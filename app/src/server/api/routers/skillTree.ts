@@ -124,14 +124,19 @@ export const skillTreeRouter = createTRPCRouter({
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
         fetchUserSkills(ctx.drizzle, ctx.userId),
       ]);
+      const activatedSkills = skills.filter((entry) => entry.activated);
       return {
         skills: skills.filter((entry) =>
           isSkillVisible(entry.skill, canAccessHiddenSkillTree(user?.role)),
         ),
+        // Prerequisites remain satisfied even when an activated skill becomes hidden.
+        activatedSkillIds: activatedSkills.map((entry) => entry.skillId),
+        activatedSkillCount: activatedSkills.length,
         // Hidden activated skills still consume points even when their details are inaccessible.
-        usedSkillPoints: skills
-          .filter((entry) => entry.activated)
-          .reduce((total, entry) => total + entry.skill.costSkillPoints, 0),
+        usedSkillPoints: activatedSkills.reduce(
+          (total, entry) => total + entry.skill.costSkillPoints,
+          0,
+        ),
       };
     }),
 
@@ -229,6 +234,10 @@ export const skillTreeRouter = createTRPCRouter({
     });
     if (!user || !canChangeContent(user.role)) {
       throw serverError("UNAUTHORIZED", "You are not authorized to create skills");
+    }
+    // New skills start hidden, so their creator must be allowed to access them.
+    if (!canAccessHiddenSkillTree(user.role)) {
+      return errorResponse("You are not authorized to create hidden skills");
     }
 
     const id = nanoid();
@@ -872,7 +881,7 @@ export const fetchUserSkills = async (client: DrizzleClient, userId: string) => 
   });
 };
 
-const fetchSkillTreeViewer = async (
+export const fetchSkillTreeViewer = async (
   client: DrizzleClient,
   userId: string | null | undefined,
 ) =>
@@ -883,7 +892,7 @@ const fetchSkillTreeViewer = async (
       })
     : undefined;
 
-const isSkillVisible = (
+export const isSkillVisible = (
   skill: { hidden: boolean; folder: { hidden: boolean } | null },
   includeHidden: boolean,
 ) => includeHidden || (!skill.hidden && !skill.folder?.hidden);

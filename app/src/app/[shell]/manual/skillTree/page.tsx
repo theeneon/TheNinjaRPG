@@ -50,7 +50,11 @@ export default function ManualSkillTree() {
   useInfinitePagination({ fetchNextPage, hasNextPage, lastElement });
 
   // Mutations
-  const { mutate: create, isPending: load1 } = api.skillTree.create.useMutation({
+  const {
+    mutate: create,
+    isPending: load1,
+    data: createResult,
+  } = api.skillTree.create.useMutation({
     onSuccess: async (data) => {
       showMutationToast(data);
       if (data.success) {
@@ -134,6 +138,11 @@ export default function ManualSkillTree() {
           </div>
         }
       >
+        {!load1 && createResult && !createResult.success && (
+          <p role="alert" className="text-destructive">
+            {createResult.message}
+          </p>
+        )}
         {totalLoading && <Loader explanation="Loading data" />}
         {allSkills.map((skill, i) => (
           <div key={skill.id} ref={i === allSkills.length - 1 ? setLastElement : null}>

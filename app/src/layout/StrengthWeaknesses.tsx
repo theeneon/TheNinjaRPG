@@ -459,7 +459,7 @@ export const SkillsTab: React.FC<SkillsTabProps> = ({ userData }) => {
   // Skill tree derived data
   const allSkillsData = allSkills?.data ?? [];
   const ownedSkills = userSkills?.skills ?? [];
-  const activatedSkills = ownedSkills.filter((us) => us.activated);
+  const activatedSkillCount = userSkills?.activatedSkillCount ?? 0;
   const totalSkillPoints = userData?.skillPoints || 0;
   const usedSkillPoints = userSkills?.usedSkillPoints ?? 0;
 
@@ -500,7 +500,7 @@ export const SkillsTab: React.FC<SkillsTabProps> = ({ userData }) => {
       <div className="mb-6 grid grid-cols-3 gap-4">
         <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-center dark:border-green-800 dark:bg-green-950/30">
           <div className="font-bold text-2xl text-green-600 dark:text-green-400">
-            {activatedSkills.length}
+            {activatedSkillCount}
           </div>
           <div className="text-green-700 text-sm dark:text-green-300">
             Skills Activated
@@ -547,6 +547,7 @@ export const SkillsTab: React.FC<SkillsTabProps> = ({ userData }) => {
         folders={folders ?? []}
         allSkills={allSkillsData}
         userSkills={ownedSkills}
+        activatedSkillIds={userSkills?.activatedSkillIds ?? []}
         userSkillPoints={totalSkillPoints - usedSkillPoints}
         onPurchaseSkill={(skillId) => purchaseSkill({ skillId })}
         onNavigateToFolder={handleNavigateToFolder}
