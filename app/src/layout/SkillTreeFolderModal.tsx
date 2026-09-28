@@ -17,6 +17,7 @@ interface SkillTreeFolderModalProps {
   folders: SkillTreeFolder[];
   allSkills: SkillTree[];
   userSkills: (UserSkill & { skill: SkillTree })[];
+  activatedSkillIds: string[];
   userSkillPoints: number;
   onPurchaseSkill: (skillId: string) => void;
   onNavigateToFolder: (folderId: string) => void;
@@ -32,6 +33,7 @@ export const SkillTreeFolderModal: React.FC<SkillTreeFolderModalProps> = ({
   folders,
   allSkills,
   userSkills,
+  activatedSkillIds,
   userSkillPoints,
   onPurchaseSkill,
   onNavigateToFolder,
@@ -40,11 +42,6 @@ export const SkillTreeFolderModal: React.FC<SkillTreeFolderModalProps> = ({
 }) => {
   const [selectedSkill, setSelectedSkill] = useState<SkillTree | null>(null);
   const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
-
-  // Get activated skill IDs
-  const activatedSkillIds = userSkills
-    .filter((us) => us.activated)
-    .map((us) => us.skillId);
 
   // Get owned skill IDs (activated or not)
   const ownedSkillIds = userSkills.map((us) => us.skillId);
