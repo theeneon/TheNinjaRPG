@@ -1,5 +1,7 @@
 // @vitest-environment node
 
+import type { SQL } from "drizzle-orm";
+import { MySqlDialect, QueryBuilder } from "drizzle-orm/mysql-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { UserRoles, type UserRole } from "@/drizzle/constants";
 import { dataRouter } from "@/server/api/routers/data";
@@ -70,7 +72,9 @@ const setup = (role: UserRole | null) => {
     { id: "owned", skillId: "secret", activated: false, skill: skills[1]! },
   ];
   const write = vi.fn().mockResolvedValue({ rowsAffected: 1 });
+  const queryBuilder = new QueryBuilder();
   const drizzle = {
+    select: queryBuilder.select.bind(queryBuilder),
     query: {
       userData: { findFirst: vi.fn().mockResolvedValue(user) },
       skillTree: {
@@ -87,6 +91,19 @@ const setup = (role: UserRole | null) => {
 };
 
 describe("hidden skill-tree permissions", () => {
+  it("returns the database page without applying the offset a second time", async () => {
+    const { drizzle, skills } = setup("USER");
+    drizzle.query.skillTree.findMany.mockResolvedValue([skills[0]!]);
+
+    expect(await invoke("getAll", drizzle, { limit: 1, cursor: 2 })).toEqual({
+      data: [skills[0]!],
+      nextCursor: 3,
+    });
+    expect(drizzle.query.skillTree.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 1, offset: 2 }),
+    );
+  });
+
   it.each(["secret", "folder-secret"])(
     "returns activated prerequisite IDs without exposing %s details",
     async (prerequisiteId) => {
@@ -194,12 +211,27 @@ describe("hidden skill-tree permissions", () => {
   it.each([...excluded, "CONTENT", "CODER", "OWNER", "EVENT", "BALANCE"] as UserRole[])(
     "applies the same visibility to queries and progress for %s",
     async (role) => {
-      const { drizzle, owned } = setup(role);
+      const { drizzle, owned, skills } = setup(role);
       const allowed = !excluded.includes(role);
       owned[0]!.activated = true;
+      drizzle.query.skillTree.findMany.mockResolvedValue(allowed ? skills : [skills[0]!]);
       const list = await invoke("getAll", drizzle, { limit: 500 });
       expect(list).toMatchObject({ data: allowed ? [expect.anything(), expect.anything(), expect.anything()] : [expect.objectContaining({ id: "public" })] });
-      drizzle.query.skillTree.findMany.mockResolvedValue([owned[0]!.skill]);
+      const options = drizzle.query.skillTree.findMany.mock.calls[0]![0] as {
+        where?: SQL; limit: number; offset: number;
+      };
+      expect(options).toMatchObject({ limit: 500, offset: 0 });
+      if (allowed) {
+        expect(options.where).toBeUndefined();
+      } else {
+        const query = new MySqlDialect().sqlToQuery(options.where!);
+        expect(query.sql).toContain("`SkillTree`.`hidden` = ?");
+        expect(query.sql).toContain("`SkillTree`.`folderId` is null");
+        expect(query.sql).toContain("not in (select");
+        expect(query.sql).toContain("`SkillTreeFolder`.`hidden` = ?");
+        expect(query.params).toEqual([0, 1]);
+      }
+      drizzle.query.skillTree.findMany.mockResolvedValue(allowed ? [owned[0]!.skill] : []);
       expect(await invoke("getAll", drizzle, { limit: 500, hidden: true })).toMatchObject({
         data: allowed ? [expect.objectContaining({ id: "secret" })] : [],
       });
@@ -224,7 +256,11 @@ describe("hidden skill-tree permissions", () => {
 
   it("does not expose hidden content to anonymous viewers or through pagination", async () => {
     const { drizzle } = setup(null);
+    drizzle.query.skillTree.findMany.mockResolvedValue([]);
     expect(await invoke("getAll", drizzle, { limit: 1, cursor: 1 }, null)).toMatchObject({ data: [] });
+    expect(drizzle.query.skillTree.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 1, offset: 1, where: expect.anything() }),
+    );
     expect(await invoke("getAllFolders", drizzle, { includeHidden: true }, null)).toHaveLength(1);
     expect(await invoke("get", drizzle, { id: "secret" }, null)).toBeUndefined();
   });
