@@ -81,7 +81,10 @@ const setup = (role: UserRole | null) => {
         findMany: vi.fn().mockResolvedValue(skills),
         findFirst: vi.fn().mockResolvedValue(skills[1]),
       },
-      skillTreeFolder: { findMany: vi.fn().mockResolvedValue(folders) },
+      skillTreeFolder: {
+        findMany: vi.fn().mockResolvedValue(folders),
+        findFirst: vi.fn().mockResolvedValue(folders[0]),
+      },
       userSkill: { findMany: vi.fn().mockResolvedValue(owned) },
     },
     update: vi.fn(() => ({ set: vi.fn(() => ({ where: write })) })),
@@ -91,6 +94,32 @@ const setup = (role: UserRole | null) => {
 };
 
 describe("hidden skill-tree permissions", () => {
+  it.each([
+    { role: "MODERATOR-ADMIN", hidden: true, allowed: false },
+    { role: "MODERATOR-ADMIN", hidden: false, allowed: true },
+    { role: "CONTENT", hidden: true, allowed: true },
+  ] as const)(
+    "guards folder writes for $role with hidden=$hidden",
+    async ({ role, hidden, allowed }) => {
+      const { drizzle } = setup(role);
+      const data = { name: "Folder", hidden };
+
+      expect(await invoke("createFolder", drizzle, data)).toMatchObject(
+        allowed
+          ? { success: true }
+          : { success: false, message: "You are not authorized to create hidden folders" },
+      );
+      expect(drizzle.insert).toHaveBeenCalledTimes(allowed ? 1 : 0);
+
+      expect(await invoke("updateFolder", drizzle, { id: "visible", data })).toMatchObject(
+        allowed
+          ? { success: true }
+          : { success: false, message: "You are not authorized to hide folders" },
+      );
+      expect(drizzle.update).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    },
+  );
+
   it("returns the database page without applying the offset a second time", async () => {
     const { drizzle, skills } = setup("USER");
     drizzle.query.skillTree.findMany.mockResolvedValue([skills[0]!]);

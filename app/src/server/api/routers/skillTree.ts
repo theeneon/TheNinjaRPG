@@ -685,6 +685,9 @@ export const skillTreeRouter = createTRPCRouter({
       if (!user || !canChangeContent(user.role)) {
         throw serverError("UNAUTHORIZED", "You are not authorized to create folders");
       }
+      if (input.hidden && !canAccessHiddenSkillTree(user.role)) {
+        return errorResponse("You are not authorized to create hidden folders");
+      }
 
       const id = nanoid();
       await ctx.drizzle.insert(skillTreeFolder).values({
@@ -716,6 +719,9 @@ export const skillTreeRouter = createTRPCRouter({
       ]);
       if (!user || !canChangeContent(user.role)) {
         throw serverError("UNAUTHORIZED", "You are not authorized to edit folders");
+      }
+      if (input.data.hidden && !canAccessHiddenSkillTree(user.role)) {
+        return errorResponse("You are not authorized to hide folders");
       }
       if (!folder) return errorResponse("Folder not found");
 
