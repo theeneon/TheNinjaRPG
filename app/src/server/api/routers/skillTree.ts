@@ -1,4 +1,17 @@
-import { and, asc, eq, gte, inArray, isNull, like, lt, not, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  like,
+  lt,
+  not,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -97,17 +110,30 @@ export const skillTreeRouter = createTRPCRouter({
       // Build where conditions using the generalized filter function
       const baseFilters = skillTreeDatabaseFilter(input || {});
 
-      const [user, skills] = await Promise.all([
-        fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.skillTree.findMany({
-          where: and(...baseFilters),
-          orderBy: [skillTree.tier, skillTree.name],
-          with: { folder: true },
-        }),
-      ]);
-      const results = skills
-        .filter((skill) => isSkillVisible(skill, canAccessHiddenSkillTree(user?.role)))
-        .slice(skip, skip + limit);
+      // Visibility must be applied before pagination, so this query depends on the viewer.
+      const user = await fetchSkillTreeViewer(ctx.drizzle, ctx.userId);
+      if (!canAccessHiddenSkillTree(user?.role)) {
+        baseFilters.push(
+          eq(skillTree.hidden, false),
+          or(
+            isNull(skillTree.folderId),
+            notInArray(
+              skillTree.folderId,
+              ctx.drizzle
+                .select({ id: skillTreeFolder.id })
+                .from(skillTreeFolder)
+                .where(eq(skillTreeFolder.hidden, true)),
+            ),
+          )!,
+        );
+      }
+      const results = await ctx.drizzle.query.skillTree.findMany({
+        where: and(...baseFilters),
+        orderBy: [skillTree.tier, skillTree.name],
+        with: { folder: true },
+        limit,
+        offset: skip,
+      });
 
       const nextCursor = results.length < limit ? null : currentCursor + 1;
       return {
