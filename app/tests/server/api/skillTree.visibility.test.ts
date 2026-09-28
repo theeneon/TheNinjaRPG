@@ -258,7 +258,7 @@ describe("hidden skill-tree permissions", () => {
         expect(query.sql).toContain("`SkillTree`.`folderId` is null");
         expect(query.sql).toContain("not in (select");
         expect(query.sql).toContain("`SkillTreeFolder`.`hidden` = ?");
-        expect(query.params).toEqual([0, 1]);
+        expect(query.params).toEqual([false, true]);
       }
       drizzle.query.skillTree.findMany.mockResolvedValue(allowed ? [owned[0]!.skill] : []);
       expect(await invoke("getAll", drizzle, { limit: 500, hidden: true })).toMatchObject({
