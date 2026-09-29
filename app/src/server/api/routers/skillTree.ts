@@ -294,18 +294,26 @@ export const skillTreeRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Check permissions
-      const [{ user }, skill, skillWithName] = await Promise.all([
+      const requestedFolderId = input.data.folderId || null;
+      const [{ user }, skill, skillWithName, targetFolder] = await Promise.all([
         fetchUpdatedUser({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
         ctx.drizzle.query.skillTree.findFirst({
           where: eq(skillTree.id, input.id),
+          with: { folder: true },
         }),
         ctx.drizzle.query.skillTree.findFirst({
           columns: { name: true, id: true },
           where: eq(skillTree.name, input.data.name),
         }),
+        requestedFolderId
+          ? ctx.drizzle.query.skillTreeFolder.findFirst({
+              where: eq(skillTreeFolder.id, requestedFolderId),
+              columns: { hidden: true },
+            })
+          : Promise.resolve(null),
       ]);
       if (!user || !canChangeContent(user.role)) {
         throw serverError(
@@ -313,9 +321,20 @@ export const skillTreeRouter = createTRPCRouter({
           "You are not authorized to edit this content",
         );
       }
-      if (!skill) return errorResponse("Skill not found");
+      const canViewHidden = canAccessHiddenSkillTree(user.role);
+      // A hidden skill, or a skill in a hidden folder, is invisible to this role.
+      if (!skill || !isSkillVisible(skill, canViewHidden)) {
+        return errorResponse("Skill not found");
+      }
+      // Hiding the skill or moving it into a hidden folder would make this save unreadable.
+      if (!canViewHidden && (input.data.hidden || targetFolder?.hidden)) {
+        return errorResponse("You are not authorized to hide skills");
+      }
       if (skillWithName && skillWithName.id !== skill.id)
         return errorResponse("Skill name already exists");
+
+      // The folder relation is only for the visibility check above.
+      const { folder: _currentFolder, ...skillRecord } = skill;
 
       // Prepare the data
       const data = {
@@ -332,7 +351,7 @@ export const skillTreeRouter = createTRPCRouter({
         folderId: input.data.folderId || null,
       };
 
-      const diff = calculateContentDiff(skill, {
+      const diff = calculateContentDiff(skillRecord, {
         id: skill.id,
         createdAt: skill.createdAt,
         updatedAt: skill.updatedAt,

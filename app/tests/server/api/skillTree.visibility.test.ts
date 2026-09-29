@@ -181,6 +181,46 @@ describe("hidden skill-tree permissions", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it("rejects hiding a visible skill or editing a hidden one", async () => {
+    const { drizzle, skills } = setup("MODERATOR-ADMIN");
+    const visible = skills[0]!;
+    const hidden = skills[1]!;
+    const data = { name: visible.name, hidden: false, folderId: null };
+
+    drizzle.query.skillTree.findFirst.mockResolvedValue(visible);
+    expect(
+      await invoke("update", drizzle, { id: visible.id, data: { ...data, hidden: true } }),
+    ).toMatchObject({
+      success: false,
+      message: "You are not authorized to hide skills",
+    });
+
+    drizzle.query.skillTreeFolder.findFirst.mockResolvedValue(folders[1]);
+    expect(
+      await invoke("update", drizzle, {
+        id: visible.id,
+        data: { ...data, folderId: folders[1]!.id },
+      }),
+    ).toMatchObject({
+      success: false,
+      message: "You are not authorized to hide skills",
+    });
+
+    drizzle.query.skillTree.findFirst.mockResolvedValue(hidden);
+    expect(await invoke("update", drizzle, { id: hidden.id, data })).toMatchObject({
+      success: false,
+      message: "Skill not found",
+    });
+    expect(drizzle.update).not.toHaveBeenCalled();
+
+    drizzle.query.skillTree.findFirst.mockResolvedValue(visible);
+    drizzle.query.skillTreeFolder.findFirst.mockResolvedValue(folders[0]);
+    expect(await invoke("update", drizzle, { id: visible.id, data })).toMatchObject({
+      success: true,
+    });
+    expect(drizzle.update).toHaveBeenCalledOnce();
+  });
+
   it.each([null, ...excluded, "CONTENT", "OWNER"] as (UserRole | null)[])(
     "enforces balance statistics visibility for %s when hidden is omitted or requested",
     async (role) => {
