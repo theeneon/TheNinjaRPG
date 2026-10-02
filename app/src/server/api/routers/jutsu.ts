@@ -27,7 +27,12 @@ import {
   RESKIN_LIMIT,
   TUTORIAL_JUTSU_ID,
 } from "@/drizzle/constants";
-import type { JutsuLoadout, UserData, UserJutsuWithRelations } from "@/drizzle/schema";
+import type {
+  Jutsu,
+  JutsuLoadout,
+  UserData,
+  UserJutsuWithRelations,
+} from "@/drizzle/schema";
 import {
   actionLog,
   bloodline,
@@ -412,6 +417,7 @@ export const jutsuRouter = createTRPCRouter({
         target: "OTHER_USER",
         jutsuType: "AI",
         statClassification: "Highest",
+        elementClassification: "None",
         image: IMG_AVATAR_DEFAULT,
       });
       return { success: true, message: id };
@@ -2089,7 +2095,7 @@ export const jutsuDatabaseFilter = (
           and(
             ...input.element.map(
               (e) =>
-                sql`JSON_SEARCH(${jutsu.effects}, 'one', ${e}, NULL, '$[*].elements[*]') IS NOT NULL`,
+                sql`(COALESCE(${jutsu.elementClassification}, 'None') = ${e} OR JSON_SEARCH(${jutsu.effects}, 'one', ${e}, NULL, '$[*].elements[*]') IS NOT NULL)`,
             ),
           ),
         ]
@@ -2252,7 +2258,7 @@ export const jutsuDatabaseFilter = (
     ...(input?.excludedElements?.length
       ? input.excludedElements.map(
           (excludedEl) =>
-            sql`JSON_SEARCH(${jutsu.effects}, 'one', ${excludedEl}, NULL, '$[*].elements[*]') IS NULL`,
+            sql`(COALESCE(${jutsu.elementClassification}, 'None') <> ${excludedEl} AND JSON_SEARCH(${jutsu.effects}, 'one', ${excludedEl}, NULL, '$[*].elements[*]') IS NULL)`,
         )
       : []),
     ...(input?.excludedEffects?.length
@@ -2273,11 +2279,27 @@ export const jutsuDatabaseFilter = (
 /**
  * Utility: Post-filter jutsu-like rows to ensure includes are satisfied within the same effect
  */
-const filterByEffectConstraints = <T extends { effects: ZodAllTags[] }>(
+export const filterByEffectConstraints = <
+  T extends Pick<Jutsu, "effects" | "elementClassification">,
+>(
   rows: T[],
   input: JutsuFilteringSchema,
 ) => {
   return rows.filter((row) => {
+    // Classification-only matches also include jutsu without effect tags.
+    if (
+      !input.stat?.length &&
+      !input.effect?.length &&
+      !input.appear &&
+      !input.static &&
+      !input.disappear &&
+      input.element?.length &&
+      input.element.every(
+        (element) => element === (row.elementClassification ?? "None"),
+      )
+    ) {
+      return true;
+    }
     if (
       input.stat ||
       input.effect ||
@@ -2294,6 +2316,7 @@ const filterByEffectConstraints = <T extends { effects: ZodAllTags[] }>(
           ...("generalTypes" in e && e.generalTypes ? e.generalTypes : []),
         ];
         const effectElements = [
+          row.elementClassification ?? "None",
           ...("elements" in e && e.elements ? e.elements : []),
         ] as string[];
 
