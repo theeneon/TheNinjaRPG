@@ -50,24 +50,27 @@ const fixture = (elementClassification: ElementName | null = "Fire") => {
 };
 
 describe("classification potency", () => {
-  it.each(ElementNames)("matches preloaded %s classification", (element) => {
-    const { action } = fixture(element);
-    const effect = makeEffect(
-      "increasepotency",
-      {
-        affectedTag: "none",
-        affectedElements: [element],
-        power: 20,
-        powerPerLevel: 0,
-        calculation: "static",
-      },
-      { targetId: "caster" },
-    );
-    const tags = resolvePotencyTags(action, [effect], "caster");
-    expect(tags.map((tag) => tag.power)).toEqual([70, 70, 40]);
-    expect(tags.slice(0, 2).map((tag) => tag.powerPerLevel)).toEqual([0, 0]);
-    expect(action.effects[0]?.power).toBe(40);
-  });
+  it.each(ElementNames.filter((element) => element !== "None"))(
+    "matches preloaded %s classification",
+    (element) => {
+      const { action } = fixture(element);
+      const effect = makeEffect(
+        "increasepotency",
+        {
+          affectedTag: "none",
+          affectedElements: [element],
+          power: 20,
+          powerPerLevel: 0,
+          calculation: "static",
+        },
+        { targetId: "caster" },
+      );
+      const tags = resolvePotencyTags(action, [effect], "caster");
+      expect(tags.map((tag) => tag.power)).toEqual([70, 70, 40]);
+      expect(tags.slice(0, 2).map((tag) => tag.powerPerLevel)).toEqual([0, 0]);
+      expect(action.effects[0]?.power).toBe(40);
+    },
+  );
 
   it.each([
     ["increasepotency", "static", 70],
@@ -116,7 +119,7 @@ describe("classification potency", () => {
   });
 
   it.each([null, "None"] as const)(
-    "matches unclassified %s jutsu",
+    "matches only non-elemental tags for unclassified %s jutsu",
     (classification) => {
       const { action } = fixture(classification);
       const effect = makeEffect(
@@ -132,12 +135,51 @@ describe("classification potency", () => {
       );
       expect(
         resolvePotencyTags(action, [effect], "caster").map((tag) => tag.power),
-      ).toEqual([70, 70, 40]);
+      ).toEqual([40, 70, 40]);
     },
   );
 });
 
 describe("classification combat restrictions", () => {
+  it.each([null, "None"] as const)(
+    "does not infer None elements from %s classification",
+    (classification) => {
+      for (const tagElements of [["Water"], ["None"], [], undefined] as const) {
+        const { jutsu, battle } = fixture(classification);
+        jutsu.effects = tagElements
+          ? [makeTag("damage", { elements: [...tagElements] })]
+          : SAGE_MODE_ACTIVATION_JUTSU.effects;
+        const owned = battle.usersState[0]!.jutsus[0]!;
+        const action = userJutsuToAction(owned, battle);
+        const matches = tagElements?.[0] === "None";
+        for (const type of ["timecompression", "timedilation"] as const) {
+          battle.usersEffects = [
+            makeEffect(
+              type,
+              { elements: ["None"], rounds: 3 },
+              { targetId: "caster", castThisRound: false },
+            ),
+          ];
+          expect(getActionPointCost("caster", battle, action)).toBe(
+            40 + (matches ? (type === "timecompression" ? 10 : -10) : 0),
+          );
+        }
+        battle.usersEffects = [
+          makeEffect(
+            "elementalseal",
+            { elements: ["None"], rounds: 3 },
+            { targetId: "caster", castThisRound: false },
+          ),
+        ];
+        expect(
+          availableUserActions(battle, "caster").some(
+            (candidate) => candidate.id === action.id,
+          ),
+        ).toBe(!matches);
+      }
+    },
+  );
+
   it.each(["Fire", "Water", "Earth", "None"] as const)(
     "matches temporal effects and seals against %s",
     (element) => {
