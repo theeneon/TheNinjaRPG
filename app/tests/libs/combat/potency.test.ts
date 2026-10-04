@@ -453,7 +453,7 @@ describe("potency element matching", () => {
       makeTag("increaseheal", { power: 40 }),
       makeTag("damage", { power: 40, elements: ["Fire"] }),
     ]);
-    action.data = { ...SAGE_MODE_ACTIVATION_JUTSU, elementClassification: "Fire" };
+    action.data = { ...SAGE_MODE_ACTIVATION_JUTSU };
     for (const affectedTag of ["all", "none"] as const) {
       const tags = resolvePotencyTags(
         action,

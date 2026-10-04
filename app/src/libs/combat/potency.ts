@@ -64,8 +64,8 @@ export const resolvePotencyTags = (
   if (action.type !== "jutsu") return tags;
   const classification =
     action.data && "elementClassification" in action.data
-      ? (action.data.elementClassification ?? "None")
-      : "None";
+      ? action.data.elementClassification
+      : undefined;
 
   const sealEffects = usersEffects.filter(
     (effect) => effect.type === "seal" && !effect.isNew && isEffectActive(effect),
@@ -114,7 +114,9 @@ export const resolvePotencyTags = (
       "elements" in tag && tag.elements?.length ? tag.elements : ["None"];
     const matching = modifiers.filter((modifier) => {
       const matchesElement = modifier.affectedElements.some(
-        (element) => element === classification || elements.includes(element),
+        (element) =>
+          (classification !== "None" && element === classification) ||
+          elements.includes(element),
       );
       if (modifier.affectedTag === "none") return matchesElement;
       return (

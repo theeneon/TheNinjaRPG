@@ -191,9 +191,10 @@ export const availableUserActions = (
             }
             // Filter out jutsus removed by elemental seal
             if (!elementalSeal?.elements?.length) return true;
-            const jutsuElements = new Set<string>([
-              jutsu.elementClassification ?? "None",
-            ]);
+            const jutsuElements = new Set<string>();
+            if (jutsu.elementClassification && jutsu.elementClassification !== "None") {
+              jutsuElements.add(jutsu.elementClassification);
+            }
             for (const effect of jutsu.effects) {
               if ("elements" in effect && Array.isArray(effect.elements)) {
                 for (const el of effect.elements) {
@@ -1412,11 +1413,13 @@ const elementsFromJutsuTags = (tags: CombatAction["effects"]): ElementName[] =>
 /** Union of classification and tag elements, including embedded jutsu data. */
 const collectJutsuActionElements = (action: CombatAction): Set<ElementName> => {
   const acc = new Set(elementsFromJutsuTags(action.effects));
-  acc.add(
+  const classification =
     action.data && "elementClassification" in action.data
-      ? (action.data.elementClassification ?? "None")
-      : "None",
-  );
+      ? action.data.elementClassification
+      : undefined;
+  if (classification && classification !== "None") {
+    acc.add(classification);
+  }
   if (action.data && "effects" in action.data && Array.isArray(action.data.effects)) {
     for (const el of elementsFromJutsuTags(action.data.effects)) {
       acc.add(el);

@@ -2093,7 +2093,7 @@ export const jutsuDatabaseFilter = (
           and(
             ...input.element.map(
               (e) =>
-                sql`(COALESCE(${jutsu.elementClassification}, 'None') = ${e} OR JSON_SEARCH(${jutsu.effects}, 'one', ${e}, NULL, '$[*].elements[*]') IS NOT NULL)`,
+                sql`((${jutsu.elementClassification} IS NOT NULL AND ${jutsu.elementClassification} <> 'None' AND ${jutsu.elementClassification} = ${e}) OR JSON_SEARCH(${jutsu.effects}, 'one', ${e}, NULL, '$[*].elements[*]') IS NOT NULL)`,
             ),
           ),
         ]
@@ -2256,7 +2256,7 @@ export const jutsuDatabaseFilter = (
     ...(input?.excludedElements?.length
       ? input.excludedElements.map(
           (excludedEl) =>
-            sql`(COALESCE(${jutsu.elementClassification}, 'None') <> ${excludedEl} AND JSON_SEARCH(${jutsu.effects}, 'one', ${excludedEl}, NULL, '$[*].elements[*]') IS NULL)`,
+            sql`((${jutsu.elementClassification} IS NULL OR ${jutsu.elementClassification} = 'None' OR ${jutsu.elementClassification} <> ${excludedEl}) AND JSON_SEARCH(${jutsu.effects}, 'one', ${excludedEl}, NULL, '$[*].elements[*]') IS NULL)`,
         )
       : []),
     ...(input?.excludedEffects?.length
@@ -2284,6 +2284,10 @@ export const filterByEffectConstraints = <
   input: JutsuFilteringSchema,
 ) => {
   return rows.filter((row) => {
+    const classification =
+      row.elementClassification && row.elementClassification !== "None"
+        ? row.elementClassification
+        : undefined;
     // Classification-only matches also include jutsu without effect tags.
     if (
       !input.stat?.length &&
@@ -2292,9 +2296,7 @@ export const filterByEffectConstraints = <
       !input.static &&
       !input.disappear &&
       input.element?.length &&
-      input.element.every(
-        (element) => element === (row.elementClassification ?? "None"),
-      )
+      input.element.every((element) => element === classification)
     ) {
       return true;
     }
@@ -2314,7 +2316,7 @@ export const filterByEffectConstraints = <
           ...("generalTypes" in e && e.generalTypes ? e.generalTypes : []),
         ];
         const effectElements = [
-          row.elementClassification ?? "None",
+          ...(classification ? [classification] : []),
           ...("elements" in e && e.elements ? e.elements : []),
         ] as string[];
 
