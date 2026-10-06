@@ -10,8 +10,10 @@ import { secondsPassed } from "@/utils/time";
 
 export type ColumnDefinitionType<T, K extends keyof T> = {
   key: K;
-  header: string;
+  header: React.ReactNode;
   width?: number;
+  /** Extra classes for the column's header and cells, e.g. to hide it on small screens. */
+  className?: string;
   onChange?: (id: string, column: string, value: string) => void;
   type:
     | "avatar"
@@ -64,7 +66,7 @@ const Table = <T, K extends keyof T>(props: TableProps<T, K>) => {
               <th
                 key={String(column.key)}
                 scope="col"
-                className={compact ? "px-2 py-1.5" : "px-3 py-3"}
+                className={cn(compact ? "px-2 py-1.5" : "px-3 py-3", column.className)}
               >
                 {column.header}
               </th>
@@ -100,7 +102,7 @@ const Table = <T, K extends keyof T>(props: TableProps<T, K>) => {
               {columns.map((column) => (
                 <td
                   key={String(column.key)}
-                  className={compact ? "px-2 py-1" : "px-3 py-2"}
+                  className={cn(compact ? "px-2 py-1" : "px-3 py-2", column.className)}
                   style={{
                     width: column.width ? `${column.width}rem` : "auto",
                     minWidth: column.width ? `${column.width}rem` : "auto",

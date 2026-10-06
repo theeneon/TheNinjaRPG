@@ -124,6 +124,7 @@ import {
 } from "@/server/utils/farming";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchQuestDiscoveryCandidates } from "@/server/utils/questDiscovery";
+import { awardRecruitRankMilestonesSafely } from "@/server/utils/recruitment";
 import { extendWarParticipantSql } from "@/server/utils/war";
 import { chunkArray, getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
@@ -1785,6 +1786,15 @@ export const updateRewards = async (info: {
       return warUpdates;
     })(),
   ]);
+  // A rank reward is a promotion: record the recruiter's rank milestones once it has landed.
+  if (getNewRank && user.recruiterId) {
+    await awardRecruitRankMilestonesSafely({
+      client,
+      recruitUserId: user.userId,
+      recruiterId: user.recruiterId,
+      rank: rewards.reward_rank,
+    });
+  }
   // Update rewards for readability. `droppedGatheringItems` is surfaced so the quest
   // claim caller (the only updateRewards caller with hydrated userQuests) can credit
   // the herbs_gathered tracker by the number of gathered drops.

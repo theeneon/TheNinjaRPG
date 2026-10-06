@@ -12,6 +12,7 @@ import {
   historicalIp,
   paypalSubscription,
   questHistory,
+  recruitReferral,
   referralSource,
   storePurchase,
   storeUserIdAlias,
@@ -31,6 +32,7 @@ import {
   isDeletedStoreUserId,
   settleRecordedLedger,
 } from "@/server/utils/purchases/grant";
+import { checkRecruitSignupEligibility } from "@/server/utils/recruitment";
 import { checkForBadWords } from "@/utils/profanity";
 import { secondsFromNow } from "@/utils/time";
 import { registrationSchema, utmSourceSchema } from "@/validators/register";
@@ -105,6 +107,7 @@ export const registerRouter = createTRPCRouter({
         storeAlias,
         storeHistory,
         paypalHistory,
+        recruitEligibility,
       ] = await Promise.all([
         ctx.drizzle.query.village.findFirst({
           where: eq(village.name, "Horizon"),
@@ -140,6 +143,14 @@ export const registerRouter = createTRPCRouter({
           columns: { id: true },
           where: eq(paypalSubscription.affectedUserId, ctx.userId),
         }),
+        input.recruiter_userid
+          ? checkRecruitSignupEligibility({
+              client: ctx.drizzle,
+              recruitUserId: ctx.userId,
+              recruiterId: input.recruiter_userid,
+              signupIp: ctx.userIp,
+            })
+          : Promise.resolve(null),
       ]);
       // Whatever the ledger holds for this identity is settled once a character row exists,
       // on every path that reaches one. A tombstone seen here means receipts can still be
@@ -289,6 +300,28 @@ export const registerRouter = createTRPCRouter({
                 .update(userData)
                 .set({ nRecruited: sql`${userData.nRecruited} + 1` })
                 .where(eq(userData.userId, input.recruiter_userid)),
+            ]
+          : []),
+        // Every recruit counts as a recruit; eligibility only gates rank milestone rewards.
+        ...(input.recruiter_userid && recruitEligibility
+          ? [
+              ctx.drizzle
+                .insert(recruitReferral)
+                .values({
+                  recruitUserId: ctx.userId,
+                  recruiterId: input.recruiter_userid,
+                  isEligible: recruitEligibility.isEligible,
+                  eligibilityReason: recruitEligibility.reason,
+                  eligibilityCheckedAt: new Date(),
+                })
+                .onDuplicateKeyUpdate({
+                  set: {
+                    recruiterId: input.recruiter_userid,
+                    isEligible: recruitEligibility.isEligible,
+                    eligibilityReason: recruitEligibility.reason,
+                    eligibilityCheckedAt: new Date(),
+                  },
+                }),
             ]
           : []),
       ]);
