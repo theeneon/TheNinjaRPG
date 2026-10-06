@@ -5,8 +5,11 @@ CREATE TABLE `ItemPurchaseCounter` (
 	`quantity` int unsigned NOT NULL DEFAULT 0,
 	CONSTRAINT `ItemPurchaseCounter_user_item_period_key` UNIQUE(`userId`,`itemId`,`periodStart`)
 );
-
+--> statement-breakpoint
 ALTER TABLE `Item` ADD `auctionMinPrice` int unsigned;
+--> statement-breakpoint
 ALTER TABLE `Item` ADD `auctionMaxPrice` int unsigned;
+--> statement-breakpoint
 ALTER TABLE `Item` ADD `purchaseLimit` int unsigned;
+--> statement-breakpoint
 ALTER TABLE `Item` ADD `purchaseLimitPeriod` enum('NONE','DAILY','WEEKLY','MONTHLY') DEFAULT 'NONE' NOT NULL;
