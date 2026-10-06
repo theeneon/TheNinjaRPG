@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "@/env/server.mjs";
 import {
   BOTID_BLOCKED_MESSAGE,
+  BOTID_DEEP_ANALYSIS_PROCEDURES,
   BOTID_PROTECTED_PROCEDURES,
   BOTID_PROTECTED_ROUTES,
   isBotIdProtectedProcedure,
@@ -24,6 +25,7 @@ import {
   createBotIdGuard,
   enforceBotId,
   isBotIdEnforced,
+  BOTID_DEEP_ANALYSIS_TIMEOUT_MS,
   BOTID_TIMEOUT_MS,
   runBotIdCheck,
   shouldGuardTrpcRequest,
@@ -86,13 +88,48 @@ describe("BotID check level", () => {
   it("asks for Basic on the client protect entry and on the server check alike", async () => {
     expect(BOTID_PROTECTED_ROUTES).toHaveLength(BOTID_PROTECTED_PROCEDURES.length);
     for (const route of BOTID_PROTECTED_ROUTES) {
-      expect(route).toMatchObject({ method: "POST", advancedOptions: { checkLevel: "basic" } });
+      const deep = BOTID_DEEP_ANALYSIS_PROCEDURES.some((p) => route.path.includes(p));
+      expect(route).toMatchObject({
+        method: "POST",
+        advancedOptions: { checkLevel: deep ? "deepAnalysis" : "basic" },
+      });
     }
     checkBotId.mockResolvedValue(human);
     await runBotIdCheck();
     expect(checkBotId).toHaveBeenCalledWith({
       advancedOptions: { checkLevel: "basic" },
     });
+  });
+
+  it("uses Deep Analysis for account creation only, on both client and server", async () => {
+    expect([...BOTID_DEEP_ANALYSIS_PROCEDURES]).toEqual(["register.createCharacter"]);
+    for (const procedure of BOTID_DEEP_ANALYSIS_PROCEDURES) {
+      expect(isBotIdProtectedProcedure(procedure)).toBe(true);
+    }
+    // botid attaches the challenge of the first matching entry, so deep entries lead.
+    expect(BOTID_PROTECTED_ROUTES[0]).toMatchObject({
+      path: "/api/trpc/*register.createCharacter*",
+      advancedOptions: { checkLevel: "deepAnalysis" },
+    });
+    checkBotId.mockResolvedValue(human);
+    const guard = createBotIdGuard(["register.createCharacter"]);
+    expect(guard.checkLevel).toBe("deepAnalysis");
+    await guard.verify();
+    expect(checkBotId).toHaveBeenCalledWith({
+      advancedOptions: { checkLevel: "deepAnalysis" },
+    });
+  });
+
+  it("checks a batch with account creation at the Deep Analysis level", () => {
+    expect(createBotIdGuard(["bank.transfer", "register.createCharacter"]).checkLevel).toBe(
+      "deepAnalysis",
+    );
+    expect(createBotIdGuard(["bank.transfer"]).checkLevel).toBe("basic");
+  });
+
+  it("gives Deep Analysis a longer fail-open budget than Basic", () => {
+    expect(BOTID_DEEP_ANALYSIS_TIMEOUT_MS).toBeGreaterThan(BOTID_TIMEOUT_MS);
+    expect(BOTID_DEEP_ANALYSIS_TIMEOUT_MS).toBeLessThanOrEqual(2000);
   });
 });
 
@@ -343,5 +380,27 @@ describe("BotID protected procedures", () => {
     }
     expect(isBotIdProtectedProcedure("combat.performAction")).toBe(false);
     expect(isBotIdProtectedProcedure("jutsu.startTraining")).toBe(true);
+  });
+});
+
+describe("BotID client matcher with mixed check levels", () => {
+  const clientRegex = (routePath: string) =>
+    new RegExp(
+      `^${routePath.replace(/[.?+^$[\]\\(){}|-]/g, "\\$&").split("*").join(".*")}$`,
+    );
+  /** botid@1.5 attaches the challenge of the first matching protect entry. */
+  const firstMatch = (pathname: string) =>
+    BOTID_PROTECTED_ROUTES.find((route) => clientRegex(route.path).test(pathname));
+
+  it("agrees with the server on the level for single and batched requests", () => {
+    for (const paths of [
+      ["register.createCharacter"],
+      ["profile.getUser", "register.createCharacter"],
+      ["bank.transfer", "register.createCharacter"],
+      ["train.startTraining"],
+    ]) {
+      const route = firstMatch(`/api/trpc/${paths.join(",")}`);
+      expect(route?.advancedOptions.checkLevel).toBe(createBotIdGuard(paths).checkLevel);
+    }
   });
 });
