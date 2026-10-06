@@ -14,6 +14,7 @@ import {
   STEALTH_TRAIN_GAIN_PER_MINUTE,
   UserRolesWithSkillTreeAccess,
 } from "@/drizzle/constants";
+import { Bloodright } from "@/layout/Bloodright";
 import ContentBox from "@/layout/ContentBox";
 import ElementImage from "@/layout/ElementImage";
 import NavTabs from "@/layout/NavTabs";
@@ -26,14 +27,14 @@ import { getEffectiveThemeTextColor } from "@/libs/themePreference";
 import { showMutationToast } from "@/libs/toast";
 import type { UserWithRelations } from "@/routers/profile";
 import { useActiveLayout } from "@/utils/LayoutContext";
-import { useRequiredUserData } from "@/utils/UserContext";
 import { canAccessHiddenSkillTree } from "@/utils/permissions";
+import { useRequiredUserData } from "@/utils/UserContext";
 import { getUserElements } from "@/validators/user";
 
 // Main StrengthWeaknesses Component
 const StrengthWeaknesses: React.FC = () => {
   // Nav tabs
-  const tabOptions = ["Stats", "Graphs", "Skills", "Covert"];
+  const tabOptions = ["Stats", "Graphs", "Skills", "Bloodright", "Covert"];
 
   // State
   type TabOptions = (typeof tabOptions)[number];
@@ -113,6 +114,7 @@ const StrengthWeaknesses: React.FC = () => {
       {currentTab === "Stats" && userData && <StatsTab userData={userData} />}
       {currentTab === "Graphs" && userData && <GraphsTab userData={userData} />}
       {currentTab === "Skills" && userData && <SkillsTab userData={userData} />}
+      {currentTab === "Bloodright" && <Bloodright />}
       {currentTab === "Covert" && userData && <CovertTab userData={userData} />}
     </ContentBox>
   );

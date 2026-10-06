@@ -114,8 +114,16 @@ const SingleEditSkillTree: React.FC<SingleEditSkillTreeProps> = (props) => {
     <>
       <ContentBox
         title="Content Panel"
-        subtitle="Skill Tree Management"
-        defaultBackHref="/manual/skillTree"
+        subtitle={
+          skillTree.pathType === "BLOODRIGHT"
+            ? "Bloodright Management"
+            : "Skill Tree Management"
+        }
+        defaultBackHref={
+          skillTree.pathType === "BLOODRIGHT"
+            ? "/manual/bloodright"
+            : "/manual/skillTree"
+        }
         noRightAlign={true}
         topRightContent={
           <div className="flex justify-end">

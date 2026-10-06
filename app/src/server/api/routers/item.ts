@@ -59,6 +59,7 @@ import {
   userSkill,
 } from "@/drizzle/schema";
 import { filterRollableBloodlines } from "@/libs/bloodline";
+import { bloodrightSwapRefund } from "@/libs/bloodright";
 import {
   deletedReason,
   editedReason,
@@ -1867,7 +1868,6 @@ export const itemRouter = createTRPCRouter({
       // Bookkeeping
       const messages: string[] = [];
       const updates = {
-        bloodlineId: user.bloodlineId,
         sageModeId: user.sageModeId,
         curHealth: user.curHealth,
         curStamina: user.curStamina,
@@ -1898,6 +1898,7 @@ export const itemRouter = createTRPCRouter({
       // Only set when THIS request rolls a new sage mode; used as the COALESCE fallback at the
       // flush below so the snapshot write never resurrects a mode a concurrent removal cleared.
       let grantedSageModeId: string | null = null;
+      let changedBloodlineId: string | null | undefined;
       useritem.item.effects.forEach((effect) => {
         if (effect.type === "rollbloodline") {
           const bloodlinePool = filterRollableBloodlines({
@@ -1943,7 +1944,7 @@ export const itemRouter = createTRPCRouter({
           }
           // Message
           if (success) {
-            updates.bloodlineId = randomBloodline.id;
+            changedBloodlineId = randomBloodline.id;
             messages.push(`You rolled a new bloodline: ${randomBloodline.name}. `);
           } else {
             messages.push(`You rolled for a new bloodline, but none was found. `);
@@ -2011,7 +2012,7 @@ export const itemRouter = createTRPCRouter({
           }
         } else if (effect.type === "removebloodline") {
           if (Math.random() * 100 < effect.power) {
-            updates.bloodlineId = null;
+            changedBloodlineId = null;
             messages.push(`Your bloodline was removed. `);
           } else {
             messages.push(`Your bloodline could not be removed successfully.`);
@@ -2102,6 +2103,12 @@ export const itemRouter = createTRPCRouter({
           // request rolled a mode), so a no-grant flush leaves the column untouched and never
           // resurrects a mode a concurrent removal cleared to null.
           .set({
+            ...(changedBloodlineId !== undefined
+              ? {
+                  ...bloodrightSwapRefund(changedBloodlineId),
+                  bloodlineId: changedBloodlineId,
+                }
+              : {}),
             ...updates,
             sageModeId: sql`COALESCE(${userData.sageModeId}, ${grantedSageModeId})`,
           })

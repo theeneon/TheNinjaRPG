@@ -100,6 +100,7 @@ import {
   war,
 } from "@/drizzle/schema";
 import { getReskinnedBloodline } from "@/libs/bloodline";
+import { bloodrightSwapRefund } from "@/libs/bloodright";
 import {
   deletedReason,
   editedReason,
@@ -1591,7 +1592,12 @@ export const profileRouter = createTRPCRouter({
             userId: target.userId,
             ...(usernameChanged ? { username: input.data.username } : {}),
             ...(customTitleChanged ? { customTitle: input.data.customTitle } : {}),
-            ...(bloodlineChanged ? { bloodlineId: input.data.bloodlineId } : {}),
+            ...(bloodlineChanged
+              ? {
+                  ...bloodrightSwapRefund(input.data.bloodlineId),
+                  bloodlineId: input.data.bloodlineId,
+                }
+              : {}),
             ...(villageChanged ? { villageId: input.data.villageId } : {}),
             ...(rankChanged ? { rank: input.data.rank } : {}),
             ...(bloodlineReskinChanged

@@ -1784,7 +1784,7 @@ export const initiateBattle = async (
     // Fetch user data
     client.query.userData.findMany({
       with: {
-        bloodline: true,
+        bloodline: { with: { bloodrightTiers: true } },
         sageMode: true,
         village: { with: { structures: true, sectors: { columns: { sector: true } } } },
         loadout: { columns: { jutsuIds: true } },
@@ -3073,6 +3073,23 @@ export const processUsersForBattle = async (
       });
     }
 
+    // Bloodright is preloaded at initiation and uses the same passive effect pipeline.
+    for (const tier of inputUser.bloodline?.bloodrightTiers ?? []) {
+      if (
+        tier.pathType === "BLOODRIGHT" &&
+        user.bloodright.some((entry) => entry.skillId === tier.id)
+      ) {
+        user.userSkills.push({
+          id: tier.id,
+          userId: user.userId,
+          skillId: tier.id,
+          activated: true,
+          purchasedAt: new Date(),
+          skill: tier,
+        });
+      }
+    }
+
     // Add skill tree effects
     if (
       user.userSkills &&
@@ -3384,7 +3401,7 @@ export const processUsersForBattle = async (
   if (summonsToProcess.length > 0) {
     const summons = await client.query.userData.findMany({
       with: {
-        bloodline: true,
+        bloodline: { with: { bloodrightTiers: true } },
         sageMode: true,
         village: true,
         items: {

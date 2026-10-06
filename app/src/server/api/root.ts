@@ -1,3 +1,4 @@
+import { bloodrightRouter } from "@/server/api/routers/bloodright";
 import { accountDeletionRouter } from "./routers/accountDeletion";
 import { activityStreakRouter } from "./routers/activityStreak";
 import { aiRouter } from "./routers/ai";
@@ -123,6 +124,7 @@ export const appRouter = createTRPCRouter({
   pvpRank: pvpRankRouter,
   bounty: bountyRouter,
   skillTree: skillTreeRouter,
+  bloodright: bloodrightRouter,
   occupation: occupationRouter,
   farming: farmingRouter,
   auction: auctionRouter,

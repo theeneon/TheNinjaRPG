@@ -107,7 +107,7 @@ export type CombatQueryCompletedQuest = {
  * Some fields are optional as they're not included in all combat queries (e.g., summons).
  */
 export type CombatQueryUser = UserData & {
-  bloodline: Bloodline | null;
+  bloodline: (Bloodline & { bloodrightTiers?: SkillTree[] }) | null;
   activeReskin?: BloodlineReskin | null; // For bloodline reskinning
   sageMode?: SageMode | null; // Sage mode (must be manually activated)
   // Present when processUsersForBattle is re-run from live BattleUserState

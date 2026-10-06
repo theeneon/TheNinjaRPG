@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 export const skillTreeFilteringSchema = z.object({
+  pathType: z.enum(["SKILL", "BLOODRIGHT"]).optional(),
+  bloodlineId: z.string().min(1).optional(),
   name: z.string().min(0).max(256).optional(),
   effect: z.array(z.string()).optional(),
   tier: z.number().min(1).max(10).nullable().optional(),
@@ -20,3 +22,8 @@ export const skillTreeFolderSchema = z.object({
 });
 
 export type SkillTreeFolderSchema = z.infer<typeof skillTreeFolderSchema>;
+
+export const bloodrightTierSchema = z.object({ skillId: z.string() });
+export const createSkillSchema = z
+  .object({ bloodlineId: z.string().min(1).optional() })
+  .optional();

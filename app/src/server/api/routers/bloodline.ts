@@ -42,6 +42,7 @@ import {
   getFreeBloodlineSwaps,
   getPityRolls,
 } from "@/libs/bloodline";
+import { bloodrightSwapRefund } from "@/libs/bloodright";
 import {
   deletedReason,
   editedReason,
@@ -613,7 +614,7 @@ export const bloodlineRouter = createTRPCRouter({
         ctx.drizzle.delete(bloodline).where(eq(bloodline.id, input.id)),
         ctx.drizzle
           .update(userData)
-          .set({ bloodlineId: null })
+          .set({ ...bloodrightSwapRefund(null), bloodlineId: null })
           .where(eq(userData.bloodlineId, input.id)),
         ctx.drizzle.insert(actionLog).values({
           id: nanoid(),
@@ -847,7 +848,10 @@ export const bloodlineRouter = createTRPCRouter({
           if (randomBloodline) {
             const bloodlineUpdateResult = await ctx.drizzle
               .update(userData)
-              .set({ bloodlineId: randomBloodline.id })
+              .set({
+                ...bloodrightSwapRefund(randomBloodline.id),
+                bloodlineId: randomBloodline.id,
+              })
               .where(
                 and(
                   eq(userData.userId, ctx.userId),
@@ -1111,6 +1115,7 @@ export const updateBloodline = async (
   const updateResult = await client
     .update(userData)
     .set({
+      ...bloodrightSwapRefund(bloodline?.id || null),
       bloodlineId: bloodline?.id || null,
       bloodlineReskinId: null,
       reputationPoints: sql`${userData.reputationPoints} - ${repCost}`,

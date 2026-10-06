@@ -87,6 +87,7 @@ import Accordion from "@/layout/Accordion";
 import ActivityStreakPanel from "@/layout/ActivityStreakPanel";
 import AiProfileEdit from "@/layout/AiProfileEdit";
 import AvatarImage from "@/layout/Avatar";
+import { ResetBloodright } from "@/layout/Bloodright";
 import { ActionSelector } from "@/layout/CombatActions";
 import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";
@@ -323,6 +324,15 @@ export default function EditProfile() {
           onClick={setActiveElement}
         >
           <ResetSkills />
+        </Accordion>
+        <Accordion
+          title="Reset Bloodright"
+          selectedTitle={activeElement}
+          unselectedSubtitle="Refund all Bloodright investments"
+          icon={RotateCcw}
+          onClick={setActiveElement}
+        >
+          <ResetBloodright />
         </Accordion>
         {emailReminder && (
           <Accordion
@@ -2954,7 +2964,8 @@ const ResetSkills: React.FC = () => {
         <div className="mb-4 rounded-lg bg-slate-100 p-4 dark:bg-slate-800">
           <div className="space-y-2 text-center">
             <p className="text-muted-foreground text-sm">
-              You have used {resetInfo.freeResetsUsed} free skill resets this month.
+              You have used {resetInfo.freeResetsUsed} shared Skills / Bloodright resets
+              this month.
               {resetInfo.freeResetsRemaining === 0 &&
                 " You must wait for monthly reset or pay reputation points."}
             </p>
@@ -2989,7 +3000,7 @@ const ResetSkills: React.FC = () => {
               isStaffMember(userData) ? (
                 "Reset Skills (Free for staff)"
               ) : (
-                `Reset Skills (${resetInfo?.freeResetsRemaining} free GOLD resets remaining)`
+                `Reset Skills (${resetInfo?.freeResetsRemaining} free shared resets remaining)`
               )
             ) : canAffordPaid ? (
               `Reset Skills for ${COST_SKILL_RESET} Reps`
