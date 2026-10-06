@@ -42,8 +42,14 @@ describe("milestonesReachedAt", () => {
     expect(ranks("GENIN")).toEqual(["GENIN:1"]);
     expect(ranks("CHUNIN")).toEqual(["GENIN:1", "CHUNIN:5"]);
     expect(ranks("JONIN")).toEqual(["GENIN:1", "CHUNIN:5", "JONIN:10"]);
-    expect(ranks("ELITE JONIN")).toEqual(ranks("JONIN"));
+    // Elders are chosen from Jonin and rank below Elite Jonin.
     expect(ranks("ELDER")).toEqual(ranks("JONIN"));
+    expect(ranks("ELITE JONIN")).toEqual([
+      "GENIN:1",
+      "CHUNIN:5",
+      "JONIN:10",
+      "ELITE JONIN:10",
+    ]);
   });
 });
 
@@ -191,6 +197,46 @@ describeWithDatabase("awardRecruitRankMilestones", () => {
     await insertReferral(true);
     expect((await award("ELDER")).map((o) => o.rank)).toEqual(["GENIN", "CHUNIN", "JONIN"]);
     expect((await recruiterRow()).reputationPointsTotal).toBe(16);
+    expect((await award("ELITE JONIN")).map((o) => o.rank)).toEqual(["ELITE JONIN"]);
+    expect((await recruiterRow()).reputationPointsTotal).toBe(26);
+  });
+
+  it("pays Elite Jonin once across Elder and Jonin round trips in any direction", async () => {
+    await insertReferral(true);
+    await award("JONIN");
+    for (const rank of [
+      "ELDER",
+      "ELITE JONIN",
+      "ELDER",
+      "ELITE JONIN",
+      "JONIN",
+      "ELITE JONIN",
+      "CHUNIN",
+      "ELITE JONIN",
+    ] as const) {
+      await award(rank);
+    }
+    expect((await recruiterRow()).reputationPointsTotal).toBe(26);
+    expect((await milestoneRows()).map((m) => `${m.rank}:${m.status}`)).toEqual([
+      "GENIN:PAID",
+      "CHUNIN:PAID",
+      "JONIN:PAID",
+      "ELITE JONIN:PAID",
+    ]);
+  });
+
+  it("pays every milestone once when Elite Jonin is the first rank recorded", async () => {
+    await insertReferral(true);
+    const reached = await award("ELITE JONIN");
+    expect(reached.map((o) => `${o.rank}:${o.reputation}`)).toEqual([
+      "GENIN:1",
+      "CHUNIN:5",
+      "JONIN:10",
+      "ELITE JONIN:10",
+    ]);
+    expect(await award("ELDER")).toEqual([]);
+    expect(await award("ELITE JONIN")).toEqual([]);
+    expect((await recruiterRow()).reputationPointsTotal).toBe(26);
   });
 
   it("never pays a milestone twice across retries, demotion and re-promotion", async () => {
@@ -290,9 +336,22 @@ describeWithDatabase("awardRecruitRankMilestones", () => {
         recruitUserId: RECRUIT,
         eligibility: "ELIGIBLE",
         milestones: [
-          { rank: "GENIN", reputation: 1, reached: true, paid: true, reputationAwarded: 1 },
-          { rank: "CHUNIN", reputation: 5, reached: false, paid: false, reputationAwarded: 0 },
-          { rank: "JONIN", reputation: 10, reached: false, paid: false, reputationAwarded: 0 },
+          {
+            rank: "GENIN",
+            reputation: 1,
+            reached: true,
+            paid: true,
+            status: "PAID",
+            reputationAwarded: 1,
+          },
+          ...(["CHUNIN", "JONIN", "ELITE JONIN"] as const).map((rank) => ({
+            rank,
+            reputation: rank === "CHUNIN" ? 5 : 10,
+            reached: false,
+            paid: false,
+            status: null,
+            reputationAwarded: 0,
+          })),
         ],
       },
     ]);

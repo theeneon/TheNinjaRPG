@@ -180,6 +180,7 @@ describeWithDatabase("recruit rank milestones end to end", () => {
           expect.objectContaining({ rank: "GENIN", paid: true, reputationAwarded: 1 }),
           expect.objectContaining({ rank: "CHUNIN", paid: true, reputationAwarded: 5 }),
           expect.objectContaining({ rank: "JONIN", reached: false, paid: false }),
+          expect.objectContaining({ rank: "ELITE JONIN", reached: false, paid: false }),
         ],
       }),
     ]);
@@ -187,6 +188,45 @@ describeWithDatabase("recruit rank milestones end to end", () => {
     expect(
       await (await callerFor(profileRouter, "recruit-fresh")).getRecruitMilestones(),
     ).toEqual([]);
+  });
+
+  it("pays Elite Jonin once when a rank reward moves an Elder there twice", async () => {
+    await register("recruit-fresh", FRESH_IP);
+    const database = await getTestDatabase();
+    // Already an Elder: the backfill or an earlier promotion recorded the lower milestones.
+    await database
+      .update(userData)
+      .set({ rank: "ELDER" })
+      .where(eq(userData.userId, "recruit-fresh"));
+    await database.insert(recruitRankMilestone).values(
+      (["GENIN", "CHUNIN", "JONIN"] as const).map((rank) => ({
+        recruitUserId: "recruit-fresh",
+        recruiterId: RECRUITER,
+        rank,
+        status: "PRE_EXISTING" as const,
+      })),
+    );
+    const moveTo = async (rank: "ELITE JONIN" | "JONIN") => {
+      const user = await database.query.userData.findFirst({
+        where: eq(userData.userId, "recruit-fresh"),
+      });
+      if (!user) throw new Error("recruit missing");
+      await updateRewards({
+        client: database,
+        user,
+        rewards: PostProcessedRewardSchema.parse({ reward_rank: rank }),
+        reason: "QUEST",
+      });
+    };
+    await moveTo("ELITE JONIN");
+    await database
+      .update(userData)
+      .set({ rank: "ELDER" })
+      .where(eq(userData.userId, "recruit-fresh"));
+    await moveTo("ELITE JONIN");
+    await moveTo("JONIN");
+    await moveTo("ELITE JONIN");
+    expect((await recruiterRep())?.reputationPointsTotal).toBe(10);
   });
 
   it("does not pay the recruiter for an ineligible recruit's promotion", async () => {
@@ -227,7 +267,8 @@ describeWithDatabase("recruit referral backfill migration", () => {
       // No IP left to check; placeholders never match each other.
       { userId: "b-none", username: "b4", recruiterId: RECRUITER, lastIp: "unknown", rank: "GENIN" },
       { userId: "b-none-2", username: "b5", recruiterId: OTHER, lastIp: "unknown" },
-      { userId: "b-self", username: "b6", recruiterId: "b-self", lastIp: "192.0.2.12" },
+      // Elite Jonin holds every milestone, Elite Jonin included.
+      { userId: "b-self", username: "b6", recruiterId: "b-self", lastIp: "192.0.2.12", rank: "ELITE JONIN" },
     ]);
     const database = await getTestDatabase();
     await database.insert(historicalIp).values([
@@ -281,6 +322,10 @@ describeWithDatabase("recruit referral backfill migration", () => {
       "b-last:CHUNIN:PRE_EXISTING",
       "b-last:GENIN:PRE_EXISTING",
       "b-none:GENIN:PRE_EXISTING",
+      "b-self:CHUNIN:PRE_EXISTING",
+      "b-self:ELITE JONIN:PRE_EXISTING",
+      "b-self:GENIN:PRE_EXISTING",
+      "b-self:JONIN:PRE_EXISTING",
     ]);
   });
 });

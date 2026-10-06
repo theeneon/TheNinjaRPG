@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "e2b49426-e0c8-4fca-a269-9bb494030c2d",
+  "id": "75f78492-a4c5-4d8f-a828-48185a443ea1",
   "prevId": "cd31eb2a-32e4-40e7-ba0d-0070643801ff",
   "tables": {
     "AbEvent": {
@@ -9870,7 +9870,7 @@
         },
         "rank": {
           "name": "rank",
-          "type": "enum('GENIN','CHUNIN','JONIN')",
+          "type": "enum('GENIN','CHUNIN','JONIN','ELITE JONIN')",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false

@@ -126,7 +126,7 @@ export default function Recruit() {
     { key: "level", header: "Level", type: "string" },
     { key: "reputationPointsTotal", header: "Reputation Points", type: "string" },
     { key: "milestones", header: "Rank Milestones", type: "jsx" },
-    { key: "eligibility", header: "Milestone Eligibility", type: "jsx" },
+    { key: "eligibility", header: "Eligibility", type: "jsx" },
   ];
 
   return (
@@ -246,7 +246,7 @@ const RecruitLinkTab: React.FC = () => {
   // State
   const { data: userData } = useRequiredUserData();
   const recruitUrl = `https://www.theninja-rpg.com/?ref=${userData?.userId ?? ""}`;
-  const [geninMilestone, chuninMilestone, joninMilestone] = RECRUIT_RANK_MILESTONES;
+  const [genin, chunin, jonin, eliteJonin] = RECRUIT_RANK_MILESTONES;
   const [copied, setCopied] = useState<boolean>(false);
 
   // Render
@@ -282,11 +282,11 @@ const RecruitLinkTab: React.FC = () => {
         <li className="px-2 py-2">
           <strong>Rank Milestones</strong>
           <br />
-          When a recruit reaches Genin you receive {geninMilestone.reputation}{" "}
-          reputation point, Chunin {chuninMilestone.reputation}, Jonin{" "}
-          {joninMilestone.reputation}. Recruits who sign up from an IP address already
-          used by another account still count as your recruits but are not eligible for
-          rank milestone rewards.
+          When a recruit reaches Genin you receive {genin.reputation} reputation point,
+          Chunin {chunin.reputation}, Jonin {jonin.reputation}, Elite Jonin{" "}
+          {eliteJonin.reputation}. Recruits who sign up from an IP address already used
+          by another account still count as your recruits but are not eligible for rank
+          milestone rewards.
         </li>
       </ul>
       <button
@@ -665,27 +665,42 @@ const RecruitEligibilityBadge: React.FC<{
       <Badge className="bg-green-600 text-white hover:bg-green-600">Eligible</Badge>
     );
   }
+  const reason =
+    eligibility === "SHARED_IP"
+      ? "Signed up from an IP address already used by another account"
+      : "Eligibility could not be verified";
   return (
-    <Badge variant="destructive" className="whitespace-normal text-left">
-      {eligibility === "SHARED_IP"
-        ? "Ineligible: signed up from an IP address already used by another account"
-        : "Ineligible: eligibility could not be verified"}
-    </Badge>
+    <div className="max-w-32" title={`Ineligible: ${reason}`}>
+      <Badge variant="destructive">Ineligible</Badge>
+      <p className="mt-1 text-muted-foreground text-xs leading-tight">{reason}</p>
+    </div>
   );
 };
 
 const RecruitMilestoneList: React.FC<{
   milestones:
-    | { rank: string; reached: boolean; paid: boolean; reputationAwarded: number }[]
+    | {
+        rank: string;
+        reached: boolean;
+        paid: boolean;
+        status: string | null;
+        reputationAwarded: number;
+      }[]
     | undefined;
 }> = ({ milestones }) => {
   if (!milestones) return null;
   return (
     <ul className="text-xs">
       {milestones.map((m) => (
-        <li key={m.rank} className={m.reached ? "" : "text-muted-foreground"}>
-          {capitalize(m.rank)}{" "}
-          {m.paid ? `✓ ${m.reputationAwarded} rep` : m.reached ? "✓ not paid" : "–"}
+        <li key={m.rank} className={m.paid ? "" : "text-muted-foreground"}>
+          {formatRank(m.rank)}{" "}
+          {m.paid
+            ? `✓ ${m.reputationAwarded} rep`
+            : m.status === "PRE_EXISTING"
+              ? "reached before milestones"
+              : m.reached
+                ? "✓ not paid"
+                : "–"}
         </li>
       ))}
     </ul>
@@ -693,4 +708,8 @@ const RecruitMilestoneList: React.FC<{
 };
 
 // Helpers
-const capitalize = (rank: string) => rank.charAt(0) + rank.slice(1).toLowerCase();
+const formatRank = (rank: string) =>
+  rank
+    .split(" ")
+    .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
+    .join(" ");

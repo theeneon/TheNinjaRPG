@@ -76,7 +76,8 @@ FROM (
 ) AS `r`;
 --> statement-breakpoint
 -- Ranks a recruit already holds are recorded as reached without payment, so they can never
--- pay later. Ranks above Jonin imply every milestone.
+-- pay later. Every rank implies the milestones below it. Elders are chosen from Jonin and
+-- rank below Elite Jonin, so they hold the milestones up to Jonin but not Elite Jonin.
 INSERT IGNORE INTO `RecruitRankMilestone` (`recruitUserId`, `recruiterId`, `rank`, `status`, `reputationAwarded`)
 SELECT `u`.`userId`, `u`.`recruiterId`, `m`.`milestone`, 'PRE_EXISTING', 0
 FROM `UserData` `u`
@@ -84,13 +85,14 @@ JOIN (
   SELECT 'GENIN' AS `milestone`, 1 AS `position`
   UNION ALL SELECT 'CHUNIN', 2
   UNION ALL SELECT 'JONIN', 3
+  UNION ALL SELECT 'ELITE JONIN', 4
 ) AS `m`
   ON `m`.`position` <= CASE `u`.`rank`
     WHEN 'GENIN' THEN 1
     WHEN 'CHUNIN' THEN 2
     WHEN 'JONIN' THEN 3
-    WHEN 'ELITE JONIN' THEN 3
     WHEN 'ELDER' THEN 3
+    WHEN 'ELITE JONIN' THEN 4
     ELSE 0
   END
 WHERE `u`.`recruiterId` IS NOT NULL;

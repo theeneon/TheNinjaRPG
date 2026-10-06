@@ -20,14 +20,17 @@ import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { logError } from "@/server/utils/sentry";
 
-/** Position of each rank on the milestone ladder; ranks above Jonin hold every milestone. */
+/**
+ * How many milestones of RECRUIT_RANK_MILESTONES a rank holds. Elders are chosen from Jonin
+ * and rank below Elite Jonin, so an Elder holds the milestones up to Jonin only.
+ */
 const MILESTONE_LADDER_POSITION: Record<UserRank, number> = {
   STUDENT: 0,
   GENIN: 1,
   CHUNIN: 2,
   JONIN: 3,
-  "ELITE JONIN": 3,
   ELDER: 3,
+  "ELITE JONIN": 4,
   NONE: 0,
 };
 
@@ -298,6 +301,7 @@ export const fetchRecruitMilestoneSummary = async (
           reputation: m.reputation,
           reached: !!row,
           paid: row?.status === "PAID",
+          status: row?.status ?? null,
           reputationAwarded: row?.reputationAwarded ?? 0,
         };
       }),

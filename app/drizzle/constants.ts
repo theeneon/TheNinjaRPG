@@ -1120,13 +1120,16 @@ export const RECRUITMENT_REWARDS = [
 export type RecruitmentReward = (typeof RECRUITMENT_REWARDS)[number];
 
 // Reputation points a recruiter receives the first time an eligible recruit reaches each rank,
-// in rank order. Reaching a rank also reaches every milestone below it.
+// in rank order. Reaching a rank also reaches every milestone below it. Elder is not on the
+// ladder: Elders are chosen from Jonin and rank below Elite Jonin (see hasRequiredRank), so an
+// Elder holds the milestones up to Jonin and never Elite Jonin.
 export const RECRUIT_RANK_MILESTONES = [
   { rank: "GENIN", reputation: 1 },
   { rank: "CHUNIN", reputation: 5 },
   { rank: "JONIN", reputation: 10 },
+  { rank: "ELITE JONIN", reputation: 10 },
 ] as const;
-export const RECRUIT_MILESTONE_RANKS = ["GENIN", "CHUNIN", "JONIN"] as const;
+export const RECRUIT_MILESTONE_RANKS = ["GENIN", "CHUNIN", "JONIN", "ELITE JONIN"] as const;
 export type RecruitMilestoneRank = (typeof RECRUIT_MILESTONE_RANKS)[number];
 
 // Outcome recorded for each (recruit, rank) milestone; only PAID moved reputation.

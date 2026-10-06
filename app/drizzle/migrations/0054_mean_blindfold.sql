@@ -2,7 +2,7 @@ CREATE TABLE `RecruitRankMilestone` (
 	`id` int AUTO_INCREMENT NOT NULL,
 	`recruitUserId` varchar(191) NOT NULL,
 	`recruiterId` varchar(191) NOT NULL,
-	`rank` enum('GENIN','CHUNIN','JONIN') NOT NULL,
+	`rank` enum('GENIN','CHUNIN','JONIN','ELITE JONIN') NOT NULL,
 	`status` enum('PAID','PRE_EXISTING','INELIGIBLE','NO_RECRUITER') NOT NULL,
 	`reputationAwarded` int NOT NULL DEFAULT 0,
 	`reachedAt` datetime(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP(3)),
