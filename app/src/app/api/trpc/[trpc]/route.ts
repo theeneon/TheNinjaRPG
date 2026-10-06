@@ -18,8 +18,9 @@ export const maxDuration = 90;
 const handler = async (req: NextRequest) => {
   // Mutations wait for BotID's verdict (see @/server/utils/botid). Starting the check
   // here overlaps its round trip with the session lookup in createContext.
-  const botIdGuard = shouldGuardTrpcRequest(req.method)
-    ? createBotIdGuard(trpcPathsFromUrl(req.url))
+  const trpcPaths = trpcPathsFromUrl(req.url);
+  const botIdGuard = shouldGuardTrpcRequest(req.method, trpcPaths)
+    ? createBotIdGuard(trpcPaths)
     : undefined;
   void botIdGuard?.verify();
 

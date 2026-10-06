@@ -3,13 +3,18 @@ import * as Sentry from "@sentry/node";
 import { TRPCError } from "@trpc/server";
 import { checkBotId } from "botid/server";
 import { env } from "@/env/server.mjs";
-import { BOTID_BLOCKED_MESSAGE, BOTID_CHECK_LEVEL } from "@/libs/botid";
+import {
+  BOTID_BLOCKED_MESSAGE,
+  BOTID_CHECK_LEVEL,
+  isBotIdProtectedProcedure,
+} from "@/libs/botid";
 
 /**
- * Vercel BotID for tRPC mutations.
+ * Vercel BotID for a short list of high-value tRPC mutations
+ * (`BOTID_PROTECTED_PROCEDURES` in `@/libs/botid`).
  *
- * The /api/trpc route opens a guard for every POST it serves on Vercel; the tRPC
- * middleware awaits it before any mutation runs. A guard calls `checkBotId()` at most once,
+ * The /api/trpc route opens a guard for every POST it serves on Vercel that names one of
+ * those procedures; the tRPC middleware awaits it before a protected mutation runs. A guard calls `checkBotId()` at most once,
  * however many mutations the batch carries, and is only reachable through the route, so
  * server-side callers (`createCaller` from MCP, the AI test-user broker, the content
  * review desk, tests and scripts) never see BotID at all.
@@ -131,13 +136,15 @@ export const withBotIdGuard = <T>(guard: BotIdGuard | undefined, fn: () => T): T
 
 /**
  * Whether a request to /api/trpc gets a guard: mutations (always POST from httpBatchLink)
- * on a Vercel deployment. Elsewhere BotID has nothing to classify with: `next dev` answers
- * "human" for every request, and a production build outside Vercel has no OIDC token.
+ * on a Vercel deployment whose batch names a protected procedure. Elsewhere BotID has
+ * nothing to classify with: `next dev` answers "human" for every request, and a
+ * production build outside Vercel has no OIDC token.
  */
 export const shouldGuardTrpcRequest = (
   method: string,
+  paths: string[],
   isOnVercel: boolean = process.env.VERCEL === "1",
-) => method === "POST" && isOnVercel;
+) => method === "POST" && isOnVercel && paths.some(isBotIdProtectedProcedure);
 
 /** `/api/trpc/a.b,c.d?batch=1` → `["a.b", "c.d"]`. */
 export const trpcPathsFromUrl = (url: string): string[] => {
@@ -167,8 +174,8 @@ export const isBotIdEnforced = (
 ) => setting === "true" || (setting !== "false" && vercelEnv === "production");
 
 /**
- * Called by the tRPC middleware before every procedure. Mutations inside a guarded
- * request wait for the verdict and are rejected with FORBIDDEN when BotID classifies the
+ * Called by the tRPC middleware before every procedure. Protected mutations inside a
+ * guarded request wait for the verdict and are rejected with FORBIDDEN when BotID classifies the
  * request as a bot and enforcement is on. Anything else passes.
  */
 export const enforceBotId = async (props: {
@@ -176,7 +183,7 @@ export const enforceBotId = async (props: {
   path: string;
   userId: string | null | undefined;
 }) => {
-  if (props.type !== "mutation") return;
+  if (props.type !== "mutation" || !isBotIdProtectedProcedure(props.path)) return;
   const guard = storage.getStore();
   if (!guard) return;
   const waitStartedAt = performance.now();

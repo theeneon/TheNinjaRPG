@@ -1,7 +1,12 @@
 import { TRPCError } from "@trpc/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { env } from "@/env/server.mjs";
-import { BOTID_BLOCKED_MESSAGE, BOTID_PROTECTED_ROUTES } from "@/libs/botid";
+import {
+  BOTID_BLOCKED_MESSAGE,
+  BOTID_PROTECTED_PROCEDURES,
+  BOTID_PROTECTED_ROUTES,
+  isBotIdProtectedProcedure,
+} from "@/libs/botid";
 
 // Bun shares module mocks across test files, so the mock lives on globalThis.
 const getCheckBotId = () => {
@@ -79,9 +84,10 @@ afterEach(() => {
 
 describe("BotID check level", () => {
   it("asks for Basic on the client protect entry and on the server check alike", async () => {
-    expect(BOTID_PROTECTED_ROUTES).toEqual([
-      { path: "/api/trpc/*", method: "POST", advancedOptions: { checkLevel: "basic" } },
-    ]);
+    expect(BOTID_PROTECTED_ROUTES).toHaveLength(BOTID_PROTECTED_PROCEDURES.length);
+    for (const route of BOTID_PROTECTED_ROUTES) {
+      expect(route).toMatchObject({ method: "POST", advancedOptions: { checkLevel: "basic" } });
+    }
     checkBotId.mockResolvedValue(human);
     await runBotIdCheck();
     expect(checkBotId).toHaveBeenCalledWith({
@@ -189,16 +195,28 @@ describe("enforceBotId", () => {
 
   it("checks and records a batch once while rejecting each of its mutations", async () => {
     checkBotId.mockResolvedValue(bot);
-    const guard = createBotIdGuard(["a.b", "c.d"]);
+    const guard = createBotIdGuard(["train.startTraining", "bank.transfer"]);
     const results = await withBotIdGuard(guard, () =>
       Promise.allSettled([
-        enforceBotId({ ...mutation, path: "a.b" }),
-        enforceBotId({ ...mutation, path: "c.d" }),
+        enforceBotId({ ...mutation, path: "train.startTraining" }),
+        enforceBotId({ ...mutation, path: "bank.transfer" }),
       ]),
     );
     expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
     expect(checkBotId).toHaveBeenCalledTimes(1);
     expect(records()).toHaveLength(1);
+  });
+
+  it("lets unprotected mutations through without waiting for BotID", async () => {
+    checkBotId.mockResolvedValue(bot);
+    const guard = createBotIdGuard(["train.startTraining", "combat.performAction"]);
+    await expect(
+      withBotIdGuard(guard, () =>
+        enforceBotId({ ...mutation, path: "combat.performAction" }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(checkBotId).not.toHaveBeenCalled();
+    expect(records()).toEqual([]);
   });
 
   it("ignores queries", async () => {
@@ -228,10 +246,14 @@ describe("isBotIdEnforced", () => {
 });
 
 describe("shouldGuardTrpcRequest", () => {
-  it("guards mutations (POST) on Vercel only", () => {
-    expect(shouldGuardTrpcRequest("POST", true)).toBe(true);
-    expect(shouldGuardTrpcRequest("GET", true)).toBe(false);
-    expect(shouldGuardTrpcRequest("POST", false)).toBe(false);
+  it("guards POSTs on Vercel that name a protected procedure", () => {
+    expect(shouldGuardTrpcRequest("POST", ["train.startTraining"], true)).toBe(true);
+    expect(
+      shouldGuardTrpcRequest("POST", ["combat.performAction", "merch.addToCart"], true),
+    ).toBe(true);
+    expect(shouldGuardTrpcRequest("POST", ["combat.performAction"], true)).toBe(false);
+    expect(shouldGuardTrpcRequest("GET", ["train.startTraining"], true)).toBe(false);
+    expect(shouldGuardTrpcRequest("POST", ["train.startTraining"], false)).toBe(false);
   });
 });
 
@@ -255,11 +277,11 @@ describe("BotID timing", () => {
   it("logs the check and wait time once per request, however many mutations it carries", async () => {
     process.env.VERCEL_ENV = "preview";
     checkBotId.mockResolvedValue(human);
-    const guard = createBotIdGuard(["a.b", "c.d"]);
+    const guard = createBotIdGuard(["train.startTraining", "bank.transfer"]);
     await withBotIdGuard(guard, () =>
       Promise.all([
-        enforceBotId({ ...mutation, path: "a.b" }),
-        enforceBotId({ ...mutation, path: "c.d" }),
+        enforceBotId({ ...mutation, path: "train.startTraining" }),
+        enforceBotId({ ...mutation, path: "bank.transfer" }),
       ]),
     );
     const logged = timings();
@@ -277,7 +299,7 @@ describe("BotID timing", () => {
 
   it("records a timed-out check as failed with its timing", async () => {
     process.env.VERCEL_ENV = "preview";
-    const guard = createBotIdGuard(["a.b"], () => runBotIdCheck(20));
+    const guard = createBotIdGuard(["train.startTraining"], () => runBotIdCheck(20));
     checkBotId.mockReturnValue(new Promise(() => undefined));
     await withBotIdGuard(guard, () => enforceBotId(mutation));
     expect(timings()[0]).toMatchObject({ ok: false, isBot: null });
@@ -288,5 +310,38 @@ describe("BotID timing", () => {
     expect(shouldLogBotIdTiming("preview", () => 0.99)).toBe(true);
     expect(shouldLogBotIdTiming("production", () => 0.05)).toBe(true);
     expect(shouldLogBotIdTiming("production", () => 0.5)).toBe(false);
+  });
+});
+
+describe("BotID protected procedures", () => {
+  /** The client-side matcher botid@1.5 applies to a request's pathname. */
+  const clientMatches = (routePath: string, pathname: string) =>
+    new RegExp(
+      `^${routePath.replace(/[.?+^$[\]\\(){}|-]/g, "\\$&").split("*").join(".*")}$`,
+    ).test(pathname);
+  const matchedBy = (pathname: string) =>
+    BOTID_PROTECTED_ROUTES.filter((route) => clientMatches(route.path, pathname));
+
+  it("lists each procedure once", () => {
+    expect(new Set(BOTID_PROTECTED_PROCEDURES).size).toBe(BOTID_PROTECTED_PROCEDURES.length);
+  });
+
+  it("attaches the challenge to protected mutations, alone or batched", () => {
+    expect(matchedBy("/api/trpc/train.startTraining")).toHaveLength(1);
+    expect(matchedBy("/api/trpc/profile.getUser,merch.addToCart")).toHaveLength(1);
+    expect(matchedBy("/api/trpc/combat.performAction%2Cbank.transfer")).toHaveLength(1);
+  });
+
+  it("leaves frequent mutations alone", () => {
+    for (const pathname of [
+      "/api/trpc/combat.performAction",
+      "/api/trpc/travel.moveInSector",
+      "/api/trpc/item.toggleEquip",
+      "/api/trpc/comments.sendTypingIndicator",
+    ]) {
+      expect(matchedBy(pathname)).toEqual([]);
+    }
+    expect(isBotIdProtectedProcedure("combat.performAction")).toBe(false);
+    expect(isBotIdProtectedProcedure("jutsu.startTraining")).toBe(true);
   });
 });
