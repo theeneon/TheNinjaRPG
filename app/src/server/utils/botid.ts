@@ -6,6 +6,8 @@ import { env } from "@/env/server.mjs";
 import {
   BOTID_BLOCKED_MESSAGE,
   BOTID_CHECK_LEVEL,
+  type BotIdCheckLevel,
+  botIdCheckLevelForPaths,
   isBotIdProtectedProcedure,
 } from "@/libs/botid";
 
@@ -32,6 +34,16 @@ import {
  */
 export const BOTID_TIMEOUT_MS = 400;
 
+/**
+ * Deep Analysis runs an ML model on top of the Basic check and is only used for account
+ * creation, a one-off action, so it gets a longer budget before failing open.
+ */
+export const BOTID_DEEP_ANALYSIS_TIMEOUT_MS = 1500;
+
+/** The fail-open budget for a check level. */
+export const botIdTimeoutFor = (checkLevel: BotIdCheckLevel) =>
+  checkLevel === "deepAnalysis" ? BOTID_DEEP_ANALYSIS_TIMEOUT_MS : BOTID_TIMEOUT_MS;
+
 /** Share of production requests that log a `[botid-timing]` line; previews log every one. */
 export const BOTID_TIMING_SAMPLE_RATE = 0.1;
 
@@ -49,6 +61,8 @@ export type BotIdVerdict =
 export type BotIdGuard = {
   /** Procedure paths named by the request URL, for the record of a detection. */
   paths: string[];
+  /** The level this request is checked at; it must match what the client attached. */
+  checkLevel: BotIdCheckLevel;
   /** The memoized verdict for this HTTP request. */
   verify: () => Promise<BotIdVerdict>;
   /** Whether this request's outcome has been recorded, so a batch records it once. */
@@ -66,6 +80,7 @@ const storage = new AsyncLocalStorage<BotIdGuard>();
 /** Ask BotID about the current request; resolves to a failed verdict instead of throwing. */
 export const runBotIdCheck = async (
   timeoutMs: number = BOTID_TIMEOUT_MS,
+  checkLevel: BotIdCheckLevel = BOTID_CHECK_LEVEL,
 ): Promise<BotIdVerdict> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -76,7 +91,7 @@ export const runBotIdCheck = async (
       );
     });
     const result = await Promise.race([
-      checkBotId({ advancedOptions: { checkLevel: BOTID_CHECK_LEVEL } }),
+      checkBotId({ advancedOptions: { checkLevel } }),
       timeout,
     ]);
     return {
@@ -100,16 +115,20 @@ export const runBotIdCheck = async (
 /** A per-request guard whose check runs at most once. */
 export const createBotIdGuard = (
   paths: string[],
-  check: () => Promise<BotIdVerdict> = runBotIdCheck,
+  check?: () => Promise<BotIdVerdict>,
 ): BotIdGuard => {
+  const checkLevel = botIdCheckLevelForPaths(paths);
+  const runCheck =
+    check ?? (() => runBotIdCheck(botIdTimeoutFor(checkLevel), checkLevel));
   let pending: Promise<BotIdVerdict> | undefined;
   const guard: BotIdGuard = {
     paths,
+    checkLevel,
     verify: () => {
       pending ??= (async () => {
         const startedAt = performance.now();
         try {
-          return await check();
+          return await runCheck();
         } finally {
           guard.checkMs = Math.round(performance.now() - startedAt);
         }
@@ -196,7 +215,8 @@ export const enforceBotId = async (props: {
         `[botid-timing] ${JSON.stringify({
           checkMs: guard.checkMs ?? null,
           waitedMs: Math.round(performance.now() - waitStartedAt),
-          timeoutMs: BOTID_TIMEOUT_MS,
+          timeoutMs: botIdTimeoutFor(guard.checkLevel),
+          checkLevel: guard.checkLevel,
           ok: verdict.ok,
           isBot: verdict.ok ? verdict.isBot : null,
           path: props.path,
@@ -225,7 +245,7 @@ const recordBotIdOutcome = (
     userId: details.userId ?? null,
     path: details.path,
     paths: guard.paths,
-    checkLevel: BOTID_CHECK_LEVEL,
+    checkLevel: guard.checkLevel,
   };
   if (!verdict.ok) {
     // Logged only: a BotID outage would otherwise raise a Sentry event per mutation.

@@ -2,13 +2,33 @@
  * Vercel BotID configuration shared by the browser (`instrumentation-client.ts`) and the
  * tRPC server (`@/server/utils/botid`).
  *
- * Only the Basic check level is used: it is free on every plan, whereas Deep Analysis is
- * billed per `checkBotId()` call. The level must be identical on the client protect entry
- * and on every server call, or verification fails, so both sides read it from here. Keep
- * Deep Analysis disabled in the Vercel dashboard as well; a per-route `checkLevel` takes
- * precedence over the project setting, but nothing here relies on that.
+ * Protected procedures use the Basic check level, which is free on every plan. Account
+ * creation (`BOTID_DEEP_ANALYSIS_PROCEDURES`) uses Deep Analysis, which is billed per
+ * `checkBotId()` call ($1 per 1,000 on Pro); at ~5,000 sign-ups a month that is ~$5. The
+ * level must be identical on the client protect entry and on the server call, or
+ * verification fails, so both sides derive it from here. A per-route `checkLevel` takes
+ * precedence over the project setting, so keep Deep Analysis disabled in the Vercel
+ * dashboard to avoid paying for it anywhere else.
  */
-export const BOTID_CHECK_LEVEL = "basic" as const;
+export type BotIdCheckLevel = "basic" | "deepAnalysis";
+export const BOTID_CHECK_LEVEL: BotIdCheckLevel = "basic";
+
+/** Protected procedures that get Deep Analysis instead of Basic: account creation only. */
+export const BOTID_DEEP_ANALYSIS_PROCEDURES = ["register.createCharacter"] as const;
+
+const deepAnalysisProcedures: ReadonlySet<string> = new Set(
+  BOTID_DEEP_ANALYSIS_PROCEDURES,
+);
+
+/**
+ * The check level for a request naming `paths`. A batch that includes a Deep Analysis
+ * procedure is checked at that level as a whole, matching the client, which attaches the
+ * challenge of the first protect entry that matches (Deep Analysis entries come first).
+ */
+export const botIdCheckLevelForPaths = (paths: readonly string[]): BotIdCheckLevel =>
+  paths.some((path) => deepAnalysisProcedures.has(path))
+    ? "deepAnalysis"
+    : BOTID_CHECK_LEVEL;
 
 /**
  * The only tRPC mutations BotID guards. Each check is a ~150-350 ms round trip to
@@ -62,11 +82,17 @@ export const isBotIdProtectedProcedure = (path: string) =>
  * also matches a batch that carries the procedure alongside others (with `,` or `%2C`
  * between them). No procedure name contains another one, so nothing else matches.
  */
-export const BOTID_PROTECTED_ROUTES = BOTID_PROTECTED_PROCEDURES.map((procedure) => ({
-  path: `/api/trpc/*${procedure}*`,
-  method: "POST",
-  advancedOptions: { checkLevel: BOTID_CHECK_LEVEL },
-}));
+export const BOTID_PROTECTED_ROUTES = [...BOTID_PROTECTED_PROCEDURES]
+  // botid uses the first matching entry, so Deep Analysis entries must come first.
+  .sort(
+    (a, b) =>
+      Number(deepAnalysisProcedures.has(b)) - Number(deepAnalysisProcedures.has(a)),
+  )
+  .map((procedure) => ({
+    path: `/api/trpc/*${procedure}*`,
+    method: "POST",
+    advancedOptions: { checkLevel: botIdCheckLevelForPaths([procedure]) },
+  }));
 
 /** Shown to a player whose mutation BotID classified as automated. */
 export const BOTID_BLOCKED_MESSAGE =
