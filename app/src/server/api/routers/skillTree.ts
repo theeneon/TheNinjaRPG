@@ -395,27 +395,27 @@ export const skillTreeRouter = createTRPCRouter({
       }
       if (input.data.pathType === "BLOODRIGHT" && !line)
         return errorResponse("Bloodline not found");
+      const changesHierarchy =
+        skill.tier !== input.data.tier ||
+        (skill.bloodlineId ?? null) !== (input.data.bloodlineId || null) ||
+        JSON.stringify(skill.requiredSkillIds) !==
+          JSON.stringify(input.data.requiredSkillIds);
       if (
-        prerequisites.length !== input.data.requiredSkillIds.length ||
-        prerequisites.some(
-          (tier) =>
-            tier.id === skill.id ||
-            tier.tier >= input.data.tier ||
-            tier.pathType !== input.data.pathType ||
-            (tier.bloodlineId ?? null) !== (input.data.bloodlineId || null),
-        )
+        changesHierarchy &&
+        (prerequisites.length !== input.data.requiredSkillIds.length ||
+          prerequisites.some(
+            (tier) =>
+              tier.id === skill.id ||
+              tier.tier >= input.data.tier ||
+              tier.pathType !== input.data.pathType ||
+              (tier.bloodlineId ?? null) !== (input.data.bloodlineId || null),
+          ))
       ) {
         return errorResponse(
           "Prerequisites must belong to the same path and bloodline, and a lower tier",
         );
       }
-      if (
-        purchased &&
-        (skill.bloodlineId !== input.data.bloodlineId ||
-          skill.tier !== input.data.tier ||
-          JSON.stringify(skill.requiredSkillIds) !==
-            JSON.stringify(input.data.requiredSkillIds))
-      )
+      if (purchased && changesHierarchy)
         return errorResponse(
           "Refund purchased Bloodright tiers before changing their bloodline, tier or prerequisites",
         );
@@ -423,6 +423,7 @@ export const skillTreeRouter = createTRPCRouter({
         return errorResponse("Only Bloodright tiers can have a bloodline");
 
       if (
+        changesHierarchy &&
         dependents.some(
           (tier) =>
             tier.pathType !== input.data.pathType ||
@@ -463,11 +464,6 @@ export const skillTreeRouter = createTRPCRouter({
       });
 
       if (diff.length > 0) {
-        const changesHierarchy =
-          skill.bloodlineId !== data.bloodlineId ||
-          skill.tier !== data.tier ||
-          JSON.stringify(skill.requiredSkillIds) !==
-            JSON.stringify(data.requiredSkillIds);
         const result = await ctx.drizzle
           .update(skillTree)
           .set({ ...data, updatedAt: getNextUserSnapshotAt(skill.updatedAt) })

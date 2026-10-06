@@ -130,4 +130,17 @@ describeWithDatabase("Bloodright economy on MySQL", () => {
     await db.update(userData).set({bloodlineId: "line", status: "BATTLE"}).where(eq(userData.userId, userId));
     expect((await invoke("purchase", {skillId: "root"})).success).toBe(false);
   });
+  it("allows content-only edits to legacy skill hierarchies but validates hierarchy changes", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ role: "OWNER" }).where(eq(userData.userId, userId));
+    await db.update(skillTree).set({ pathType: "SKILL", bloodlineId: null });
+    await db.update(skillTree).set({ tier: 5 }).where(eq(skillTree.id, "root"));
+    const update = skillTreeRouter._def.procedures.update._def as unknown as { resolver: (args: {ctx: {drizzle: typeof db; userId: string}; input: unknown}) => Promise<{success: boolean}> };
+    for (const id of ["root", "child"]) {
+      const skill = await db.query.skillTree.findFirst({ where: eq(skillTree.id, id) });
+      expect((await update.resolver({ ctx: { drizzle: db, userId }, input: { id, data: { ...skill, description: "Updated description" } } })).success).toBe(true);
+    }
+    const root = await db.query.skillTree.findFirst({ where: eq(skillTree.id, "root") });
+    expect((await update.resolver({ ctx: { drizzle: db, userId }, input: { id: "root", data: { ...root, tier: 6 } } })).success).toBe(false);
+  });
 });

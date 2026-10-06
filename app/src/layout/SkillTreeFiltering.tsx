@@ -10,6 +10,7 @@ import { effectFilters } from "@/validators/combat";
 
 interface SkillTreeFilteringProps {
   state: SkillTreeFilteringState;
+  isBloodright?: boolean;
 }
 
 const makeSkillTreeSchema = () =>
@@ -39,6 +40,8 @@ const makeSkillTreeSchema = () =>
       {
         id: "costSkillPoints",
         label: "Skill Points Cost",
+        visibleIf: (ctx) =>
+          !(ctx as { isBloodright?: boolean } | undefined)?.isBloodright,
         type: "single-select",
         noneOption: { value: "ANY", label: "ANY" },
         defaultValue: "ANY",
@@ -67,7 +70,10 @@ const makeSkillTreeSchema = () =>
 
 const SkillTreeFiltering: React.FC<SkillTreeFilteringProps> = (props) => {
   const { data: userData } = useUserData();
-  const context = { canEdit: Boolean(userData && canChangeContent(userData.role)) };
+  const context = {
+    canEdit: Boolean(userData && canChangeContent(userData.role)),
+    isBloodright: props.isBloodright,
+  };
   return (
     <ContentFiltering
       schema={makeSkillTreeSchema()}

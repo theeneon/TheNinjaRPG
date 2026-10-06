@@ -167,7 +167,9 @@ export const ResetBloodright = () => {
         button={
           <Button disabled={!info || reset.isPending}>
             {info?.isFree
-              ? `Reset Bloodright (${info.freeResetsRemaining} free resets remaining)`
+              ? info.freeResetsRemaining > 0
+                ? `Reset Bloodright (${info.freeResetsRemaining} free resets remaining)`
+                : "Reset Bloodright (Free for staff)"
               : `Reset Bloodright for ${COST_SKILL_RESET} Reps`}
           </Button>
         }

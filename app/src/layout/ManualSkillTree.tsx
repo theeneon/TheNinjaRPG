@@ -49,6 +49,7 @@ export default function ManualSkillTree({
     {
       limit: 20,
       ...getFilter(state),
+      ...(isBloodright ? { costSkillPoints: undefined } : {}),
       pathType: isBloodright ? "BLOODRIGHT" : "SKILL",
     },
     {
@@ -182,7 +183,7 @@ export default function ManualSkillTree({
                 </div>
               )}
 
-            <SkillTreeFiltering state={state} />
+            <SkillTreeFiltering state={state} isBloodright={isBloodright} />
           </div>
         }
       >
