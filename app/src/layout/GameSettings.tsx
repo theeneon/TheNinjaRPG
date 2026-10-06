@@ -19,6 +19,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import {
   BUTTON_CLICK_SFX_URLS,
+  MUSIC_AKASUMI_THEME,
   MUSIC_AKIKAZE_THEME,
   MUSIC_SHIROHANA_THEME,
   MUSIC_SYNDICATE_THEME,
@@ -172,6 +173,8 @@ export const GlobalAudioProvider: React.FC<{
     musicSrc = MUSIC_SHIROHANA_THEME;
   } else if (userData?.village?.name === "Akikaze") {
     musicSrc = MUSIC_AKIKAZE_THEME;
+  } else if (userData?.village?.name === "Akasumi") {
+    musicSrc = MUSIC_AKASUMI_THEME;
   } else if (userData?.village?.name === "Syndicate") {
     musicSrc = MUSIC_SYNDICATE_THEME;
   }

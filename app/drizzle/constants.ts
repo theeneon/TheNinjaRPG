@@ -2751,7 +2751,9 @@ export const MUSIC_SHIROHANA_THEME =
 export const MUSIC_TSUKIMORI_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJE9b6CNLfKL5D7TAFe29bymSaPCIQ846MdzGg";
 export const MUSIC_AKIKAZE_THEME =
-  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJY9DJWIOMAlNnPZ41ev6fCGcFK3hmjX9I8W7d";
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJ8Aqzvwkkp45TvAnoIBa0rtCf1lbyXYjVKQ2q";
+export const MUSIC_AKASUMI_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJTvL90a5IU29dZYJPoOKSh5vmlqatMub3EigH";
 export const MUSIC_SYNDICATE_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJxrcAPUWZsq9k0Von5rUfP6OgQ2TyptCKHS4u";
 export const BUTTON_CLICK_SFX_URLS = [
