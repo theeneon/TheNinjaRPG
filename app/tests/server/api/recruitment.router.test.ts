@@ -36,10 +36,12 @@ const OTHER = "router-other";
 const SHARED_IP = "203.0.113.50";
 const FRESH_IP = "203.0.113.51";
 
+// The backfill is the data section of the recruit-milestone migration, after its marker.
 const backfill = readFileSync(
-  join(import.meta.dirname, "../../../drizzle/migrations/0055_recruit_referral_backfill.sql"),
+  join(import.meta.dirname, "../../../drizzle/migrations/0054_concerned_plazm.sql"),
   "utf8",
 )
+  .split("-- recruit-milestones-backfill:start")[1]!
   .split("--> statement-breakpoint")
   .map((statement) => statement.trim())
   .filter(Boolean);

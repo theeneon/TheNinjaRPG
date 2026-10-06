@@ -1,3 +1,37 @@
+CREATE TABLE `RecruitRankMilestone` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`recruitUserId` varchar(191) NOT NULL,
+	`recruiterId` varchar(191) NOT NULL,
+	`rank` enum('GENIN','CHUNIN','JONIN','ELITE JONIN') NOT NULL,
+	`status` enum('PAID','PRE_EXISTING','INELIGIBLE','NO_RECRUITER') NOT NULL,
+	`reputationAwarded` int NOT NULL DEFAULT 0,
+	`reachedAt` datetime(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP(3)),
+	CONSTRAINT `RecruitRankMilestone_id` PRIMARY KEY(`id`),
+	CONSTRAINT `RecruitRankMilestone_recruitUserId_rank_key` UNIQUE(`recruitUserId`,`rank`)
+);
+
+CREATE TABLE `RecruitReferral` (
+	`recruitUserId` varchar(191) NOT NULL,
+	`recruiterId` varchar(191) NOT NULL,
+	`isEligible` boolean NOT NULL,
+	`eligibilityReason` enum('IP_NOT_SHARED','IP_UNKNOWN','SHARED_IP','SELF_REFERRAL','BACKFILL_IP_NOT_SHARED','BACKFILL_SHARED_IP','BACKFILL_UNVERIFIED') NOT NULL,
+	`eligibilityCheckedAt` datetime(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP(3)),
+	CONSTRAINT `RecruitReferral_recruitUserId` PRIMARY KEY(`recruitUserId`)
+);
+
+ALTER TABLE `RecruitmentRewards` MODIFY COLUMN `type` enum('MONEY','REPUTATION','PRESTIGE','CLAN_POINTS','RANK_MILESTONE') NOT NULL;
+ALTER TABLE `UserData` ADD `unreadRecruitRewards` smallint DEFAULT 0 NOT NULL;
+CREATE INDEX `RecruitRankMilestone_recruiterId_idx` ON `RecruitRankMilestone` (`recruiterId`);
+CREATE INDEX `RecruitReferral_recruiterId_idx` ON `RecruitReferral` (`recruiterId`);
+CREATE INDEX `UserData_lastIp_idx` ON `UserData` (`lastIp`);
+
+-- recruit-milestones-backfill:start
+-- Data backfill for the tables above. PlanetScale deploy requests only carry the schema
+-- changes, so run everything from the marker above directly on the production branch after
+-- the schema is deployed and before the app is deployed. The statements below are separated by
+-- statement-breakpoint markers and are idempotent (INSERT IGNORE), so this section can be
+-- re-run on its own, e.g. after the app deploy to cover recruits who registered in between.
+-- --> statement-breakpoint
 -- Backfill recruit referrals and their rank milestones for recruits that predate them.
 --
 -- Both statements are INSERT IGNORE keyed on the tables' primary/unique keys, so the file can
@@ -74,7 +108,7 @@ FROM (
   FROM `UserData` `u`
   WHERE `u`.`recruiterId` IS NOT NULL
 ) AS `r`;
---> statement-breakpoint
+-- --> statement-breakpoint
 -- Ranks a recruit already holds are recorded as reached without payment, so they can never
 -- pay later. Every rank implies the milestones below it. Elders are chosen from Jonin and
 -- rank below Elite Jonin, so they hold the milestones up to Jonin but not Elite Jonin.
