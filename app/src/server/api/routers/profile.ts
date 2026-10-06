@@ -164,6 +164,10 @@ import { getFarmCollectionCount } from "@/server/utils/farming";
 import { hashIp } from "@/server/utils/ipHash";
 import { buildDerivedUserRegenUpdate } from "@/server/utils/profileRegen";
 import { fetchQuestDiscoverySummaryCandidates } from "@/server/utils/questDiscovery";
+import {
+  awardRecruitRankMilestonesSafely,
+  fetchRecruitMilestoneSummary,
+} from "@/server/utils/recruitment";
 import { getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
 import {
@@ -1202,6 +1206,20 @@ export const profileRouter = createTRPCRouter({
             notificationCount: user.unreadNews,
           });
         }
+        // Rank milestone rewards from recruits, counted when they were paid
+        if (user.unreadRecruitRewards > 0) {
+          notifications.push({
+            href: "/profile/recruit",
+            name: `Your recruits earned you ${user.unreadRecruitRewards} rank milestone ${user.unreadRecruitRewards === 1 ? "reward" : "rewards"}`,
+            color: "toast",
+          });
+          await ctx.drizzle
+            .update(userData)
+            .set({
+              unreadRecruitRewards: sql`GREATEST(${userData.unreadRecruitRewards} - ${user.unreadRecruitRewards}, 0)`,
+            })
+            .where(eq(userData.userId, ctx.userId));
+        }
         if (user.unreadNotifications > 0) {
           const [unread] = await Promise.all([
             ctx.drizzle.query.notification.findMany({
@@ -1600,6 +1618,14 @@ export const profileRouter = createTRPCRouter({
           relatedImage: target.avatarLight,
         }),
       ]);
+      if (rankChanged && target.recruiterId) {
+        await awardRecruitRankMilestonesSafely({
+          client: ctx.drizzle,
+          recruitUserId: target.userId,
+          recruiterId: target.recruiterId,
+          rank: input.data.rank,
+        });
+      }
       return { success: true, message: `Data updated: ${diff.join(". ")}` };
     }),
   // Update a AI
@@ -2301,6 +2327,14 @@ export const profileRouter = createTRPCRouter({
       });
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return { data: results, nextCursor };
+    }),
+  // Rank milestone eligibility and payouts for the current user's recruits
+  getRecruitMilestones: protectedProcedure
+    .meta({
+      mcp: { description: "Get rank milestone rewards status for user's recruits" },
+    })
+    .query(async ({ ctx }) => {
+      return await fetchRecruitMilestoneSummary(ctx.drizzle, ctx.userId);
     }),
   // Toggle deletion of user
   toggleDeletionTimer: protectedProcedure

@@ -11,6 +11,7 @@ import {
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -22,7 +23,7 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { ACTIVE_VOTING_SITES } from "@/drizzle/constants";
+import { ACTIVE_VOTING_SITES, RECRUIT_RANK_MILESTONES } from "@/drizzle/constants";
 import AvatarImage from "@/layout/Avatar";
 import ContentBox from "@/layout/ContentBox";
 import Loader from "@/layout/Loader";
@@ -83,6 +84,14 @@ export default function Recruit() {
     },
   );
 
+  const { data: milestoneSummary } = api.profile.getRecruitMilestones.useQuery(
+    undefined,
+    {
+      enabled: !!userData?.userId,
+      staleTime: 1000 * 60 * 5,
+    },
+  );
+
   // Infinite pagination
   useInfinitePagination({ fetchNextPage, hasNextPage, lastElement });
 
@@ -98,7 +107,17 @@ export default function Recruit() {
   const allVotesCompleted = completedVotes === totalVotes;
 
   // Process data
-  const allUsers = users?.pages.flatMap((page) => page.data) ?? [];
+  const summaryByRecruit = new Map(
+    (milestoneSummary ?? []).map((s) => [s.recruitUserId, s]),
+  );
+  const allUsers = (users?.pages.flatMap((page) => page.data) ?? []).map((user) => {
+    const summary = summaryByRecruit.get(user.userId);
+    return {
+      ...user,
+      eligibility: <RecruitEligibilityBadge eligibility={summary?.eligibility} />,
+      milestones: <RecruitMilestoneList milestones={summary?.milestones} />,
+    };
+  });
   type User = ArrayElement<typeof allUsers>;
 
   const recruitedColumns: ColumnDefinitionType<User, keyof User>[] = [
@@ -106,6 +125,8 @@ export default function Recruit() {
     { key: "username", header: "Username", type: "string" },
     { key: "level", header: "Level", type: "string" },
     { key: "reputationPointsTotal", header: "Reputation Points", type: "string" },
+    { key: "milestones", header: "Rank Milestones", type: "jsx" },
+    { key: "eligibility", header: "Milestone Eligibility", type: "jsx" },
   ];
 
   return (
@@ -225,6 +246,7 @@ const RecruitLinkTab: React.FC = () => {
   // State
   const { data: userData } = useRequiredUserData();
   const recruitUrl = `https://www.theninja-rpg.com/?ref=${userData?.userId ?? ""}`;
+  const [geninMilestone, chuninMilestone, joninMilestone] = RECRUIT_RANK_MILESTONES;
   const [copied, setCopied] = useState<boolean>(false);
 
   // Render
@@ -256,6 +278,15 @@ const RecruitLinkTab: React.FC = () => {
           <br />
           Every time a recruited user earns village prestige from quests, you will
           receive 10% of the prestige they earn.
+        </li>
+        <li className="px-2 py-2">
+          <strong>Rank Milestones</strong>
+          <br />
+          When a recruit reaches Genin you receive {geninMilestone.reputation}{" "}
+          reputation point, Chunin {chuninMilestone.reputation}, Jonin{" "}
+          {joninMilestone.reputation}. Recruits who sign up from an IP address already
+          used by another account still count as your recruits but are not eligible for
+          rank milestone rewards.
         </li>
       </ul>
       <button
@@ -624,3 +655,42 @@ const RecruitRewardsTab: React.FC = () => {
     </div>
   );
 };
+
+const RecruitEligibilityBadge: React.FC<{
+  eligibility: "ELIGIBLE" | "SHARED_IP" | "UNVERIFIED" | undefined;
+}> = ({ eligibility }) => {
+  if (!eligibility) return null;
+  if (eligibility === "ELIGIBLE") {
+    return (
+      <Badge className="bg-green-600 text-white hover:bg-green-600">Eligible</Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive" className="whitespace-normal text-left">
+      {eligibility === "SHARED_IP"
+        ? "Ineligible: signed up from an IP address already used by another account"
+        : "Ineligible: eligibility could not be verified"}
+    </Badge>
+  );
+};
+
+const RecruitMilestoneList: React.FC<{
+  milestones:
+    | { rank: string; reached: boolean; paid: boolean; reputationAwarded: number }[]
+    | undefined;
+}> = ({ milestones }) => {
+  if (!milestones) return null;
+  return (
+    <ul className="text-xs">
+      {milestones.map((m) => (
+        <li key={m.rank} className={m.reached ? "" : "text-muted-foreground"}>
+          {capitalize(m.rank)}{" "}
+          {m.paid ? `✓ ${m.reputationAwarded} rep` : m.reached ? "✓ not paid" : "–"}
+        </li>
+      ))}
+    </ul>
+  );
+};
+
+// Helpers
+const capitalize = (rank: string) => rank.charAt(0) + rank.slice(1).toLowerCase();

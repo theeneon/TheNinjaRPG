@@ -1937,6 +1937,63 @@ export const recruitmentRewardsRelations = relations(recruitmentRewards, ({ one 
   }),
 }));
 
+/**
+ * One row per recruited account: who recruited it and whether it is eligible for rank
+ * milestone rewards. Eligibility is decided once, at signup (or by the backfill for referrals
+ * that predate the check), and is internal: players only ever see eligible / ineligible.
+ */
+export const recruitReferral = mysqlTable(
+  "RecruitReferral",
+  {
+    recruitUserId: varchar("recruitUserId", { length: 191 }).primaryKey().notNull(),
+    recruiterId: varchar("recruiterId", { length: 191 }).notNull(),
+    isEligible: boolean("isEligible").notNull(),
+    eligibilityReason: mysqlEnum(
+      "eligibilityReason",
+      consts.RECRUIT_ELIGIBILITY_REASONS,
+    ).notNull(),
+    eligibilityCheckedAt: datetime("eligibilityCheckedAt", { mode: "date", fsp: 3 })
+      .default(sql`(CURRENT_TIMESTAMP(3))`)
+      .notNull(),
+  },
+  (table) => {
+    return {
+      recruiterIdIdx: index("RecruitReferral_recruiterId_idx").on(table.recruiterId),
+    };
+  },
+);
+export type RecruitReferral = InferSelectModel<typeof recruitReferral>;
+
+/**
+ * Ledger of rank milestones a recruit has reached, one row per (recruit, rank). The unique key
+ * is what makes each milestone pay at most once, so rows are kept when either account is
+ * deleted: a recreated character must not be able to earn the same milestone again.
+ */
+export const recruitRankMilestone = mysqlTable(
+  "RecruitRankMilestone",
+  {
+    id: int("id").primaryKey().autoincrement().notNull(),
+    recruitUserId: varchar("recruitUserId", { length: 191 }).notNull(),
+    recruiterId: varchar("recruiterId", { length: 191 }).notNull(),
+    rank: mysqlEnum("rank", consts.RECRUIT_MILESTONE_RANKS).notNull(),
+    status: mysqlEnum("status", consts.RECRUIT_MILESTONE_STATUSES).notNull(),
+    reputationAwarded: int("reputationAwarded").default(0).notNull(),
+    reachedAt: datetime("reachedAt", { mode: "date", fsp: 3 })
+      .default(sql`(CURRENT_TIMESTAMP(3))`)
+      .notNull(),
+  },
+  (table) => {
+    return {
+      recruitRankKey: uniqueIndex("RecruitRankMilestone_recruitUserId_rank_key").on(
+        table.recruitUserId,
+        table.rank,
+      ),
+      recruiterIdIdx: index("RecruitRankMilestone_recruiterId_idx").on(table.recruiterId),
+    };
+  },
+);
+export type RecruitRankMilestone = InferSelectModel<typeof recruitRankMilestone>;
+
 export const notification = mysqlTable(
   "Notification",
   {
@@ -2428,6 +2485,8 @@ export const userData = mysqlTable(
       .notNull(),
     currentlyTraining: mysqlEnum("currentlyTraining", consts.UserStatNames),
     unreadNotifications: smallint("unreadNotifications").default(0).notNull(),
+    // Recruit rank milestone rewards received since the player last loaded their profile
+    unreadRecruitRewards: smallint("unreadRecruitRewards").default(0).notNull(),
     unreadNews: smallint("unreadNews").default(0).notNull(),
     questData: json("questData").$type<QuestTrackerType[]>(),
     activeNpcQuestId: varchar("activeNpcQuestId", { length: 191 }),
@@ -2579,6 +2638,7 @@ export const userData = mysqlTable(
       latitudeIdx: index("UserData_latitude_idx").on(table.latitude),
       longitudeIdx: index("UserData_longitude_idx").on(table.longitude),
       createdAtIdx: index("UserData_createdAt_idx").on(table.createdAt),
+      lastIpIdx: index("UserData_lastIp_idx").on(table.lastIp),
     };
   },
 );

@@ -45,6 +45,7 @@ import {
   raidParticipation,
   rankedPvpQueue,
   rankedUserRewards,
+  recruitReferral,
   reportLog,
   ryoTrade,
   sector,
@@ -1309,6 +1310,9 @@ const deleteUserInternal = async (client: DrizzleClient, userId: string) => {
   await Promise.all([
     client.delete(historicalAvatar).where(eq(historicalAvatar.userId, userId)),
     client.delete(historicalIp).where(eq(historicalIp.userId, userId)),
+    // The referral goes with the character; its RecruitRankMilestone ledger stays so a
+    // recreated character cannot earn the same milestones again.
+    client.delete(recruitReferral).where(eq(recruitReferral.recruitUserId, userId)),
     client.delete(userActivityEvent).where(eq(userActivityEvent.userId, userId)),
     client.delete(actionLog).where(eq(actionLog.userId, userId)),
     client.delete(trainingLog).where(eq(trainingLog.userId, userId)),
