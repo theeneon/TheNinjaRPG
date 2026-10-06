@@ -36,6 +36,7 @@ import {
  *
  */
 import { drizzleDB } from "@/server/db";
+import { enforceBotId } from "@/server/utils/botid";
 import { getClientIp } from "@/utils/network";
 
 /**
@@ -194,6 +195,15 @@ export const ratelimitMiddleware = t.middleware(
 );
 
 /**
+ * Vercel BotID on mutations served by /api/trpc; a no-op for queries and for
+ * server-side callers (see @/server/utils/botid).
+ */
+export const botIdMiddleware = t.middleware(async ({ ctx, type, path, next }) => {
+  await enforceBotId({ type, path, userId: ctx.userId });
+  return next();
+});
+
+/**
  * This is how you create new routers and sub-routers in your tRPC API.
  *
  * @see https://trpc.io/docs/router
@@ -208,6 +218,7 @@ export const createTRPCRouter = t.router;
  * are logged in.
  */
 export const publicProcedure = t.procedure
+  .use(botIdMiddleware)
   .use(ratelimitMiddleware)
   .use(sentryMiddleware);
 
@@ -251,6 +262,7 @@ const enforceUserIsAuthed = t.middleware(
 
 export const protectedProcedure = t.procedure
   .use(enforceUserIsAuthed)
+  .use(botIdMiddleware)
   .use(sentryMiddleware);
 
 /**

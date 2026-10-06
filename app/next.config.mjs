@@ -1,5 +1,6 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import bundleAnalyzer from "@next/bundle-analyzer";
+import { withBotId } from "botid/next/config";
 import { cdnOrigin, contentSecurityPolicy } from "./src/libs/cdn.mjs";
 
 // @ts-check
@@ -152,7 +153,9 @@ const config = {
 };
 
 // export default withBundleAnalyzer(config);
-export default withSentryConfig(withBundleAnalyzer(config), {
+// withBotId adds the same-origin rewrites that serve the BotID challenge script (see
+// src/libs/botid.ts); src/proxy.ts keeps its path prefix out of the shell rewrite.
+export default withSentryConfig(withBotId(withBundleAnalyzer(config)), {
   // For all available options, see:
   // https://github.com/getsentry/sentry-webpack-plugin#options
 

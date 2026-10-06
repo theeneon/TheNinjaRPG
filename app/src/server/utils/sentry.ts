@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/node";
+import { BOTID_BLOCKED_MESSAGE } from "@/libs/botid";
 
 /**
  * @param error - The error to log
@@ -54,6 +55,9 @@ export const isExpectedTrpcRouteError = (props: {
   const { code, message, userId, method } = props;
   // Rejected before or by auth/rate limiting; the client handles both without a report.
   if (code === "UNAUTHORIZED" || code === "TOO_MANY_REQUESTS") return true;
+  // A BotID block is recorded once per request by @/server/utils/botid, with the verdict;
+  // the client shows the message as a toast.
+  if (code === "FORBIDDEN" && message === BOTID_BLOCKED_MESSAGE) return true;
   // tRPC rejects a request whose method does not match the procedure type with
   // METHOD_NOT_SUPPORTED before any resolver runs. httpBatchLink always POSTs mutations, so
   // an anonymous GET against one is a bot ignoring the /api/ disallow in robots.ts. It also

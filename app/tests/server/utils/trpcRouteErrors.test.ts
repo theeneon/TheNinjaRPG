@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BOTID_BLOCKED_MESSAGE } from "@/libs/botid";
 import { isExpectedTrpcRouteError } from "@/server/utils/sentry";
 
 const base = { message: "", userId: "user-1", method: "GET" };
@@ -48,5 +49,13 @@ describe("isExpectedTrpcRouteError", () => {
     expect(isExpectedTrpcRouteError({ ...base, code: "BAD_REQUEST", method: "POST" })).toBe(
       false,
     );
+  });
+
+  it("ignores a BotID block, which is recorded with its verdict, but no other FORBIDDEN", () => {
+    const forbidden = { ...base, code: "FORBIDDEN", method: "POST" };
+    expect(isExpectedTrpcRouteError({ ...forbidden, message: BOTID_BLOCKED_MESSAGE })).toBe(
+      true,
+    );
+    expect(isExpectedTrpcRouteError({ ...forbidden, message: "Not your clan" })).toBe(false);
   });
 });
