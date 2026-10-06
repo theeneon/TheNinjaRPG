@@ -3019,7 +3019,7 @@ const ResetSkills: React.FC = () => {
         {isFree
           ? isStaffMember(userData)
             ? " (Free for staff member)"
-            : " (Free GOLD monthly reset)"
+            : " (Free shared monthly reset)"
           : ` for ${COST_SKILL_RESET} reputation points`}
         . This action cannot be undone. Are you sure you want to continue?
       </Confirm>
