@@ -1458,6 +1458,15 @@ export const item = mysqlTable(
     canBeHunted: boolean("canBeHunted").default(false).notNull(),
     canBeGathered: boolean("canBeGathered").default(false).notNull(),
     canBeTraded: boolean("canBeTraded").default(false).notNull(),
+    auctionMinPrice: int("auctionMinPrice", { unsigned: true }),
+    auctionMaxPrice: int("auctionMaxPrice", { unsigned: true }),
+    purchaseLimit: int("purchaseLimit", { unsigned: true }),
+    purchaseLimitPeriod: mysqlEnum(
+      "purchaseLimitPeriod",
+      consts.ItemPurchaseLimitPeriods,
+    )
+      .default("NONE")
+      .notNull(),
     isFarmSeed: boolean("isFarmSeed").default(false).notNull(),
     farmGrowTimeSeconds: int("farmGrowTimeSeconds").default(0).notNull(),
     farmYieldItemId: varchar("farmYieldItemId", { length: 191 }),
@@ -1500,6 +1509,23 @@ export const item = mysqlTable(
   },
 );
 export type Item = InferSelectModel<typeof item>;
+
+export const itemPurchaseCounter = mysqlTable(
+  "ItemPurchaseCounter",
+  {
+    userId: varchar("userId", { length: 191 }).notNull(),
+    itemId: varchar("itemId", { length: 191 }).notNull(),
+    periodStart: datetime("periodStart", { mode: "date", fsp: 3 }).notNull(),
+    quantity: int("quantity", { unsigned: true }).default(0).notNull(),
+  },
+  (table) => ({
+    periodKey: uniqueIndex("ItemPurchaseCounter_user_item_period_key").on(
+      table.userId,
+      table.itemId,
+      table.periodStart,
+    ),
+  }),
+);
 export type ItemType = Item["itemType"];
 export type ItemSlotType = Item["slot"];
 export type ItemRarity = Item["rarity"];

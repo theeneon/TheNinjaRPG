@@ -32,6 +32,7 @@ import {
   userData,
   userItem,
 } from "@/drizzle/schema";
+import { getAuctionPriceError } from "@/libs/itemEconomy";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -357,11 +358,22 @@ export const auctionRouter = createTRPCRouter({
       if (!userItemData.item.canBeTraded) {
         return errorResponse("Item is not tradable");
       }
-      if (buyoutPrice && buyoutPrice < startingPrice) {
+      if (buyoutPrice && buyoutPrice <= startingPrice) {
         return errorResponse("Buyout price must be greater than starting price");
       }
 
       // Handle quantity splitting for stackable items
+      const listingQuantity = quantity ?? userItemData.quantity;
+      for (const price of [startingPrice, buyoutPrice]) {
+        if (price === undefined) continue;
+        const priceError = getAuctionPriceError(
+          userItemData.item,
+          listingType,
+          price,
+          listingQuantity,
+        );
+        if (priceError) return errorResponse(priceError);
+      }
       let auctionUserItemId = userItemId;
       if (quantity !== undefined) {
         // Validate quantity is provided for stackable items

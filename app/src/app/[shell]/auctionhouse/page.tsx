@@ -87,6 +87,7 @@ import {
   auctionHouseLevelMessage,
   IMG_AVATAR_DEFAULT,
   ItemRarities,
+  RYO_FOR_REP_MIN_REPS,
   TRADEABLE_CURRENCY_TYPES,
 } from "@/drizzle/constants";
 import { useAvatarRenditionWidth } from "@/layout/Avatar";
@@ -105,7 +106,10 @@ import { showMutationToast } from "@/libs/toast";
 import { capitalizeFirstLetter } from "@/utils/string";
 import { useRequiredUserData, useRequireInVillage } from "@/utils/UserContext";
 import type { CreateAuctionListingSchema } from "@/validators/auction";
-import { createAuctionListingSchema } from "@/validators/auction";
+import {
+  auctionListingSchemaForItem,
+  type createAuctionListingSchema,
+} from "@/validators/auction";
 import { getSearchValidator } from "@/validators/register";
 
 type AuctionListingRow = RouterOutputs["auction"]["getAuctionListings"]["data"][number];
@@ -1394,6 +1398,7 @@ const AuctionDetailsDialog: React.FC<AuctionDetailsDialogProps> = ({
 };
 
 export const NewAuctionListingDialog: React.FC = () => {
+  const { data: userItems } = api.item.getUserItems.useQuery();
   const ignoreNextPopoverOpenRef = useRef(false);
   const itemSearchInputRef = useRef<HTMLInputElement>(null);
 
@@ -1409,7 +1414,13 @@ export const NewAuctionListingDialog: React.FC = () => {
     unknown,
     CreateAuctionListingSchema
   >({
-    resolver: zodResolver(createAuctionListingSchema),
+    mode: "onChange",
+    resolver: (values, context, options) => {
+      const selected = userItems?.find((row) => row.id === values.userItemId);
+      return zodResolver(
+        auctionListingSchemaForItem(selected?.item, selected?.quantity),
+      )(values, context, options);
+    },
     defaultValues: {
       listingType: "AUCTION",
       durationHours: 24,
@@ -1426,9 +1437,6 @@ export const NewAuctionListingDialog: React.FC = () => {
     resolver: zodResolver(userSearchSchema),
     defaultValues: { username: "", users: [] },
   });
-
-  // Queries
-  const { data: userItems } = api.item.getUserItems.useQuery();
 
   // Mutations
   const [itemSearchTerm, setItemSearchTerm] = useState("");
@@ -1495,6 +1503,32 @@ export const NewAuctionListingDialog: React.FC = () => {
 
   // Get the selected item to check if it's stackable
   const selectedItem = filteredItems.find((item) => item.id === watchedUserItemId);
+  const [watchedQuantity, watchedCurrency, watchedStartingPrice] = useWatch({
+    control: createForm.control,
+    name: ["quantity", "currencyType", "startingPrice"],
+  });
+  const listingQuantity = watchedQuantity ?? selectedItem?.quantity ?? 1;
+  const minimum =
+    watchedListingType === "AUCTION" ? selectedItem?.item.auctionMinPrice : null;
+  const maximum =
+    watchedListingType === "AUCTION" ? selectedItem?.item.auctionMaxPrice : null;
+  const minimumTotal = Math.max(
+    watchedCurrency === "REPUTATION" ? RYO_FOR_REP_MIN_REPS : 1,
+    (minimum ?? 0) * listingQuantity,
+  );
+  const maximumTotal = maximum == null ? undefined : maximum * listingQuantity;
+  useEffect(() => {
+    // Changing the item, quantity, or currency changes both price fields' bounds.
+    if (watchedUserItemId && createForm.getValues("startingPrice") !== undefined) {
+      void createForm.trigger(["startingPrice", "buyoutPrice"]);
+    }
+  }, [
+    watchedUserItemId,
+    watchedQuantity,
+    watchedListingType,
+    watchedCurrency,
+    createForm,
+  ]);
   const showQuantityInput = selectedItem?.item?.canStack && selectedItem.quantity > 1;
 
   // Reset quantity when item selection changes
@@ -1817,6 +1851,15 @@ export const NewAuctionListingDialog: React.FC = () => {
               )}
             />
 
+            {selectedItem && watchedListingType === "AUCTION" && (
+              <p className="text-muted-foreground text-sm">
+                Allowed per-unit range: {minimum ?? "no minimum"} –{" "}
+                {maximum ?? "no maximum"}{" "}
+                {watchedCurrency === "REPUTATION" ? "reputation points" : "ryo"}. Prices
+                below are totals for {listingQuantity} units. Bids may exceed the
+                maximum.
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-4">
               <FormField
                 control={createForm.control}
@@ -1829,7 +1872,8 @@ export const NewAuctionListingDialog: React.FC = () => {
                         type="number"
                         inputMode="numeric"
                         step={1}
-                        min={1}
+                        min={minimumTotal}
+                        max={maximumTotal}
                         placeholder="Whole numbers only (e.g. 100)"
                         value={field.value ?? ""}
                         name={field.name}
@@ -1862,7 +1906,8 @@ export const NewAuctionListingDialog: React.FC = () => {
                         type="number"
                         inputMode="numeric"
                         step={1}
-                        min={1}
+                        min={Math.max(minimumTotal, (watchedStartingPrice ?? 0) + 1)}
+                        max={maximumTotal}
                         placeholder="Whole numbers only — leave empty for no buyout"
                         value={field.value ?? ""}
                         name={field.name}
