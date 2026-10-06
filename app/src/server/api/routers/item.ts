@@ -47,6 +47,7 @@ import {
   craftingRequirement,
   item,
   itemLoadout,
+  itemPurchaseCounter,
   itemVariant,
   quest,
   questHistory,
@@ -84,6 +85,7 @@ import {
   partitionImbuementsForItemTransfer,
   readItemListFilterSlot,
 } from "@/libs/item";
+import { getItemPurchaseAllowance, itemPurchaseLimitMessage } from "@/libs/itemEconomy";
 import {
   buildMissingLoadouts,
   decideRename,
@@ -129,6 +131,7 @@ import {
   backfillLoadouts,
   fetchLoadoutUser,
 } from "@/server/utils/loadout";
+import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
 import { fedItemLoadouts } from "@/utils/paypal";
@@ -139,6 +142,7 @@ import {
   canOnlyEditSelf,
 } from "@/utils/permissions";
 import { sanitizeVariantText } from "@/utils/sanitize";
+import { getItemPurchasePeriodStart } from "@/utils/time";
 import type { QueryCondition } from "@/utils/typeutils";
 import { getStrucBoost } from "@/utils/village";
 import type { ZodAllTags } from "@/validators/combat";
@@ -2526,7 +2530,18 @@ export const itemRouter = createTRPCRouter({
         kitsUsed: kitsToUse,
       };
     }),
-  // Buy user item
+  // Authenticated and uncached: allowance changes after purchases and UTC resets.
+  getPurchaseAllowance: protectedProcedure
+    .input(idSchema)
+    .query(async ({ ctx, input }) => {
+      const now = new Date();
+      const [info, counters] = await Promise.all([
+        fetchItem(ctx.drizzle, input.id),
+        fetchPurchaseCounters(ctx.drizzle, ctx.userId, input.id, now),
+      ]);
+      if (!info) return null;
+      return getItemPurchaseAllowance(info, counters, now);
+    }),
   buy: protectedProcedure
     .meta({ mcp: { description: "Buy an item from shop" } })
     .input(itemBuySchema)
@@ -2535,15 +2550,18 @@ export const itemRouter = createTRPCRouter({
       // Query
       const iid = input.itemId;
       const uid = ctx.userId;
+      const purchaseTime = new Date();
       // Read userData before inventory so the transactional updatedAt CAS below
       // detects any capacity mutation that commits between these snapshots.
       const user = await fetchUser(ctx.drizzle, ctx.userId);
-      const [info, useritems, structures, questState] = await Promise.all([
-        fetchItem(ctx.drizzle, iid),
-        fetchUserItems(ctx.drizzle, uid),
-        fetchStructures(ctx.drizzle, input.villageId),
-        fetchUserQuestState(ctx.drizzle, ctx.userId),
-      ]);
+      const [info, useritems, structures, questState, purchaseCounters] =
+        await Promise.all([
+          fetchItem(ctx.drizzle, iid),
+          fetchUserItems(ctx.drizzle, uid),
+          fetchStructures(ctx.drizzle, input.villageId),
+          fetchUserQuestState(ctx.drizzle, ctx.userId),
+          fetchPurchaseCounters(ctx.drizzle, uid, iid, purchaseTime),
+        ]);
       // Derived — capacity counts carried stacks by dedicated inventory bucket
       const carriedItems = useritems?.filter((ui) => !ui.storedAtHome) ?? [];
       const bucketCounts = {
@@ -2569,6 +2587,10 @@ export const itemRouter = createTRPCRouter({
       // Guard
       if (user.villageId !== input.villageId) return errorResponse("Wrong village");
       if (!info) return errorResponse("Item not found");
+      const allowance = getItemPurchaseAllowance(info, purchaseCounters, purchaseTime);
+      if (allowance.remaining != null && input.stack > allowance.remaining) {
+        return errorResponse(itemPurchaseLimitMessage(allowance));
+      }
       if (input.stack > 1 && !info.canStack) return errorResponse("Item cannot stack");
       if (input.stack > 1 && input.stack > info.stackSize)
         return errorResponse("You can not buy a stack with this many items");
@@ -2679,37 +2701,89 @@ export const itemRouter = createTRPCRouter({
       // Commit the user-snapshot claim, fund deduction, quest update, and item insert
       // together. The updatedAt CAS serializes the earlier capacity read with other
       // inventory mutations, while the transaction prevents charging without delivery.
-      const purchaseCommitted = await ctx.drizzle.transaction(async (tx) => {
-        const result = await tx
-          .update(userData)
-          .set({
-            money: sql`${userData.money} - ${ryoCost}`,
-            reputationPoints: sql`${userData.reputationPoints} - ${repsCost}`,
-            seichiSilver: sql`${userData.seichiSilver} - ${seichiSilverCost}`,
-            updatedAt: getNextUserSnapshotAt(user.updatedAt),
-            ...questDataUpdate,
-          })
-          .where(
-            and(
-              eq(userData.userId, uid),
-              eq(userData.updatedAt, user.updatedAt),
-              gte(userData.money, ryoCost),
-              gte(userData.reputationPoints, repsCost),
-              gte(userData.seichiSilver, seichiSilverCost),
-            ),
-          );
-        if (result.rowsAffected !== 1) return false;
+      const quotaConflict = new Error("Purchase quota changed");
+      const purchaseCommitted = await retryOnDeadlock(() =>
+        ctx.drizzle.transaction(async (tx) => {
+          const result = await tx
+            .update(userData)
+            .set({
+              money: sql`${userData.money} - ${ryoCost}`,
+              reputationPoints: sql`${userData.reputationPoints} - ${repsCost}`,
+              seichiSilver: sql`${userData.seichiSilver} - ${seichiSilverCost}`,
+              updatedAt: getNextUserSnapshotAt(user.updatedAt),
+              ...questDataUpdate,
+            })
+            .where(
+              and(
+                eq(userData.userId, uid),
+                eq(userData.updatedAt, user.updatedAt),
+                gte(userData.money, ryoCost),
+                gte(userData.reputationPoints, repsCost),
+                gte(userData.seichiSilver, seichiSilverCost),
+              ),
+            );
+          if (result.rowsAffected !== 1) return false;
 
-        await tx.insert(userItem).values({
-          id: nanoid(),
-          userId: uid,
-          itemId: iid,
-          quantity: input.stack,
-          equipped: equipped,
-        });
-        return true;
+          if (allowance.periodStart && allowance.limit != null) {
+            // A duplicate leaves the existing count intact. The guarded increment below
+            // is authoritative even when another purchase read the same allowance.
+            await tx
+              .insert(itemPurchaseCounter)
+              .values({
+                userId: uid,
+                itemId: iid,
+                periodStart: allowance.periodStart,
+                quantity: 0,
+              })
+              .onDuplicateKeyUpdate({
+                set: { quantity: sql`${itemPurchaseCounter.quantity}` },
+              });
+            const claimed = await tx
+              .update(itemPurchaseCounter)
+              .set({
+                quantity: sql`${itemPurchaseCounter.quantity} + ${input.stack}`,
+              })
+              .where(
+                and(
+                  eq(itemPurchaseCounter.userId, uid),
+                  eq(itemPurchaseCounter.itemId, iid),
+                  eq(itemPurchaseCounter.periodStart, allowance.periodStart),
+                  lte(itemPurchaseCounter.quantity, allowance.limit - input.stack),
+                ),
+              );
+            // Throw to roll back payment, quest progress, and a newly inserted counter.
+            if (claimed.rowsAffected !== 1) throw quotaConflict;
+          }
+
+          await tx.insert(userItem).values({
+            id: nanoid(),
+            userId: uid,
+            itemId: iid,
+            quantity: input.stack,
+            equipped: equipped,
+          });
+          return true;
+        }),
+      ).catch((error: unknown) => {
+        if (error === quotaConflict) return "QUOTA" as const;
+        throw error;
       });
-      if (!purchaseCommitted) {
+      if (purchaseCommitted !== true && allowance.limit != null) {
+        const counters = await fetchPurchaseCounters(
+          ctx.drizzle,
+          uid,
+          iid,
+          purchaseTime,
+        );
+        const currentAllowance = getItemPurchaseAllowance(info, counters, purchaseTime);
+        if (
+          purchaseCommitted === "QUOTA" ||
+          input.stack > (currentAllowance.remaining ?? 0)
+        ) {
+          return errorResponse(itemPurchaseLimitMessage(currentAllowance));
+        }
+      }
+      if (purchaseCommitted !== true) {
         return {
           success: false,
           message: "Inventory or funds changed, please refresh and try again",
@@ -4083,3 +4157,23 @@ export const fetchSageModeRolls = async (client: DrizzleClient, userId: string) 
 export const fetchSageModes = async (client: DrizzleClient) => {
   return await client.query.sageMode.findMany({ where: eq(sageMode.hidden, false) });
 };
+
+// Fetch candidate calendar periods upfront, before the item's period is known.
+const fetchPurchaseCounters = (
+  client: DrizzleClient,
+  userId: string,
+  itemId: string,
+  now: Date,
+) =>
+  client.query.itemPurchaseCounter.findMany({
+    where: and(
+      eq(itemPurchaseCounter.userId, userId),
+      eq(itemPurchaseCounter.itemId, itemId),
+      inArray(
+        itemPurchaseCounter.periodStart,
+        (["DAILY", "WEEKLY", "MONTHLY"] as const)
+          .map((period) => getItemPurchasePeriodStart(period, now))
+          .filter((start) => start !== null),
+      ),
+    ),
+  });

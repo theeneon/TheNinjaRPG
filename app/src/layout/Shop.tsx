@@ -258,7 +258,22 @@ const Shop: React.FC<ShopProps> = (props) => {
 
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [item, setItem] = useState<Item | undefined>(undefined);
-  const [stacksize, setStacksize] = useState<number>(1);
+  const [requestedStacksize, setStacksize] = useState<number>(1);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const allowance = api.item.getPurchaseAllowance.useQuery(
+    { id: item?.id ?? "" },
+    { enabled: isOpen && !!item, staleTime: 0, refetchInterval: 30_000 },
+  );
+  const maxPurchaseQuantity = Math.min(
+    item?.canStack ? getMaxItemShopPurchaseQuantity(item.stackSize) : 1,
+    allowance.data?.remaining ?? Number.POSITIVE_INFINITY,
+  );
+  const stacksize = Math.min(requestedStacksize, Math.max(1, maxPurchaseQuantity));
+  const canPurchaseQuantity =
+    !!allowance.data &&
+    !allowance.isError &&
+    stacksize >= 1 &&
+    stacksize <= maxPurchaseQuantity;
   const [lastElement, setLastElement] = useState<HTMLDivElement | null>(null);
   const filteringState = useShopFiltering(defaultType);
   const isAwake = useAwake(userData);
@@ -325,6 +340,7 @@ const Shop: React.FC<ShopProps> = (props) => {
     const next = typeof open === "function" ? open(isOpen) : open;
     setIsOpen(next);
     if (!next) {
+      setPurchaseError(null);
       setItem(undefined);
       setStacksize(1);
     }
@@ -350,19 +366,22 @@ const Shop: React.FC<ShopProps> = (props) => {
     onSuccess: (data, variables) => {
       showMutationToast(data);
       if (data.success) {
+        setItemConfirmOpen(false);
         void utils.item.getUserItemCounts.invalidate();
         void utils.profile.getUser.invalidate();
         void utils.item.getUserItems.invalidate();
+        void utils.item.getPurchaseAllowance.invalidate();
         if (isItemBuyStep && variables.itemId === TUTORIAL_ITEM_ID) {
           handleNextStep();
         }
+      } else {
+        setPurchaseError(data.message);
+        void allowance.refetch();
       }
     },
+    onError: (error) => setPurchaseError(error.message),
     onSettled: () => {
       document.body.style.cursor = "default";
-      setIsOpen(false);
-      setItem(undefined);
-      setStacksize(1);
     },
   });
 
@@ -444,13 +463,16 @@ const Shop: React.FC<ShopProps> = (props) => {
       isOpen={isOpen}
       setIsOpen={setItemConfirmOpen}
       isValid={false}
-      proceedDisabled={!canReviewRollOdds}
+      isLoading={isPurchasing}
+      keepOpenOnAccept
+      proceedDisabled={!canReviewRollOdds || !canPurchaseQuantity || isPurchasing}
       onClose={() => {
         setItem(undefined);
         setStacksize(1);
       }}
       onAccept={() => {
-        if (!canReviewRollOdds) return;
+        if (!canReviewRollOdds || !canPurchaseQuantity || isPurchasing) return;
+        setPurchaseError(null);
         if (canAfford) {
           purchase({
             itemId: item.id,
@@ -467,6 +489,25 @@ const Shop: React.FC<ShopProps> = (props) => {
           : "bg-red-600 text-white hover:bg-red-700"
       }
     >
+      {purchaseError && (
+        <p role="alert" className="text-destructive">
+          {purchaseError}
+        </p>
+      )}
+      {allowance.isPending && <p>Loading purchase allowance…</p>}
+      {allowance.isError && (
+        <p role="alert">
+          Could not load purchase allowance.{" "}
+          <Button onClick={() => void allowance.refetch()}>Retry</Button>
+        </p>
+      )}
+      {allowance.data?.limit != null && (
+        <p className="pb-3 text-sm">
+          Limit: {allowance.data.limit} units {allowance.data.period.toLowerCase()} (UTC
+          {allowance.data.period === "WEEKLY" ? ", resets Monday" : ""}). Purchased:{" "}
+          {allowance.data.purchased}. Remaining: {allowance.data.remaining}.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-2 pb-3">
         <div className="rounded-lg bg-slate-100 p-3 dark:bg-slate-800">
           <h4 className="mb-2 font-semibold text-sm">Your Currency</h4>
@@ -582,13 +623,13 @@ const Shop: React.FC<ShopProps> = (props) => {
             showEdit="item"
             showStatistic="item"
           />
-          {item.canStack && item.stackSize > 1 ? (
+          {item.canStack && item.stackSize > 1 && maxPurchaseQuantity > 0 ? (
             <UncontrolledSliderField
               id="stackSize"
               label={`How many to buy: ${stacksize}`}
               value={stacksize}
               min={1}
-              max={getMaxItemShopPurchaseQuantity(item.stackSize)}
+              max={maxPurchaseQuantity}
               setValue={setStacksize}
             />
           ) : undefined}

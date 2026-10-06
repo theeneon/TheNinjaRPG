@@ -16,6 +16,8 @@ export type VariantCostType = (typeof VARIANT_COST_TYPES)[number];
 export const MAX_ITEM_VARIANTS = 7;
 /** Rows in the sidebar banner of users with the most ranked LP. */
 export const STRONGEST_USERS_COUNT = 10;
+export const ItemPurchaseLimitPeriods = ["NONE", "DAILY", "WEEKLY", "MONTHLY"] as const;
+export const MAX_ITEM_PURCHASE_LIMIT = 100;
 export const MAX_ITEM_STACK_SIZE = 9_999;
 export const MAX_ITEM_CRAFTING_REQUIREMENT_QUANTITY = MAX_ITEM_STACK_SIZE;
 export const MAX_ITEM_SHOP_PURCHASE_QUANTITY = 50;
