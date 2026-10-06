@@ -67,6 +67,9 @@ describe("proxy matcher", () => {
     "/api/healthcheck",
     "/api/trpc/cdn/profile.getStrongestUsers,village.getAllNames",
     "/_next/static/a.js",
+    // Vercel BotID's challenge and proxy paths, rewritten by withBotId in next.config.mjs.
+    "/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/a-4-a/c.js",
+    "/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/fp",
   ])("skips %s, which is served without the middleware",
     (path) => {
       expect(admits(path)).toBe(false);

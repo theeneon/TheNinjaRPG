@@ -3,6 +3,8 @@
 // https://docs.sentry.io/platforms/javascript/guides/nextjs/
 
 import * as Sentry from "@sentry/nextjs";
+import { initBotId } from "botid/client/core";
+import { BOTID_PROTECTED_ROUTES } from "@/libs/botid";
 import {
   isNetworkError as isNetworkErrorPattern,
   isHtmlResponseError as isHtmlResponseErrorPattern,
@@ -2698,5 +2700,10 @@ const ensureBrowserErrorHandler = () => {
 
 // Ensure handlers are registered immediately after Sentry.init
 ensureBrowserErrorHandler();
+
+// Vercel BotID: attaches the challenge headers to tRPC mutations, which the server checks
+// in botIdMiddleware. It patches window.fetch, so it must run before the tRPC client is
+// built during hydration.
+initBotId({ protect: BOTID_PROTECTED_ROUTES });
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;

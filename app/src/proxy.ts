@@ -86,9 +86,11 @@ export const config = {
      * responses. Only the last segment counts: a dotted earlier segment (/x.php/guide)
      * must still be rewritten, or it would match the shell segment with the file name as
      * its value and render the page beneath it into a 404. Paths that do resolve to a
-     * route are re-added explicitly below.
+     * route are re-added explicitly below. The Vercel BotID prefix (rewritten to
+     * api.vercel.com by withBotId in next.config.mjs) is skipped as well: rewriting it to a
+     * shell variant would 404 the challenge.
      */
-    "/((?!api(?:/|$)|trpc(?:/|$)|_next(?:/|$)|static(?:/|$)|[^?]*\\.[^/?]+$).*)",
+    "/((?!api(?:/|$)|trpc(?:/|$)|_next(?:/|$)|static(?:/|$)|149e9513-01fa-4fb0-aad4-566afd725d1b(?:/|$)|[^?]*\\.[^/?]+$).*)",
     /*
      * A shell variant path is always redirected to the public one, including when the
      * rest of it is file-like and the skip above would otherwise let it resolve under

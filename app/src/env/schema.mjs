@@ -49,6 +49,12 @@ export const serverSchema = z.object({
   CAPTCHA_SALT: z.string().optional(),
   CLERK_SECRET_KEY: z.string().optional(),
   NATIVE_CLERK_PROXY_ENABLED: z.enum(["true", "false"]).optional(),
+  /**
+   * Vercel BotID on tRPC mutations (src/server/utils/botid.ts). Unset blocks detected bots
+   * on the production deployment only; "false" records detections without blocking;
+   * "true" also blocks on preview deployments.
+   */
+  BOTID_ENFORCE: z.enum(["true", "false"]).optional(),
   AI_TEST_USER_BROKER_TOKEN: z.string().optional(),
   // Tower Defense HMAC secret for signing session data
   TOWER_DEFENSE_HMAC_SECRET: z.string().optional(),
@@ -121,6 +127,7 @@ export const serverEnv = {
   NATIVE_CLERK_PROXY_ENABLED: /** @type {"true" | "false" | undefined} */ (
     process.env.NATIVE_CLERK_PROXY_ENABLED
   ),
+  BOTID_ENFORCE: /** @type {"true" | "false" | undefined} */ (process.env.BOTID_ENFORCE),
   AI_TEST_USER_BROKER_TOKEN: process.env.AI_TEST_USER_BROKER_TOKEN,
   IP_HASH_SECRET: process.env.IP_HASH_SECRET,
   // Tower Defense HMAC secret for signing session data

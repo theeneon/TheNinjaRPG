@@ -17,6 +17,7 @@ import {
 import { useState } from "react";
 import superjson from "superjson";
 import { toast } from "@/components/ui/use-toast";
+import { BOTID_BLOCKED_MESSAGE } from "@/libs/botid";
 import { showMutationToast } from "@/libs/toast";
 import { isRetryableTrpcError } from "@/utils/error";
 import {
@@ -185,6 +186,13 @@ const handleTrpcError = (error: unknown) => {
     const errorCode = trpcErrorCode;
     // Handle rate limiting errors with a softer toast (not logged to Sentry, not destructive)
     if (errorCode === "TOO_MANY_REQUESTS") {
+      showMutationToast({ success: false, message: error.message });
+      return;
+    }
+    // A BotID block of a mutation: the server records each one with its verdict, and
+    // the toast tells the player to reload. The mutation settles as failed, so its
+    // pending state clears like any other rejection.
+    if (errorCode === "FORBIDDEN" && error.message === BOTID_BLOCKED_MESSAGE) {
       showMutationToast({ success: false, message: error.message });
       return;
     }
