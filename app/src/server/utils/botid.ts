@@ -21,10 +21,14 @@ import { BOTID_BLOCKED_MESSAGE, BOTID_CHECK_LEVEL } from "@/libs/botid";
 
 /**
  * Upper bound on the BotID round trip. In production `checkBotId()` POSTs to
- * api.vercel.com, and every mutation waits for it, so a slow answer is treated as no
- * answer.
+ * api.vercel.com/bot-protection/v1/is-bot, and every mutation waits for it, so a slow
+ * answer is treated as no answer. The check starts when the route receives the request and
+ * overlaps `auth()`, so players only wait for whatever part of it outlasts auth.
  */
-export const BOTID_TIMEOUT_MS = 1500;
+export const BOTID_TIMEOUT_MS = 400;
+
+/** Share of production requests that log a `[botid-timing]` line; previews log every one. */
+export const BOTID_TIMING_SAMPLE_RATE = 0.1;
 
 export type BotIdVerdict =
   | {
@@ -46,6 +50,10 @@ export type BotIdGuard = {
   reported: boolean;
   /** Whether a Sentry event was captured that the route must flush. */
   needsFlush: boolean;
+  /** Round trip of the BotID check in ms, once it has settled. */
+  checkMs: number | undefined;
+  /** Whether this request's `[botid-timing]` line has been considered, so a batch logs once. */
+  timingLogged: boolean;
 };
 
 const storage = new AsyncLocalStorage<BotIdGuard>();
@@ -90,16 +98,32 @@ export const createBotIdGuard = (
   check: () => Promise<BotIdVerdict> = runBotIdCheck,
 ): BotIdGuard => {
   let pending: Promise<BotIdVerdict> | undefined;
-  return {
+  const guard: BotIdGuard = {
     paths,
     verify: () => {
-      pending ??= check();
+      pending ??= (async () => {
+        const startedAt = performance.now();
+        try {
+          return await check();
+        } finally {
+          guard.checkMs = Math.round(performance.now() - startedAt);
+        }
+      })();
       return pending;
     },
     reported: false,
     needsFlush: false,
+    checkMs: undefined,
+    timingLogged: false,
   };
+  return guard;
 };
+
+/** Every preview request logs its timing; production samples `BOTID_TIMING_SAMPLE_RATE`. */
+export const shouldLogBotIdTiming = (
+  vercelEnv: string | undefined = process.env.VERCEL_ENV,
+  random: () => number = Math.random,
+) => vercelEnv !== "production" || random() < BOTID_TIMING_SAMPLE_RATE;
 
 /** Run `fn` with `guard` visible to the tRPC middleware; without one, `fn` runs unguarded. */
 export const withBotIdGuard = <T>(guard: BotIdGuard | undefined, fn: () => T): T =>
@@ -155,7 +179,25 @@ export const enforceBotId = async (props: {
   if (props.type !== "mutation") return;
   const guard = storage.getStore();
   if (!guard) return;
+  const waitStartedAt = performance.now();
   const verdict = await guard.verify();
+  if (!guard.timingLogged) {
+    guard.timingLogged = true;
+    if (shouldLogBotIdTiming()) {
+      // checkMs is the BotID round trip; waitedMs is what the mutation actually waited.
+      console.info(
+        `[botid-timing] ${JSON.stringify({
+          checkMs: guard.checkMs ?? null,
+          waitedMs: Math.round(performance.now() - waitStartedAt),
+          timeoutMs: BOTID_TIMEOUT_MS,
+          ok: verdict.ok,
+          isBot: verdict.ok ? verdict.isBot : null,
+          path: props.path,
+          vercelEnv: process.env.VERCEL_ENV ?? null,
+        })}`,
+      );
+    }
+  }
   if (verdict.ok && !verdict.isBot) return;
   const enforced = verdict.ok && isBotIdEnforced();
   if (!guard.reported) {

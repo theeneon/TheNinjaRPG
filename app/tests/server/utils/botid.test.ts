@@ -19,8 +19,10 @@ import {
   createBotIdGuard,
   enforceBotId,
   isBotIdEnforced,
+  BOTID_TIMEOUT_MS,
   runBotIdCheck,
   shouldGuardTrpcRequest,
+  shouldLogBotIdTiming,
   trpcPathsFromUrl,
   withBotIdGuard,
 } from "@/server/utils/botid";
@@ -40,6 +42,17 @@ const guardedMutation = (verdict: object) => {
 const originalSetting = env.BOTID_ENFORCE;
 const originalVercelEnv = process.env.VERCEL_ENV;
 let warn: { mock: { calls: unknown[][] }; mockRestore: () => void };
+let info: { mock: { calls: unknown[][] }; mockRestore: () => void };
+
+/** The `[botid-timing]` records logged so far. */
+const timings = () =>
+  info.mock.calls
+    .map(([line]: unknown[]) => String(line))
+    .filter((line: string) => line.startsWith("[botid-timing] "))
+    .map(
+      (line: string) =>
+        JSON.parse(line.slice("[botid-timing] ".length)) as Record<string, unknown>,
+    );
 
 /** The structured `[botid]` records logged so far. */
 const records = () =>
@@ -50,12 +63,14 @@ const records = () =>
 
 beforeEach(() => {
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  info = vi.spyOn(console, "info").mockImplementation(() => undefined);
   env.BOTID_ENFORCE = undefined;
   process.env.VERCEL_ENV = "production";
 });
 
 afterEach(() => {
   warn.mockRestore();
+  info.mockRestore();
   checkBotId.mockReset();
   env.BOTID_ENFORCE = originalSetting;
   if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV;
@@ -229,5 +244,49 @@ describe("trpcPathsFromUrl", () => {
       "a.b",
       "c.d",
     ]);
+  });
+});
+
+describe("BotID timing", () => {
+  it("caps the round trip well below a noticeable delay", () => {
+    expect(BOTID_TIMEOUT_MS).toBeLessThanOrEqual(500);
+  });
+
+  it("logs the check and wait time once per request, however many mutations it carries", async () => {
+    process.env.VERCEL_ENV = "preview";
+    checkBotId.mockResolvedValue(human);
+    const guard = createBotIdGuard(["a.b", "c.d"]);
+    await withBotIdGuard(guard, () =>
+      Promise.all([
+        enforceBotId({ ...mutation, path: "a.b" }),
+        enforceBotId({ ...mutation, path: "c.d" }),
+      ]),
+    );
+    const logged = timings();
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({
+      timeoutMs: BOTID_TIMEOUT_MS,
+      ok: true,
+      isBot: false,
+      vercelEnv: "preview",
+    });
+    expect(typeof logged[0]?.checkMs).toBe("number");
+    expect(typeof logged[0]?.waitedMs).toBe("number");
+    expect(guard.checkMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("records a timed-out check as failed with its timing", async () => {
+    process.env.VERCEL_ENV = "preview";
+    const guard = createBotIdGuard(["a.b"], () => runBotIdCheck(20));
+    checkBotId.mockReturnValue(new Promise(() => undefined));
+    await withBotIdGuard(guard, () => enforceBotId(mutation));
+    expect(timings()[0]).toMatchObject({ ok: false, isBot: null });
+    expect(guard.checkMs).toBeGreaterThanOrEqual(15);
+  });
+
+  it("logs every preview request and samples production", () => {
+    expect(shouldLogBotIdTiming("preview", () => 0.99)).toBe(true);
+    expect(shouldLogBotIdTiming("production", () => 0.05)).toBe(true);
+    expect(shouldLogBotIdTiming("production", () => 0.5)).toBe(false);
   });
 });
