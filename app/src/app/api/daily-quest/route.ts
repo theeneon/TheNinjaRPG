@@ -1,4 +1,4 @@
-import { and, eq, gte, isNotNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { type UserRank, VILLAGE_SYNDICATE_ID } from "@/drizzle/constants";
 import { quest, questHistory, userData } from "@/drizzle/schema";
@@ -11,6 +11,7 @@ import { availableQuestLetterRanks } from "@/libs/train";
 import { upsertQuestEntries } from "@/routers/quests";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
+import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
 const ENDPOINT_NAME = "daily-quest";
 
@@ -69,10 +70,15 @@ export async function GET(request: Request) {
         .from(userData)
         .where(eq(userData.isAi, false))
         .groupBy(userData.rank, userData.villageId, userData.level),
-      drizzleDB
-        .update(questHistory)
-        .set({ completed: 0, endAt: new Date() })
-        .where(and(eq(questHistory.questType, "daily"), eq(questHistory.completed, 0))),
+      // Guarded and idempotent, so a deadlock with the other midnight crons just reruns it.
+      retryOnDeadlock(() =>
+        drizzleDB
+          .update(questHistory)
+          .set({ completed: 0, endAt: new Date() })
+          .where(
+            and(eq(questHistory.questType, "daily"), eq(questHistory.completed, 0)),
+          ),
+      ),
     ]);
 
     // Book-keeping to do upsert afterwards more efficiently
@@ -119,7 +125,11 @@ export async function GET(request: Request) {
       }
     }
 
-    // Do upsertions for each quest
+    // Do upsertions for each quest. Each combo selects only the players it was counted from
+    // (non-AI, that exact level): matching the quest's whole level range instead would also
+    // hand it to every other level in the range, each of which had a daily of its own picked.
+    // A failure rolls the timer back, and the next cron tick in hour 0 reruns the whole
+    // reset, which closes whatever this run reopened and reassigns from scratch.
     for (const m of memory) {
       const newDaily = dailies.find(
         (q: (typeof dailies)[number]) => q.id === m.questId,
@@ -128,13 +138,15 @@ export async function GET(request: Request) {
         await upsertQuestEntries(
           drizzleDB,
           newDaily,
-          or(
-            ...m.combos.map((c) =>
-              and(
-                eq(userData.rank, c.rank),
-                eq(userData.villageId, c.villageId),
-                gte(userData.level, newDaily.requiredLevel),
-                lte(userData.level, newDaily.maxLevel),
+          and(
+            eq(userData.isAi, false),
+            or(
+              ...m.combos.map((c) =>
+                and(
+                  eq(userData.rank, c.rank),
+                  eq(userData.villageId, c.villageId),
+                  eq(userData.level, c.level),
+                ),
               ),
             ),
           ),

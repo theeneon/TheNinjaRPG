@@ -40,3 +40,41 @@ export const flushSafe = async (timeout = 5000): Promise<boolean> => {
     return false;
   }
 };
+
+/**
+ * Whether a tRPC error the /api/trpc route handler sees is expected traffic rather than a
+ * failure worth reporting from the route's onError.
+ */
+export const isExpectedTrpcRouteError = (props: {
+  code: string;
+  message: string;
+  userId: string | null | undefined;
+  method: string;
+}) => {
+  const { code, message, userId, method } = props;
+  // Rejected before or by auth/rate limiting; the client handles both without a report.
+  if (code === "UNAUTHORIZED" || code === "TOO_MANY_REQUESTS") return true;
+  // tRPC rejects a request whose method does not match the procedure type with
+  // METHOD_NOT_SUPPORTED before any resolver runs. httpBatchLink always POSTs mutations, so
+  // an anonymous GET against one is a bot ignoring the /api/ disallow in robots.ts. It also
+  // always GETs queries (no methodOverride or maxURLLength is configured, and no other
+  // first-party client calls /api/trpc), so a POST to a query, signed in or not, is a script
+  // replaying a session: no first-party UI issued it, so there is no user-facing failure to
+  // surface. An authenticated GET against a mutation could still be genuine client/server
+  // skew, so that keeps reporting, and the client surfaces it through the global error
+  // toast in _trpc/Provider.tsx.
+  if (code === "METHOD_NOT_SUPPORTED" && (!userId || method === "POST")) return true;
+  // A Clerk session with no UserData row of its OWN: character creation was never
+  // finished, or the character was deleted while the tab stayed open. The client
+  // forwards to /register off profile.getUser's undefined user, so the guard firing
+  // elsewhere in the same request is expected. fetchUser raises the identical message
+  // for a missing *target* user, so match the session id rather than the shape.
+  if (
+    code === "NOT_FOUND" &&
+    userId &&
+    message === `User not found: ${userId}. Please complete registration.`
+  ) {
+    return true;
+  }
+  return false;
+};

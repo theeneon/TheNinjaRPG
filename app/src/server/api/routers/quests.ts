@@ -122,6 +122,7 @@ import {
   getFarmCollectionCount,
   reduceActiveFarmPlotTimers,
 } from "@/server/utils/farming";
+import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchQuestDiscoveryCandidates } from "@/server/utils/questDiscovery";
 import { extendWarParticipantSql } from "@/server/utils/war";
 import { chunkArray, getRandomElement } from "@/utils/array";
@@ -1198,10 +1199,12 @@ export const questsRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       // Check if user has permission to view quests
       const user = await fetchUser(ctx.drizzle, ctx.userId);
-      // Safety
-      if (!canEditQuests(user.role)) {
-        throw serverError("UNAUTHORIZED", "Not authorized to view user quests");
-      }
+      // The profile editor enables this query only for roles that pass the same check, so a
+      // caller without it is a tab still showing another account than the session it now
+      // sends, or a direct call. Return no quests, as reports.get does for a report the
+      // caller cannot read: nothing is disclosed, and the staff-only panel renders empty
+      // rather than erroring.
+      if (!canEditQuests(user.role)) return [];
       // Get all quests for the user
       const quests = await ctx.drizzle.query.questHistory.findMany({
         where: eq(questHistory.userId, input.userId),
@@ -2029,19 +2032,22 @@ export const upsertQuestEntries = async (
     .where(updateSelector);
   const missingHistory = candidates.filter((row) => row.historyId === null);
   if (missingHistory.length > 0) {
-    await client
-      .insert(questHistory)
-      .values(
-        missingHistory.map((row) => ({
-          id: nanoid(),
-          userId: row.userId,
-          questId: quest.id,
-          questType: quest.questType,
-        })),
-      )
-      .onDuplicateKeyUpdate({
-        set: { completed: 0, endAt: null, startedAt: new Date() },
-      });
+    // Idempotent through the unique (userId, questId) key, so a deadlock victim can rerun.
+    await retryOnDeadlock(() =>
+      client
+        .insert(questHistory)
+        .values(
+          missingHistory.map((row) => ({
+            id: nanoid(),
+            userId: row.userId,
+            questId: quest.id,
+            questType: quest.questType,
+          })),
+        )
+        .onDuplicateKeyUpdate({
+          set: { completed: 0, endAt: null, startedAt: new Date() },
+        }),
+    );
   }
   // Users to update for (including those we just inserted for)
   if (candidates.length > 0) {
@@ -2077,22 +2083,26 @@ export const upsertQuestEntries = async (
       // quest. JSON_SEARCH 'one' drops a single tracker and questData is not guaranteed to hold
       // only one per quest, so repeat until a pass changes nothing; each pass shrinks the
       // array, making the cap a guard against a wedged cron rather than a real bound.
+      // Each statement runs alone and is guarded by its WHERE, so a deadlock victim (the
+      // reset shares midnight with other crons writing every UserData row) simply reruns.
       let cleared = false;
       for (let pass = 0; pass < QUEST_RESET_MAX_TRACKER_PASSES; pass++) {
-        const removed = await client
-          .update(userData)
-          .set({
-            questData: sql`JSON_REMOVE(
-              ${userData.questData},
-              TRIM(TRAILING '.id' FROM ${trackerPath})
-            )`,
-          })
-          .where(
-            and(
-              inArray(userData.userId, batchUserIds),
-              sql`${trackerPath} IS NOT NULL`,
+        const removed = await retryOnDeadlock(() =>
+          client
+            .update(userData)
+            .set({
+              questData: sql`JSON_REMOVE(
+                ${userData.questData},
+                TRIM(TRAILING '.id' FROM ${trackerPath})
+              )`,
+            })
+            .where(
+              and(
+                inArray(userData.userId, batchUserIds),
+                sql`${trackerPath} IS NOT NULL`,
+              ),
             ),
-          );
+        );
         if (removed.rowsAffected === 0) {
           cleared = true;
           break;
@@ -2105,15 +2115,17 @@ export const upsertQuestEntries = async (
       // shortened the arrays, so the next run finishes the job.
       if (!cleared) continue;
 
-      await client
-        .update(questHistory)
-        .set({ completed: 0, endAt: null, startedAt })
-        .where(
-          and(
-            inArray(questHistory.userId, batchUserIds),
-            eq(questHistory.questId, questId),
+      await retryOnDeadlock(() =>
+        client
+          .update(questHistory)
+          .set({ completed: 0, endAt: null, startedAt })
+          .where(
+            and(
+              inArray(questHistory.userId, batchUserIds),
+              eq(questHistory.questId, questId),
+            ),
           ),
-        );
+      );
     }
   }
 };

@@ -361,6 +361,45 @@ describe("assignQuestToUser compatibility", () => {
     expect(update).toHaveBeenCalledTimes(50);
   });
 
+  it("reruns a reset statement that InnoDB picked as a deadlock victim", async () => {
+    // The reset shares midnight with crons that update every UserData row; a deadlock rolls
+    // back only the losing statement, so the guarded statement can simply run again.
+    const { client, sets, wheres } = makeBulkClient(
+      [{ userId: user.userId, historyId: "history-1" }],
+      [0, 1, 0, 1],
+    );
+    const update = (client as unknown as { update: ReturnType<typeof vi.fn> }).update;
+    const realUpdate = update.getMockImplementation()!;
+    update.mockImplementationOnce(() => ({
+      set: (value: Record<string, unknown>) => {
+        sets.push(value);
+        return {
+          where: vi.fn(() =>
+            Promise.reject(
+              new Error("Deadlock found when trying to get lock (errno 1213)"),
+            ),
+          ),
+        };
+      },
+    }));
+    update.mockImplementation(realUpdate);
+
+    await upsertQuestEntries(
+      client,
+      { ...quest, questType: "daily" } as never,
+      undefined as never,
+    );
+
+    // deadlocked removal, its rerun, the terminating no-op pass, then the reopen
+    expect(sets.map((set) => ("questData" in set ? "remove" : "reopen"))).toEqual([
+      "remove",
+      "remove",
+      "remove",
+      "reopen",
+    ]);
+    expect(wheres).toHaveLength(3);
+  });
+
   it("batches distinct users when a quest has duplicate history rows", async () => {
     const daily = { ...quest, questType: "daily" };
     const { client, wheres } = makeBulkClient([

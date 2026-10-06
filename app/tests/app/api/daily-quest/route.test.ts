@@ -5,6 +5,8 @@ import {
   stubCronAuth,
   stubDatabase,
 } from "../../../setup/serverModules";
+import type { SQL } from "drizzle-orm";
+import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type DailyQuestTestMocks = {
@@ -145,6 +147,64 @@ describe("daily-quest cron", () => {
     expect(mocks.upsertQuestEntries).toHaveBeenCalledOnce();
     expect(mocks.upsertQuestEntries.mock.calls[0]?.[1]).toMatchObject({ id: daily.id });
     expect(mocks.updateSets.some((set) => "tutorialOn" in set)).toBe(false);
+    expect(mocks.rollback).not.toHaveBeenCalled();
+  });
+
+  it("gives each rank/village/level combo only its own daily", async () => {
+    // Two levels inside one quest's level range must not both receive both picks: each
+    // combo's selector is pinned to the level it was counted for, and to players only.
+    const second = { ...daily, id: "daily-2" };
+    seedHappyPath();
+    mocks.findQuests.mockResolvedValue([daily, second]);
+    mocks.select.mockReset();
+    mocks.select.mockReturnValueOnce({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          groupBy: vi.fn().mockResolvedValue([
+            { rank: "GENIN", villageId: "village-1", level: 10, count: 1 },
+            { rank: "GENIN", villageId: "village-1", level: 12, count: 1 },
+          ]),
+        })),
+      })),
+    });
+
+    await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+
+    const dialect = new MySqlDialect();
+    const selectors = mocks.upsertQuestEntries.mock.calls.map(
+      (call) => dialect.sqlToQuery(call[2] as SQL),
+    );
+    const levelParams = selectors.flatMap((query) =>
+      query.params.filter((param) => param === 10 || param === 12),
+    );
+    expect(levelParams.sort()).toEqual([10, 12]);
+    for (const query of selectors) {
+      expect(query.sql).toContain("`UserData`.`isAi` = ?");
+      expect(query.sql).toContain("`UserData`.`level` = ?");
+      expect(query.sql).not.toContain(">=");
+    }
+  });
+
+  it("retries closing the open dailies when it loses a deadlock", async () => {
+    seedHappyPath();
+    let attempts = 0;
+    mocks.update.mockImplementation(() => ({
+      set: (value: Record<string, unknown>) => ({
+        where: vi.fn(async () => {
+          attempts++;
+          if (attempts === 1) {
+            throw new Error("Deadlock found when trying to get lock (errno 1213)");
+          }
+          mocks.updateSets.push(value);
+          return { rowsAffected: 1 };
+        }),
+      }),
+    }));
+
+    const response = await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+
+    expect(await response.json()).toBe("OK");
+    expect(attempts).toBe(2);
     expect(mocks.rollback).not.toHaveBeenCalled();
   });
 
