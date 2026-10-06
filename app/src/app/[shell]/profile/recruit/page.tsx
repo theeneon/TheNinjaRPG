@@ -2,16 +2,19 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
+  Check,
   CheckCircle2,
   ClipboardCopy,
+  Clock,
   ExternalLink,
+  Info,
   Loader2,
   Trophy,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
-import { Badge } from "@/components/ui/badge";
+import { badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Form,
@@ -22,8 +25,14 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
-import { ACTIVE_VOTING_SITES, RECRUIT_RANK_MILESTONES } from "@/drizzle/constants";
+import {
+  ACTIVE_VOTING_SITES,
+  RECRUIT_RANK_MILESTONES,
+  type RecruitMilestoneRank,
+  type RecruitMilestoneStatus,
+} from "@/drizzle/constants";
 import AvatarImage from "@/layout/Avatar";
 import ContentBox from "@/layout/ContentBox";
 import Loader from "@/layout/Loader";
@@ -31,6 +40,7 @@ import Modal from "@/layout/Modal";
 import NavTabs from "@/layout/NavTabs";
 import Table, { type ColumnDefinitionType } from "@/layout/Table";
 import { useInfinitePagination } from "@/libs/pagination";
+import { cn } from "@/libs/shadui";
 import { showMutationToast } from "@/libs/toast";
 import { getVotingLink } from "@/libs/voting";
 import { canReviewLinkPromotions } from "@/utils/permissions";
@@ -115,18 +125,31 @@ export default function Recruit() {
     return {
       ...user,
       eligibility: <RecruitEligibilityBadge eligibility={summary?.eligibility} />,
-      milestones: <RecruitMilestoneList milestones={summary?.milestones} />,
+      milestones: <RecruitMilestoneChips milestones={summary?.milestones} />,
     };
   });
   type User = ArrayElement<typeof allUsers>;
 
   const recruitedColumns: ColumnDefinitionType<User, keyof User>[] = [
-    { key: "avatar", header: "", type: "avatar" },
+    { key: "avatar", header: "", type: "avatar", className: "hidden @lg:table-cell" },
     { key: "username", header: "Username", type: "string" },
     { key: "level", header: "Level", type: "string" },
-    { key: "reputationPointsTotal", header: "Reputation Points", type: "string" },
-    { key: "milestones", header: "Rank Milestones", type: "jsx" },
-    { key: "eligibility", header: "Eligibility", type: "jsx" },
+    {
+      key: "reputationPointsTotal",
+      header: "Reputation Points",
+      type: "string",
+      className: "hidden @2xl:table-cell",
+    },
+    {
+      key: "milestones",
+      header: <MilestoneRulesHeader label="Milestones" />,
+      type: "jsx",
+    },
+    {
+      key: "eligibility",
+      header: <MilestoneRulesHeader label="Eligibility" />,
+      type: "jsx",
+    },
   ];
 
   return (
@@ -228,13 +251,17 @@ export default function Recruit() {
           initialBreak={true}
           padding={false}
         >
-          <Table
-            data={allUsers}
-            columns={recruitedColumns}
-            linkPrefix="/username/"
-            linkColumn={"username"}
-            setLastElement={setLastElement}
-          />
+          {/* Columns hide by the box's own width, which the game layout makes narrower
+              than the viewport on desktop. */}
+          <div className="@container">
+            <Table
+              data={allUsers}
+              columns={recruitedColumns}
+              linkPrefix="/username/"
+              linkColumn={"username"}
+              setLastElement={setLastElement}
+            />
+          </div>
         </ContentBox>
       )}
     </>
@@ -656,56 +683,133 @@ const RecruitRewardsTab: React.FC = () => {
   );
 };
 
+type RecruitEligibility = "ELIGIBLE" | "SHARED_IP" | "UNVERIFIED";
+type RecruitMilestone = {
+  rank: RecruitMilestoneRank;
+  reputation: number;
+  reached: boolean;
+  paid: boolean;
+  status: RecruitMilestoneStatus | null;
+  reputationAwarded: number;
+};
+
 const RecruitEligibilityBadge: React.FC<{
-  eligibility: "ELIGIBLE" | "SHARED_IP" | "UNVERIFIED" | undefined;
+  eligibility: RecruitEligibility | undefined;
 }> = ({ eligibility }) => {
-  if (!eligibility) return null;
-  if (eligibility === "ELIGIBLE") {
-    return (
-      <Badge className="bg-green-600 text-white hover:bg-green-600">Eligible</Badge>
-    );
-  }
-  const reason =
-    eligibility === "SHARED_IP"
-      ? "Signed up from an IP address already used by another account"
-      : "Eligibility could not be verified";
+  // Reserve the badge's footprint while the summary loads so the row does not shift.
+  if (!eligibility) return <span className="inline-block h-5 w-20" />;
+  const isEligible = eligibility === "ELIGIBLE";
+  const label = isEligible ? "Eligible" : "Ineligible";
   return (
-    <div className="max-w-32" title={`Ineligible: ${reason}`}>
-      <Badge variant="destructive">Ineligible</Badge>
-      <p className="mt-1 text-muted-foreground text-xs leading-tight">{reason}</p>
-    </div>
+    <Popover>
+      <PopoverTrigger
+        className={cn(
+          badgeVariants({ variant: isEligible ? "default" : "destructive" }),
+          "cursor-pointer gap-1 whitespace-nowrap",
+          isEligible && "bg-green-600 text-white hover:bg-green-700",
+        )}
+        aria-label={`${label}: show details`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {label}
+        <Info className="h-3 w-3" />
+      </PopoverTrigger>
+      <PopoverContent className="w-64 text-sm" onClick={(e) => e.stopPropagation()}>
+        {ELIGIBILITY_EXPLANATION[eligibility]}
+      </PopoverContent>
+    </Popover>
   );
 };
 
-const RecruitMilestoneList: React.FC<{
-  milestones:
-    | {
-        rank: string;
-        reached: boolean;
-        paid: boolean;
-        status: string | null;
-        reputationAwarded: number;
-      }[]
-    | undefined;
+const RecruitMilestoneChips: React.FC<{
+  milestones: RecruitMilestone[] | undefined;
 }> = ({ milestones }) => {
-  if (!milestones) return null;
+  if (!milestones) return <span className="inline-block h-5 w-28" />;
   return (
-    <ul className="text-xs">
-      {milestones.map((m) => (
-        <li key={m.rank} className={m.paid ? "" : "text-muted-foreground"}>
-          {formatRank(m.rank)}{" "}
-          {m.paid
-            ? `✓ ${m.reputationAwarded} rep`
-            : m.status === "PRE_EXISTING"
-              ? "reached before milestones"
-              : m.reached
-                ? "✓ not paid"
-                : "–"}
-        </li>
-      ))}
-    </ul>
+    <Popover>
+      <PopoverTrigger
+        className="flex cursor-pointer items-center gap-0.5 whitespace-nowrap rounded-md"
+        aria-label="Show rank milestone details"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {milestones.map((m) => (
+          <MilestoneChip key={m.rank} milestone={m} />
+        ))}
+      </PopoverTrigger>
+      <PopoverContent className="w-72 text-sm" onClick={(e) => e.stopPropagation()}>
+        <ul className="space-y-1">
+          {milestones.map((m) => (
+            <li key={m.rank} className="flex items-start gap-2">
+              <MilestoneChip milestone={m} />
+              <span>
+                <strong>{formatRank(m.rank)}</strong>: {describeMilestone(m)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
   );
 };
+
+const MilestoneChip: React.FC<{
+  milestone: Pick<RecruitMilestone, "rank" | "reached" | "paid" | "status">;
+}> = ({ milestone }) => {
+  const state = milestoneState(milestone);
+  return (
+    <span
+      className={cn(
+        "inline-flex h-5 min-w-5 shrink-0 items-center justify-center gap-0.5 rounded border px-1 font-semibold text-[10px] leading-none",
+        state === "paid" && "border-green-600 bg-green-600 text-white",
+        state === "unpaid" &&
+          "border-muted bg-muted text-muted-foreground line-through",
+        state === "before" && "border-muted bg-muted text-muted-foreground",
+        state === "pending" &&
+          "border-muted-foreground/50 border-dashed text-muted-foreground",
+      )}
+    >
+      {MILESTONE_SHORT_LABEL[milestone.rank]}
+      {state === "paid" && <Check className="h-2.5 w-2.5" />}
+      {state === "before" && <Clock className="h-2.5 w-2.5" />}
+    </span>
+  );
+};
+
+const MilestoneRulesHeader: React.FC<{ label: string }> = ({ label }) => (
+  <span className="inline-flex items-center gap-1">
+    {label}
+    <Popover>
+      <PopoverTrigger
+        className="cursor-pointer rounded-full"
+        aria-label="How rank milestone rewards work"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </PopoverTrigger>
+      <PopoverContent className="w-72 space-y-2 text-sm normal-case">
+        <p>
+          When an eligible recruit first reaches a rank you receive:{" "}
+          {RECRUIT_RANK_MILESTONES.map(
+            (m) =>
+              `${formatRank(m.rank)} ${m.reputation} ${m.reputation === 1 ? "point" : "points"}`,
+          ).join(", ")}
+          . Each milestone is paid at most once per recruit.
+        </p>
+        <p>
+          Recruits who sign up from an IP address already used by another account still
+          count as your recruits but are not eligible for rank milestone rewards.
+        </p>
+        <ul className="space-y-1">
+          {MILESTONE_LEGEND.map(({ example, text }) => (
+            <li key={text} className="flex items-center gap-2">
+              <MilestoneChip milestone={example} />
+              <span>{text}</span>
+            </li>
+          ))}
+        </ul>
+      </PopoverContent>
+    </Popover>
+  </span>
+);
 
 // Helpers
 const formatRank = (rank: string) =>
@@ -713,3 +817,61 @@ const formatRank = (rank: string) =>
     .split(" ")
     .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
     .join(" ");
+
+const milestoneState = (
+  m: Pick<RecruitMilestone, "reached" | "paid" | "status">,
+): "paid" | "unpaid" | "before" | "pending" => {
+  if (m.paid) return "paid";
+  if (m.status === "PRE_EXISTING") return "before";
+  if (m.reached) return "unpaid";
+  return "pending";
+};
+
+const describeMilestone = (m: RecruitMilestone) => {
+  switch (milestoneState(m)) {
+    case "paid":
+      return `+${m.reputationAwarded} reputation ${m.reputationAwarded === 1 ? "point" : "points"} paid`;
+    case "before":
+      return "reached before rank milestones existed";
+    case "unpaid":
+      return m.status === "NO_RECRUITER"
+        ? "reached, not paid"
+        : "reached, not paid (not eligible)";
+    case "pending":
+      return `not reached yet (+${m.reputation})`;
+  }
+};
+
+const MILESTONE_SHORT_LABEL: Record<RecruitMilestoneRank, string> = {
+  GENIN: "G",
+  CHUNIN: "C",
+  JONIN: "J",
+  "ELITE JONIN": "EJ",
+};
+
+const MILESTONE_LEGEND = [
+  {
+    example: { rank: "GENIN", reached: true, paid: true, status: "PAID" },
+    text: "Paid",
+  },
+  {
+    example: { rank: "GENIN", reached: true, paid: false, status: "PRE_EXISTING" },
+    text: "Reached before rank milestones existed",
+  },
+  {
+    example: { rank: "GENIN", reached: true, paid: false, status: "INELIGIBLE" },
+    text: "Reached, not paid",
+  },
+  {
+    example: { rank: "GENIN", reached: false, paid: false, status: null },
+    text: "Not reached yet",
+  },
+] as const;
+
+const ELIGIBILITY_EXPLANATION: Record<RecruitEligibility, string> = {
+  ELIGIBLE: "Eligible for rank milestone rewards.",
+  SHARED_IP:
+    "Signed up from an IP address already used by another account. Still counts as your recruit, but rank milestones are not paid.",
+  UNVERIFIED:
+    "Eligibility could not be verified for this recruit. Still counts as your recruit, but rank milestones are not paid.",
+};
