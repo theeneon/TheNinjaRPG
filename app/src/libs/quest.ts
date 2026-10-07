@@ -14,8 +14,6 @@ import {
   IMG_MISSION_PVP,
   IMG_MISSION_S,
   type LetterRank,
-  MAP_SECTOR_ID_MAX,
-  MAP_SECTOR_ID_MIN,
   MEDICAL_MISSIONS_PER_DAY,
   type MEDNIN_RANK,
   MEDNIN_RANKS,
@@ -48,12 +46,14 @@ import {
 import {
   earlierBoundObjectivesComplete,
   isSupportedOverworldBindingTask,
+  pickPlaceableSector,
 } from "@/libs/overworldAi";
 import { getSageMasteryDisplayRank, isSageRankAtLeast } from "@/libs/sageMode";
+import type { NormalizedSectorMap } from "@/libs/sector-map/types";
+import { findNearestReachableCoordinate } from "@/libs/sector-map/validation";
 import { availableQuestLetterRanks } from "@/libs/train";
 import type { UserWithRelations } from "@/routers/profile";
 import { getUnique } from "@/utils/grouping";
-import { randomInt } from "@/utils/math";
 import { canChangeContent, canPlayHiddenQuests } from "@/utils/permissions";
 import { capitalizeFirstLetter } from "@/utils/string";
 import { periodStart, secondsPassed } from "@/utils/time";
@@ -66,6 +66,7 @@ import {
 import type {
   AllObjectivesType,
   AllObjectiveTask,
+  ObjectiveTrackerType,
   QuestTrackerType,
 } from "@/validators/objectives";
 import { ObjectiveTracker, QuestTracker } from "@/validators/objectives";
@@ -910,10 +911,10 @@ export const getNewTrackers = (
             if (objective.sectorType === "specific") {
               status.sector = objective.sector;
             } else if (objective.sectorType === "random") {
-              status.sector = randomInt(MAP_SECTOR_ID_MIN, MAP_SECTOR_ID_MAX);
+              status.sector = pickPlaceableSector();
             } else if (objective.sectorType === "from_list") {
               if (objective.sectorList.length === 0) {
-                status.sector = randomInt(MAP_SECTOR_ID_MIN, MAP_SECTOR_ID_MAX);
+                status.sector = pickPlaceableSector();
               } else {
                 const idx = Math.floor(Math.random() * objective.sectorList.length);
                 status.sector = Number(objective.sectorList?.[idx]);
@@ -956,7 +957,7 @@ export const getNewTrackers = (
 
               // Fallback to random sector if no war found
               if (status.sector === undefined) {
-                status.sector = randomInt(MAP_SECTOR_ID_MIN, MAP_SECTOR_ID_MAX);
+                status.sector = pickPlaceableSector();
               }
             }
             if (status.sector !== undefined) {
@@ -1465,6 +1466,92 @@ export const getNewTrackers = (
 
 // Type returned by getNewTrackers
 export type GetNewTrackersResult = Awaited<ReturnType<typeof getNewTrackers>>;
+
+/**
+ * Unfinished goals of active quests that carry a concrete map location which has not yet been
+ * checked against the published sector map. Placement-bound objectives are skipped because the
+ * overworld placement, not the stored coordinate, decides where they resolve.
+ */
+const getUncheckedLocatedGoals = (
+  user: NonNullable<UserWithRelations>,
+  trackers: QuestTrackerType[],
+) => {
+  const located: { goal: ObjectiveTrackerType; objective: AllObjectivesType }[] = [];
+  for (const quest of getUserQuests(user)) {
+    const tracker = trackers.find((t) => t.id === quest.id);
+    if (!tracker) continue;
+    for (const goal of tracker.goals) {
+      if (goal.done || goal.locationChecked) continue;
+      if (
+        goal.sector === undefined ||
+        goal.longitude === undefined ||
+        goal.latitude === undefined
+      ) {
+        continue;
+      }
+      const objective = quest.content.objectives.find((o) => o.id === goal.id);
+      if (!objective) continue;
+      if (
+        "overworldPlacementId" in objective &&
+        objective.overworldPlacementId &&
+        isSupportedOverworldBindingTask(objective.task)
+      ) {
+        continue;
+      }
+      located.push({ goal, objective });
+    }
+  }
+  return located;
+};
+
+/** Sectors whose published maps are needed by {@link snapQuestTargetsToReachable}. */
+export const getUncheckedQuestTargetSectors = (
+  user: NonNullable<UserWithRelations>,
+  trackers: QuestTrackerType[],
+) => [
+  ...new Set(
+    getUncheckedLocatedGoals(user, trackers).map(({ goal }) => goal.sector as number),
+  ),
+];
+
+/**
+ * Moves every unchecked quest target onto the nearest tile a player can walk to in its sector
+ * and marks it checked, so random rolls, village-relative coordinates and admin-placed points
+ * that land on water or obstacles stay completable. Mutates the trackers and the active
+ * quests' objectives in place, mirroring how getNewTrackers instantiates locations.
+ *
+ * @returns whether any tracker changed and must be persisted.
+ */
+export const snapQuestTargetsToReachable = (
+  user: NonNullable<UserWithRelations>,
+  trackers: QuestTrackerType[],
+  maps: ReadonlyMap<
+    number,
+    Pick<NormalizedSectorMap, "width" | "height" | "tiles" | "anchors">
+  >,
+) => {
+  let changed = false;
+  for (const { goal, objective } of getUncheckedLocatedGoals(user, trackers)) {
+    const map = maps.get(goal.sector as number);
+    const reachable = map
+      ? findNearestReachableCoordinate(map, {
+          x: goal.longitude as number,
+          y: goal.latitude as number,
+        })
+      : null;
+    if (reachable) {
+      goal.longitude = reachable.x;
+      goal.latitude = reachable.y;
+      if ("sector" in objective) {
+        objective.longitude = reachable.x;
+        objective.latitude = reachable.y;
+      }
+    }
+    goal.locationChecked = true;
+    changed = true;
+  }
+  return changed;
+};
 
 // Combine two tracker results into one
 export const combineTrackerResults = (

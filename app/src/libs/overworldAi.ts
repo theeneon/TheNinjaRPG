@@ -28,8 +28,12 @@ export const isPlaceableSector = (sector: number): boolean =>
 const randInt = (maxExclusive: number, rng: () => number) =>
   Math.min(maxExclusive - 1, Math.floor(rng() * maxExclusive));
 
-/** Selects a valid placement sector while deterministically skipping reserved sectors. */
-const pickPlaceableSector = (rng: () => number): number => {
+/**
+ * Selects a random sector outside the reserved Wake Island / War-Torn Battleground sectors,
+ * deterministically rolling forward past a reserved hit. Shared by overworld placements and
+ * quest objectives with a random sector.
+ */
+export const pickPlaceableSector = (rng: () => number = Math.random): number => {
   // Bounded scan from a random start so a reserved hit deterministically rolls forward.
   let sector = randInt(MAP_TOTAL_SECTORS, rng);
   for (let i = 0; i < MAP_TOTAL_SECTORS; i++) {

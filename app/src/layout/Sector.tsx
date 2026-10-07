@@ -2272,7 +2272,10 @@ const Sector: React.FC<SectorProps> = (props) => {
               const target = i.object.userData.tile as TerrainHex;
               const clickedSector = i.object.userData.sector as number;
               if (target.blocked) {
+                // Quest markers can sit above blocked tiles, so repeated clicks on
+                // them reuse one toast instead of stacking a new one per click.
                 showMutationToast({
+                  id: "sector-blocked-terrain",
                   success: false,
                   message: "That terrain cannot be walked on",
                 });
