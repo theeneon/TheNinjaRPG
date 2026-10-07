@@ -160,7 +160,7 @@ export const bloodlineRouter = createTRPCRouter({
         description: "New bloodline description",
         effects: [],
         rank: "D",
-        statClassification: "Highest",
+        statClassification: "None",
         hidden: true,
       });
       return { success: true, message: id };

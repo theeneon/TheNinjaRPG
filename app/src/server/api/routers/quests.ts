@@ -16,6 +16,8 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { QuestType, UserRole } from "@/drizzle/constants";
 import {
+  ENERGY_EVENT_REWARD,
+  ENERGY_PVE_REWARD,
   FARM_ACTIVITY_REWARD_TIME_REDUCTION_SECONDS,
   IMG_AVATAR_DEFAULT,
   LetterRanks,
@@ -2797,9 +2799,28 @@ export const commitQuestObjectiveRewards = async (info: {
           activeNpcQuestId: sql`IF(${userData.activeNpcQuestId} = ${userQuest.questId}, NULL, ${userData.activeNpcQuestId})`,
         }
       : undefined;
+  const energyReward =
+    resolved && userQuest
+      ? userQuest.quest.questType === "event"
+        ? ENERGY_EVENT_REWARD
+        : ["mission", "battlepyramid", "story", "starter"].includes(
+              userQuest.quest.questType,
+            )
+          ? ENERGY_PVE_REWARD
+          : 0
+      : 0;
+  const energyPatch =
+    energyReward > 0
+      ? {
+          maxEnergy: user.maxEnergy,
+          curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${energyReward})`,
+          // Invalidate passive-regeneration snapshots taken between the claim and payout.
+          updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
+        }
+      : undefined;
   const mergedUserDataPatch =
-    slotClearPatch || info.postClaimUserDataPatch
-      ? { ...slotClearPatch, ...info.postClaimUserDataPatch }
+    slotClearPatch || energyPatch || info.postClaimUserDataPatch
+      ? { ...slotClearPatch, ...energyPatch, ...info.postClaimUserDataPatch }
       : undefined;
 
   const farmRewardAt = new Date();
@@ -2857,6 +2878,10 @@ export const commitQuestObjectiveRewards = async (info: {
       : []),
   ]);
   const { items, jutsus, bloodlines, badges, sageModes } = rewardResult;
+
+  if (energyReward > 0) {
+    postNotifications.push(`Energy reward: ${energyReward} (restored up to capacity).`);
+  }
 
   if (farmRewardResult && farmRewardResult.rowsAffected > 0) {
     postNotifications.push("Active crop growth times reduced by 1 minute.");

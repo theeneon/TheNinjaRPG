@@ -28,6 +28,7 @@ import {
   ALLIANCEHALL_LONG,
   BasicElementName,
   COST_CHANGE_USERNAME,
+  CombatStatNames,
   getTavernColorChangeCost,
   getUserCaps,
   IMG_AVATAR_DEFAULT,
@@ -95,6 +96,7 @@ import {
   userNindo,
   userPollVote,
   userReport,
+  userSkill,
   userVote,
   village,
   war,
@@ -110,14 +112,17 @@ import { getWorldCyclePosition } from "@/libs/dayNight";
 import { getGameSettingBoost } from "@/libs/gameSettingBoost";
 import { getGameSetting, updateGameSetting } from "@/libs/gamesettings";
 import { getLayoutExperimentAssignments } from "@/libs/layoutPreference";
+import { effectiveMasteries, type MasteryStatSource } from "@/libs/mastery";
 import type { NavBarDropdownLink } from "@/libs/menus";
 import { moderateContent, validateUserUpdateReason } from "@/libs/moderator";
 import {
   calcActiveUserRegen,
   calcCP,
+  calcEnergy,
   calcHP,
+  calcMaxEnergy,
   calcSP,
-  capUserStats,
+  getAssignedCombatStatTotal,
   levelUpBlockMessage,
   scaleUserStats,
 } from "@/libs/profile";
@@ -201,11 +206,11 @@ import sanitize from "@/utils/sanitize";
 import {
   getTimeOfLastReset,
   isDifferentDay,
+  secondsFromDate,
   secondsFromNow,
   secondsPassed,
 } from "@/utils/time";
 import { getShrineBoost } from "@/utils/village";
-import { createStatSchema } from "@/validators/combat";
 import { mutateContentSchema } from "@/validators/comments";
 import { idSchema } from "@/validators/misc";
 import { attributes, colors, skin_colors, usernameSchema } from "@/validators/register";
@@ -216,6 +221,9 @@ import {
 import type { GetPublicUsersSchema } from "@/validators/user";
 import {
   adjustSeichiSilverSchema,
+  assignableMasteryNames,
+  assignedExperienceOutputSchema,
+  createAssignedExperienceSchema,
   getPublicUsersSchema,
   tavernColorChangeSchema,
   updateUserPreferencesSchema,
@@ -483,9 +491,6 @@ export const profileRouter = createTRPCRouter({
           ...(input.defaultAutoCombat !== undefined
             ? { defaultAutoCombat: input.defaultAutoCombat }
             : {}),
-          ...(input.preferredStat !== undefined
-            ? { preferredStat: input.preferredStat }
-            : {}),
           ...(input.preferredGeneral1 !== undefined
             ? { preferredGeneral1: input.preferredGeneral1 }
             : {}),
@@ -611,6 +616,7 @@ export const profileRouter = createTRPCRouter({
           maxHealth: calcHP(newLevel),
           maxStamina: calcSP(newLevel),
           maxChakra: calcCP(newLevel),
+          maxEnergy: calcEnergy(newLevel),
           questData: filterQuestTrackersForDbPersist(trackers, user),
           ...(skillPointsGain > 0
             ? {
@@ -1137,14 +1143,8 @@ export const profileRouter = createTRPCRouter({
         if (user.earnedExperience > 0) {
           const { stats_cap, gens_cap } = getUserCaps(user.rank);
           const allStatsCapped =
-            user.ninjutsuOffence >= stats_cap &&
-            user.ninjutsuDefence >= stats_cap &&
-            user.genjutsuOffence >= stats_cap &&
-            user.genjutsuDefence >= stats_cap &&
-            user.taijutsuOffence >= stats_cap &&
-            user.taijutsuDefence >= stats_cap &&
-            user.bukijutsuOffence >= stats_cap &&
-            user.bukijutsuDefence >= stats_cap &&
+            user.offence >= stats_cap &&
+            user.defence >= stats_cap &&
             user.strength >= gens_cap &&
             user.speed >= gens_cap &&
             user.intelligence >= gens_cap &&
@@ -1698,7 +1698,7 @@ export const profileRouter = createTRPCRouter({
       const newAi = { ...ai, ...input.data } as UserData;
 
       // Level-based stats / pools
-      scaleUserStats(newAi);
+      scaleEditedAi(ai, newAi);
 
       // Calculate diff
       const oldContent = Object.fromEntries(
@@ -1891,29 +1891,8 @@ export const profileRouter = createTRPCRouter({
   // Use earned experience points for stats
   useUnusedExperiencePoints: protectedProcedure
     .meta({ mcp: { description: "Assign earned experience to stats" } })
-    .input(createStatSchema(0, 0).schema)
-    .output(
-      baseServerResponse.extend({
-        data: z
-          .object({
-            ninjutsuOffence: z.number(),
-            taijutsuOffence: z.number(),
-            genjutsuOffence: z.number(),
-            bukijutsuOffence: z.number(),
-            ninjutsuDefence: z.number(),
-            taijutsuDefence: z.number(),
-            genjutsuDefence: z.number(),
-            bukijutsuDefence: z.number(),
-            strength: z.number(),
-            speed: z.number(),
-            intelligence: z.number(),
-            willpower: z.number(),
-            experience: z.number(),
-            earnedExperience: z.number(),
-          })
-          .optional(),
-      }),
-    )
+    .input(createAssignedExperienceSchema().schema)
+    .output(assignedExperienceOutputSchema)
     .mutation(async ({ ctx, input }) => {
       // Query
       const user = await fetchUser(ctx.drizzle, ctx.userId);
@@ -1928,48 +1907,73 @@ export const profileRouter = createTRPCRouter({
       if (inputSum > user.earnedExperience) {
         return errorResponse("Trying to assign more stats than available");
       }
-      // Mutate & cap
-      user.ninjutsuOffence += Math.floor(input.ninjutsuOffence);
-      user.taijutsuOffence += Math.floor(input.taijutsuOffence);
-      user.genjutsuOffence += Math.floor(input.genjutsuOffence);
-      user.bukijutsuOffence += Math.floor(input.bukijutsuOffence);
-      user.ninjutsuDefence += Math.floor(input.ninjutsuDefence);
-      user.taijutsuDefence += Math.floor(input.taijutsuDefence);
-      user.genjutsuDefence += Math.floor(input.genjutsuDefence);
-      user.bukijutsuDefence += Math.floor(input.bukijutsuDefence);
-      user.strength += Math.floor(input.strength);
-      user.speed += Math.floor(input.speed);
-      user.intelligence += Math.floor(input.intelligence);
-      user.willpower += Math.floor(input.willpower);
-      capUserStats(user);
+      // Mutate: points stop at the rank cap and only the points that land are spent. A
+      // stat already stored above its cap keeps its value; it counts again after a rank-up.
+      const { stats_cap, gens_cap, mastery_cap } = getUserCaps(user.rank);
+      const assign = (current: number, points: number, cap: number) =>
+        Math.max(current, Math.min(current + Math.floor(points), cap));
+      const stats = {
+        ninjutsuMastery: assign(
+          user.ninjutsuMastery,
+          input.ninjutsuMastery,
+          mastery_cap,
+        ),
+        genjutsuMastery: assign(
+          user.genjutsuMastery,
+          input.genjutsuMastery,
+          mastery_cap,
+        ),
+        taijutsuMastery: assign(
+          user.taijutsuMastery,
+          input.taijutsuMastery,
+          mastery_cap,
+        ),
+        bukijutsuMastery: assign(
+          user.bukijutsuMastery,
+          input.bukijutsuMastery,
+          mastery_cap,
+        ),
+        offence: assign(user.offence, input.offence, stats_cap),
+        defence: assign(user.defence, input.defence, stats_cap),
+        strength: assign(user.strength, input.strength, gens_cap),
+        speed: assign(user.speed, input.speed, gens_cap),
+        intelligence: assign(user.intelligence, input.intelligence, gens_cap),
+        willpower: assign(user.willpower, input.willpower, gens_cap),
+      };
+      const combatSpent = Math.round(
+        getAssignedCombatStatTotal(stats) - getAssignedCombatStatTotal(user),
+      );
+      const spent =
+        combatSpent +
+        assignableMasteryNames.reduce((sum, name) => sum + stats[name] - user[name], 0);
+      if (spent <= 0) return errorResponse("Those stats are already capped");
       // Update
       const data = {
-        ninjutsuOffence: user.ninjutsuOffence,
-        taijutsuOffence: user.taijutsuOffence,
-        genjutsuOffence: user.genjutsuOffence,
-        bukijutsuOffence: user.bukijutsuOffence,
-        ninjutsuDefence: user.ninjutsuDefence,
-        taijutsuDefence: user.taijutsuDefence,
-        genjutsuDefence: user.genjutsuDefence,
-        bukijutsuDefence: user.bukijutsuDefence,
-        strength: user.strength,
-        speed: user.speed,
-        intelligence: user.intelligence,
-        willpower: user.willpower,
-        experience: user.experience + inputSum,
-        earnedExperience: user.earnedExperience - inputSum,
+        ...stats,
+        experience: user.experience + combatSpent,
+        earnedExperience: user.earnedExperience - spent,
       };
-      const result = await ctx.drizzle
-        .update(userData)
-        .set(data)
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.earnedExperience, inputSum),
+      const result = await claimUserSnapshot({
+        client: ctx.drizzle,
+        userId: ctx.userId,
+        updatedAt: user.updatedAt,
+        set: {
+          ...stats,
+          experience: sql`${userData.experience} + ${combatSpent}`,
+          earnedExperience: sql`${userData.earnedExperience} - ${spent}`,
+        },
+        where: [
+          eq(userData.rank, user.rank),
+          ...[...CombatStatNames, ...assignableMasteryNames].map((stat) =>
+            eq(userData[stat], user[stat]),
           ),
-        );
-      if (result.rowsAffected === 0) {
-        return errorResponse("Could not update user");
+          eq(userData.experience, user.experience),
+          eq(userData.earnedExperience, user.earnedExperience),
+          gte(userData.earnedExperience, spent),
+        ],
+      });
+      if (!result.success) {
+        return errorResponse("Stats changed while assigning points. Please try again");
       } else {
         return { success: true, message: "User stats updated", data };
       }
@@ -2907,7 +2911,8 @@ export const fetchUpdatedUser = async (props: {
         items: {
           where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
           with: {
-            item: { columns: { id: true, itemType: true, maxDurability: true } },
+            item: true,
+            imbuements: { with: { item: true } },
           },
         },
         userQuests: {
@@ -2925,6 +2930,7 @@ export const fetchUpdatedUser = async (props: {
           where: gte(questHistory.completed, 1),
         },
         votes: true,
+        userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
       },
     }),
     fetchHasUnvotedPolls(client, userId, now),
@@ -3035,6 +3041,7 @@ export const fetchUpdatedUser = async (props: {
   if (user) {
     // Add bloodline, structure, etc.  regen to regeneration
     user.regeneration = calcActiveUserRegen(user, settings);
+    user.maxEnergy = calcMaxEnergy(user);
   }
 
   // Handle village prestige situations
@@ -3153,12 +3160,17 @@ export const fetchUpdatedUser = async (props: {
       (user.villagePrestige < 0 && !user.isOutlaw) // To trigger getting kicked out of village
     ) {
       const originalUpdatedAt = user.updatedAt;
-      const regen = (user.regeneration * secondsPassed(user.regenAt)) / REGEN_SECONDS;
+      const ticks = Math.max(
+        0,
+        Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS),
+      );
+      const regen = user.regeneration * ticks;
       user.curHealth = Math.min(user.curHealth + regen, user.maxHealth);
       user.curStamina = Math.min(user.curStamina + regen, user.maxStamina);
       user.curChakra = Math.min(user.curChakra + regen, user.maxChakra);
+      user.curEnergy = Math.min(user.curEnergy + regen, user.maxEnergy);
       user.updatedAt = now;
-      user.regenAt = now;
+      user.regenAt = secondsFromDate(ticks * REGEN_SECONDS, user.regenAt);
 
       // Ensure that the user has elements
       const rankId = UserRanks.indexOf(user.rank);
@@ -3259,7 +3271,7 @@ export const fetchUpdatedUser = async (props: {
       });
     }
     return {
-      user,
+      user: { ...user, effectiveMasteries: effectiveMasteries(user) },
       settings,
       toastMessages,
       hasUnvotedPolls,
@@ -3344,6 +3356,8 @@ const persistPassiveRegenToDb = async ({
     client,
     userId,
     updatedAt: originalUpdatedAt,
+    // Status transitions can occur without advancing the snapshot timestamp.
+    where: [eq(userData.status, user.status)],
     set: derivedUserUpdate,
   });
   if (claim.success) user.updatedAt = claim.claimedAt;
@@ -3730,8 +3744,25 @@ export const fetchAttributes = async (client: DrizzleClient, userId: string) => 
   });
 };
 
+/**
+ * Scale an edited AI row to its level before it is saved. Changed combat stats are the
+ * editor's focus weights and spread the whole AI budget; otherwise the stored experience
+ * makes a save the identity at the same level and a proportional rescale on a level
+ * change, and a new stats multiplier applies to the stored stats.
+ */
+export const scaleEditedAi = (stored: UserData, edited: UserData) => {
+  const reweight = CombatStatNames.some((stat) => edited[stat] !== stored[stat]);
+  if (!reweight && edited.statsMultiplier !== stored.statsMultiplier) {
+    for (const stat of CombatStatNames) {
+      edited[stat] = (stored[stat] / stored.statsMultiplier) * edited.statsMultiplier;
+    }
+  }
+  scaleUserStats(edited, "ai", { reweight });
+};
+
 export type UserWithRelations =
   | (UserData & {
+      effectiveMasteries?: MasteryStatSource;
       bloodline?: Bloodline | null;
       sageMode?: SageMode | null;
       activeReskin?: BloodlineReskin | null;

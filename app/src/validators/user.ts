@@ -2,20 +2,73 @@ import { z } from "zod";
 import type { ElementName, LetterRank, QuestType } from "@/drizzle/constants";
 import {
   GeneralTypes,
+  getUserCaps,
   SEICHI_SILVER_ADJUST_LIMIT,
-  StatTypes,
   TavernColorPresets,
   UserRanks,
   UserRoles,
 } from "@/drizzle/constants";
 import type { UserWithRelations } from "@/routers/profile";
-import type { ZodAllTags } from "@/validators/combat";
+import { baseServerResponse } from "@/validators/base";
+import { createStatSchema, type ZodAllTags } from "@/validators/combat";
 import { dashboardContentPrioritySchema } from "@/validators/dashboard";
 import { genders, usernameSchema } from "@/validators/register";
 import {
   isReservedCustomTitle,
   RESERVED_CUSTOM_TITLE_MESSAGE,
 } from "@/validators/reservedName";
+
+export const assignableMasteryNames = [
+  "ninjutsuMastery",
+  "genjutsuMastery",
+  "taijutsuMastery",
+  "bukijutsuMastery",
+] as const;
+
+export const createAssignedExperienceSchema = (
+  user?: NonNullable<UserWithRelations>,
+) => {
+  const { schema, maxValues } = createStatSchema(0, 0, user);
+  const { mastery_cap } = getUserCaps(user?.rank);
+  const masteryRoom = Object.fromEntries(
+    assignableMasteryNames.map((name) => [
+      name,
+      Math.max(0, mastery_cap - (user?.[name] ?? 0)),
+    ]),
+  ) as Record<(typeof assignableMasteryNames)[number], number>;
+  const masteryFields = Object.fromEntries(
+    assignableMasteryNames.map((name) => [
+      name,
+      z.coerce.number().min(0).max(masteryRoom[name]).prefault(0),
+    ]),
+  ) as Record<
+    (typeof assignableMasteryNames)[number],
+    z.ZodPrefault<z.ZodCoercedNumber>
+  >;
+  return {
+    schema: schema.extend(masteryFields),
+    maxValues: { ...maxValues, ...masteryRoom },
+  };
+};
+
+export const assignedExperienceDataSchema = z.object({
+  ninjutsuMastery: z.number(),
+  genjutsuMastery: z.number(),
+  taijutsuMastery: z.number(),
+  bukijutsuMastery: z.number(),
+  offence: z.number(),
+  defence: z.number(),
+  strength: z.number(),
+  speed: z.number(),
+  intelligence: z.number(),
+  willpower: z.number(),
+  experience: z.number(),
+  earnedExperience: z.number(),
+});
+
+export const assignedExperienceOutputSchema = baseServerResponse.extend({
+  data: assignedExperienceDataSchema.optional(),
+});
 
 export const updateUserSchema = z.object({
   username: usernameSchema,
@@ -120,6 +173,7 @@ export const isBloodlineEffectBeneficial = (effect: ZodAllTags) => {
       "increasedamagetaken",
       "decreaseheal",
       "decreasestat",
+      "decreasemastery",
       "damage",
     ].includes(effect.type)
   )
@@ -161,7 +215,6 @@ export type GetPublicUsersSchema = z.infer<typeof getPublicUsersSchema>;
 // For updating highest preferences
 export const updateUserPreferencesSchema = z
   .object({
-    preferredStat: z.enum(StatTypes).nullable().optional(),
     preferredGeneral1: z.enum(GeneralTypes).nullable().optional(),
     preferredGeneral2: z.enum(GeneralTypes).nullable().optional(),
     dashboardContentPriority: dashboardContentPrioritySchema.optional(),

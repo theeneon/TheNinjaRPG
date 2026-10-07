@@ -1,14 +1,18 @@
 "use client";
 
 import { Chart as ChartJS } from "chart.js/auto";
-import { CircleHelp, Eye, Lock, Search, Sparkles } from "lucide-react";
+import { CircleHelp, Eye, Leaf, Lock, Search } from "lucide-react";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import type { MasteryType } from "@/drizzle/constants";
 import {
+  CombatStatNames,
+  getUserCaps,
+  MasteryNames,
   STEALTH_SENSORY_CAP,
   STEALTH_SENSORY_DEFAULT,
   STEALTH_TRAIN_GAIN_PER_MINUTE,
@@ -20,7 +24,7 @@ import ElementImage from "@/layout/ElementImage";
 import NavTabs from "@/layout/NavTabs";
 import SkillTreeFolderGrid from "@/layout/SkillTreeFolderGrid";
 import SkillTreeFolderModal from "@/layout/SkillTreeFolderModal";
-import { capUserStats } from "@/libs/profile";
+import { withCappedStats } from "@/libs/profile";
 import { getSageMasteryDisplayRank } from "@/libs/sageMode";
 import { getStealthStatus } from "@/libs/stealth";
 import { getEffectiveThemeTextColor } from "@/libs/themePreference";
@@ -38,11 +42,11 @@ const StrengthWeaknesses: React.FC = () => {
 
   // State
   type TabOptions = (typeof tabOptions)[number];
-  const { data: userData } = useRequiredUserData();
+  const { data: storedUserData } = useRequiredUserData();
   const [currentTab, setCurrentTab] = useState<TabOptions>("Graphs");
 
-  // Implement stats cap
-  if (userData) capUserStats(userData);
+  // Show rank-capped stats from a copy; the cached user keeps its stored values
+  const userData = storedUserData ? withCappedStats(storedUserData) : undefined;
 
   // Render info button for Stats and Graphs tabs
   const renderInfoButton = () => (
@@ -74,16 +78,16 @@ const StrengthWeaknesses: React.FC = () => {
           </ul>
           <ul>
             <li>
-              <b>Ninjutsu:</b> Ninja techniques infused with chakra
+              <b>Offence:</b> how hard your attacks hit
             </li>
             <li>
-              <b>Genjutsu:</b> Illusions and mental techniques
+              <b>Defence:</b> how well you resist incoming damage
             </li>
+          </ul>
+          <ul>
             <li>
-              <b>Taijutsu:</b> Physical combat techniques
-            </li>
-            <li>
-              <b>Bukijutsu:</b> Proficiency with weapons
+              <b>Masteries:</b> unlock jutsu, items, and armor. They do not deal damage
+              or grant experience.
             </li>
           </ul>
         </div>
@@ -98,8 +102,9 @@ const StrengthWeaknesses: React.FC = () => {
       id="tutorial-strength-weaknesses"
       title="User Stats"
       subtitle="Strengths & Weaknesses"
+      topRightCorntentBreakpoint="sm"
       topRightContent={
-        <div className="flex items-center gap-3">
+        <div className="my-2 flex items-center gap-3">
           <NavTabs
             id="strength-weaknesses-tabs"
             current={currentTab}
@@ -127,112 +132,101 @@ interface StatsTabProps {
 
 export const StatsTab: React.FC<StatsTabProps> = ({ userData }) => {
   const userElements = getUserElements(userData);
+  const masteries = userData.effectiveMasteries ?? userData;
 
   return (
-    <>
-      <div className="grid grid-cols-2 gap-2">
+    <div className="grid grid-cols-2 gap-4">
+      <div className="space-y-3">
         <div>
-          <b>Offences</b>
+          <b>Combat</b>
           <div className="flex flex-row items-center">
-            <ElementImage element="Ninjutsu" className="mr-1 mb-1 h-6 w-6" />
-            Ninjutsu offence:{" "}
-            {Number((userData.ninjutsuOffence ?? 0).toFixed(2)).toLocaleString()}
+            <ElementImage element="offensiveStance" className="mr-1 mb-1 h-6 w-6" />
+            Offence: {Number((userData.offence ?? 0).toFixed(2)).toLocaleString()}
           </div>
           <div className="flex flex-row items-center">
-            <ElementImage element="Genjutsu" className="mr-1 mb-1 h-6 w-6" />
-            Genjutsu offence:{" "}
-            {Number((userData.genjutsuOffence ?? 0).toFixed(2)).toLocaleString()}
-          </div>
-          <div className="flex flex-row items-center">
-            <ElementImage element="Taijutsu" className="mr-1 mb-1 h-6 w-6" />
-            Taijutsu offence:{" "}
-            {Number((userData.taijutsuOffence ?? 0).toFixed(2)).toLocaleString()}
-          </div>
-          <div className="flex flex-row items-center">
-            <ElementImage element="Bukijutsu" className="mr-1 mb-1 h-6 w-6" />
-            Bukijutsu offence:{" "}
-            {Number((userData.bukijutsuOffence ?? 0).toFixed(2)).toLocaleString()}
+            <ElementImage element="defensiveStance" className="mr-1 mb-1 h-6 w-6" />
+            Defence: {Number((userData.defence ?? 0).toFixed(2)).toLocaleString()}
           </div>
         </div>
-
         <div>
-          <b>Defences</b>
+          <b>Generals</b>
           <div className="flex flex-row items-center">
-            <ElementImage element="Ninjutsu" className="mr-1 mb-1 h-6 w-6" />
-            Ninjutsu defence:{" "}
-            {Number((userData.ninjutsuDefence ?? 0).toFixed(2)).toLocaleString()}
+            <ElementImage element="Strength" className="mr-1 mb-1 h-6 w-6" />
+            Strength: {Number((userData.strength ?? 0).toFixed(2)).toLocaleString()}
           </div>
           <div className="flex flex-row items-center">
-            <ElementImage element="Genjutsu" className="mr-1 mb-1 h-6 w-6" />
-            Genjutsu defence:{" "}
-            {Number((userData.genjutsuDefence ?? 0).toFixed(2)).toLocaleString()}
+            <ElementImage element="Intelligence" className="mr-1 mb-1 h-6 w-6" />
+            Intelligence:{" "}
+            {Number((userData.intelligence ?? 0).toFixed(2)).toLocaleString()}
           </div>
           <div className="flex flex-row items-center">
-            <ElementImage element="Taijutsu" className="mr-1 mb-1 h-6 w-6" />
-            Taijutsu defence:{" "}
-            {Number((userData.taijutsuDefence ?? 0).toFixed(2)).toLocaleString()}
+            <ElementImage element="Willpower" className="mr-1 mb-1 h-6 w-6" />
+            Willpower: {Number((userData.willpower ?? 0).toFixed(2)).toLocaleString()}
           </div>
           <div className="flex flex-row items-center">
-            <ElementImage element="Bukijutsu" className="mr-1 mb-1 h-6 w-6" />
-            Bukijutsu defence:{" "}
-            {Number((userData.bukijutsuDefence ?? 0).toFixed(2)).toLocaleString()}
+            <ElementImage element="Speed" className="mr-1 mb-1 h-6 w-6" />
+            Speed: {Number((userData.speed ?? 0).toFixed(2)).toLocaleString()}
           </div>
         </div>
-      </div>
-      <div className="pt-2">
-        <div className="grid grid-cols-2">
-          <div>
-            <b>Generals</b>
-            <div className="flex flex-row items-center">
-              <ElementImage element="Strength" className="mr-1 mb-1 h-6 w-6" />
-              Strength: {Number((userData.strength ?? 0).toFixed(2)).toLocaleString()}
-            </div>
-            <div className="flex flex-row items-center">
-              <ElementImage element="Intelligence" className="mr-1 mb-1 h-6 w-6" />
-              Intelligence:{" "}
-              {Number((userData.intelligence ?? 0).toFixed(2)).toLocaleString()}
-            </div>
-            <div className="flex flex-row items-center">
-              <ElementImage element="Willpower" className="mr-1 mb-1 h-6 w-6" />
-              Willpower: {Number((userData.willpower ?? 0).toFixed(2)).toLocaleString()}
-            </div>
-            <div className="flex flex-row items-center">
-              <ElementImage element="Speed" className="mr-1 mb-1 h-6 w-6" />
-              Speed: {Number((userData.speed ?? 0).toFixed(2)).toLocaleString()}
-            </div>
-          </div>
-          <div>
-            <b>Mastery</b>
-            <div className="flex flex-row items-center">
-              <Sparkles className="mr-1 mb-1 h-6 w-6" />
-              Sage Mastery:{" "}
-              {getSageMasteryDisplayRank(
-                userData.sageMasteryExperience ?? 0,
-                !!userData.sageModeId,
-              )}{" "}
-              ({(userData.sageMasteryExperience ?? 0).toLocaleString()} XP)
-            </div>
-            <div className="pt-2">
-              <b>Elemental Proficiency</b>
-              <div className="grid grid-cols-2 gap-1">
-                {userElements.map((element, i) => (
-                  <div key={`${element}-${i}`} className="flex flex-row pt-1">
-                    <ElementImage element={element} className="w-6" />
-                    <p className="pl-2">{element}</p>
-                  </div>
-                ))}
+        <div>
+          <b>Elemental Proficiency</b>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {userElements.map((element, i) => (
+              <div key={`${element}-${i}`} className="flex flex-row pt-1">
+                <ElementImage element={element} className="w-6" />
+                <p className="pl-2">{element}</p>
               </div>
-              {userElements.length === 0 && (
-                <>
-                  <p>- 1st element at Genin</p>
-                  <p>- 2nd element at Chunin</p>
-                </>
-              )}
-            </div>
+            ))}
+          </div>
+          {userElements.length === 0 && (
+            <>
+              <p>- 1st element at Genin</p>
+              <p>- 2nd element at Chunin</p>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="space-y-3">
+        <div>
+          <b>Masteries</b>
+          {MasteryNames.map((name) => {
+            const label =
+              name.charAt(0).toUpperCase() + name.slice(1).replace("Mastery", "");
+            const bonus = masteries[name] - userData[name];
+            return (
+              <div key={name} className="flex flex-wrap items-center">
+                <ElementImage
+                  element={label as MasteryType}
+                  className="mr-1 mb-1 h-6 w-6"
+                />
+                {label}: {Number(userData[name].toFixed(2)).toLocaleString()}
+                {bonus !== 0 && (
+                  <span
+                    className="ml-1 text-muted-foreground"
+                    title="Equipment, bloodline and skill modifiers; total used for mastery requirements"
+                  >
+                    ({bonus > 0 ? "+" : ""}
+                    {Number(bonus.toFixed(2)).toLocaleString()})
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div>
+          <b>Sage Mode</b>
+          <div className="flex flex-row items-center">
+            <Leaf className="mr-1 mb-1 h-6 w-6" />
+            Rank:{" "}
+            {getSageMasteryDisplayRank(
+              userData.sageMasteryExperience ?? 0,
+              !!userData.sageModeId,
+            )}{" "}
+            ({(userData.sageMasteryExperience ?? 0).toLocaleString()} XP)
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 
@@ -242,19 +236,21 @@ interface GraphsTabProps {
 }
 
 export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
-  const statsChartRef = useRef<HTMLCanvasElement>(null);
-  const generalsChartRef = useRef<HTMLCanvasElement>(null);
+  const masteryChartRef = useRef<HTMLCanvasElement>(null);
+  const combatChartRef = useRef<HTMLCanvasElement>(null);
   const userElements = getUserElements(userData);
   const activeLayout = useActiveLayout();
+  const { stats_cap, mastery_cap } = getUserCaps(userData.rank);
 
   useEffect(() => {
-    const statsCtx = statsChartRef?.current?.getContext("2d");
-    const generalsCtx = generalsChartRef?.current?.getContext("2d");
-    if (statsCtx && generalsCtx && userData) {
-      // Update stats chart
+    const masteries = userData.effectiveMasteries ?? userData;
+    const masteryCtx = masteryChartRef?.current?.getContext("2d");
+    const combatCtx = combatChartRef?.current?.getContext("2d");
+    if (masteryCtx && combatCtx && userData) {
+      // Mastery distribution
       const chartTextColor = getEffectiveThemeTextColor(activeLayout);
       ChartJS.defaults.color = chartTextColor;
-      const myStatsChart = new ChartJS(statsCtx, {
+      const masteryChart = new ChartJS(masteryCtx, {
         type: "radar",
         options: {
           maintainAspectRatio: false,
@@ -269,13 +265,13 @@ export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
             r: {
               angleLines: { color: "rgba(148, 163, 184, 0.35)", display: true },
               grid: { color: "rgba(148, 163, 184, 0.25)" },
-              pointLabels: { color: chartTextColor },
+              pointLabels: { color: chartTextColor, font: { size: 11 } },
               ticks: {
                 backdropColor: "rgba(99, 255, 132, 0.0)",
                 color: chartTextColor,
+                maxTicksLimit: 4,
               },
-              suggestedMin: 0,
-              backgroundColor: "rgba(99, 255, 132, 0.2)",
+              min: 0,
             },
           },
           plugins: {
@@ -285,29 +281,14 @@ export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
           },
         },
         data: {
-          labels: [
-            "Nin Off",
-            "Gen Off",
-            "Tai Off",
-            "Buki Off",
-            "Nin Def",
-            "Gen Def",
-            "Tai Def",
-            "Buki Def",
-          ],
+          labels: MasteryNames.map(
+            (stat) =>
+              stat.charAt(0).toUpperCase() + stat.slice(1).replace("Mastery", ""),
+          ),
           datasets: [
             {
               label: "Value",
-              data: [
-                userData.ninjutsuOffence ?? 0,
-                userData.genjutsuOffence ?? 0,
-                userData.taijutsuOffence ?? 0,
-                userData.bukijutsuOffence ?? 0,
-                userData.ninjutsuDefence ?? 0,
-                userData.genjutsuDefence ?? 0,
-                userData.taijutsuDefence ?? 0,
-                userData.bukijutsuDefence ?? 0,
-              ],
+              data: MasteryNames.map((stat) => masteries[stat]),
               fill: true,
               backgroundColor: "rgba(255, 99, 132, 0.2)",
               borderColor: "rgb(255, 99, 132)",
@@ -319,22 +300,22 @@ export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
           ],
         },
       });
-      // Update stats chart
-      const myGeneralsChart = new ChartJS(generalsCtx, {
+      // Combat stat comparison
+      const combatChart = new ChartJS(combatCtx, {
         type: "bar",
         options: {
           maintainAspectRatio: false,
           responsive: true,
-          aspectRatio: 1.1,
+          indexAxis: "y",
           scales: {
             x: {
-              ticks: { color: chartTextColor },
+              beginAtZero: true,
+              ticks: { color: chartTextColor, maxTicksLimit: 4 },
               grid: { color: "rgba(148, 163, 184, 0.16)" },
             },
             y: {
-              beginAtZero: true,
               ticks: { color: chartTextColor },
-              grid: { color: "rgba(148, 163, 184, 0.16)" },
+              grid: { display: false },
             },
           },
           plugins: {
@@ -344,66 +325,83 @@ export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
           },
         },
         data: {
-          labels: ["Strength", "Speed", "Intelligence", "Willpower"],
+          labels: CombatStatNames.map(
+            (stat) => stat.charAt(0).toUpperCase() + stat.slice(1),
+          ),
           datasets: [
             {
-              data: [
-                userData.strength ?? 0,
-                userData.speed ?? 0,
-                userData.intelligence ?? 0,
-                userData.willpower ?? 0,
-              ],
-              backgroundColor: [
-                "rgba(255, 99, 132, 0.5)",
-                "rgba(255, 159, 64, 0.5)",
-                "rgba(255, 205, 86, 0.5)",
-                "rgba(75, 192, 192, 0.5)",
-              ],
-              borderColor: [
-                "rgb(255, 99, 132)",
-                "rgb(255, 159, 64)",
-                "rgb(255, 205, 86)",
-                "rgb(75, 192, 192)",
-              ],
+              label: "Stat",
+              data: CombatStatNames.map((stat) => userData[stat]),
+              backgroundColor: "rgba(75, 192, 192, 0.5)",
+              borderColor: "rgb(75, 192, 192)",
               borderWidth: 1,
+              borderRadius: 4,
+              maxBarThickness: 24,
             },
           ],
         },
       });
       // Remove on unmount
       return () => {
-        myStatsChart.destroy();
-        myGeneralsChart.destroy();
+        masteryChart.destroy();
+        combatChart.destroy();
       };
     }
   }, [activeLayout, userData]);
 
   return (
-    <div className="grid grid-cols-1 pt-3 sm:grid-cols-2">
-      <div>
-        <p className="font-bold">Generals</p>
-        <div className="relative w-[99%] p-3">
-          <canvas ref={generalsChartRef} id="generalsChartRef"></canvas>
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <section className="min-w-0 rounded-lg border bg-background/40 p-3">
+        <h3 className="font-bold">Combat stats</h3>
+        <p className="text-muted-foreground text-xs">Offence, Defence and Generals</p>
+        <div className="relative my-3 h-64">
+          <canvas
+            ref={combatChartRef}
+            id="combatChartRef"
+            role="img"
+            aria-label="Combat stat comparison"
+          />
         </div>
-      </div>
-      <div>
-        <p className="font-bold">Strengths</p>
-        <div className="relative w-[99%]">
-          <canvas ref={statsChartRef} id="statsChartRef"></canvas>
+        <p className="mt-3 border-t pt-2 text-muted-foreground text-xs">
+          Rank cap: {stats_cap.toLocaleString()} per stat
+        </p>
+      </section>
+      <section className="min-w-0 rounded-lg border bg-background/40 p-3">
+        <h3 className="font-bold">Masteries</h3>
+        <p className="text-muted-foreground text-xs">
+          Includes equipment, bloodline and skill modifiers; does not affect damage
+        </p>
+        <div className="relative my-3 h-64">
+          <canvas
+            ref={masteryChartRef}
+            id="masteryChartRef"
+            role="img"
+            aria-label="Mastery distribution"
+          />
         </div>
-        <p className="pt-2 font-bold">Elemental Proficiency</p>
-        <div className="flex w-full flex-row justify-center gap-2 pt-2">
-          {userElements.map((element, i) => (
-            <ElementImage key={`${element}-${i}`} element={element} className="w-14" />
+        <p className="mt-3 border-t pt-2 text-muted-foreground text-xs">
+          Rank cap: {mastery_cap.toLocaleString()} per mastery
+        </p>
+      </section>
+      <p className="text-muted-foreground text-xs sm:col-span-2">
+        Chart axes scale to your current stats, rather than the rank cap.
+      </p>
+      <section className="rounded-lg border bg-background/40 p-3 sm:col-span-2">
+        <h3 className="font-bold">Elemental Proficiency</h3>
+        <div className="flex flex-wrap gap-4 pt-2">
+          {userElements.map((element) => (
+            <div key={element} className="flex items-center gap-2 text-sm">
+              <ElementImage element={element} className="w-8" />
+              <span>{element}</span>
+            </div>
           ))}
         </div>
         {userElements.length === 0 && (
-          <>
-            <p>- 1st element at Genin</p>
-            <p>- 2nd element at Chunin</p>
-          </>
+          <p className="text-muted-foreground text-sm">
+            First element unlocks at Genin; second at Chunin.
+          </p>
         )}
-      </div>
+      </section>
     </div>
   );
 };

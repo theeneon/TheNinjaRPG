@@ -40,6 +40,7 @@ import type {
 import {
   getBattlefieldHeightRatio,
   getTurnControl,
+  isPvpEnergyRewardBattle,
   resolveControlledActorId,
 } from "@/libs/combat/util";
 import type { TerrainHex } from "@/libs/hexgrid";
@@ -70,6 +71,7 @@ import {
 } from "@/libs/threejs/util";
 import { showMutationToast } from "@/libs/toast";
 import { preloadAudioBuffers, savedSfxVolume } from "@/utils/audio";
+import { capitalizeFirstLetter } from "@/utils/string";
 import { secondsFromNow } from "@/utils/time";
 import {
   combatActionIdAtom,
@@ -607,6 +609,13 @@ const Combat: React.FC<CombatProps> = (props) => {
           battleRef.current = data.battle;
           setBattleAtom(data.battle);
           setBattleState({ battle: data.battle, result: null, isPending: false });
+          if (data.message) {
+            showMutationToast({
+              success: true,
+              title: "Loadout updated",
+              message: data.message,
+            });
+          }
           void utils.combat.getBattle.invalidate().catch(() => undefined);
         }
       } else {
@@ -1542,7 +1551,19 @@ const Combat: React.FC<CombatProps> = (props) => {
         <div className="absolute top-0 right-0 bottom-0 left-0 z-20 m-auto bg-black opacity-90">
           <div className="text-center text-white">
             <p className="p-5 pb-2 text-3xl">You {result.outcome}</p>
+            {battleType === "QUEST" && (
+              <p>
+                Quest Energy is restored when you claim the completed quest's rewards.
+              </p>
+            )}
             <div className="grid grid-cols-2">
+              {battleRef.current &&
+                isPvpEnergyRewardBattle(battleRef.current, props.userId) && (
+                  <p>
+                    PvP Energy reward: {result.energyReward ?? 0}
+                    {(result.energyReward ?? 0) > 0 && " (restored up to capacity)"}
+                  </p>
+                )}
               {result.lpDiff !== 0 && (
                 <div>
                   {result.lpDiff > 0 ? (
@@ -1558,30 +1579,16 @@ const Combat: React.FC<CombatProps> = (props) => {
               {result.earnedExperience > 0 && (
                 <p>Unassigned Experience: {result.earnedExperience.toFixed(2)}</p>
               )}
-              {result.ninjutsuOffence > 0 && (
-                <p>Offensive Ninjutsu: {result.ninjutsuOffence.toFixed(2)}</p>
-              )}
-              {result.ninjutsuDefence > 0 && (
-                <p>Defensive Ninjutsu: {result.ninjutsuDefence.toFixed(2)}</p>
-              )}
-              {result.taijutsuOffence > 0 && (
-                <p>Offensive Taijutsu: {result.taijutsuOffence.toFixed(2)}</p>
-              )}
-              {result.taijutsuDefence > 0 && (
-                <p>Defensive Taijutsu: {result.taijutsuDefence.toFixed(2)}</p>
-              )}
-              {result.genjutsuOffence > 0 && (
-                <p>Offensive Genjutsu: {result.genjutsuOffence.toFixed(2)}</p>
-              )}
-              {result.genjutsuDefence > 0 && (
-                <p>Defensive Genjutsu: {result.genjutsuDefence.toFixed(2)}</p>
-              )}
-              {result.bukijutsuOffence > 0 && (
-                <p>Offensive Bukijutsu: {result.bukijutsuOffence.toFixed(2)}</p>
-              )}
-              {result.bukijutsuDefence > 0 && (
-                <p>Defensive Bukijutsu: {result.bukijutsuDefence.toFixed(2)}</p>
-              )}
+              {result.offence > 0 && <p>Offence: {result.offence.toFixed(2)}</p>}
+              {result.defence > 0 && <p>Defence: {result.defence.toFixed(2)}</p>}
+              {Object.entries(result.masteryGains ?? {})
+                .filter(([, gain]) => gain > 0)
+                .map(([mastery, gain]) => (
+                  <p key={mastery}>
+                    {capitalizeFirstLetter(mastery.replace("Mastery", ""))} Mastery:{" "}
+                    {gain.toFixed(2)}
+                  </p>
+                ))}
               {result.intelligence > 0 && (
                 <p>Intelligence: {result.intelligence.toFixed(2)}</p>
               )}

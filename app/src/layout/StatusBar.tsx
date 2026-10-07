@@ -9,7 +9,7 @@ import {
 import { REGEN_SECONDS } from "@/drizzle/constants";
 import type { UserStatus } from "@/drizzle/schema";
 import { cn } from "@/libs/shadui";
-import { secondsPassed } from "@/utils/time";
+import { nextRegenerationTickAt, secondsPassed } from "@/utils/time";
 
 interface StatusBarProps {
   title: string;
@@ -19,7 +19,12 @@ interface StatusBarProps {
   showText?: boolean;
   status?: UserStatus;
   timeDiff?: number;
-  color: "bg-red-500" | "bg-blue-500" | "bg-green-500" | "bg-yellow-500";
+  color:
+    | "bg-red-500"
+    | "bg-blue-500"
+    | "bg-green-500"
+    | "bg-yellow-500"
+    | "bg-violet-500";
   current?: number;
   total?: number;
 }
@@ -37,6 +42,7 @@ export const calcCurrent = (
 ) => {
   const end = total ?? 100;
   let current = Math.max(start ?? 0, 0);
+  let nextTickSeconds: number | undefined;
   if (status === "BATTLE" || start === undefined) {
     current = end;
   } else if (
@@ -45,16 +51,28 @@ export const calcCurrent = (
     regenAt &&
     ["AWAKE", "ASLEEP", "TRAVEL"].includes(status)
   ) {
-    const minutes = secondsPassed(regenAt, timeDiff, false) / REGEN_SECONDS;
+    const minutes = Math.max(
+      0,
+      Math.floor(secondsPassed(regenAt, timeDiff) / REGEN_SECONDS),
+    );
     if (regen >= 0) {
       current = Math.min(end, start + regen * minutes);
     } else {
       current = Math.max(0, start + regen * minutes);
     }
+    // Seconds until the next one-minute regeneration tick, shown while the bar still moves
+    if ((regen > 0 && current < end) || (regen < 0 && current > 0)) {
+      nextTickSeconds = Math.max(
+        1,
+        Math.ceil(
+          -secondsPassed(nextRegenerationTickAt(regenAt, timeDiff), timeDiff, false),
+        ),
+      );
+    }
   }
   const width = (current / end) * 100;
 
-  return { current, width };
+  return { current, width, nextTickSeconds };
 };
 
 const StatusBar: React.FC<StatusBarProps> = (props) => {
@@ -99,7 +117,8 @@ const StatusBar: React.FC<StatusBarProps> = (props) => {
             // Only update if values actually changed to prevent unnecessary re-renders
             if (
               prevState.current !== newState.current ||
-              prevState.width !== newState.width
+              prevState.width !== newState.width ||
+              prevState.nextTickSeconds !== newState.nextTickSeconds
             ) {
               return newState;
             }
@@ -124,6 +143,7 @@ const StatusBar: React.FC<StatusBarProps> = (props) => {
       {showText && (
         <div className={cn("leading-none", isInBattle && "invisible")}>
           {title} ({total ? `${Math.round(state.current)} / ${total}` : "?? / ??"})
+          {state.nextTickSeconds !== undefined && ` (${state.nextTickSeconds}s)`}
         </div>
       )}
 

@@ -9,7 +9,7 @@ Repository-wide agent instructions; `CLAUDE.md` imports this file. Paths below a
 - **Economy:** use atomic WHERE/CAS guards for balances, receipt delivery and reward claims; check `rowsAffected` before granting irreversible rewards. Use SQL increments for counters vulnerable to stale snapshots.
 - **Database latency:** fetch independent queries upfront with `Promise.all()`, then filter in JavaScript. Prefer fewer round-trips over smaller payloads. Defer a query only when it depends on an earlier result, or is expensive and potentially unnecessary.
 - Define all Zod schemas in `app/src/validators/`, never inline in pages or routers.
-- When refactoring schema, remove deprecated fields and migrate all callers; do not retain legacy fields. Run `make makemigrations` after editing `app/drizzle/schema.ts`.
+- When refactoring schema, remove deprecated fields and migrate all callers; do not retain legacy fields. Run `make makemigrations` after editing `app/drizzle/schema.ts`. Keep migration SQL free of `--> statement-breakpoint` markers; `app/drizzle.config.ts` disables their generation.
 - React hooks must run unconditionally, in stable order, before early returns. Use query `enabled` for conditional fetching and react-hook-form `useWatch`, never `watch` (React Compiler). Verify hook ordering after frontend changes.
 - Before filtering a Sentry error, verify meaningful user feedback, resolved loading states and no broken/blank UI. Comment how UX is handled; use domain-validating regexes for URL filters, never substring matching.
 

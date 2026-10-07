@@ -5,6 +5,7 @@ import {
   MEDNIN_EXP_CAP,
   MEDNIN_HEALABLE_STATES,
   MEDNIN_MIN_RANK,
+  REGEN_SECONDS,
   SENSEI_GENIN_MED_EXP_SHARE_PERC,
   SENSEI_MAX_STUDENT_LEVEL,
 } from "@/drizzle/constants";
@@ -31,7 +32,7 @@ import {
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { pushActivityUpdate } from "@/server/utils/push/liveActivity";
 import { findRelationship } from "@/utils/alliance";
-import { secondsFromNow } from "@/utils/time";
+import { secondsFromDate, secondsFromNow, secondsPassed } from "@/utils/time";
 import { getStrucBoost } from "@/utils/village";
 import {
   npcHealInputSchema,
@@ -186,7 +187,27 @@ export const hospitalRouter = createTRPCRouter({
             ? Math.min(u.curStamina + toHeal, u.maxStamina)
             : u.curStamina,
         medicalExperience: Math.min(u.medicalExperience + expGain, MEDNIN_EXP_CAP),
-        regenAt: isSelfHeal ? healedAt : u.regenAt,
+        curEnergy: isSelfHeal
+          ? Math.min(
+              u.maxEnergy,
+              u.curEnergy +
+                u.regeneration *
+                  Math.floor(
+                    Math.max(0, healedAt.getTime() - u.regenAt.getTime()) /
+                      (REGEN_SECONDS * 1000),
+                  ),
+            )
+          : u.curEnergy,
+        maxEnergy: u.maxEnergy,
+        regenAt: isSelfHeal
+          ? secondsFromDate(
+              Math.floor(
+                Math.max(0, healedAt.getTime() - u.regenAt.getTime()) /
+                  (REGEN_SECONDS * 1000),
+              ) * REGEN_SECONDS,
+              u.regenAt,
+            )
+          : u.regenAt,
       };
       const healerClaim = await claimUserSnapshot({
         client: ctx.drizzle,
@@ -206,7 +227,13 @@ export const hospitalRouter = createTRPCRouter({
                 curStamina: sql`LEAST(${userData.curStamina} + ${toHeal}, ${t.maxStamina})`,
               }
             : {}),
-          ...(isSelfHeal ? { regenAt: healedAt } : {}),
+          ...(isSelfHeal
+            ? {
+                curEnergy: sql`LEAST(${u.maxEnergy}, ${userData.curEnergy} + ${u.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, ${healedAt})) / ${REGEN_SECONDS * 1_000_000}))`,
+                maxEnergy: u.maxEnergy,
+                regenAt: healer.regenAt,
+              }
+            : {}),
           questData: questDataForDb,
         },
       });
@@ -235,7 +262,14 @@ export const hospitalRouter = createTRPCRouter({
                     curStamina: sql`LEAST(${userData.curStamina} + ${toHeal}, ${userData.maxStamina})`,
                   }
                 : {}),
-              regenAt: new Date(),
+              // Settle Energy before resetting the hospital admission/regen clock.
+              curEnergy: sql`LEAST(${t.maxEnergy}, ${userData.curEnergy} + ${t.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+              maxEnergy: t.maxEnergy,
+              regenAt:
+                t.status === "HOSPITALIZED"
+                  ? sql`NOW(3)`
+                  : sql`TIMESTAMPADD(SECOND, FLOOR(GREATEST(0, TIMESTAMPDIFF(SECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS}) * ${REGEN_SECONDS}, ${userData.regenAt})`,
+              updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
               // Don't change status - users must check out manually at the hospital
               // unless they pay to be healed at the hospital while hospitalized
             })
@@ -283,11 +317,12 @@ export const hospitalRouter = createTRPCRouter({
     .output(npcHealOutputSchema)
     .mutation(async ({ ctx, input }) => {
       // Query
-      const [user, structures] = await Promise.all([
-        fetchUser(ctx.drizzle, ctx.userId),
+      const [{ user }, structures] = await Promise.all([
+        fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId, forceRegen: true }),
         fetchStructures(ctx.drizzle, input.villageId),
       ]);
       // Guard
+      if (!user) return errorResponse("User not found");
       if (user.villageId !== input.villageId) {
         return errorResponse("You are not in this village");
       }
@@ -303,7 +338,10 @@ export const hospitalRouter = createTRPCRouter({
           .update(userData)
           .set({
             curHealth: user.maxHealth,
-            regenAt: new Date(),
+            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+            maxEnergy: user.maxEnergy,
+            regenAt: sql`NOW(3)`,
+            updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
             status: "AWAKE",
           })
           .where(
@@ -319,7 +357,10 @@ export const hospitalRouter = createTRPCRouter({
           .set({
             curHealth: user.maxHealth,
             money: sql`${userData.money} - ${cost}`,
-            regenAt: new Date(),
+            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+            maxEnergy: user.maxEnergy,
+            regenAt: sql`NOW(3)`,
+            updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
             status: "AWAKE",
           })
           .where(
@@ -355,6 +396,13 @@ export const hospitalRouter = createTRPCRouter({
           message: "You have been healed",
           data: {
             curHealth: user.maxHealth,
+            curEnergy: Math.min(
+              user.maxEnergy,
+              user.curEnergy +
+                user.regeneration *
+                  Math.max(0, Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS)),
+            ),
+            maxEnergy: user.maxEnergy,
             money: user.money - cost,
             regenAt: new Date(),
           },
