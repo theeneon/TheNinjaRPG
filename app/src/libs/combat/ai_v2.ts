@@ -1,6 +1,7 @@
 import type { Grid } from "honeycomb-grid";
 import { spiral } from "honeycomb-grid";
 import {
+  ActionNotPossibleError,
   actionPointsAfterAction,
   availableUserActions,
   performBattleAction,
@@ -435,7 +436,7 @@ export const performAIaction = (
       /** ************************ */
       if (nextAction) {
         const check = actionPointsAfterAction(user, nextBattle, nextAction?.action);
-        const result = performBattleAction({
+        const result = attemptBattleAction({
           battle: returnBattle,
           action: nextAction.action,
           grid,
@@ -444,8 +445,7 @@ export const performAIaction = (
           longitude: nextAction.long,
           latitude: nextAction.lat,
         });
-        const valid = check.canAct && !!result;
-        if (valid) {
+        if (check.canAct && result) {
           nextBattle = result.newBattle;
           nextActionEffects.push(...result.actionEffects);
           aiDescriptions.push(nextAction.action.battleDescription);
@@ -480,6 +480,24 @@ export const performAIaction = (
   // Return the new state
   const nextActionId = nextAction?.action?.id ?? undefined;
   return { nextBattle, nextActionEffects, aiDescriptions, nextActionId };
+};
+
+/**
+ * Perform an AI-chosen action, or return undefined when it cannot be carried out.
+ *
+ * The rules pick actions without checking the target is in reach (e.g. a range-1
+ * attack while every tile next to the opponent is taken). Such a pick has to fall
+ * through to the next rule: letting it throw would abort the whole turn, which the
+ * client then re-fires every second until the round timer passes the turn on. A
+ * rejected action leaves the battle state untouched, so the next rule can reuse it.
+ */
+const attemptBattleAction = (props: Parameters<typeof performBattleAction>[0]) => {
+  try {
+    return performBattleAction(props);
+  } catch (error) {
+    if (error instanceof ActionNotPossibleError) return undefined;
+    throw error;
+  }
 };
 
 /**

@@ -1280,6 +1280,13 @@ export const getTargetUser = (
   return result;
 };
 
+/**
+ * Thrown by performBattleAction when the action cannot be carried out from the
+ * actor's position (no valid target in reach, not enough action points). The
+ * battle state is left unchanged, so callers such as the AI can try another action.
+ */
+export class ActionNotPossibleError extends Error {}
+
 export const performBattleAction = (props: {
   battle: CompleteBattle;
   action: CombatAction;
@@ -1299,7 +1306,9 @@ export const performBattleAction = (props: {
   // Note: this mutates usersEffects, groundEffects in place
   const check = insertAction({ battle, grid, action, actorId, longitude, latitude });
   if (!check) {
-    throw new Error(`Action ${action.name} no longer possible for ${user.username}`);
+    throw new ActionNotPossibleError(
+      `Action ${action.name} no longer possible for ${user.username}`,
+    );
   }
 
   // Track weapon durability usage (skip for battles that don't lose durability)
