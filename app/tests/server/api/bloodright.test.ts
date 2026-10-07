@@ -1,9 +1,11 @@
 // @vitest-environment node
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { actionLog, bloodline, skillTree, userData, userSkill } from "@/drizzle/schema";
 import * as socials from "@/libs/socials";
-import { bloodrightSwapRefund } from "@/libs/bloodright";
+import { bloodrightSwapRefund, matchBloodrightSnapshot } from "@/libs/bloodright";
+import { bloodlineRouter, updateBloodline } from "@/server/api/routers/bloodline";
+import { staffRouter } from "@/server/api/routers/staff";
 import { bloodrightRouter } from "@/server/api/routers/bloodright";
 import { skillTreeRouter } from "@/server/api/routers/skillTree";
 import { resetServerModuleStubs, stubProfile } from "../../setup/serverModules";
@@ -28,6 +30,7 @@ describeWithDatabase("Bloodright economy on MySQL", () => {
     await db.insert(userData).values({ userId, username: "BloodrightPlayer", gender: "Other", bloodlineId: "line", seichiSilver: 1000, reputationPoints: 100, rank: "JONIN" });
     await db.insert(skillTree).values([tier("root"), tier("child", 2, ["root"]), tier("grandchild", 3, ["child"]), tier("other"), tier("fifth"), tier("sixth")]);
     stubProfile("fetchUpdatedUser", async () => ({ user: await read() }));
+    stubProfile("fetchUser", async (_client: unknown, id: string) => db.query.userData.findFirst({ where: eq(userData.userId, id) }));
   });
   afterEach(() => { resetServerModuleStubs(); vi.restoreAllMocks(); });
 
@@ -142,5 +145,46 @@ describeWithDatabase("Bloodright economy on MySQL", () => {
     }
     const root = await db.query.skillTree.findFirst({ where: eq(skillTree.id, "root") });
     expect((await update.resolver({ ctx: { drizzle: db, userId }, input: { id: "root", data: { ...root, tier: 6 } } })).success).toBe(false);
+  });
+  it("rejects bloodline swaps and natural removals during battle without refunding", async () => {
+    const db = await getTestDatabase();
+    await invoke("purchase", { skillId: "root" });
+    const awake = await read();
+    await db.update(userData).set({ status: "BATTLE" }).where(eq(userData.userId, userId));
+    for (const name of ["removeBloodline", "swapBloodline"] as const) {
+      const { resolver } = bloodlineRouter._def.procedures[name]._def as unknown as { resolver: (args: { ctx: { drizzle: typeof db; userId: string }; input: unknown }) => Promise<{ success: boolean; message: string }> };
+      const result = await resolver({ ctx: { drizzle: db, userId }, input: name === "swapBloodline" ? { bloodlineId: "line" } : undefined });
+      expect(result).toMatchObject({ success: false, message: "You cannot change bloodline during battle" });
+    }
+    await expect(updateBloodline(db, awake, null, 0, "Bloodline Removed")).rejects.toThrow("Unable to update bloodline");
+    expect(await read()).toMatchObject({ bloodlineId: "line", seichiSilver: 900, bloodrightSpent: 100, reputationPoints: 100 });
+    expect(await db.query.actionLog.findMany()).toHaveLength(0);
+  });
+  it("rejects battle claims after a refund and refunds after a battle claim", async () => {
+    const db = await getTestDatabase();
+    await invoke("purchase", { skillId: "root" });
+    const beforeRefund = await read();
+    await invoke("refund", { skillId: "root" });
+    const claim = (snapshot: typeof beforeRefund) => db.update(userData).set({ status: "BATTLE" }).where(and(ne(userData.status, "BATTLE"), matchBloodrightSnapshot(snapshot)));
+    expect((await claim(beforeRefund)).rowsAffected).toBe(0);
+    await invoke("purchase", { skillId: "root" });
+    expect((await claim(await read())).rowsAffected).toBe(1);
+    expect((await invoke("refund", { skillId: "root" })).success).toBe(false);
+    expect(await read()).toMatchObject({ seichiSilver: 900, bloodrightSpent: 100, status: "BATTLE" });
+  });
+  it("clones Silver and saved Bloodright purchases as one debug snapshot without retaining the staff path", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ role: "OWNER", staffAccount: true }).where(eq(userData.userId, userId));
+    await invoke("purchase", { skillId: "root" });
+    await db.insert(userData).values({ userId: "clone-target", username: "CloneTarget", gender: "Other", bloodlineId: "other-line", seichiSilver: 250, bloodright: [{ skillId: "target-tier", cost: 77 }], bloodrightSpent: 77 });
+    stubProfile("fetchAttributes", async () => []);
+    const { resolver } = staffRouter._def.procedures.cloneUserForDebug._def as unknown as { resolver: (args: { ctx: { drizzle: typeof db; userId: string }; input: { userId: string } }) => Promise<{ success: boolean }> };
+    for (let i = 0; i < 2; i++) {
+      expect((await resolver({ ctx: { drizzle: db, userId }, input: { userId: "clone-target" } })).success).toBe(true);
+      expect(await read()).toMatchObject({ bloodlineId: "other-line", seichiSilver: 250, bloodright: [{ skillId: "target-tier", cost: 77 }], bloodrightSpent: 77 });
+      expect((await invoke("reset")).success).toBe(true);
+      expect((await read()).seichiSilver).toBe(327);
+    }
+    expect(await db.query.userData.findFirst({ where: eq(userData.userId, "clone-target") })).toMatchObject({ seichiSilver: 250, bloodrightSpent: 77 });
   });
 });

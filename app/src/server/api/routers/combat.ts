@@ -85,6 +85,7 @@ import {
   war,
 } from "@/drizzle/schema";
 import { getReskinnedBloodline } from "@/libs/bloodline";
+import { matchBloodrightSnapshot } from "@/libs/bloodright";
 import {
   availableUserActions,
   getDefaultBasicActions,
@@ -2640,6 +2641,12 @@ export const initiateBattle = async (
           // row is never even examined (or locked) by this update. Drizzle
           // compiles an empty list to FALSE, matching expectedRows === 0.
           inArray(userData.userId, allParticipantIds),
+          // A refund or swap may finish after preload but before the participant status claim.
+          or(
+            ...users
+              .filter((user) => allParticipantIds.includes(user.userId))
+              .map(matchBloodrightSnapshot),
+          ),
           // Never move an AI into a battle: its row is shared by everyone
           // fighting it, and the battle state clones it under a fresh id anyway.
           // Redundant with the claim list above, but kept so a drifting AI

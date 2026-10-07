@@ -1,5 +1,16 @@
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import type { UserData } from "@/drizzle/schema";
 import { userData } from "@/drizzle/schema";
+
+/** Claim combat only with the bloodline and purchased effects that were preloaded. */
+export const matchBloodrightSnapshot = (
+  user: Pick<UserData, "userId" | "bloodlineId" | "bloodright">,
+) =>
+  and(
+    eq(userData.userId, user.userId),
+    sql`${userData.bloodlineId} <=> ${user.bloodlineId}`,
+    sql`${userData.bloodright} = CAST(${JSON.stringify(user.bloodright)} AS JSON)`,
+  );
 
 /** Refund at the saved purchase prices, in the same statement that changes the bloodline. */
 export const bloodrightSwapRefund = (bloodlineId: string | null) => {
