@@ -306,6 +306,106 @@ describeWithDatabase("auction item price bounds", () => {
       expect(inventory[0]?.isInAuction).toBe(result.success);
     },
   );
+  it.each([
+    {
+      currentQuantity: 2,
+      quantity: undefined,
+      startingPrice: 50,
+      buyoutPrice: undefined,
+      succeeds: false,
+    },
+    {
+      currentQuantity: 6,
+      quantity: undefined,
+      startingPrice: 50,
+      buyoutPrice: undefined,
+      succeeds: false,
+    },
+    {
+      currentQuantity: 4,
+      quantity: 2,
+      startingPrice: 30,
+      buyoutPrice: undefined,
+      succeeds: false,
+    },
+    {
+      currentQuantity: 7,
+      quantity: 2,
+      startingPrice: 30,
+      buyoutPrice: undefined,
+      succeeds: false,
+    },
+    {
+      currentQuantity: 4,
+      quantity: 2,
+      startingPrice: 20,
+      buyoutPrice: 30,
+      succeeds: false,
+    },
+    {
+      currentQuantity: 6,
+      quantity: 2,
+      startingPrice: 30,
+      buyoutPrice: undefined,
+      succeeds: true,
+    },
+  ])(
+    "prices and reserves the actual stack after a quantity race: %j",
+    async ({ currentQuantity, quantity, startingPrice, buyoutPrice, succeeds }) => {
+      const db = await getTestDatabase();
+      let firstRead = true;
+      const raced = new Proxy(db, {
+        get(target, key, receiver) {
+          if (key !== "query") return Reflect.get(target, key, receiver);
+          return {
+            ...db.query,
+            userItem: {
+              ...db.query.userItem,
+              findFirst: async (
+                ...args: Parameters<typeof db.query.userItem.findFirst>
+              ) => {
+                const row = await db.query.userItem.findFirst(...args);
+                if (firstRead) {
+                  firstRead = false;
+                  // Another inventory operation commits after the auction's first read.
+                  await db
+                    .update(userItem)
+                    .set({ quantity: currentQuantity })
+                    .where(eq(userItem.id, "owned"));
+                }
+                return row;
+              },
+            },
+          };
+        },
+      });
+      const api = callerForDatabase(auctionRouter, "seller", raced);
+      expect(
+        await api.createAuctionListing({
+          ...listing,
+          startingPrice,
+          buyoutPrice,
+          quantity,
+        }),
+      ).toMatchObject({ success: succeeds });
+      const [inventory, listings, logs] = await Promise.all([
+        db.select().from(userItem),
+        db.select().from(auctionListing),
+        db.select().from(actionLog),
+      ]);
+      expect(inventory.reduce((total, row) => total + row.quantity, 0)).toBe(
+        currentQuantity,
+      );
+      expect(listings).toHaveLength(succeeds ? 1 : 0);
+      expect(inventory.filter((row) => row.isInAuction)).toHaveLength(succeeds ? 1 : 0);
+      if (succeeds) {
+        expect(inventory.find((row) => row.isInAuction)?.quantity).toBe(3);
+        expect(JSON.parse(logs[0]!.changes as string).quantity).toBe(3);
+      } else {
+        expect(logs).toHaveLength(0);
+      }
+    },
+  );
   it.each([19, 20, 40, 41])(
     "validates split-stack total %i before splitting",
     async (startingPrice) => {
