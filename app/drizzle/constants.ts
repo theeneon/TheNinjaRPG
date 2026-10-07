@@ -1062,6 +1062,8 @@ export const TUTORIAL_JUTSU_ID = "clh4d6pxd0006tb0h4y1yudi5";
 export const TUTORIAL_ITEM_ID = "VOditPJ3X2id0yC-F5Kz3";
 export const TUTORIAL_STARTER_QUEST_ID = "eYDVpL63vPhK3lywMexdv";
 export const TUTORIAL_GENIN_EXAM_QUEST_ID = "9-t1rNWEzXbIfdUfxWrny";
+export const HEAVENLY_SONATA_BLOODLINE_ID = "clh4d6q6s000atb0h0qdqdh1z";
+export const BLUE_BLADE_EYES_BLOODLINE_ID = "clh4d6qo4000itb0hrx8t06wq";
 export const TUTORIAL_ARENA_DUMMY_ID = "ICXb49Z0Jle3GyJ-rosTi";
 
 // Recruitment analytics metric options (used by frontend and backend)
@@ -2809,6 +2811,10 @@ export const MUSIC_WINTER_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJMIfxyadtsO4cexqW2RDgkE3zZbNXSFGitmna";
 export const MUSIC_SHADOWS_DANCE =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJhUwWfeMfUBdnwAX5LTajlNc4mrgzi0RJtqpM";
+export const MUSIC_HEAVENLY_SONATA_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJpoak58fbKBAOsGCHyl3Sk0mZFrgWPUdjMJ75";
+export const MUSIC_BLUE_BLADE_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJIvdW2M4xfOewksxBoS1HQCihpL7c42Ky9uUF";
 export const BUTTON_CLICK_SFX_URLS = [
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJSiIRUn3jWrEB7TyZlmpoAxMK5Qi16kNPVJuH",
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJDaZRDSzEwoh0WXMnscL279N8ayVQUCbRzS3p",
