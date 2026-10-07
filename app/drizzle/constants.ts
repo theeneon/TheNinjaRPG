@@ -2788,9 +2788,9 @@ export const IMG_BATTLEFIELD_STAR =
 export const MUSIC_SHADOW_OF_THE_BLADE =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJQCH0mJjhzBPya1rwfCIqOTU0cV5xgsMeo3u2";
 export const MUSIC_WELCOME_TO_SEICHI =
-  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJrwIzM2huJPmdY8zI2ptZXAoEj1c6BMKvrQOx";
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJmJDFBGHE4IMO5Goa7cgLxPJ0VC6lU8vbt1Ap";
 export const MUSIC_SHIROHANA_THEME =
-  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJnL3NqnmojJ0EqeDCvBrNmZaXVdY97gSpOWiA";
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJ4vI0KulYIif5CL8BKvMsOh2ZnmS7yHt0jTD3";
 export const MUSIC_TSUKIMORI_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJE9b6CNLfKL5D7TAFe29bymSaPCIQ846MdzGg";
 export const MUSIC_AKIKAZE_THEME =
@@ -2799,6 +2799,16 @@ export const MUSIC_AKASUMI_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJTvL90a5IU29dZYJPoOKSh5vmlqatMub3EigH";
 export const MUSIC_SYNDICATE_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJxrcAPUWZsq9k0Von5rUfP6OgQ2TyptCKHS4u";
+export const MUSIC_HYORIN_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJe1hBMMyV3OvUJQExAi0bGoIZDF74LqSnHRdp";
+export const MUSIC_HORIZON_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJ7dGr02BXKPBOUWGyFuM4DlL1v5HNTZhkte0z";
+export const MUSIC_HALLOWEEN_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJX2KBuGqIOpAoLKbZ4nW9Rsil2V67yuFwQhqv";
+export const MUSIC_WINTER_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJMIfxyadtsO4cexqW2RDgkE3zZbNXSFGitmna";
+export const MUSIC_SHADOWS_DANCE =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJhUwWfeMfUBdnwAX5LTajlNc4mrgzi0RJtqpM";
 export const BUTTON_CLICK_SFX_URLS = [
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJSiIRUn3jWrEB7TyZlmpoAxMK5Qi16kNPVJuH",
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJDaZRDSzEwoh0WXMnscL279N8ayVQUCbRzS3p",
