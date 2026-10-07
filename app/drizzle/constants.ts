@@ -2815,6 +2815,9 @@ export const MUSIC_HEAVENLY_SONATA_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJpoak58fbKBAOsGCHyl3Sk0mZFrgWPUdjMJ75";
 export const MUSIC_BLUE_BLADE_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJIvdW2M4xfOewksxBoS1HQCihpL7c42Ky9uUF";
+/** Cartoon, Musical, Success, Fanfare (Epidemic Sound a7890bad-75d0-415f-b721-e31c7b87fd6f). */
+export const CONFETTI_SFX_URL =
+  "https://ui0arpl8sm.ufs.sh/f/confetti-success-fanfare-b859237a-db7f-425e-9228-3465d2152e6b.mp3";
 export const BUTTON_CLICK_SFX_URLS = [
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJSiIRUn3jWrEB7TyZlmpoAxMK5Qi16kNPVJuH",
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJDaZRDSzEwoh0WXMnscL279N8ayVQUCbRzS3p",

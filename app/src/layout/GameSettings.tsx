@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import { BUTTON_CLICK_SFX_URLS } from "@/drizzle/constants";
+import { BUTTON_CLICK_SFX_URLS, CONFETTI_SFX_URL } from "@/drizzle/constants";
 import { useDayNightMapOverlays } from "@/hooks/day-night-overlay";
 import {
   safeLocalStorageGetItem,
@@ -310,7 +310,7 @@ export const GlobalAudioProvider: React.FC<{
   useEffect(() => {
     if (!isClient) return;
     setSfxVolume(getInitialSfxVolumeState());
-    void preloadAudioBuffers([...BUTTON_CLICK_SFX_URLS]);
+    void preloadAudioBuffers([...BUTTON_CLICK_SFX_URLS, CONFETTI_SFX_URL]);
   }, [isClient]);
 
   useEffect(() => {
@@ -416,15 +416,18 @@ export const useGameSettings = (userData?: UserWithRelations | null) => {
   // Embedded iframe mute state
   const { isIframesMuted, setIframesMuted } = useIframeMute();
 
-  // Sync SFX with user data changes
+  // Sync saved SFX changes without overwriting a local toggle on unrelated profile refreshes.
+  const savedSfxOn = userData?.sfxOn;
   useEffect(() => {
     if (!isClient) return;
-    if (userData) {
-      setSfxOn(!!userData.sfxOn);
+    if (typeof savedSfxOn === "boolean") {
+      setSfxOn(savedSfxOn);
+      // Non-React celebration playback reads the current account preference from storage.
+      safeLocalStorageSetItem("sfxOn", JSON.stringify(savedSfxOn));
     } else {
-      setSfxOn(getInitialSfxState());
+      setSfxOn(safeLocalStorageGetItem("sfxOn") !== "false");
     }
-  }, [isClient, userData]);
+  }, [isClient, savedSfxOn]);
 
   // Update preferences mutation
   const { mutate: updatePreferences } = api.profile.updatePreferences.useMutation({
@@ -529,6 +532,7 @@ const GameSettingsContent: React.FC<GameSettingsContentProps> = ({
   };
 
   const handleSfxToggle = (checked: boolean) => {
+    safeLocalStorageSetItem("sfxOn", JSON.stringify(checked));
     setSfxOn(checked);
     if (userData) {
       updatePreferences({
@@ -540,8 +544,6 @@ const GameSettingsContent: React.FC<GameSettingsContentProps> = ({
       if (updateUser) {
         void updateUser({ sfxOn: checked });
       }
-    } else {
-      safeLocalStorageSetItem("sfxOn", JSON.stringify(checked));
     }
   };
 
