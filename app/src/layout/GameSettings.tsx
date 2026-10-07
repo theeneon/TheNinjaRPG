@@ -17,15 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import {
-  BUTTON_CLICK_SFX_URLS,
-  MUSIC_AKASUMI_THEME,
-  MUSIC_AKIKAZE_THEME,
-  MUSIC_SHIROHANA_THEME,
-  MUSIC_SYNDICATE_THEME,
-  MUSIC_TSUKIMORI_THEME,
-  MUSIC_WELCOME_TO_SEICHI,
-} from "@/drizzle/constants";
+import { BUTTON_CLICK_SFX_URLS } from "@/drizzle/constants";
 import { useDayNightMapOverlays } from "@/hooks/day-night-overlay";
 import {
   safeLocalStorageGetItem,
@@ -41,6 +33,7 @@ import {
   LIGHT_LAYOUT_STORAGE_KEY,
   persistLayoutPreferenceCookie,
 } from "@/libs/layoutPreference";
+import { getBackgroundMusicSrc } from "@/libs/music";
 import { audioSession, platform } from "@/libs/native";
 import { showMutationToast } from "@/libs/toast";
 import type { UserWithRelations } from "@/routers/profile";
@@ -165,19 +158,8 @@ export const GlobalAudioProvider: React.FC<{
     isClient ? getInitialSfxVolumeState() : 0.8,
   );
 
-  // Use village-specific music if user has a village, otherwise use default
-  let musicSrc = MUSIC_WELCOME_TO_SEICHI;
-  if (userData?.village?.name === "Tsukimori") {
-    musicSrc = MUSIC_TSUKIMORI_THEME;
-  } else if (userData?.village?.name === "Shirohana") {
-    musicSrc = MUSIC_SHIROHANA_THEME;
-  } else if (userData?.village?.name === "Akikaze") {
-    musicSrc = MUSIC_AKIKAZE_THEME;
-  } else if (userData?.village?.name === "Akasumi") {
-    musicSrc = MUSIC_AKASUMI_THEME;
-  } else if (userData?.village?.name === "Syndicate") {
-    musicSrc = MUSIC_SYNDICATE_THEME;
-  }
+  // Village theme, or the event theme while a seasonal event runs
+  const musicSrc = getBackgroundMusicSrc(userData?.village?.name);
 
   // Initialize the single audio instance
   const {
