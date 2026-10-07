@@ -2053,7 +2053,7 @@ export const SECTOR_TYPES = [
 ] as const;
 
 // Conversation config
-export const CONVERSATION_QUIET_MINS = 5;
+export const CONVERSATION_PAUSE_HIDDEN_MINS = 5;
 export const MESSAGING_MIN_LEVEL = 3;
 export const FORUM_MIN_LEVEL = 3;
 export const AUCTION_HOUSE_MIN_LEVEL = 15;
