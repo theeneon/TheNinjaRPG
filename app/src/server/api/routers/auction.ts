@@ -363,7 +363,7 @@ export const auctionRouter = createTRPCRouter({
       }
 
       // Handle quantity splitting for stackable items
-      const listingQuantity = quantity ?? userItemData.quantity;
+      let listingQuantity = quantity ?? userItemData.quantity;
       for (const price of [startingPrice, buyoutPrice]) {
         if (price === undefined) continue;
         const priceError = getAuctionPriceError(
@@ -409,6 +409,20 @@ export const auctionRouter = createTRPCRouter({
 
           // Use the new item for the auction
           auctionUserItemId = result.newUserItemId;
+          if (result.quantityToSplit !== listingQuantity) {
+            listingQuantity = result.quantityToSplit;
+            for (const price of [startingPrice, buyoutPrice]) {
+              if (price === undefined) continue;
+              const priceError = getAuctionPriceError(
+                userItemData.item,
+                listingType,
+                price,
+                listingQuantity,
+                currencyType,
+              );
+              if (priceError) return errorResponse(priceError);
+            }
+          }
         }
       }
 
@@ -433,8 +447,8 @@ export const auctionRouter = createTRPCRouter({
       expiresAt.setHours(expiresAt.getHours() + durationHours);
 
       // Write-time guard: set isInAuction only if item still has no active imbuement (atomic).
-      // The quantity guard also refuses rows held by a stack-merge claim (negative) or left as
-      // a merge tombstone (zero), so a listing can never break an in-flight merge publish.
+      // Pin the reservation to the priced quantity, including the actual split result.
+      // This also excludes negative merge claims and zero-quantity merge tombstones.
       const markInAuctionResult = await ctx.drizzle
         .update(userItem)
         .set({
@@ -445,6 +459,7 @@ export const auctionRouter = createTRPCRouter({
           and(
             eq(userItem.id, auctionUserItemId),
             eq(userItem.userId, ctx.userId),
+            eq(userItem.quantity, listingQuantity),
             gt(userItem.quantity, 0),
             eq(userItem.isInAuction, false),
             sql`NOT EXISTS (SELECT 1 FROM UserItemImbuement WHERE UserItemImbuement.userItemId = ${auctionUserItemId} AND UserItemImbuement.craftingFinishedAt > NOW())`,
@@ -452,7 +467,7 @@ export const auctionRouter = createTRPCRouter({
         );
       if (markInAuctionResult.rowsAffected === 0) {
         return errorResponse(
-          "Item is not available or is being imbued; cannot list for auction or direct sale",
+          "Item quantity or availability changed, or item is being imbued; please refresh and try again",
         );
       }
 
@@ -482,7 +497,7 @@ export const auctionRouter = createTRPCRouter({
             userItemId: auctionUserItemId,
             originalUserItemId: userItemId,
             itemId: userItemData.itemId,
-            quantity: quantity || userItemData.quantity,
+            quantity: listingQuantity,
             startingPrice,
             buyoutPrice,
             expiresAt,

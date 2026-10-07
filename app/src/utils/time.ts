@@ -7,13 +7,7 @@ export const getItemPurchasePeriodStart = (
   now = new Date(),
 ) => {
   if (period === "NONE") return null;
-  const start = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
-  if (period === "WEEKLY")
-    start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
-  if (period === "MONTHLY") start.setUTCDate(1);
-  return start;
+  return periodStart(period.toLowerCase() as Lowercase<typeof period>, now);
 };
 
 /**
