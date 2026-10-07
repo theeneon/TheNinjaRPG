@@ -644,6 +644,8 @@ export const ObjectiveTracker = z.object({
   sector: z.coerce.number().min(0).optional(),
   longitude: z.coerce.number().min(0).optional(),
   latitude: z.coerce.number().min(0).optional(),
+  /** Set once the coordinates were verified (or moved) onto a reachable tile of the sector map. */
+  locationChecked: z.boolean().optional(),
   selectedNextObjectiveId: z.string().optional(),
   timestamp: z.iso.datetime().optional(),
   recentlyDied: z.boolean().prefault(false),

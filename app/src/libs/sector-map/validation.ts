@@ -185,6 +185,71 @@ export const findNearestWalkableCoordinate = (
 };
 
 /**
+ * Every walkable coordinate connected to `from`, keyed by getSectorTileKey.
+ * Empty when `from` itself is not walkable.
+ */
+const getConnectedWalkableKeys = (
+  map: Pick<NormalizedSectorMap, "width" | "height" | "tiles">,
+  from: SectorCoordinate,
+) => {
+  const visited = new Set<string>();
+  if (!isWalkableCoordinate(map, from)) return visited;
+  const queue: SectorCoordinate[] = [from];
+  let head = 0;
+  visited.add(getSectorTileKey(from.x, from.y));
+  while (head < queue.length) {
+    const current = queue[head++];
+    if (!current) continue;
+    for (const neighbor of getNeighborCoordinates(current)) {
+      const key = getSectorTileKey(neighbor.x, neighbor.y);
+      if (visited.has(key) || !isWalkableCoordinate(map, neighbor)) continue;
+      visited.add(key);
+      queue.push(neighbor);
+    }
+  }
+  return visited;
+};
+
+/**
+ * Resolve a destination a player can actually walk to: the coordinate itself
+ * when it is walkable and connected to the sector's "spawn.default" anchor,
+ * else the nearest such tile by Chebyshev distance. Maps whose spawn anchor is
+ * missing or blocked fall back to plain walkability. Returns null only when
+ * the map has no walkable tiles at all.
+ */
+export const findNearestReachableCoordinate = (
+  map: Pick<NormalizedSectorMap, "width" | "height" | "tiles" | "anchors">,
+  coordinate: SectorCoordinate,
+): SectorCoordinate | null => {
+  const spawn = resolveSectorAnchor(map, "spawn.default");
+  const connected = spawn ? getConnectedWalkableKeys(map, spawn) : new Set<string>();
+  const isReachable = (candidate: SectorCoordinate) =>
+    connected.size > 0
+      ? connected.has(getSectorTileKey(candidate.x, candidate.y))
+      : isWalkableCoordinate(map, candidate);
+  if (isReachable(coordinate)) return { x: coordinate.x, y: coordinate.y };
+
+  // Ties on Chebyshev distance prefer the smaller Manhattan offset, so the
+  // replacement sits as straight across from the original as possible.
+  let best: SectorCoordinate | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  let bestOffset = Number.POSITIVE_INFINITY;
+  for (const tile of map.tiles) {
+    if (!isReachable(tile)) continue;
+    const dx = Math.abs(tile.x - coordinate.x);
+    const dy = Math.abs(tile.y - coordinate.y);
+    const distance = Math.max(dx, dy);
+    const offset = dx + dy;
+    if (distance < bestDistance || (distance === bestDistance && offset < bestOffset)) {
+      best = { x: tile.x, y: tile.y };
+      bestDistance = distance;
+      bestOffset = offset;
+    }
+  }
+  return best;
+};
+
+/**
  * Structural validation of a normalized map: format version, dimension caps,
  * exact tile count, duplicate tiles/anchors, terrain-registry membership,
  * combat biomes, the required spawn.default anchor, at least one walkable

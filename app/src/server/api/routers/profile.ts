@@ -125,10 +125,12 @@ import {
   controlShownQuestLocationInformation,
   filterQuestTrackersForDbPersist,
   getNewTrackers,
+  getUncheckedQuestTargetSectors,
   getUserQuests,
   isAvailableUserQuests,
   mockAchievementHistoryEntries,
   questHasOverworldObjectives,
+  snapQuestTargetsToReachable,
 } from "@/libs/quest";
 import {
   getRaidObjectiveData,
@@ -168,6 +170,7 @@ import {
   awardRecruitRankMilestonesSafely,
   fetchRecruitMilestoneSummary,
 } from "@/server/utils/recruitment";
+import { fetchPublishedSectorMaps } from "@/server/utils/sectorMap";
 import { getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
 import {
@@ -3206,6 +3209,28 @@ export const fetchUpdatedUser = async (props: {
 
     // Destructure for local usage
     const { trackers, notifications, consequences } = trackerResults;
+
+    // Quest targets (random rolls, village-relative or authored coordinates) may sit on
+    // water or obstacles of the published sector map. Each target is checked once, right
+    // after it is instantiated, and moved onto the nearest reachable tile; the check flag is
+    // persisted so later reads skip the map fetch. This depends on the sectors rolled above,
+    // so it cannot join an earlier Promise.all.
+    const targetSectors = getUncheckedQuestTargetSectors(user, trackers);
+    if (targetSectors.length > 0) {
+      const sectorMaps = await fetchPublishedSectorMaps(client, targetSectors).catch(
+        (error: unknown) => {
+          // Retried on the next read; the unchecked target stays usable meanwhile.
+          Sentry.captureException(error, {
+            level: "warning",
+            tags: { source: "snapQuestTargetsToReachable" },
+          });
+          return null;
+        },
+      );
+      if (sectorMaps && snapQuestTargetsToReachable(user, trackers, sectorMaps)) {
+        consequences.push({ type: "update_user", ids: ["location_update"] });
+      }
+    }
 
     const fullTrackers = trackers;
     user.questData = filterQuestTrackersForDbPersist(trackers, user);
