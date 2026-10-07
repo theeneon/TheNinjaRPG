@@ -8,6 +8,7 @@ import {
   MUSIC_HEAVENLY_SONATA_THEME,
   MUSIC_HORIZON_THEME,
   MUSIC_HYORIN_THEME,
+  MUSIC_SHADOWS_DANCE,
   MUSIC_SYNDICATE_THEME,
   MUSIC_WELCOME_TO_SEICHI,
   MUSIC_WINTER_THEME,
@@ -93,5 +94,31 @@ describe("getBackgroundMusicSrc", () => {
     expect(
       getBackgroundMusicSrc({ villageName: "Syndicate", isOutlaw: true }, "winter"),
     ).toBe(MUSIC_WINTER_THEME);
+  });
+
+  it("plays Shadow's Dance in every battle, over all other themes", () => {
+    expect(getBackgroundMusicSrc({ villageName: "Hyorin", inBattle: true }, "fall")).toBe(
+      MUSIC_SHADOWS_DANCE,
+    );
+    expect(
+      getBackgroundMusicSrc({ villageName: "Syndicate", isOutlaw: true, inBattle: true }, "spring"),
+    ).toBe(MUSIC_SHADOWS_DANCE);
+    expect(
+      getBackgroundMusicSrc(
+        { bloodlineId: HEAVENLY_SONATA_BLOODLINE_ID, inBattle: true },
+        "summer",
+      ),
+    ).toBe(MUSIC_SHADOWS_DANCE);
+    expect(getBackgroundMusicSrc({ inBattle: true }, "halloween")).toBe(MUSIC_SHADOWS_DANCE);
+    expect(getBackgroundMusicSrc({ inBattle: true }, "winter")).toBe(MUSIC_SHADOWS_DANCE);
+  });
+
+  it("returns to the normal theme once the battle is over", () => {
+    expect(getBackgroundMusicSrc({ villageName: "Hyorin", inBattle: false }, "fall")).toBe(
+      MUSIC_HYORIN_THEME,
+    );
+    expect(getBackgroundMusicSrc({ villageName: "Hyorin", inBattle: null }, "halloween")).toBe(
+      MUSIC_HALLOWEEN_THEME,
+    );
   });
 });
