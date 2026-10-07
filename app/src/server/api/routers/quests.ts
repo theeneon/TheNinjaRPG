@@ -6,6 +6,7 @@ import {
   gt,
   gte,
   inArray,
+  isNotNull,
   isNull,
   like,
   lte,
@@ -89,6 +90,7 @@ import {
   isAvailableUserQuests,
   isQuestRankAllowed,
   isWarMissionAvailable,
+  postProcessRewards,
   questAlreadyActiveBlockMessage,
   questDailyQuota,
   questTypeConcurrentBlockMessage,
@@ -96,6 +98,14 @@ import {
   rollObjectiveAttackers,
   verifyQuestContentForSave,
 } from "@/libs/quest";
+import {
+  REWARD_CHOICE_AMOUNT_LABELS,
+  REWARD_CHOICE_PENDING_MESSAGE,
+  REWARD_CHOICE_READY_MESSAGE,
+  rewardFromChoiceCards,
+  validateRewardPicks,
+  verifyRewardChoiceForSave,
+} from "@/libs/rewardChoice";
 import { getSageMasteryDisplayRank, sageRanksAtOrBelow } from "@/libs/sageMode";
 import { callDiscordContent } from "@/libs/socials";
 import { availableQuestLetterRanks, availableRanks } from "@/libs/train";
@@ -146,7 +156,16 @@ import { idSchema } from "@/validators/misc";
 import type { AllObjectivesType, QuestTrackerType } from "@/validators/objectives";
 import { QuestTracker, QuestValidator } from "@/validators/objectives";
 import { questFilteringSchema } from "@/validators/quest";
-import { PostProcessedRewardSchema } from "@/validators/rewards";
+import {
+  ClaimRewardChoiceSchema,
+  type PendingRewardChoice,
+  PendingRewardChoiceSchema,
+  PostProcessedRewardSchema,
+  type RewardChoiceAmountField,
+  type RewardChoiceCard,
+  type RewardChoiceDisplay,
+  RewardChoiceDisplaySchema,
+} from "@/validators/rewards";
 import type { QuestCounterFieldName } from "@/validators/user";
 import { getQuestCounterFieldName } from "@/validators/user";
 
@@ -390,6 +409,7 @@ export const questsRouter = createTRPCRouter({
             historyPreviousCompletes: questHistory.previousCompletes,
             historyStartedAt: questHistory.startedAt,
             historyEndAt: questHistory.endAt,
+            historyPendingRewardChoice: questHistory.pendingRewardChoice,
           })
           .from(quest)
           .leftJoin(
@@ -500,6 +520,7 @@ export const questsRouter = createTRPCRouter({
               previousAttempts: result.previousAttempts ?? 0,
               periodCompletes: result.periodCompletes ?? 0,
               periodStartAt: result.periodStartAt,
+              pendingRewardChoice: result.historyPendingRewardChoice,
             }
           : null;
 
@@ -698,6 +719,10 @@ export const questsRouter = createTRPCRouter({
         );
         if (!check) {
           return { success: false, message: `Objective flow invalid: ${message}` };
+        }
+        const rewardChoiceCheck = verifyRewardChoiceForSave(input.data.content);
+        if (!rewardChoiceCheck.check) {
+          return errorResponse(rewardChoiceCheck.message);
         }
         // Validate that either main quest has sceneCharacters or each objective has sceneCharacters
         const hasMainSceneCharacters = input.data.content.sceneCharacters.length > 0;
@@ -1002,6 +1027,8 @@ export const questsRouter = createTRPCRouter({
         z.object({
           success: z.literal(false),
           message: z.string(),
+          /** Completion refused because an earlier reward choice is still waiting. */
+          rewardChoicePending: z.boolean().optional(),
         }),
         // Success response
         z.object({
@@ -1025,6 +1052,8 @@ export const questsRouter = createTRPCRouter({
               image: z.string(),
             }),
           ),
+          /** The completion left a reward choice for the player to pick from. */
+          rewardChoicePending: z.boolean(),
         }),
       ]),
     )
@@ -1053,8 +1082,15 @@ export const questsRouter = createTRPCRouter({
       }
 
       // Figure out if any finished quests & get rewards
-      const { rewards, trackers, userQuest, resolved, notifications, consequences } =
-        getReward(user, input.questId, input.nextObjectiveId, settings);
+      const {
+        rewards,
+        trackers,
+        userQuest,
+        resolved,
+        notifications,
+        consequences,
+        rewardChoice,
+      } = getReward(user, input.questId, input.nextObjectiveId, settings);
 
       // Persist completion before snapshot CAS so we cannot commit questData/updatedAt and then
       // lose the completion race; if snapshot claim fails, revert completion below. Shared with
@@ -1070,6 +1106,7 @@ export const questsRouter = createTRPCRouter({
         notifications,
         consequences,
         existingHistory: questHistoryPrefetch ?? null,
+        rewardChoice,
       });
 
       if (claim.outcome === "already_completed") {
@@ -1089,6 +1126,7 @@ export const questsRouter = createTRPCRouter({
             : null,
           resolved: true,
           badges: [],
+          rewardChoicePending: false,
         };
       }
       if (claim.outcome === "not_found") {
@@ -1097,9 +1135,18 @@ export const questsRouter = createTRPCRouter({
       if (claim.outcome === "state_changed") {
         return errorResponse("Quest state changed, please try again");
       }
+      if (claim.outcome === "choice_pending") {
+        return {
+          ...errorResponse(REWARD_CHOICE_PENDING_MESSAGE),
+          rewardChoicePending: true,
+        };
+      }
 
       // Handle immidiate consequences first
       const finalNotifications = [...toastMessages, ...claim.postNotifications];
+      if (claim.rewardChoicePending) {
+        finalNotifications.push(REWARD_CHOICE_READY_MESSAGE);
+      }
 
       return {
         success: true,
@@ -1116,6 +1163,99 @@ export const questsRouter = createTRPCRouter({
           : null,
         resolved,
         badges: claim.badges,
+        rewardChoicePending: claim.rewardChoicePending,
+      };
+    }),
+  getPendingRewardChoices: protectedProcedure
+    .meta({
+      mcp: { description: "List quest reward choices waiting for the player to pick" },
+    })
+    .output(z.array(RewardChoiceDisplaySchema))
+    .query(async ({ ctx }) => {
+      const rows = await ctx.drizzle.query.questHistory.findMany({
+        columns: { questId: true, pendingRewardChoice: true },
+        where: and(
+          eq(questHistory.userId, ctx.userId),
+          isNotNull(questHistory.pendingRewardChoice),
+        ),
+        with: { quest: { columns: { name: true } } },
+      });
+      return await resolveRewardChoiceDisplays(ctx.drizzle, rows);
+    }),
+  claimRewardChoice: protectedProcedure
+    .meta({ mcp: { description: "Pick and claim rewards from a quest reward choice" } })
+    .input(ClaimRewardChoiceSchema)
+    .output(
+      z.union([
+        z.object({ success: z.literal(false), message: z.string() }),
+        z.object({
+          success: z.literal(true),
+          message: z.string(),
+          rewards: PostProcessedRewardSchema,
+          badges: z.array(
+            z.object({ id: z.string(), name: z.string(), image: z.string() }),
+          ),
+        }),
+      ]),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const [user, history] = await Promise.all([
+        fetchUser(ctx.drizzle, ctx.userId),
+        ctx.drizzle.query.questHistory.findFirst({
+          columns: { id: true, pendingRewardChoice: true },
+          where: and(
+            eq(questHistory.userId, ctx.userId),
+            eq(questHistory.questId, input.questId),
+          ),
+          with: { quest: { columns: { name: true } } },
+        }),
+      ]);
+      // Guards
+      if (user.isBanned) {
+        return errorResponse("You are banned and cannot perform this action");
+      }
+      const offer = PendingRewardChoiceSchema.safeParse(history?.pendingRewardChoice);
+      if (!history || !offer.success) {
+        return errorResponse("No reward choice is waiting for this quest");
+      }
+      if (offer.data.id !== input.choiceId) {
+        return errorResponse("This reward choice is no longer available");
+      }
+      const picks = validateRewardPicks(offer.data, input.cardIds);
+      if (!picks.success) return errorResponse(picks.message);
+      // Consume exactly the offer that was validated; a parallel claim or a newer offer
+      // leaves zero rows affected, so the picked rewards are granted at most once.
+      const consumed = await ctx.drizzle
+        .update(questHistory)
+        .set({ pendingRewardChoice: null })
+        .where(
+          and(
+            eq(questHistory.id, history.id),
+            eq(questHistory.userId, ctx.userId),
+            sql`JSON_UNQUOTE(JSON_EXTRACT(${questHistory.pendingRewardChoice}, '$.id')) = ${offer.data.id}`,
+          ),
+        );
+      if (consumed.rowsAffected === 0) {
+        return errorResponse("This reward choice was already claimed");
+      }
+      // Mutations
+      const rewards = postProcessRewards(rewardFromChoiceCards(picks.cards));
+      const { items, jutsus, bloodlines, badges, sageModes } = await updateRewards({
+        client: ctx.drizzle,
+        user,
+        rewards,
+        reason: "QUEST",
+      });
+      rewards.reward_items = items.map((i) => i.name);
+      rewards.reward_jutsus = jutsus.map((i) => i.name);
+      rewards.reward_bloodlines = bloodlines.map((i) => i.name);
+      rewards.reward_sage_modes = sageModes.map((i) => i.name);
+      rewards.reward_badges = badges.map((i) => i.name);
+      return {
+        success: true,
+        message: `Claimed rewards from ${history.quest?.name ?? "quest"}`,
+        rewards,
+        badges,
       };
     }),
   checkLocationQuest: protectedProcedure
@@ -2463,6 +2603,7 @@ export const upsertQuestEntry = async (
       previousAttempts: 1,
       periodCompletes: 0,
       periodStartAt: null,
+      pendingRewardChoice: null,
     };
     // Idempotent on the (userId, questId) unique key: if a concurrent start (double-tap, or a
     // UI + overworld race, possibly past a stale `prevEntry`) already inserted the row, restart
@@ -2541,6 +2682,7 @@ const revertQuestCompletionAfterFailedClaim = async (
   questId: string,
   completedEndAt: Date,
   wrotePeriodCounter: boolean,
+  wroteRewardChoice: boolean,
 ) => {
   await client
     .update(questHistory)
@@ -2553,6 +2695,8 @@ const revertQuestCompletionAfterFailedClaim = async (
       ...(wrotePeriodCounter
         ? { periodCompletes: sql`GREATEST(${questHistory.periodCompletes} - 1, 0)` }
         : {}),
+      // The offer belongs to the reverted completion; the retry stores a fresh one.
+      ...(wroteRewardChoice ? { pendingRewardChoice: null } : {}),
       endAt: null,
     })
     .where(
@@ -2605,13 +2749,17 @@ type CommitQuestObjectiveRewardsResult =
       /** Same GetRewardResult passed in, mutated with resolved reward names for display. */
       rewards: GetRewardResult;
       badges: { id: string; name: string; image: string }[];
+      /** The completion stored a reward-choice offer the player still has to pick from. */
+      rewardChoicePending: boolean;
     }
   /** Resolved completion lost the CAS and the row is already completed (idempotent re-claim). */
   | { outcome: "already_completed" }
   /** Resolved completion lost the CAS and no quest history row exists. */
   | { outcome: "not_found" }
   /** Completion CAS or snapshot claim failed; caller should ask the user to retry. */
-  | { outcome: "state_changed" };
+  | { outcome: "state_changed" }
+  /** An earlier completion's reward choice is still unpicked, so this one cannot store its own. */
+  | { outcome: "choice_pending" };
 
 /**
  * Shared post-`getReward` reward-claim sequence used by both `checkRewards` and the
@@ -2639,6 +2787,11 @@ export const commitQuestObjectiveRewards = async (info: {
   /** Pre-fetched questHistory row for this quest, if the caller already loaded it. */
   existingHistory?: { completed: number } | null;
   /**
+   * Offer of a resolved "choose" quest. It is written by the completion CAS itself, which also
+   * refuses to overwrite an unpicked offer, so a completion and its offer land together.
+   */
+  rewardChoice?: PendingRewardChoice | null;
+  /**
    * Extra userData columns for updateRewards to fold into its single UPDATE on the claim path.
    * Only applied when this commit actually reaches the reward payout (i.e. the completion CAS
    * won / a non-resolved advance was claimed), never on already_completed / not_found / state
@@ -2658,6 +2811,7 @@ export const commitQuestObjectiveRewards = async (info: {
     notifications,
     consequences,
   } = info;
+  const rewardChoice = resolved ? (info.rewardChoice ?? null) : null;
 
   user.questData = filterQuestTrackersForDbPersist(trackers, user);
   // Once a quest resolves, remove its tracker so replayed assignments cannot inherit done goals.
@@ -2714,6 +2868,7 @@ export const commitQuestObjectiveRewards = async (info: {
         completed: 1,
         previousCompletes: sql`${questHistory.previousCompletes} + 1`,
         endAt: completedEndAt,
+        ...(rewardChoice ? { pendingRewardChoice: rewardChoice } : {}),
         // Reset the period counter when this completion opens a new period, else increment.
         ...(cps
           ? {
@@ -2727,6 +2882,7 @@ export const commitQuestObjectiveRewards = async (info: {
           eq(questHistory.questId, userQuest?.questId ?? ""),
           eq(questHistory.userId, userId),
           eq(questHistory.completed, 0),
+          ...(rewardChoice ? [isNull(questHistory.pendingRewardChoice)] : []),
         ),
       );
 
@@ -2741,6 +2897,9 @@ export const commitQuestObjectiveRewards = async (info: {
       }
       if (!historyRow) {
         return { outcome: "not_found" };
+      }
+      if (rewardChoice && historyRow.pendingRewardChoice) {
+        return { outcome: "choice_pending" };
       }
       return { outcome: "state_changed" };
     }
@@ -2763,6 +2922,7 @@ export const commitQuestObjectiveRewards = async (info: {
         userQuest.questId,
         completedEndAt,
         periodCounterWritten,
+        !!rewardChoice,
       );
     }
     return { outcome: "state_changed" };
@@ -2904,6 +3064,7 @@ export const commitQuestObjectiveRewards = async (info: {
     postNotifications,
     rewards,
     badges,
+    rewardChoicePending: !!rewardChoice,
   };
 };
 
@@ -3229,3 +3390,153 @@ export const sageQuestFilters = (
     ),
   ),
 ];
+
+/**
+ * Resolves pending reward-choice offers for display: one query per referenced content type,
+ * run together. Offers that no longer parse are skipped rather than failing the list.
+ */
+export const resolveRewardChoiceDisplays = async (
+  client: DrizzleClient,
+  rows: {
+    questId: string;
+    pendingRewardChoice: unknown;
+    quest: { name: string } | null;
+  }[],
+): Promise<RewardChoiceDisplay[]> => {
+  const offers = rows.flatMap((row) => {
+    const parsed = PendingRewardChoiceSchema.safeParse(row.pendingRewardChoice);
+    return parsed.success
+      ? [
+          {
+            questId: row.questId,
+            questName: row.quest?.name ?? "Quest",
+            ...parsed.data,
+          },
+        ]
+      : [];
+  });
+  const idsFor = (field: RewardChoiceCard["field"]) => [
+    ...new Set(
+      offers.flatMap((offer) =>
+        offer.cards.flatMap((card) =>
+          card.field === field && card.contentId ? [card.contentId] : [],
+        ),
+      ),
+    ),
+  ];
+  const itemIds = idsFor("reward_items");
+  const jutsuIds = idsFor("reward_jutsus");
+  const bloodlineIds = idsFor("reward_bloodlines");
+  const sageModeIds = idsFor("reward_sage_modes");
+  const badgeIds = idsFor("reward_badges");
+  const [items, jutsus, bloodlines, sageModes, badges] = await Promise.all([
+    itemIds.length > 0
+      ? client
+          .select({
+            id: item.id,
+            name: item.name,
+            image: item.image,
+            rarity: item.rarity,
+            description: item.description,
+          })
+          .from(item)
+          .where(inArray(item.id, itemIds))
+      : [],
+    jutsuIds.length > 0
+      ? client
+          .select({
+            id: jutsu.id,
+            name: jutsu.name,
+            image: jutsu.image,
+            rarity: jutsu.jutsuRank,
+            description: jutsu.description,
+          })
+          .from(jutsu)
+          .where(inArray(jutsu.id, jutsuIds))
+      : [],
+    bloodlineIds.length > 0
+      ? client
+          .select({
+            id: bloodline.id,
+            name: bloodline.name,
+            image: bloodline.image,
+            rarity: bloodline.rank,
+            description: bloodline.description,
+          })
+          .from(bloodline)
+          .where(inArray(bloodline.id, bloodlineIds))
+      : [],
+    sageModeIds.length > 0
+      ? client
+          .select({
+            id: sageMode.id,
+            name: sageMode.name,
+            image: sageMode.image,
+            description: sageMode.description,
+          })
+          .from(sageMode)
+          .where(inArray(sageMode.id, sageModeIds))
+      : [],
+    badgeIds.length > 0
+      ? client
+          .select({
+            id: badge.id,
+            name: badge.name,
+            image: badge.image,
+            description: badge.description,
+          })
+          .from(badge)
+          .where(inArray(badge.id, badgeIds))
+      : [],
+  ]);
+  const content = new Map<
+    string,
+    { name: string; image: string; rarity: string | null; description: string }
+  >();
+  const register = (
+    field: RewardChoiceCard["field"],
+    entries: {
+      id: string;
+      name: string;
+      image: string;
+      description: string;
+      rarity?: string;
+    }[],
+  ) => {
+    for (const entry of entries) {
+      content.set(`${field}:${entry.id}`, { ...entry, rarity: entry.rarity ?? null });
+    }
+  };
+  register("reward_items", items);
+  register("reward_jutsus", jutsus);
+  register("reward_bloodlines", bloodlines);
+  register("reward_sage_modes", sageModes);
+  register("reward_badges", badges);
+
+  return offers.map((offer) => ({
+    questId: offer.questId,
+    questName: offer.questName,
+    choiceId: offer.id,
+    pickCount: offer.pickCount,
+    cards: offer.cards.map((card) => {
+      if (!card.contentId) {
+        const field = card.field as RewardChoiceAmountField;
+        return {
+          ...card,
+          name: REWARD_CHOICE_AMOUNT_LABELS[field] ?? card.field,
+          image: null,
+          rarity: null,
+          description: null,
+        };
+      }
+      const resolved = content.get(`${card.field}:${card.contentId}`);
+      return {
+        ...card,
+        name: resolved?.name ?? "Unknown reward",
+        image: resolved?.image ?? null,
+        rarity: resolved?.rarity ?? null,
+        description: resolved?.description ?? null,
+      };
+    }),
+  }));
+};

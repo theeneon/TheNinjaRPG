@@ -19,6 +19,7 @@ import Loader from "@/layout/Loader";
 import Modal from "@/layout/Modal";
 import NavTabs from "@/layout/NavTabs";
 import { EventTimer, Objective, Reward } from "@/layout/Objective";
+import { PendingRewardChoices, useOpenRewardChoice } from "@/layout/RewardChoice";
 import Table, { type ColumnDefinitionType } from "@/layout/Table";
 import { getLemuImage, LEMU_EXPERIMENT } from "@/libs/lemuExperiment";
 import {
@@ -28,6 +29,7 @@ import {
 } from "@/libs/objectives";
 import { useInfinitePagination } from "@/libs/pagination";
 import { isReducedMissionReward } from "@/libs/quest";
+import { getRewardPickCount, isRewardChoiceQuest } from "@/libs/rewardChoice";
 import { cn } from "@/libs/shadui";
 import { showMutationToast, showRewardToast } from "@/libs/toast";
 import { isRetryableTrpcError } from "@/utils/error";
@@ -232,6 +234,7 @@ export const LogbookActive: React.FC = () => {
 
   return (
     <div className="">
+      <PendingRewardChoices />
       {quests?.map((uq) => {
         const tracker = userData?.questData?.find((q) => q.id === uq.questId);
         return (
@@ -721,6 +724,11 @@ export const LogbookEntry: React.FC<LogbookEntryProps> = (props) => {
               <Reward
                 info={userQuest.quest.content.reward}
                 rewardMultiplier={rewardMultiplier}
+                pickCount={
+                  isRewardChoiceQuest(userQuest.quest.content)
+                    ? getRewardPickCount(userQuest.quest.content)
+                    : undefined
+                }
               />
               <EventTimer quest={quest} tracker={tracker} />
             </div>
@@ -835,6 +843,7 @@ export const LogbookEntry: React.FC<LogbookEntryProps> = (props) => {
  */
 export const useCheckRewards = () => {
   const utils = api.useUtils();
+  const openRewardChoice = useOpenRewardChoice();
 
   // Tutorial step
   const { currentStep, handleNextStepAsync } = useTutorialStep();
@@ -846,6 +855,10 @@ export const useCheckRewards = () => {
         // If a failutre, show a toast
         if (!data.success && "message" in data) {
           showMutationToast({ success: data.success, message: data.message });
+        }
+        // A finished "choose" quest (or one blocked by an earlier unpicked offer) opens the picker
+        if (data.rewardChoicePending) {
+          void openRewardChoice();
         }
         // Update state
         await Promise.all([

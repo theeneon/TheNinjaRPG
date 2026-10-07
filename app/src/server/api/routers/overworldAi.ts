@@ -28,6 +28,10 @@ import {
   isMockQuestHistoryRow,
   questTypeConcurrentBlockMessage,
 } from "@/libs/quest";
+import {
+  REWARD_CHOICE_PENDING_MESSAGE,
+  REWARD_CHOICE_READY_MESSAGE,
+} from "@/libs/rewardChoice";
 import { availableQuestLetterRanks } from "@/libs/train";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUserItems } from "@/routers/item";
@@ -326,6 +330,8 @@ export const overworldAiRouter = createTRPCRouter({
       baseServerResponse.extend({
         battleId: z.string().optional(),
         grantedQuestId: z.string().optional(),
+        /** The interaction completed a quest whose reward the player now picks. */
+        rewardChoicePending: z.boolean().optional(),
         dialog: z
           .object({
             objectiveId: z.string(),
@@ -468,16 +474,23 @@ export const overworldAiRouter = createTRPCRouter({
         // revert, structural consequences, sensei mission bonus, tier-quest bootstrap /
         // repeatable-achievement re-arm, and the reward payout via updateRewards), so the
         // overworld path stays in parity with the canonical reward claim.
-        const { rewards, trackers, userQuest, resolved, notifications, consequences } =
-          getReward(
-            userForTrackers,
-            bound.questId,
-            input.dialogContentId,
-            settings,
-            // The player is validated as standing on this placement's tile above, so a
-            // bound deliver_item/objective resolves off the placement, not stored coords.
-            new Set([placement.id]),
-          );
+        const {
+          rewards,
+          trackers,
+          userQuest,
+          resolved,
+          notifications,
+          consequences,
+          rewardChoice,
+        } = getReward(
+          userForTrackers,
+          bound.questId,
+          input.dialogContentId,
+          settings,
+          // The player is validated as standing on this placement's tile above, so a
+          // bound deliver_item/objective resolves off the placement, not stored coords.
+          new Set([placement.id]),
+        );
 
         const claim = await commitQuestObjectiveRewards({
           client: ctx.drizzle,
@@ -497,6 +510,7 @@ export const overworldAiRouter = createTRPCRouter({
             activeUser.userQuests?.find(
               (q) => q.questId === bound.questId && !isMockQuestHistoryRow(q),
             ) ?? null,
+          rewardChoice,
           // The active-NPC-mission slot is freed centrally by commitQuestObjectiveRewards on
           // terminal completion (questId-scoped IF, folded into updateRewards' userData write),
           // so this path needs no explicit clear.
@@ -509,13 +523,23 @@ export const overworldAiRouter = createTRPCRouter({
         if (claim.outcome === "already_completed") {
           return { success: true, message: "Interaction complete" };
         }
+        if (claim.outcome === "choice_pending") {
+          return {
+            ...errorResponse(REWARD_CHOICE_PENDING_MESSAGE),
+            rewardChoicePending: true,
+          };
+        }
         if (claim.outcome !== "claimed") {
           return errorResponse("Quest state changed, please try again");
         }
+        const messages = claim.rewardChoicePending
+          ? [...claim.postNotifications, REWARD_CHOICE_READY_MESSAGE]
+          : claim.postNotifications;
 
         return {
           success: true,
-          message: claim.postNotifications.join(" ") || "Interaction complete",
+          message: messages.join(" ") || "Interaction complete",
+          rewardChoicePending: claim.rewardChoicePending,
         };
       }
 

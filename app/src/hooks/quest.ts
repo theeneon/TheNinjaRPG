@@ -9,6 +9,8 @@ import {
   IMG_BADGE_DIALOG,
   LetterRanks,
   MEDNIN_RANKS,
+  QUEST_REWARD_MODES,
+  QUEST_REWARD_PICK_MAX,
   QuestTypes,
   QuestTypesWithMaxAttempts,
   RetryQuestDelays,
@@ -55,6 +57,8 @@ export const useQuestEditForm = (quest: Quest, refetch: () => Promise<unknown>) 
     ...quest.content.reward,
     sceneBackground: quest.content.sceneBackground,
     sceneCharacters: quest.content.sceneCharacters,
+    rewardMode: quest.content.rewardMode ?? "all",
+    rewardPickCount: quest.content.rewardPickCount ?? 1,
     endsAt: endsAt,
     startsAt: startsAt,
   };
@@ -151,6 +155,8 @@ export const useQuestEditForm = (quest: Quest, refetch: () => Promise<unknown>) 
         sceneBackground: data.sceneBackground,
         sceneCharacters: data.sceneCharacters,
         objectives: newObjectives,
+        rewardMode: data.rewardMode,
+        rewardPickCount: data.rewardPickCount,
         reward: {
           reward_money: data.reward_money,
           reward_seichi_silver: data.reward_seichi_silver,
@@ -241,6 +247,10 @@ export const useQuestEditForm = (quest: Quest, refetch: () => Promise<unknown>) 
   const questType = useWatch({
     control: form.control,
     name: "questType",
+  });
+  const rewardMode = useWatch({
+    control: form.control,
+    name: "rewardMode",
   });
 
   // Object for form values
@@ -366,6 +376,19 @@ export const useQuestEditForm = (quest: Quest, refetch: () => Promise<unknown>) 
   }
 
   // Rewards
+  formData.push({
+    id: "rewardMode",
+    type: "str_array",
+    values: QUEST_REWARD_MODES,
+    label: "Reward Mode (all, or player chooses)",
+  });
+  if (rewardMode === "choose") {
+    formData.push({
+      id: "rewardPickCount",
+      type: "number",
+      label: `Rewards to Choose (1-${QUEST_REWARD_PICK_MAX}; rank, village & materials always given)`,
+    });
+  }
   formData.push({ id: "reward_hunter_items", type: "boolean" });
   formData.push({ id: "reward_gathering_items", type: "boolean" });
   formData.push({

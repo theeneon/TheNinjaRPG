@@ -866,6 +866,12 @@ export const BattleDataEntryType = [
 export const RetryQuestDelays = ["daily", "weekly", "monthly", "none"] as const;
 export type RetryQuestDelay = (typeof RetryQuestDelays)[number];
 
+/** How a quest's completion reward is granted: everything, or a player-picked subset. */
+export const QUEST_REWARD_MODES = ["all", "choose"] as const;
+export type QuestRewardMode = (typeof QUEST_REWARD_MODES)[number];
+/** Upper bound for how many rewards a "choose" quest lets the player pick. */
+export const QUEST_REWARD_PICK_MAX = 5;
+
 export const QuestTypes = [
   "starter",
   "tier",

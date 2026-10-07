@@ -402,6 +402,117 @@ describe("commitQuestObjectiveRewards compatibility", () => {
     );
     expect(persisted.length).toBeGreaterThan(0);
   });
+
+  describe("reward choice", () => {
+    const rewardChoice = {
+      id: "offer-1",
+      pickCount: 1,
+      cards: [
+        { id: "reward_money", field: "reward_money" as const, amount: 100 },
+        { id: "reward_exp", field: "reward_exp" as const, amount: 50 },
+      ],
+    };
+
+    it("stores the offer in the completion compare-and-swap", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([
+        { rowsAffected: 1 },
+        { rowsAffected: 1 },
+        { rowsAffected: 1 },
+        { rowsAffected: 1 },
+      ]);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: true,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toMatchObject({ outcome: "claimed", rewardChoicePending: true });
+      expect(sets[0]).toMatchObject({ completed: 1, pendingRewardChoice: rewardChoice });
+    });
+
+    it("never writes an offer for a non-terminal objective claim", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: false,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toMatchObject({ outcome: "claimed", rewardChoicePending: false });
+      expect(sets.some((set) => "pendingRewardChoice" in set)).toBe(false);
+    });
+
+    it("refuses to replace an earlier offer the player has not picked yet", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([{ rowsAffected: 0 }], {
+        completed: 0,
+        pendingRewardChoice: { ...rewardChoice, id: "older-offer" },
+      } as never);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: true,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toEqual({ outcome: "choice_pending" });
+      expect(sets).toHaveLength(1);
+    });
+
+    it("drops the offer together with the completion when the snapshot claim loses", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([
+        { rowsAffected: 1 },
+        { rowsAffected: 0 },
+        { rowsAffected: 1 },
+      ]);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: true,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toEqual({ outcome: "state_changed" });
+      expect(sets[2]).toMatchObject({ completed: 0, pendingRewardChoice: null });
+    });
+  });
 });
 
 describeWithDatabase("quest Energy reward snapshots", () => {

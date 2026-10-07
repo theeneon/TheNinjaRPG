@@ -17,6 +17,7 @@ import { ActiveSessionBoundary } from "@/layout/ActiveSessionBoundary";
 import ActivityStreakPopup from "@/layout/ActivityStreakPopup";
 import { ExperimentSpeedInsights } from "@/layout/ExperimentSpeedInsights";
 import LayoutSwitcher from "@/layout/LayoutSwitcher";
+import { RewardChoiceModal } from "@/layout/RewardChoice";
 import StructuredData from "@/layout/StructuredData";
 import { WebAnalytics } from "@/layout/WebAnalytics";
 import {
@@ -149,6 +150,7 @@ export default async function RootLayout({
                   <Toaster />
                   <AcceptWarning />
                   <ActivityStreakPopup />
+                  <RewardChoiceModal />
                   <PWAManager />
                   <NativeBridge />
                   <InstallPrompt />

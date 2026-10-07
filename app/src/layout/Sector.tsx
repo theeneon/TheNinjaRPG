@@ -51,6 +51,7 @@ import Link from "@/layout/Link";
 import { LogbookEntry, QuestDialogScene } from "@/layout/Logbook";
 import Modal from "@/layout/Modal";
 import RaidBrowser from "@/layout/RaidBrowser";
+import { useOpenRewardChoice } from "@/layout/RewardChoice";
 import SliderField from "@/layout/SliderField";
 import WebGlError from "@/layout/WebGLError";
 import { getWorldCycleBrightness } from "@/libs/dayNight";
@@ -401,6 +402,7 @@ const Sector: React.FC<SectorProps> = (props) => {
 
   // tRPC utility
   const utils = api.useUtils();
+  const openRewardChoice = useOpenRewardChoice();
 
   // Data from db
   const { data: userData, pusher, timeDiff, updateUser } = useRequiredUserData();
@@ -1596,6 +1598,9 @@ const Sector: React.FC<SectorProps> = (props) => {
             utils.travel.getSectorData.invalidate(),
             utils.profile.getUser.invalidate(),
           ]);
+        }
+        if (data.rewardChoicePending) {
+          void openRewardChoice();
         }
       },
     });

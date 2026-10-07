@@ -1,0 +1,1 @@
+ALTER TABLE `QuestHistory` ADD `pendingRewardChoice` json;

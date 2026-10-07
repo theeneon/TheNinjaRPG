@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { STARTER_VILLAGES, UserRanks } from "@/drizzle/constants";
+import {
+  QUEST_REWARD_MODES,
+  QUEST_REWARD_PICK_MAX,
+  STARTER_VILLAGES,
+  UserRanks,
+} from "@/drizzle/constants";
 import { idsWithNumberField } from "@/validators/base";
 
 // Maps legacy STARTER_VILLAGES enum keys to their current renames so quest
@@ -113,3 +118,89 @@ export const hasReward = (reward: ObjectiveRewardType) => {
     parsedReward.reward_war_healing > 0
   );
 };
+
+/** Quest content fields that select between granting every reward and a player pick. */
+export const questRewardModeFields = {
+  rewardMode: z.enum(QUEST_REWARD_MODES).prefault("all"),
+  rewardPickCount: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(QUEST_REWARD_PICK_MAX)
+    .prefault(1),
+};
+
+/** Scalar reward fields that each become one pickable card in a "choose" quest. */
+export const REWARD_CHOICE_AMOUNT_FIELDS = [
+  "reward_money",
+  "reward_seichi_silver",
+  "reward_clanpoints",
+  "reward_anbupoints",
+  "reward_exp",
+  "reward_tokens",
+  "reward_prestige",
+  "reward_reputation",
+  "reward_skillpoints",
+  "reward_medical_experience",
+  "reward_hunting_experience",
+  "reward_crafting_experience",
+  "reward_gathering_experience",
+  "reward_sage_mastery_experience",
+  "reward_war_damage",
+  "reward_war_healing",
+] as const;
+export type RewardChoiceAmountField = (typeof REWARD_CHOICE_AMOUNT_FIELDS)[number];
+
+/** Content reward fields whose every entry becomes one pickable card in a "choose" quest. */
+export const REWARD_CHOICE_CONTENT_FIELDS = [
+  "reward_items",
+  "reward_jutsus",
+  "reward_bloodlines",
+  "reward_sage_modes",
+  "reward_badges",
+] as const;
+export type RewardChoiceContentField = (typeof REWARD_CHOICE_CONTENT_FIELDS)[number];
+
+/**
+ * One pickable reward. `amount` is the scaled scalar value, or the item quantity (1 for
+ * jutsus, bloodlines, sage modes and badges); `contentId` names the granted content.
+ */
+export const RewardChoiceCardSchema = z.object({
+  id: z.string().min(1),
+  field: z.enum([...REWARD_CHOICE_AMOUNT_FIELDS, ...REWARD_CHOICE_CONTENT_FIELDS]),
+  amount: z.number().int().min(1),
+  contentId: z.string().optional(),
+});
+export type RewardChoiceCard = z.infer<typeof RewardChoiceCardSchema>;
+
+/** Offer frozen on QuestHistory when a "choose" quest completes, until the player picks. */
+export const PendingRewardChoiceSchema = z.object({
+  id: z.string().min(1),
+  pickCount: z.number().int().min(1).max(QUEST_REWARD_PICK_MAX),
+  cards: z.array(RewardChoiceCardSchema).min(1),
+});
+export type PendingRewardChoice = z.infer<typeof PendingRewardChoiceSchema>;
+
+export const ClaimRewardChoiceSchema = z.object({
+  questId: z.string().min(1),
+  choiceId: z.string().min(1),
+  cardIds: z.array(z.string().min(1)).min(1).max(QUEST_REWARD_PICK_MAX),
+});
+export type ClaimRewardChoiceInput = z.infer<typeof ClaimRewardChoiceSchema>;
+
+/** A pending offer as shown to the player, with each card's content resolved for display. */
+export const RewardChoiceDisplaySchema = z.object({
+  questId: z.string(),
+  questName: z.string(),
+  choiceId: z.string(),
+  pickCount: z.number(),
+  cards: z.array(
+    RewardChoiceCardSchema.extend({
+      name: z.string(),
+      image: z.string().nullable(),
+      rarity: z.string().nullable(),
+      description: z.string().nullable(),
+    }),
+  ),
+});
+export type RewardChoiceDisplay = z.infer<typeof RewardChoiceDisplaySchema>;

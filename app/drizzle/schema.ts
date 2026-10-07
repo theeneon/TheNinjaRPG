@@ -36,7 +36,7 @@ import type {
   ActionEffect,
 } from "@/libs/combat/types";
 import type { QuestContentType, QuestTrackerType } from "@/validators/objectives";
-import type { ObjectiveRewardType } from "@/validators/rewards";
+import type { ObjectiveRewardType, PendingRewardChoice } from "@/validators/rewards";
 import type {
   RankedSeasonDivisionReward,
   RankedLoadoutSchema,
@@ -3836,6 +3836,8 @@ export const questHistory = mysqlTable(
     // Completions counted within the current retryDelay calendar period.
     periodCompletes: int("periodCompletes").default(0).notNull(),
     periodStartAt: datetime("periodStartAt", { mode: "date", fsp: 3 }),
+    // Reward offer of a "choose" quest completion, cleared atomically when the player picks.
+    pendingRewardChoice: json("pendingRewardChoice").$type<PendingRewardChoice>(),
   },
   (table) => {
     return {
