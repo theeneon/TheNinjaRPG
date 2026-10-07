@@ -79,8 +79,11 @@ export type BotIdGuard = {
   checkLevel: BotIdCheckLevel;
   /** The memoized verdict for this HTTP request. */
   verify: () => Promise<BotIdVerdict>;
-  /** Whether this request's outcome has been recorded, so a batch records it once. */
-  reported: boolean;
+  /**
+   * Which outcomes of this request have been recorded, by whether they blocked, so a batch
+   * records each once and a block after an observe-only record is not hidden.
+   */
+  reported: Set<boolean>;
   /** Whether a Sentry event was captured that the route must flush. */
   needsFlush: boolean;
   /** Round trip of the BotID check in ms, once it has settled. */
@@ -159,7 +162,7 @@ export const createBotIdGuard = (
       })();
       return pending;
     },
-    reported: false,
+    reported: new Set(),
     needsFlush: false,
     checkMs: undefined,
     timingLogged: false,
@@ -233,8 +236,8 @@ export const enforceBotId = async (props: {
   if (!guard) return;
   const blocking = isBotIdBlockingProcedure(props.path) && isBotIdEnforced();
   if (!guard.hasChallenge) {
-    if (!guard.reported) {
-      guard.reported = true;
+    if (!guard.reported.has(blocking)) {
+      guard.reported.add(blocking);
       recordMissingChallenge(guard, { ...props, enforced: blocking });
     }
     if (blocking) {
@@ -267,8 +270,8 @@ export const enforceBotId = async (props: {
   }
   if (verdict.ok && !verdict.isBot) return;
   const enforced = verdict.ok && blocking;
-  if (!guard.reported) {
-    guard.reported = true;
+  if (!guard.reported.has(enforced)) {
+    guard.reported.add(enforced);
     recordBotIdOutcome(guard, verdict, { ...props, enforced });
   }
   if (enforced) {

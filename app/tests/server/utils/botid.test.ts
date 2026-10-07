@@ -325,6 +325,21 @@ describe("enforceBotId without a challenge", () => {
     expect(records()).toMatchObject([{ event: "missing_challenge", enforced: false }]);
   });
 
+  it("records a block that follows an observe-only record in the same batch", async () => {
+    const guard = unchallenged(["activityStreak.claimStreakDay", "train.startTraining"]);
+    const results = await withBotIdGuard(guard, () =>
+      Promise.allSettled([
+        enforceBotId({ ...mutation, path: "activityStreak.claimStreakDay" }),
+        enforceBotId({ ...mutation, path: "train.startTraining" }),
+      ]),
+    );
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(records()).toMatchObject([
+      { path: "activityStreak.claimStreakDay", enforced: false },
+      { path: "train.startTraining", enforced: true },
+    ]);
+  });
+
   it("only records when enforcement is off", async () => {
     env.BOTID_ENFORCE = "false";
     const guard = unchallenged(["train.startTraining"]);
@@ -362,6 +377,23 @@ describe("observe-only procedures", () => {
       withBotIdGuard(guard, () => enforceBotId({ ...mutation, path: "bank.claimInterest" })),
     ).resolves.toBeUndefined();
     expect(records()).toMatchObject([{ event: "observed", isBot: true }]);
+  });
+
+  it("do not hide a block of a later mutation in the same batch", async () => {
+    checkBotId.mockResolvedValue(bot);
+    const guard = createBotIdGuard(["bank.claimInterest", "bank.transfer"]);
+    const results = await withBotIdGuard(guard, () =>
+      Promise.allSettled([
+        enforceBotId({ ...mutation, path: "bank.claimInterest" }),
+        enforceBotId({ ...mutation, path: "bank.transfer" }),
+      ]),
+    );
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected"]);
+    expect(checkBotId).toHaveBeenCalledTimes(1);
+    expect(records()).toMatchObject([
+      { event: "observed", path: "bank.claimInterest" },
+      { event: "blocked", path: "bank.transfer" },
+    ]);
   });
 });
 
