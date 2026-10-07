@@ -61,8 +61,8 @@ export const Bloodright = () => {
         purchasedIds={purchasedIds}
         silver={user?.seichiSilver ?? 0}
         onSelect={(id) => {
-          purchase.reset();
-          refund.reset();
+          if (!purchase.isPending) purchase.reset();
+          if (!refund.isPending) refund.reset();
           setSelectedId(id);
           setIsOpen(true);
         }}
@@ -80,6 +80,7 @@ export const Bloodright = () => {
               title={tier.name}
               isOpen={isOpen}
               setIsOpen={setIsOpen}
+              isLoading={isMutating}
               className="max-w-2xl"
             >
               <ItemWithEffects item={tier} />
