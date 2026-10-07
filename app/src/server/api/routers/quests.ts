@@ -91,6 +91,7 @@ import {
   questDailyQuota,
   questTypeConcurrentBlockMessage,
   questUiAccessBlockMessage,
+  rollObjectiveAttackers,
   verifyQuestContentForSave,
 } from "@/libs/quest";
 import { getSageMasteryDisplayRank, sageRanksAtOrBelow } from "@/libs/sageMode";
@@ -1182,6 +1183,7 @@ export const questsRouter = createTRPCRouter({
         user,
         consequences,
         notifications,
+        { rollObjectiveAttackers: true },
       );
 
       user.questData = fullTrackers;
@@ -3002,7 +3004,8 @@ const executeClaimedQuestConsequences = async ({
  * Handles the consequences of a quest (items, battles, quest resets, etc.).
  *
  * With `alwaysClaimUserState` (used by `checkRewards`), always runs `claimUserSnapshot` so parallel
- * submissions serialize on `userData.updatedAt` before reward payout.
+ * submissions serialize on `userData.updatedAt` before reward payout. With `rollObjectiveAttackers`
+ * (used by `checkLocationQuest`), active objectives with attackers may start a random encounter.
  */
 export const handleQuestConsequences = async (
   client: DrizzleClient,
@@ -3011,6 +3014,8 @@ export const handleQuestConsequences = async (
   notifications: string[],
   options?: {
     alwaysClaimUserState?: boolean;
+    /** Roll the active objectives' ambush attackers; only the travel movement check sets it. */
+    rollObjectiveAttackers?: boolean;
   },
 ) => {
   // Quests reset
@@ -3035,45 +3040,12 @@ export const handleQuestConsequences = async (
     .filter(Boolean) as string[];
   // Opponents to attack
   let opponent = consequences.find((c) => c.type === "combat");
-  // If no opponent set, check if any objectives have attackers set
-  const activeObjectives = getActiveObjectives(user);
-  if (!opponent) {
-    activeObjectives.forEach((objective) => {
-      if ("attackers" in objective && objective.attackers.length > 0) {
-        let opponents = objective.attackers
-          .filter((ai) => Math.random() * 100 < ai.number)
-          .flatMap((ai) => ai.ids);
-        // See if we should limit the number of attackers
-        if (
-          "attackers_max_per_battle" in objective &&
-          objective.attackers_max_per_battle > 0 &&
-          opponents.length > objective.attackers_max_per_battle
-        ) {
-          // Randomly shuffle attackers and slice
-          opponents = opponents
-            .sort(() => Math.random() - 0.5)
-            .slice(0, objective.attackers_max_per_battle);
-        }
-        // If it's "encounter_at_location", then check sector
-        let sectorCheck = true;
-        if (objective.task === "win_encounter_at_location") {
-          if (user.sector !== objective.sector) {
-            sectorCheck = false;
-          }
-        }
-        // If we have opponents, set the opponent
-        if (opponents.length > 0 && sectorCheck) {
-          opponent = {
-            type: "random_encounter",
-            ids: opponents,
-            scaleStats: objective.attackers_scaled_to_user,
-            scaleGains: objective.attackers_scale_gains,
-          };
-          notifications.push("You have been attacked!");
-        }
-      }
-      if (opponent) return;
-    });
+  // Objective attackers ambush a player who is out travelling, so they are rolled only for the
+  // movement check (checkLocationQuest) of an awake player. Page loads (getUser), reward claims
+  // and battle retries must never start a random encounter on their own.
+  if (!opponent && options?.rollObjectiveAttackers && user.status === "AWAKE") {
+    opponent = rollObjectiveAttackers(getActiveObjectives(user), user.sector);
+    if (opponent) notifications.push("You have been attacked!");
   }
   // If quests were reset, update the user's quest data
   if (resetQuests.length > 0) {

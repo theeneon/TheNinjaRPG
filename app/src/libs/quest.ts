@@ -193,6 +193,48 @@ export const getActiveObjectives = (user: NonNullable<UserWithRelations>) => {
 };
 
 /**
+ * Roll the ambush attackers of the given active objectives. Each attacker set joins with its
+ * `number` percent chance, capped at `attackers_max_per_battle`; a `win_encounter_at_location`
+ * objective only ambushes inside its own sector. The first objective that produces attackers
+ * decides the encounter.
+ *
+ * @returns the random encounter to start, or undefined when nobody attacks.
+ */
+export const rollObjectiveAttackers = (
+  objectives: AllObjectivesType[],
+  sector: number,
+  random: () => number = Math.random,
+): QuestConsequence | undefined => {
+  for (const objective of objectives) {
+    if (!("attackers" in objective) || objective.attackers.length === 0) continue;
+    if (objective.task === "win_encounter_at_location" && sector !== objective.sector) {
+      continue;
+    }
+    let opponents = objective.attackers
+      .filter((ai) => random() * 100 < ai.number)
+      .flatMap((ai) => ai.ids);
+    if (
+      "attackers_max_per_battle" in objective &&
+      objective.attackers_max_per_battle > 0 &&
+      opponents.length > objective.attackers_max_per_battle
+    ) {
+      opponents = opponents
+        .sort(() => random() - 0.5)
+        .slice(0, objective.attackers_max_per_battle);
+    }
+    if (opponents.length > 0) {
+      return {
+        type: "random_encounter",
+        ids: opponents,
+        scaleStats: objective.attackers_scaled_to_user,
+        scaleGains: objective.attackers_scale_gains,
+      };
+    }
+  }
+  return undefined;
+};
+
+/**
  * Check if this is a location objective and user is at the location
  */
 export const isLocationObjective = (
