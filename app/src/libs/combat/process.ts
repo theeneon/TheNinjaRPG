@@ -10,6 +10,7 @@ import {
   OUT_OF_COMBAT_BASE_DAMAGE_INCREASE,
   OUT_OF_COMBAT_BASE_DAMAGE_REDUCTION,
   POST_DAMAGE_MODIFIER_TYPES,
+  type PoolType,
   SAGE_MODE_ACTIVATION_JUTSU_ID,
   SAGE_MODE_DISABLED_BATTLES,
   SAGE_MODE_MAX_LEVEL,
@@ -126,6 +127,7 @@ import {
   creditDamageDealt,
   findBarrier,
   findUser,
+  getEffectiveMaxPool,
   getEffectStackKey,
   getEffectStage,
   getItem,
@@ -725,6 +727,11 @@ export const applyEffects = (
       const user = newUsersState.find((u) => u.userId === c.userId);
       const target = newUsersState.find((u) => u.userId === c.targetId);
 
+      // Pools refill up to the effective max, so max-pool effects (e.g. armor pool
+      // bonuses) are not stripped by the first heal, absorb or lifesteal of the fight
+      const cap = (u: BattleUserState, pool: PoolType) =>
+        getEffectiveMaxPool(u, usersEffects, pool);
+
       // Apply all the consequences
       if (target && user) {
         // Vamp + lifesteal share one 60%-of-damage budget per consequence. Declared
@@ -764,7 +771,7 @@ export const applyEffects = (
             );
             if (vampHeal > 0) {
               leechConsumed += vampHeal;
-              user.curHealth = Math.min(user.maxHealth, user.curHealth + vampHeal);
+              user.curHealth = Math.min(cap(user, "Health"), user.curHealth + vampHeal);
               actionEffects.push({
                 txt: `${user.username} vamps ${vampHeal} damage as health`,
                 color: "green",
@@ -851,7 +858,7 @@ export const applyEffects = (
         }
         if (c.heal_hp !== undefined && c.heal_hp >= 0 && target.curHealth > 0) {
           target.curHealth += c.heal_hp;
-          target.curHealth = Math.min(target.maxHealth, target.curHealth);
+          target.curHealth = Math.min(cap(target, "Health"), target.curHealth);
           actionEffects.push({
             txt: `${target.username} heals ${c.heal_hp} HP`,
             color: "green",
@@ -859,7 +866,7 @@ export const applyEffects = (
         }
         if (c.heal_sp !== undefined && c.heal_sp >= 0) {
           target.curStamina += c.heal_sp;
-          target.curStamina = Math.min(target.maxStamina, target.curStamina);
+          target.curStamina = Math.min(cap(target, "Stamina"), target.curStamina);
           actionEffects.push({
             txt: `${target.username} heals ${c.heal_sp} SP`,
             color: "green",
@@ -867,7 +874,7 @@ export const applyEffects = (
         }
         if (c.heal_cp !== undefined && c.heal_cp >= 0) {
           target.curChakra += c.heal_cp;
-          target.curChakra = Math.min(target.maxChakra, target.curChakra);
+          target.curChakra = Math.min(cap(target, "Chakra"), target.curChakra);
           actionEffects.push({
             txt: `${target.username} heals ${c.heal_cp} CP`,
             color: "green",
@@ -916,7 +923,7 @@ export const applyEffects = (
           if (finalLifesteal > 0) {
             leechConsumed += finalLifesteal;
             user.curHealth += finalLifesteal;
-            user.curHealth = Math.min(user.maxHealth, user.curHealth);
+            user.curHealth = Math.min(cap(user, "Health"), user.curHealth);
             actionEffects.push({
               txt: `${user.username} steals ${finalLifesteal.toFixed(2)} damage as health`,
               color: "green",
@@ -929,7 +936,7 @@ export const applyEffects = (
           const maxAbsorb = preShieldDamage * 0.6;
           const absorbAmount = Math.min(c.absorb_hp, maxAbsorb);
           target.curHealth += absorbAmount;
-          target.curHealth = Math.min(target.maxHealth, target.curHealth);
+          target.curHealth = Math.min(cap(target, "Health"), target.curHealth);
           actionEffects.push({
             txt: `${target.username} absorbs ${absorbAmount.toFixed(2)} damage and converts it to health`,
             color: "green",
@@ -937,7 +944,7 @@ export const applyEffects = (
         }
         if (c.absorb_sp !== undefined && c.absorb_sp >= 0) {
           target.curStamina += c.absorb_sp;
-          target.curStamina = Math.min(target.maxHealth, target.curStamina);
+          target.curStamina = Math.min(cap(target, "Stamina"), target.curStamina);
           actionEffects.push({
             txt: `${target.username} absorbs ${c.absorb_sp.toFixed(2)} damage and converts it to stamina`,
             color: "green",
@@ -945,7 +952,7 @@ export const applyEffects = (
         }
         if (c.absorb_cp !== undefined && c.absorb_cp >= 0) {
           target.curChakra += c.absorb_cp;
-          target.curChakra = Math.min(target.maxHealth, target.curChakra);
+          target.curChakra = Math.min(cap(target, "Chakra"), target.curChakra);
           actionEffects.push({
             txt: `${target.username} absorbs ${c.absorb_cp.toFixed(2)} damage and converts it to chakra`,
             color: "green",
@@ -977,7 +984,7 @@ export const applyEffects = (
         if (c.poison !== undefined && c.poison >= 0) {
           target.curHealth = Math.max(
             0,
-            Math.min(target.maxHealth, target.curHealth - c.poison),
+            Math.min(cap(target, "Health"), target.curHealth - c.poison),
           );
           creditDamageDealt(damageCreditUser, target, c.poison);
           actionEffects.push({
@@ -2181,14 +2188,16 @@ function applyInstantSageAfterEffects(
   consequences.forEach((c) => {
     const target = battle.usersState.find((user) => user.userId === c.targetId);
     if (!target) return;
+    const cap = (pool: PoolType) =>
+      getEffectiveMaxPool(target, battle.usersEffects, pool);
     if (c.heal_hp !== undefined && c.heal_hp >= 0 && target.curHealth > 0) {
-      target.curHealth = Math.min(target.maxHealth, target.curHealth + c.heal_hp);
+      target.curHealth = Math.min(cap("Health"), target.curHealth + c.heal_hp);
     }
     if (c.heal_sp !== undefined && c.heal_sp >= 0) {
-      target.curStamina = Math.min(target.maxStamina, target.curStamina + c.heal_sp);
+      target.curStamina = Math.min(cap("Stamina"), target.curStamina + c.heal_sp);
     }
     if (c.heal_cp !== undefined && c.heal_cp >= 0) {
-      target.curChakra = Math.min(target.maxChakra, target.curChakra + c.heal_cp);
+      target.curChakra = Math.min(cap("Chakra"), target.curChakra + c.heal_cp);
     }
     if (c.damage !== undefined && c.damage >= 0) {
       target.curHealth = Math.max(0, target.curHealth - c.damage);
