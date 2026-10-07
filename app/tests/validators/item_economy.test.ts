@@ -115,13 +115,21 @@ describe("auction form per-unit price validation", () => {
       }).success,
     ).toBe(true);
   });
-  it("interprets bounds in the selected currency", () => {
-    expect(
-      auctionListingSchemaForItem(item).safeParse({
-        ...listing,
-        currencyType: "REPUTATION",
-        startingPrice: 21,
-      }).success,
-    ).toBe(false);
-  });
+  it.each([10, 5000, 50001])(
+    "ignores ryo bounds for reputation price %i",
+    (startingPrice) => {
+      expect(
+        auctionListingSchemaForItem({
+          ...item,
+          auctionMinPrice: 5000,
+          auctionMaxPrice: 50000,
+        }).safeParse({
+          ...listing,
+          currencyType: "REPUTATION",
+          startingPrice,
+          buyoutPrice: startingPrice + 1,
+        }).success,
+      ).toBe(true);
+    },
+  );
 });

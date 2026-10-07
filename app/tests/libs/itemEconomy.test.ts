@@ -95,6 +95,7 @@ describe("auction server price guard", () => {
         "AUCTION",
         price as number,
         1,
+        "MONEY",
       );
       if (message) expect(result).toContain(message);
       else expect(result).toBeNull();
@@ -107,6 +108,7 @@ describe("auction server price guard", () => {
         "AUCTION",
         1,
         1,
+        "MONEY",
       ),
     ).toBeNull();
   });

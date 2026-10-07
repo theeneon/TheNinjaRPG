@@ -109,6 +109,7 @@ export const auctionListingSchemaForItem = (
         data.listingType,
         price,
         data.quantity ?? fullQuantity,
+        data.currencyType,
       );
       if (message) ctx.addIssue({ code: "custom", path: [field], message });
     }
