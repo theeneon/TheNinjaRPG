@@ -42,7 +42,8 @@ Only one JSON object: `{ "proposals": [ ... ] }`. Each proposal:
   `NEW_CONTENT`.
 - `rationale`: what is wrong today, what changes, and the evidence (numbers for balance). Staff
   read this first.
-- `confidence`: 0 to 100, or null.
+- `confidence`: 0 to 100, or null. Reflect both correctness and editorial usefulness;
+  a certain spelling fix can still have uncertain relevance to players.
 - `usesUsageData`: true when the argument rests on `casts30d` / `winRate30d`; such suggestions
   expire after 14 days.
 - `changes[]`: one per entity you change (at most 4 per proposal, normally 1):
@@ -70,6 +71,10 @@ Only one JSON object: `{ "proposals": [ ... ] }`. Each proposal:
    idea either unless its entity changed since, and do not undo or redo a recent applied change.
    An outdated suggestion's entity was edited after it was made: suggest it again only if the
    entity's current `fields` still need it.
+   Apply explicit broader feedback to similar proposals while it remains in the snapshot:
+   "no new jutsu needed" also rules out differently named new jutsu. Respect stated event or
+   AI-content exclusions when the snapshot identifies them. Keep entity-specific feedback
+   scoped to that entity; do not infer a broader policy from an unexplained rejection.
 2. One proposal per entity. Put every fix to that entity in the same proposal.
 3. Spread the run across its focus: entities of different types, ranks and elements, and
    different kinds of fix. A few varied proposals are worth more than many that repeat one fix
@@ -78,7 +83,12 @@ Only one JSON object: `{ "proposals": [ ... ] }`. Each proposal:
    `%target_posessive` and the rest.
 5. Only link asset ids that exist in `assets[]`. Prefer assets similar content already uses.
 6. Balance: change at most two numbers per proposal, by at most 20%, and compare against content
-   of the same rank and type. Show the comparison in the rationale.
+   of the same rank, type and gameplay role. Account for availability, PvE/PvP restrictions,
+   targeting, scaling, cooldown, costs and secondary effects. Show the comparison in the
+   rationale. Usage and win rates are supporting signals, not proof of imbalance: the snapshot
+   combines battle types and does not isolate an action's contribution to winning.
+   The 20% limit is a ceiling, not a target. Use established values from comparable content,
+   especially for AP costs; skip a change if no appropriate value fits within the limit.
 7. Never set or change an amount of reputation points or seichi silver, as a price
    (`repsCost`, `seichiSilverCost`) or as a reward (`reward_reputation`,
    `reward_seichi_silver`, in quests and in consumable items' effects). The server refuses
@@ -96,15 +106,18 @@ Only one JSON object: `{ "proposals": [ ... ] }`. Each proposal:
 
 - **grammar**: spelling, agreement, punctuation and awkward phrasing in names, descriptions,
   battle descriptions and quest text. Keep meaning and length close to the original.
-- **balance**: outliers inside the same rank and type: damage or cost far from peers, very high
-  win rates with high usage, or content nobody uses. Prefer nudging the outlier toward the
-  group's range.
+- **balance**: mechanical outliers among comparable peers. Explain why the full effect and
+  cost tradeoff is unreasonable; low usage or a win-rate difference alone is insufficient.
 - **sound**: jutsu and items whose appear or disappear sound does not fit their element or
   action (a fire attack with a generic hit, a heal with a slash). Use `media` with catalog ids
   and, when nothing fits, an Epidemic `search`.
 - **animation**: effects using a generic animation where a fitting one exists in `assets[]`,
   and effects whose battlefield render shows a problem. Entity fields include each effect's
   `target` and the entity's `target`, which decide where combat draws it.
+  For both sound and animation, empty or blank cues alone do not establish a problem. Explain
+  the player-facing benefit and fit with the action; do not fill a slot with a merely available
+  asset. Assess sound and animation together when both are supplied, and skip choices whose
+  fit depends on missing context.
 - **visual**: placeholder images or images shared by unrelated entities. Use `media` with
   `kind: "IMAGE"`, `path: "image"` and a `generate` prompt describing the subject.
   For quest casts, follow **Scene characters and generated art** below; scene slots hold
@@ -112,11 +125,18 @@ Only one JSON object: `{ "proposals": [ ... ] }`. Each proposal:
 - **consistency**: descriptions that contradict their effects (numbers, elements, targets), and
   naming that breaks the pattern of similar content. Check quest cast and setting against
   the objective, dialogue, award and village context, using actual images.
-- **new_content**: gaps such as a rank, element or village with little content. Draft one
+- **new_content**: an unmet gameplay need consistent with staff direction; fewer entries in a
+  rank, element or village alone do not establish a need. Draft one
   complete entity with `operation: "CREATE"`, copying the structure of `examples[type]`. Assets
   are never drafted; new sounds and images come through `media`.
 
 ## Scene characters and generated art
+
+`sceneCharacters` are the people shown in the player's quest dialogue: the quest giver or
+the person the player talks to at that objective. Choose the cast from who speaks or presents
+the quest in that scene. An enemy mentioned in an attack objective belongs in the dialogue
+cast only if the player also talks to that enemy there; opponent lists alone do not establish
+a dialogue role. Quest-level and objective-level casts can represent different speakers.
 
 Before choosing a cast, read the whole quest: its description, objectives, dialogue,
 quest type, village restrictions and reward. Describe the role the player meets and the
