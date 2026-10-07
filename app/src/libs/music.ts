@@ -8,6 +8,7 @@ import {
   MUSIC_HEAVENLY_SONATA_THEME,
   MUSIC_HORIZON_THEME,
   MUSIC_HYORIN_THEME,
+  MUSIC_SHADOWS_DANCE,
   MUSIC_SHIROHANA_THEME,
   MUSIC_SYNDICATE_THEME,
   MUSIC_TSUKIMORI_THEME,
@@ -23,6 +24,8 @@ export type BackgroundMusicUser = {
   villageName?: string | null;
   isOutlaw?: boolean | null;
   bloodlineId?: string | null;
+  /** True while the user is in any battle, PvE or PvP (`UserData.status === "BATTLE"`) */
+  inBattle?: boolean | null;
 };
 
 /** Background theme per village name; any other village (or none) hears Welcome to Seichi */
@@ -48,7 +51,8 @@ const SEASON_MUSIC: Partial<Record<Season, string>> = {
 };
 
 /**
- * Pick the background music track, in priority order: seasonal event theme,
+ * Pick the background music track, in priority order: battle theme (Shadow's
+ * Dance, for every PvE and PvP fight), seasonal event theme,
  * bloodline theme, outlaw theme (for every outlaw, whether their village is the
  * Syndicate, a hideout or a town), village theme, then Welcome to Seichi.
  * Seasons follow `getCurrentSeason`, the same calendar that switches the
@@ -58,6 +62,7 @@ export const getBackgroundMusicSrc = (
   user?: BackgroundMusicUser | null,
   season: Season = getCurrentSeason(),
 ): string => {
+  if (user?.inBattle) return MUSIC_SHADOWS_DANCE;
   const seasonal = SEASON_MUSIC[season];
   if (seasonal) return seasonal;
   const bloodline = BLOODLINE_MUSIC.get(user?.bloodlineId ?? "");
