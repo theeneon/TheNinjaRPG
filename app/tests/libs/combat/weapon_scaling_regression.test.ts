@@ -1,11 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/libs/hexgrid", () => ({
-  getPossibleActionTiles: vi.fn((_action, _userHex, grid) => grid),
-  PathCalculator: vi.fn(() => ({
-    getShortestPath: vi.fn(() => []),
-  })),
-}));
+import { describe, expect, it } from "vitest";
 
 import { userItemToAction } from "@/libs/combat/actions";
 import { dmgConfig } from "@/libs/combat/constants";
