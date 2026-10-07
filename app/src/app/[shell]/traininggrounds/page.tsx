@@ -91,6 +91,8 @@ import {
   checkJutsuBloodline,
   checkJutsuRank,
   checkJutsuVillage,
+  findJutsuInTraining,
+  isJutsuInTraining,
   isJutsuTrainToLearnRestricted,
   isStatTrainingCapped,
   statTrainingBlockMessage,
@@ -691,7 +693,12 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [jutsu, setJutsu] = useState<Jutsu | undefined>(undefined);
   const [lastElement, setLastElement] = useState<HTMLDivElement | null>(null);
-  const now = new Date();
+  // Re-renders the box when the countdown ends: the refetch it triggers returns the
+  // same rows, which alone would leave the finished training's overlay on screen.
+  const [, setTrainingFinishedAt] = useState<number>();
+  // finishTraining is a server timestamp; compare it on the server clock, the same one
+  // the countdown and the server's training guards use.
+  const serverNow = Date.now() - timeDiff;
 
   // tRPC useUtils
   const utils = api.useUtils();
@@ -743,10 +750,9 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
   const userJutsuCounts = userJutsus?.map((userJutsu) => {
     return {
       id: userJutsu.jutsuId,
-      quantity:
-        userJutsu.finishTraining && userJutsu.finishTraining > now
-          ? userJutsu.level - 1
-          : userJutsu.level,
+      quantity: isJutsuInTraining(userJutsu, serverNow)
+        ? userJutsu.level - 1
+        : userJutsu.level,
     };
   });
 
@@ -877,9 +883,7 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
   }
 
   // Training time
-  const finishTrainingAt = userJutsus?.find(
-    (jutsu) => jutsu.finishTraining && jutsu.finishTraining > now,
-  );
+  const finishTrainingAt = findJutsuInTraining(userJutsus, serverNow);
 
   // Derived calculations
   const level = userJutsuCounts?.find((entry) => entry.id === jutsu?.id)?.quantity || 0;
@@ -1007,6 +1011,7 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
                   targetDate={finishTrainingAt.finishTraining}
                   timeDiff={timeDiff}
                   onFinish={async () => {
+                    setTrainingFinishedAt(Date.now());
                     await utils.jutsu.getUserJutsus.invalidate();
                   }}
                 />
