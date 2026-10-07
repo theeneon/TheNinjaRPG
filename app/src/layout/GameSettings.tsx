@@ -532,6 +532,7 @@ const GameSettingsContent: React.FC<GameSettingsContentProps> = ({
   };
 
   const handleSfxToggle = (checked: boolean) => {
+    safeLocalStorageSetItem("sfxOn", JSON.stringify(checked));
     setSfxOn(checked);
     if (userData) {
       updatePreferences({
@@ -543,8 +544,6 @@ const GameSettingsContent: React.FC<GameSettingsContentProps> = ({
       if (updateUser) {
         void updateUser({ sfxOn: checked });
       }
-    } else {
-      safeLocalStorageSetItem("sfxOn", JSON.stringify(checked));
     }
   };
 

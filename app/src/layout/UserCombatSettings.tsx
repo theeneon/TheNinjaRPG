@@ -38,6 +38,7 @@ export const UserCombatSettings: React.FC<UserCombatSettingsProps> = ({
   }, [lightLayout, initialLightLayout]);
 
   const handleSfxToggle = (checked: boolean) => {
+    safeLocalStorageSetItem("sfxOn", JSON.stringify(checked));
     setSfxOn(checked);
     if (userData) {
       updatePreferences({
@@ -49,8 +50,6 @@ export const UserCombatSettings: React.FC<UserCombatSettingsProps> = ({
       if (updateUser) {
         void updateUser({ sfxOn: checked });
       }
-    } else {
-      safeLocalStorageSetItem("sfxOn", JSON.stringify(checked));
     }
   };
 
