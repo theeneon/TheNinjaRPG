@@ -3,7 +3,9 @@ import type { FieldErrors } from "react-hook-form";
 import type { ToastActionElement } from "@/components/ui/toast";
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/components/ui/use-toast";
+import { CONFETTI_SFX_URL } from "@/drizzle/constants";
 import type { Quest } from "@/drizzle/schema";
+import { safeLocalStorageGetItem } from "@/hooks/localstorage";
 import Image from "@/layout/Image";
 import { haptics } from "@/libs/native";
 import {
@@ -12,6 +14,7 @@ import {
   ensureParticleOverlayCanvas,
 } from "@/libs/particleOverlay";
 import { registerParticlePlugins } from "@/libs/particlePlugins";
+import { playPreloadedAudio, savedSfxVolume } from "@/utils/audio";
 import { parseHtml } from "@/utils/parse";
 import type { PostProcessedRewards } from "@/validators/rewards";
 
@@ -67,6 +70,12 @@ export const triggerConfetti = async (
   // Guard against SSR - only run in browser
   if (typeof window === "undefined") {
     return;
+  }
+
+  // Start the celebration sound before particle imports can delay playback.
+  // Autoplay restrictions are handled by the shared player without blocking confetti.
+  if (CONFETTI_SFX_URL && safeLocalStorageGetItem("sfxOn") !== "false") {
+    void playPreloadedAudio(CONFETTI_SFX_URL, savedSfxVolume()).catch(() => undefined);
   }
 
   const fire = await loadConfetti();
