@@ -187,4 +187,20 @@ describeWithDatabase("Bloodright economy on MySQL", () => {
     }
     expect(await db.query.userData.findFirst({ where: eq(userData.userId, "clone-target") })).toMatchObject({ seichiSilver: 250, bloodrightSpent: 77 });
   });
+  it("defers deletion refunds for battling users and lets them recover saved costs after battle", async () => {
+    const db = await getTestDatabase();
+    await invoke("purchase", { skillId: "root" });
+    await db.update(userData).set({ role: "OWNER", isAi: true, status: "BATTLE" }).where(eq(userData.userId, userId));
+    await db.insert(userData).values({ userId: "awake-ai", username: "AwakeAI", gender: "Other", isAi: true, bloodlineId: "line", seichiSilver: 250, bloodright: [{ skillId: "root", cost: 77 }], bloodrightSpent: 77 });
+    const { resolver } = bloodlineRouter._def.procedures.delete._def as unknown as { resolver: (args: { ctx: { drizzle: typeof db; userId: string }; input: { id: string } }) => Promise<{ success: boolean }> };
+    expect((await resolver({ ctx: { drizzle: db, userId }, input: { id: "line" } })).success).toBe(true);
+    expect(await db.query.bloodline.findFirst({ where: eq(bloodline.id, "line") })).toBeUndefined();
+    expect(await read()).toMatchObject({ bloodlineId: null, seichiSilver: 900, bloodright: [{ skillId: "root", cost: 100 }], bloodrightSpent: 100 });
+    expect(await db.query.userData.findFirst({ where: eq(userData.userId, "awake-ai") })).toMatchObject({ bloodlineId: null, seichiSilver: 327, bloodright: [], bloodrightSpent: 0 });
+    expect((await invoke("refund", { skillId: "root" })).success).toBe(false);
+    await db.update(userData).set({ status: "AWAKE" }).where(eq(userData.userId, userId));
+    expect((await invoke("refund", { skillId: "root" })).success).toBe(true);
+    expect((await invoke("refund", { skillId: "root" })).success).toBe(false);
+    expect(await read()).toMatchObject({ seichiSilver: 1000, bloodright: [], bloodrightSpent: 0 });
+  });
 });

@@ -620,11 +620,18 @@ export const bloodlineRouter = createTRPCRouter({
         return errorResponse(`Bloodline used by users: ${usernames}, cannot delete`);
       }
       // Mutate
+      const bloodrightRefund = bloodrightSwapRefund(null);
       await Promise.all([
         ctx.drizzle.delete(bloodline).where(eq(bloodline.id, input.id)),
         ctx.drizzle
           .update(userData)
-          .set({ ...bloodrightSwapRefund(null), bloodlineId: null })
+          .set({
+            // Combat retains preloaded tiers; preserve their saved refund until the battle ends.
+            seichiSilver: sql`IF(${userData.status} = 'BATTLE', ${userData.seichiSilver}, ${bloodrightRefund.seichiSilver})`,
+            bloodright: sql`IF(${userData.status} = 'BATTLE', ${userData.bloodright}, ${bloodrightRefund.bloodright})`,
+            bloodrightSpent: sql`IF(${userData.status} = 'BATTLE', ${userData.bloodrightSpent}, ${bloodrightRefund.bloodrightSpent})`,
+            bloodlineId: null,
+          })
           .where(eq(userData.bloodlineId, input.id)),
         ctx.drizzle.insert(actionLog).values({
           id: nanoid(),
