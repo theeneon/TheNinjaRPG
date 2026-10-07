@@ -58,6 +58,7 @@ import {
   checkJutsuVillage,
   hasRequiredLevel,
   hasRequiredRank,
+  isJutsuInTraining,
   remainingXpToLevel,
 } from "@/libs/train";
 import { canReskinFreely, canTransferJutsu } from "@/utils/permissions";
@@ -76,8 +77,9 @@ export default function MyJutsu() {
   const state = useFiltering();
 
   // Settings
-  const now = new Date();
-  const { data: userData, updateUser } = useRequiredUserData();
+  const { data: userData, updateUser, timeDiff } = useRequiredUserData();
+  // finishTraining is a server timestamp, so compare it on the server clock
+  const serverNow = Date.now() - timeDiff;
   const [isOpen, setIsOpen] = useState<boolean>(false);
   const [isReskinOpen, setIsReskinOpen] = useState<boolean>(false);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -152,10 +154,9 @@ export default function MyJutsu() {
   const userJutsuCounts = userJutsus?.map((userJutsu) => {
     return {
       id: userJutsu.id,
-      quantity:
-        userJutsu.finishTraining && userJutsu.finishTraining > now
-          ? userJutsu.level - 1
-          : userJutsu.level,
+      quantity: isJutsuInTraining(userJutsu, serverNow)
+        ? userJutsu.level - 1
+        : userJutsu.level,
     };
   });
 
@@ -791,10 +792,9 @@ export default function MyJutsu() {
                   {availableEvolutions &&
                     availableEvolutions.length > 0 &&
                     availableEvolutions.map((evo) => {
-                      const effectiveLevel =
-                        userjutsu.finishTraining && userjutsu.finishTraining > now
-                          ? userjutsu.level - 1
-                          : userjutsu.level;
+                      const effectiveLevel = isJutsuInTraining(userjutsu, serverNow)
+                        ? userjutsu.level - 1
+                        : userjutsu.level;
                       const canEvolve =
                         !!userData &&
                         effectiveLevel >= JUTSU_TRAIN_LEVEL_CAP &&

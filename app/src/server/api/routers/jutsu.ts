@@ -79,8 +79,10 @@ import {
   canTrainJutsu,
   canUseJutsu,
   checkJutsuBloodlineItem,
+  findJutsuInTraining,
   hasRequiredLevel,
   hasRequiredRank,
+  isJutsuInTraining,
   isJutsuTrainToLearnRestricted,
 } from "@/libs/train";
 import { fetchStudents } from "@/routers/sensei";
@@ -562,7 +564,7 @@ export const jutsuRouter = createTRPCRouter({
         return errorResponse("This evolution is not yet available");
       const userJutsuObj = userJutsus.find((j) => j.id === input.userJutsuId);
       if (!userJutsuObj) return errorResponse("You don't own this jutsu");
-      if (userJutsuObj.finishTraining && userJutsuObj.finishTraining > new Date())
+      if (isJutsuInTraining(userJutsuObj, Date.now()))
         return errorResponse(
           "This jutsu is currently being trained. Wait for training to complete before evolving.",
         );
@@ -1043,7 +1045,7 @@ export const jutsuRouter = createTRPCRouter({
       if (info.hidden && !canChangeContent(user.role)) {
         return errorResponse("Jutsu is hidden, cannot be trained");
       }
-      if (userjutsus.find((j) => j.finishTraining && j.finishTraining > new Date())) {
+      if (findJutsuInTraining(userjutsus, Date.now())) {
         return errorResponse("You are already training a jutsu");
       }
 
@@ -1188,9 +1190,7 @@ export const jutsuRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx }) => {
       const userjutsus = await fetchUserJutsus(ctx.drizzle, ctx.userId);
-      const userjutsuObj = userjutsus.find(
-        (j) => j.finishTraining && j.finishTraining > new Date(),
-      );
+      const userjutsuObj = findJutsuInTraining(userjutsus, Date.now());
       if (!userjutsuObj) {
         return { success: false, message: "Not training any jutsu" };
       }

@@ -326,6 +326,24 @@ export const calcJutsuTrainTime = (
 };
 
 /**
+ * Whether a jutsu is still in training at `serverNow` (epoch ms). `finishTraining` is a
+ * server timestamp, so the browser must pass the server-synced clock
+ * (`Date.now() - timeDiff`): a device clock that runs behind the server would otherwise
+ * keep showing a training the server has already finished, and every action the server
+ * gates on training would disagree with the UI.
+ */
+export const isJutsuInTraining = (
+  userJutsu: { finishTraining: Date | null },
+  serverNow: number,
+) => !!userJutsu.finishTraining && userJutsu.finishTraining.getTime() > serverNow;
+
+/** The user jutsu in training at `serverNow`, if any; see `isJutsuInTraining`. */
+export const findJutsuInTraining = <T extends { finishTraining: Date | null }>(
+  userJutsus: readonly T[] | undefined,
+  serverNow: number,
+) => userJutsus?.find((userJutsu) => isJutsuInTraining(userJutsu, serverNow));
+
+/**
  * Training stores the target level and finish time. Later actions such as equip
  * rewrite updatedAt without changing finishTraining, so the start is the finish
  * minus the duration of the level training began at.
