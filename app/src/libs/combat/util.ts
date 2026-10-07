@@ -1469,6 +1469,7 @@ export const maskBattle = (battle: Battle, userId: string) => {
           return [id, bloodline];
         }),
       ),
+      enemySkills: {},
       userQuests: {},
       completedQuests: {},
       questData: {},
