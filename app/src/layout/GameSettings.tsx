@@ -158,8 +158,12 @@ export const GlobalAudioProvider: React.FC<{
     isClient ? getInitialSfxVolumeState() : 0.8,
   );
 
-  // Village theme, or the event theme while a seasonal event runs
-  const musicSrc = getBackgroundMusicSrc(userData?.village?.name);
+  // Event, bloodline, outlaw or village theme (see getBackgroundMusicSrc)
+  const musicSrc = getBackgroundMusicSrc({
+    villageName: userData?.village?.name,
+    isOutlaw: userData?.isOutlaw,
+    bloodlineId: userData?.bloodlineId,
+  });
 
   // Initialize the single audio instance
   const {
