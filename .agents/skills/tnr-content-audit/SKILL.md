@@ -114,10 +114,6 @@ Only one JSON object: `{ "proposals": [ ... ] }`. Each proposal:
 - **animation**: effects using a generic animation where a fitting one exists in `assets[]`,
   and effects whose battlefield render shows a problem. Entity fields include each effect's
   `target` and the entity's `target`, which decide where combat draws it.
-  For both sound and animation, empty or blank cues alone do not establish a problem. Explain
-  the player-facing benefit and fit with the action; do not fill a slot with a merely available
-  asset. Assess sound and animation together when both are supplied, and skip choices whose
-  fit depends on missing context.
 - **visual**: placeholder images or images shared by unrelated entities. Use `media` with
   `kind: "IMAGE"`, `path: "image"` and a `generate` prompt describing the subject.
   For quest casts, follow **Scene characters and generated art** below; scene slots hold
