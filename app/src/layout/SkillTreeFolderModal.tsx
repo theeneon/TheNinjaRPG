@@ -264,7 +264,7 @@ export const SkillCard: React.FC<SkillCardProps> = ({
     <button
       type="button"
       onClick={onClick}
-      aria-disabled={isLocked || isUnaffordable}
+      aria-label={`${skill.name}, Tier ${skill.tier}, ${effectivelyOwned ? "Active" : isLocked ? "Prerequisites required" : isUnaffordable ? "Unavailable" : "Available"}`}
       className={`relative w-full cursor-pointer rounded-lg border-2 p-3 text-left transition-all duration-200 hover:shadow-md ${
         effectivelyOwned
           ? "border-green-500 bg-green-50 dark:bg-green-950/30"

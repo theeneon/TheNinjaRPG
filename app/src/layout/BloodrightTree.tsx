@@ -42,10 +42,16 @@ export const BloodrightTree = ({ tiers, purchasedIds, silver, onSelect }: Props)
               const toX = node.x + 84;
               const toY = node.y;
               const middle = (fromY + toY) / 2;
+              // Skip-tier prerequisites travel around the cards so they cannot
+              // appear to connect to an unrelated intermediate tier.
+              const path =
+                node.y - parent.y > 192
+                  ? `M ${fromX} ${fromY} V ${fromY + 12} H ${width - 2} V ${toY - 12} H ${toX} V ${toY}`
+                  : `M ${fromX} ${fromY} C ${fromX} ${middle}, ${toX} ${middle}, ${toX} ${toY}`;
               return (
                 <path
                   key={`${id}-${node.skill.id}`}
-                  d={`M ${fromX} ${fromY} C ${fromX} ${middle}, ${toX} ${middle}, ${toX} ${toY}`}
+                  d={path}
                   fill="none"
                   stroke="currentColor"
                   strokeWidth={2}
