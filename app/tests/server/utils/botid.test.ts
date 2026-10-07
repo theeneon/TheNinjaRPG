@@ -4,8 +4,11 @@ import { env } from "@/env/server.mjs";
 import {
   BOTID_BLOCKED_MESSAGE,
   BOTID_DEEP_ANALYSIS_PROCEDURES,
+  BOTID_OBSERVE_ONLY_PROCEDURES,
   BOTID_PROTECTED_PROCEDURES,
   BOTID_PROTECTED_ROUTES,
+  BOTID_RELOAD_REQUIRED_MESSAGE,
+  isBotIdBlockingProcedure,
   isBotIdProtectedProcedure,
 } from "@/libs/botid";
 
@@ -194,6 +197,7 @@ describe("enforceBotId", () => {
         path: "train.startTraining",
         paths: ["train.startTraining"],
         checkLevel: "basic",
+        userAgent: null,
         isBot: true,
         isHuman: false,
         isVerifiedBot: false,
@@ -270,6 +274,97 @@ describe("enforceBotId", () => {
   });
 });
 
+describe("enforceBotId without a challenge", () => {
+  const unchallenged = (paths: string[]) =>
+    createBotIdGuard(paths, { hasChallenge: false, userAgent: "Mozilla/5.0" });
+
+  it("asks a page without a challenge to reload, without calling BotID", async () => {
+    const guard = unchallenged(["train.startTraining"]);
+    const error = await withBotIdGuard(guard, () => enforceBotId(mutation)).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(TRPCError);
+    expect(error).toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: BOTID_RELOAD_REQUIRED_MESSAGE,
+    });
+    expect(checkBotId).not.toHaveBeenCalled();
+    expect(records()).toEqual([
+      {
+        event: "missing_challenge",
+        userId: "user-1",
+        path: "train.startTraining",
+        paths: ["train.startTraining"],
+        checkLevel: "basic",
+        userAgent: "Mozilla/5.0",
+        enforced: true,
+      },
+    ]);
+    expect(guard.needsFlush).toBe(true);
+  });
+
+  it("records once per batch while rejecting each blocking mutation", async () => {
+    const guard = unchallenged(["train.startTraining", "bank.transfer"]);
+    const results = await withBotIdGuard(guard, () =>
+      Promise.allSettled([
+        enforceBotId({ ...mutation, path: "train.startTraining" }),
+        enforceBotId({ ...mutation, path: "bank.transfer" }),
+      ]),
+    );
+    expect(results.map((r) => r.status)).toEqual(["rejected", "rejected"]);
+    expect(records()).toHaveLength(1);
+  });
+
+  it("lets observe-only procedures through and records them as not enforced", async () => {
+    const guard = unchallenged(["activityStreak.claimStreakDay"]);
+    await expect(
+      withBotIdGuard(guard, () =>
+        enforceBotId({ ...mutation, path: "activityStreak.claimStreakDay" }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(records()).toMatchObject([{ event: "missing_challenge", enforced: false }]);
+  });
+
+  it("only records when enforcement is off", async () => {
+    env.BOTID_ENFORCE = "false";
+    const guard = unchallenged(["train.startTraining"]);
+    await expect(
+      withBotIdGuard(guard, () => enforceBotId(mutation)),
+    ).resolves.toBeUndefined();
+    expect(records()).toMatchObject([{ event: "missing_challenge", enforced: false }]);
+  });
+
+  it("still ignores unprotected mutations", async () => {
+    const guard = unchallenged(["train.startTraining", "combat.performAction"]);
+    await expect(
+      withBotIdGuard(guard, () =>
+        enforceBotId({ ...mutation, path: "combat.performAction" }),
+      ),
+    ).resolves.toBeUndefined();
+    expect(records()).toEqual([]);
+  });
+});
+
+describe("observe-only procedures", () => {
+  it("are protected procedures that BotID never blocks", () => {
+    for (const procedure of BOTID_OBSERVE_ONLY_PROCEDURES) {
+      expect(isBotIdProtectedProcedure(procedure)).toBe(true);
+      expect(isBotIdBlockingProcedure(procedure)).toBe(false);
+    }
+    expect(isBotIdBlockingProcedure("train.startTraining")).toBe(true);
+    expect(isBotIdBlockingProcedure("combat.performAction")).toBe(false);
+  });
+
+  it("record a bot verdict without blocking", async () => {
+    checkBotId.mockResolvedValue(bot);
+    const guard = createBotIdGuard(["bank.claimInterest"]);
+    await expect(
+      withBotIdGuard(guard, () => enforceBotId({ ...mutation, path: "bank.claimInterest" })),
+    ).resolves.toBeUndefined();
+    expect(records()).toMatchObject([{ event: "observed", isBot: true }]);
+  });
+});
+
 describe("isBotIdEnforced", () => {
   it.each([
     [undefined, "production", true],
@@ -336,7 +431,9 @@ describe("BotID timing", () => {
 
   it("records a timed-out check as failed with its timing", async () => {
     process.env.VERCEL_ENV = "preview";
-    const guard = createBotIdGuard(["train.startTraining"], () => runBotIdCheck(20));
+    const guard = createBotIdGuard(["train.startTraining"], {
+      check: () => runBotIdCheck(20),
+    });
     checkBotId.mockReturnValue(new Promise(() => undefined));
     await withBotIdGuard(guard, () => enforceBotId(mutation));
     expect(timings()[0]).toMatchObject({ ok: false, isBot: null });

@@ -6,8 +6,10 @@ import { env } from "@/env/server.mjs";
 import {
   BOTID_BLOCKED_MESSAGE,
   BOTID_CHECK_LEVEL,
+  BOTID_RELOAD_REQUIRED_MESSAGE,
   type BotIdCheckLevel,
   botIdCheckLevelForPaths,
+  isBotIdBlockingProcedure,
   isBotIdProtectedProcedure,
 } from "@/libs/botid";
 
@@ -22,8 +24,16 @@ import {
  * review desk, tests and scripts) never see BotID at all.
  *
  * A classification is never allowed to break gameplay on its own: an error or timeout
- * from BotID lets the request through, and blocking is limited to production by default
- * (see `isBotIdEnforced`).
+ * from BotID lets the request through, blocking is limited to production by default
+ * (see `isBotIdEnforced`), and `BOTID_OBSERVE_ONLY_PROCEDURES` are recorded but never
+ * blocked.
+ *
+ * A request without a challenge header is not sent to BotID at all, which would only
+ * answer "bot". Current pages always attach one, so it comes from a tab still running a
+ * bundle from before its procedure was protected (players keep tabs open for days) or
+ * from a script. Both are rejected the same way, before any side effect, with
+ * `BOTID_RELOAD_REQUIRED_MESSAGE`: a reload loads the current bundle, and a script gains
+ * nothing from the different wording.
  */
 
 /**
@@ -61,6 +71,10 @@ export type BotIdVerdict =
 export type BotIdGuard = {
   /** Procedure paths named by the request URL, for the record of a detection. */
   paths: string[];
+  /** Whether the request carries the BotID client's challenge header. */
+  hasChallenge: boolean;
+  /** The request's User-Agent, for the record of a detection. */
+  userAgent: string | null;
   /** The level this request is checked at; it must match what the client attached. */
   checkLevel: BotIdCheckLevel;
   /** The memoized verdict for this HTTP request. */
@@ -115,7 +129,15 @@ export const runBotIdCheck = async (
 /** A per-request guard whose check runs at most once. */
 export const createBotIdGuard = (
   paths: string[],
-  check?: () => Promise<BotIdVerdict>,
+  {
+    check,
+    hasChallenge = true,
+    userAgent = null,
+  }: {
+    check?: () => Promise<BotIdVerdict>;
+    hasChallenge?: boolean;
+    userAgent?: string | null;
+  } = {},
 ): BotIdGuard => {
   const checkLevel = botIdCheckLevelForPaths(paths);
   const runCheck =
@@ -123,6 +145,8 @@ export const createBotIdGuard = (
   let pending: Promise<BotIdVerdict> | undefined;
   const guard: BotIdGuard = {
     paths,
+    hasChallenge,
+    userAgent,
     checkLevel,
     verify: () => {
       pending ??= (async () => {
@@ -194,8 +218,10 @@ export const isBotIdEnforced = (
 
 /**
  * Called by the tRPC middleware before every procedure. Protected mutations inside a
- * guarded request wait for the verdict and are rejected with FORBIDDEN when BotID classifies the
- * request as a bot and enforcement is on. Anything else passes.
+ * guarded request wait for the verdict and, when enforcement is on and the procedure is
+ * not observe-only, are rejected with FORBIDDEN when BotID classifies the request as a
+ * bot, or with PRECONDITION_FAILED when the request carries no challenge at all.
+ * Anything else passes.
  */
 export const enforceBotId = async (props: {
   type: string;
@@ -205,6 +231,20 @@ export const enforceBotId = async (props: {
   if (props.type !== "mutation" || !isBotIdProtectedProcedure(props.path)) return;
   const guard = storage.getStore();
   if (!guard) return;
+  const blocking = isBotIdBlockingProcedure(props.path) && isBotIdEnforced();
+  if (!guard.hasChallenge) {
+    if (!guard.reported) {
+      guard.reported = true;
+      recordMissingChallenge(guard, { ...props, enforced: blocking });
+    }
+    if (blocking) {
+      throw new TRPCError({
+        code: "PRECONDITION_FAILED",
+        message: BOTID_RELOAD_REQUIRED_MESSAGE,
+      });
+    }
+    return;
+  }
   const waitStartedAt = performance.now();
   const verdict = await guard.verify();
   if (!guard.timingLogged) {
@@ -226,7 +266,7 @@ export const enforceBotId = async (props: {
     }
   }
   if (verdict.ok && !verdict.isBot) return;
-  const enforced = verdict.ok && isBotIdEnforced();
+  const enforced = verdict.ok && blocking;
   if (!guard.reported) {
     guard.reported = true;
     recordBotIdOutcome(guard, verdict, { ...props, enforced });
@@ -241,12 +281,7 @@ const recordBotIdOutcome = (
   verdict: BotIdVerdict,
   details: { path: string; userId: string | null | undefined; enforced: boolean },
 ) => {
-  const base = {
-    userId: details.userId ?? null,
-    path: details.path,
-    paths: guard.paths,
-    checkLevel: guard.checkLevel,
-  };
+  const base = recordBase(guard, details);
   if (!verdict.ok) {
     // Logged only: a BotID outage would otherwise raise a Sentry event per mutation.
     console.warn(
@@ -281,6 +316,47 @@ const recordBotIdOutcome = (
     level: "warning",
     fingerprint: ["botid", action],
     tags: { botid: action, botid_verified_bot: String(verdict.isVerifiedBot) },
+    user: details.userId ? { id: details.userId } : undefined,
+    extra: record,
+  });
+  guard.needsFlush = true;
+};
+
+const recordBase = (
+  guard: BotIdGuard,
+  details: { path: string; userId: string | null | undefined },
+) => ({
+  userId: details.userId ?? null,
+  path: details.path,
+  paths: guard.paths,
+  checkLevel: guard.checkLevel,
+  userAgent: guard.userAgent,
+});
+
+/**
+ * Records a protected mutation that arrived without a challenge. It gets its own Sentry
+ * issue, at info level, so stale tabs after a deploy stay apart from BotID's verdicts.
+ */
+const recordMissingChallenge = (
+  guard: BotIdGuard,
+  details: { path: string; userId: string | null | undefined; enforced: boolean },
+) => {
+  const record = {
+    event: "missing_challenge",
+    ...recordBase(guard, details),
+    enforced: details.enforced,
+  };
+  console.warn(`[botid] ${JSON.stringify(record)}`);
+  Sentry.addBreadcrumb({
+    category: "botid",
+    level: "info",
+    message: "missing_challenge",
+    data: record,
+  });
+  Sentry.captureMessage("BotID challenge missing on a tRPC mutation", {
+    level: "info",
+    fingerprint: ["botid", "missing_challenge"],
+    tags: { botid: "missing_challenge", botid_enforced: String(details.enforced) },
     user: details.userId ? { id: details.userId } : undefined,
     extra: record,
   });
