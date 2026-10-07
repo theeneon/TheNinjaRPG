@@ -1307,7 +1307,7 @@ export const SAGE_MODE_DEFAULT_ACTIVATION_MESSAGE = "%user enters sage mode!";
 export const SAGE_MODE_DEFAULT_ACTION_COST_PERC = 80;
 
 // Skill tree config
-export const SKILL_TREE_RESET_FREE_NORMAL = 0;
+export const SKILL_TREE_RESET_FREE_NORMAL = 1;
 export const SKILL_TREE_RESET_FREE_SILVER = 1;
 export const SKILL_TREE_RESET_FREE_GOLD = 2;
 
@@ -3414,3 +3414,6 @@ export const STORE_FEDERAL_PRODUCTS = [
 
 /** RevenueCat entitlement that grants federal status, whichever plan is active. */
 export const STORE_FEDERAL_ENTITLEMENT = "federal";
+
+export const SkillTreePathTypes = ["SKILL", "BLOODRIGHT"] as const;
+export const MAX_BLOODRIGHT_TIERS = 5;

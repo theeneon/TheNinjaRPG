@@ -32,10 +32,15 @@ const skill = (
   folder,
   folderId: folder.id,
   skillType: "DEFAULT",
+  pathType: "SKILL",
+  bloodlineId: null,
+  seichiSilverCost: 0,
   costSkillPoints: 2,
   tier: 1,
   effects: [],
   requiredSkillIds: [] as string[],
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
 });
 
 beforeEach(() => {
@@ -83,8 +88,9 @@ const setup = (role: UserRole | null) => {
     select: queryBuilder.select.bind(queryBuilder),
     query: {
       userData: { findFirst: vi.fn().mockResolvedValue(user) },
+      bloodline: { findFirst: vi.fn().mockResolvedValue(null) },
       skillTree: {
-        findMany: vi.fn().mockResolvedValue(skills),
+        findMany: vi.fn().mockImplementation((options) => Promise.resolve(options?.where && new MySqlDialect().sqlToQuery(options.where).sql.includes("JSON_CONTAINS") ? [] : skills)),
         findFirst: vi.fn().mockResolvedValue(skills[1]),
       },
       skillTreeFolder: {
@@ -191,7 +197,7 @@ describe("hidden skill-tree permissions", () => {
     const { drizzle, skills } = setup("MODERATOR-ADMIN");
     const visible = skills[0]!;
     const hidden = skills[1]!;
-    const data = { name: visible.name, hidden: false, folderId: null };
+    const data = { ...visible, hidden: false, folderId: null };
 
     drizzle.query.skillTree.findFirst.mockResolvedValue(visible);
     expect(
@@ -304,14 +310,14 @@ describe("hidden skill-tree permissions", () => {
       };
       expect(options).toMatchObject({ limit: 500, offset: 0 });
       if (allowed) {
-        expect(options.where).toBeUndefined();
+        expect(new MySqlDialect().sqlToQuery(options.where!).params).toEqual(["SKILL"]);
       } else {
         const query = new MySqlDialect().sqlToQuery(options.where!);
         expect(query.sql).toContain("`SkillTree`.`hidden` = ?");
         expect(query.sql).toContain("`SkillTree`.`folderId` is null");
         expect(query.sql).toContain("not in (select");
         expect(query.sql).toContain("`SkillTreeFolder`.`hidden` = ?");
-        expect(query.params).toEqual([false, true]);
+        expect(query.params).toEqual(["SKILL", false, true]);
       }
       drizzle.query.skillTree.findMany.mockResolvedValue(allowed ? [owned[0]!.skill] : []);
       expect(await invoke("getAll", drizzle, { limit: 500, hidden: true })).toMatchObject({

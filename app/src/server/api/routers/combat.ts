@@ -85,6 +85,7 @@ import {
   war,
 } from "@/drizzle/schema";
 import { getReskinnedBloodline } from "@/libs/bloodline";
+import { matchBloodrightSnapshot } from "@/libs/bloodright";
 import {
   availableUserActions,
   getDefaultBasicActions,
@@ -1784,7 +1785,7 @@ export const initiateBattle = async (
     // Fetch user data
     client.query.userData.findMany({
       with: {
-        bloodline: true,
+        bloodline: { with: { bloodrightTiers: true } },
         sageMode: true,
         village: { with: { structures: true, sectors: { columns: { sector: true } } } },
         loadout: { columns: { jutsuIds: true } },
@@ -2640,6 +2641,12 @@ export const initiateBattle = async (
           // row is never even examined (or locked) by this update. Drizzle
           // compiles an empty list to FALSE, matching expectedRows === 0.
           inArray(userData.userId, allParticipantIds),
+          // A refund or swap may finish after preload but before the participant status claim.
+          or(
+            ...users
+              .filter((user) => allParticipantIds.includes(user.userId))
+              .map(matchBloodrightSnapshot),
+          ),
           // Never move an AI into a battle: its row is shared by everyone
           // fighting it, and the battle state clones it under a fresh id anyway.
           // Redundant with the claim list above, but kept so a drifting AI
@@ -3073,6 +3080,23 @@ export const processUsersForBattle = async (
       });
     }
 
+    // Bloodright is preloaded at initiation and uses the same passive effect pipeline.
+    for (const tier of inputUser.bloodline?.bloodrightTiers ?? []) {
+      if (
+        tier.pathType === "BLOODRIGHT" &&
+        user.bloodright.some((entry) => entry.skillId === tier.id)
+      ) {
+        user.userSkills.push({
+          id: tier.id,
+          userId: user.userId,
+          skillId: tier.id,
+          activated: true,
+          purchasedAt: new Date(),
+          skill: tier,
+        });
+      }
+    }
+
     // Add skill tree effects
     if (
       user.userSkills &&
@@ -3384,7 +3408,7 @@ export const processUsersForBattle = async (
   if (summonsToProcess.length > 0) {
     const summons = await client.query.userData.findMany({
       with: {
-        bloodline: true,
+        bloodline: { with: { bloodrightTiers: true } },
         sageMode: true,
         village: true,
         items: {
