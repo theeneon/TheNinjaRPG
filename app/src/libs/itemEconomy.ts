@@ -1,3 +1,4 @@
+import type { TradeableCurrencyType } from "@/drizzle/constants";
 import type { Item } from "@/drizzle/schema";
 import { getItemPurchasePeriodStart } from "@/utils/time";
 
@@ -6,13 +7,15 @@ export const getAuctionPriceError = (
   listingType: "AUCTION" | "DIRECT",
   price: number,
   quantity: number,
+  currencyType: TradeableCurrencyType,
 ) => {
-  if (listingType !== "AUCTION" || !item.canBeTraded) return null;
+  if (listingType !== "AUCTION" || !item.canBeTraded || currencyType !== "MONEY")
+    return null;
   if (item.auctionMinPrice != null && price < item.auctionMinPrice * quantity) {
-    return `Price must be at least ${item.auctionMinPrice} per unit in the selected currency`;
+    return `Price must be at least ${item.auctionMinPrice} ryo per unit`;
   }
   if (item.auctionMaxPrice != null && price > item.auctionMaxPrice * quantity) {
-    return `Price must be at most ${item.auctionMaxPrice} per unit in the selected currency`;
+    return `Price must be at most ${item.auctionMaxPrice} ryo per unit`;
   }
   return null;
 };

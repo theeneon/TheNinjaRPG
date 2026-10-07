@@ -371,6 +371,7 @@ export const auctionRouter = createTRPCRouter({
           listingType,
           price,
           listingQuantity,
+          currencyType,
         );
         if (priceError) return errorResponse(priceError);
       }

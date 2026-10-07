@@ -206,12 +206,12 @@ export const useItemEditForm = (
     {
       id: "auctionMinPrice",
       type: "number",
-      label: "Auction minimum per unit (blank for none)",
+      label: "Auction minimum ryo per unit (blank for none)",
     },
     {
       id: "auctionMaxPrice",
       type: "number",
-      label: "Auction maximum per unit (blank for none)",
+      label: "Auction maximum ryo per unit (blank for none)",
     },
     { id: "canBeImbued", type: "boolean" },
     { id: "craftingExperience", type: "number", label: "Crafting Experience" },

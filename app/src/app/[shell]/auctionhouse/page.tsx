@@ -1508,10 +1508,9 @@ export const NewAuctionListingDialog: React.FC = () => {
     name: ["quantity", "currencyType", "startingPrice"],
   });
   const listingQuantity = watchedQuantity ?? selectedItem?.quantity ?? 1;
-  const minimum =
-    watchedListingType === "AUCTION" ? selectedItem?.item.auctionMinPrice : null;
-  const maximum =
-    watchedListingType === "AUCTION" ? selectedItem?.item.auctionMaxPrice : null;
+  const hasRyoBounds = watchedListingType === "AUCTION" && watchedCurrency === "MONEY";
+  const minimum = hasRyoBounds ? selectedItem?.item.auctionMinPrice : null;
+  const maximum = hasRyoBounds ? selectedItem?.item.auctionMaxPrice : null;
   const minimumTotal = Math.max(
     watchedCurrency === "REPUTATION" ? RYO_FOR_REP_MIN_REPS : 1,
     (minimum ?? 0) * listingQuantity,
@@ -1853,11 +1852,10 @@ export const NewAuctionListingDialog: React.FC = () => {
 
             {selectedItem && watchedListingType === "AUCTION" && (
               <p className="text-muted-foreground text-sm">
-                Allowed per-unit range: {minimum ?? "no minimum"} –{" "}
-                {maximum ?? "no maximum"}{" "}
-                {watchedCurrency === "REPUTATION" ? "reputation points" : "ryo"}. Prices
-                below are totals for {listingQuantity} units. Bids may exceed the
-                maximum.
+                {hasRyoBounds
+                  ? `Allowed per-unit range: ${minimum ?? "no minimum"} – ${maximum ?? "no maximum"} ryo. Bids may exceed the maximum.`
+                  : "Item price bounds apply only to ryo listings."}{" "}
+                Prices below are totals for {listingQuantity} units.
               </p>
             )}
             <div className="grid grid-cols-2 gap-4">
