@@ -946,6 +946,7 @@ export const insertAction = (info: {
     // Bookkeeping
     let targetUsernames: string[] = [];
     let targetGenders: string[] = [];
+    const enemyRecipients = new Map<string, BattleUserState>();
     const appliedEffects = new Set<string>();
     const barrierAttacks = new Set<string>();
     // Path finder on grid
@@ -1026,6 +1027,9 @@ export const insertAction = (info: {
             ) {
               targetUsernames.push(target.username);
               targetGenders.push(target.gender);
+              if (target.direction !== user.direction) {
+                enemyRecipients.set(target.userId, target);
+              }
             }
           }
         });
@@ -1060,6 +1064,9 @@ export const insertAction = (info: {
                 } else {
                   effect.targetId = target.userId;
                   usersEffects.push(effect);
+                  if (target.direction !== user.direction) {
+                    enemyRecipients.set(target.userId, target);
+                  }
                 }
               }
             } else if (tag.target === "SELF") {
@@ -1116,6 +1123,29 @@ export const insertAction = (info: {
         });
       }
     });
+    // Trigger each passive source once per enemy reached by the accepted action.
+    // Empty tiles, self actions, stealth rejections and barrier hits supply no recipient.
+    for (const target of enemyRecipients.values()) {
+      for (const skillId of user.enemySkillIds ?? []) {
+        for (const tag of battle.extraState.enemySkills?.[skillId] ?? []) {
+          const effect = realizeTag({
+            tag: structuredClone(tag) as UserEffect,
+            user,
+            target,
+            actionId: skillId,
+            level: user.level,
+            round: battle.round,
+          });
+          effect.fromType = "skill";
+          effect.targetId = target.userId;
+          effect.longitude = target.longitude;
+          effect.latitude = target.latitude;
+          if (checkFriendlyFire(effect, target, alive)) {
+            usersEffects.push(effect);
+          }
+        }
+      }
+    }
     // Get uniques only
     targetUsernames = [...new Set(targetUsernames)];
     targetGenders = [...new Set(targetGenders)];

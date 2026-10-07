@@ -1289,6 +1289,8 @@ export const combatRouter = createTRPCRouter({
       Object.assign(userBattle.extraState.jutsus, extraState.jutsus);
       Object.assign(userBattle.extraState.jutsuReskins, extraState.jutsuReskins);
       Object.assign(userBattle.extraState.items, extraState.items);
+      userBattle.extraState.enemySkills ??= {};
+      Object.assign(userBattle.extraState.enemySkills, extraState.enemySkills);
       Object.assign(userBattle.extraState.sageModes, extraState.sageModes);
       const updatedBattleUserId = usersState[0]?.userId;
       if (updatedBattleUserId) {
@@ -2449,6 +2451,14 @@ export const initiateBattle = async (
         ]),
       ),
     ),
+    ...Object.values(extraState.enemySkills ?? {}).flatMap((effects) =>
+      effects.flatMap((e) => [
+        e.appearAnimation,
+        e.disappearAnimation,
+        e.staticAnimation,
+        e.staticAssetPath,
+      ]),
+    ),
     // Include staticAssetPath from ground effects (barriers, etc.)
     ...groundEffects.map((e) => e.staticAssetPath),
   ]
@@ -2456,6 +2466,9 @@ export const initiateBattle = async (
     .concat([ID_ANIMATION_SMOKE, ID_ANIMATION_HIT, ID_ANIMATION_HEAL]);
 
   const sfxAssets = [
+    ...Object.values(extraState.enemySkills ?? {}).flatMap((effects) =>
+      effects.flatMap((e) => [e.appearSfx, e.disappearSfx]),
+    ),
     ...users.flatMap((u) =>
       u.items.flatMap((i) =>
         (i.item?.effects ?? []).flatMap((e) => [e.appearSfx, e.disappearSfx]),
@@ -2792,13 +2805,12 @@ export const processUsersForBattle = async (
   // Collect user effects here
   const allSummons: string[] = [];
   const userEffects: UserEffect[] = [];
+  const enemySkills: NonNullable<ExtraState["enemySkills"]> = {};
   const pendingSkillEffects: {
     creatorId: string;
-    creatorVillageId: string | null;
     skillId: string;
     effects: UserEffect[];
     level: number;
-    target: "ALLIES" | "ENEMIES";
   }[] = [];
   const takenLocations: { x: number; y: number }[] = [];
 
@@ -2809,6 +2821,7 @@ export const processUsersForBattle = async (
       ...inputUser,
       // Set controllerID and mark this user as the original
       controllerId: inputUser.userId,
+      enemySkillIds: [],
       userId: inputUser.isAi ? nanoid() : inputUser.userId,
       // Set direction based on team membership (leftSideUserIds determines left team)
       direction: leftSideUserIds?.includes(inputUser.userId) ? "left" : "right",
@@ -3128,14 +3141,21 @@ export const processUsersForBattle = async (
               realized.fromType = "skill";
               userEffects.push(realized);
             });
-          } else if (skill.target === "ALLIES" || skill.target === "ENEMIES") {
+          } else if (skill.target === "ENEMIES") {
+            user.enemySkillIds ??= [];
+            user.enemySkillIds.push(userSkill.skillId);
+            enemySkills[userSkill.skillId] = structuredClone(
+              skill.effects,
+            ) as NonNullable<ExtraState["enemySkills"]>[string];
+            for (const effect of enemySkills[userSkill.skillId] ?? []) {
+              if (effect.type === "summon") allSummons.push(effect.aiId);
+            }
+          } else if (skill.target === "ALLIES") {
             pendingSkillEffects.push({
               creatorId: user.userId,
-              creatorVillageId: user.villageId,
               skillId: userSkill.skillId,
               effects: skill.effects as unknown as UserEffect[],
               level: user.level,
-              target: skill.target,
             });
           }
         },
@@ -3460,16 +3480,18 @@ export const processUsersForBattle = async (
     }
   }
 
-  // Apply any pending skill tree effects that target allies/enemies now that usersState exists
+  // Apply ally passives after every participant has been assigned a team.
   if (pendingSkillEffects.length > 0) {
     for (const pending of pendingSkillEffects) {
       const creator = usersState.find((u) => u.userId === pending.creatorId);
       if (!creator) continue;
-      const targets = usersState.filter((u) => stillInBattle(u));
+      const targets = usersState.filter(
+        (u) => stillInBattle(u) && u.direction === creator.direction,
+      );
       for (const target of targets) {
         for (const effect of pending.effects) {
           const realized = realizeTag({
-            tag: effect,
+            tag: structuredClone(effect),
             user: creator,
             actionId: pending.skillId,
             target,
@@ -3507,6 +3529,7 @@ export const processUsersForBattle = async (
     jutsuReskins: {},
     items: {},
     bloodlines: {},
+    enemySkills,
     sageModes: {},
     villages: {},
     anbuSquads: {},
@@ -3730,6 +3753,8 @@ export const processUsersForBattle = async (
     Object.assign(extraState.jutsuReskins, summonExtraState.jutsuReskins);
     Object.assign(extraState.items, summonExtraState.items);
     Object.assign(extraState.bloodlines, summonExtraState.bloodlines);
+    extraState.enemySkills ??= {};
+    Object.assign(extraState.enemySkills, summonExtraState.enemySkills);
     Object.assign(extraState.sageModes, summonExtraState.sageModes);
     Object.assign(extraState.villages, summonExtraState.villages);
     Object.assign(extraState.anbuSquads, summonExtraState.anbuSquads);

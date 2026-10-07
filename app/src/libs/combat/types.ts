@@ -173,6 +173,8 @@ export type CombatUserFields = {
   usedActions: { id: string; type: "jutsu" | "item" | "basic" | "bloodline" }[];
   /** Distinct tag types the user applied this battle (for tag_usage_win tracker). Array not Set — serializes to JSON. */
   usedTagTypes: EffectType[];
+  /** Enemy-targeted skill and bloodright sources preloaded for on-action application. */
+  enemySkillIds?: string[];
   /** Total damage this user dealt to opponents this battle (for damage_dealt tracker). */
   damageDealt: number;
   initiative: number;
@@ -368,6 +370,7 @@ export type ExtraState = {
   jutsuReskins: Record<string, JutsuReskin>; // reskinId -> Reskin data
   items: Record<string, Item>; // itemId -> Item
   bloodlines: Record<string, Bloodline>; // bloodlineId -> Bloodline
+  enemySkills?: Record<string, ZodAllTags[]>; // skillId -> on-action effect templates
   sageModes: Record<string, SageMode>; // sageModeId -> SageMode
   villages: Record<string, CombatQueryVillage>; // villageId -> Village
   anbuSquads: Record<string, AnbuSquad>; // anbuId -> AnbuSquad
