@@ -246,9 +246,15 @@ interface SkillCardProps {
     canPurchase: boolean;
   };
   onClick: () => void;
+  costLabel?: string;
 }
 
-const SkillCard: React.FC<SkillCardProps> = ({ skill, status, onClick }) => {
+export const SkillCard: React.FC<SkillCardProps> = ({
+  skill,
+  status,
+  onClick,
+  costLabel,
+}) => {
   const effectivelyOwned = status.isOwned && status.isActivated;
   const isLocked = !effectivelyOwned && !status.hasPrereqs;
   const isUnaffordable = !effectivelyOwned && status.hasPrereqs && !status.hasPoints;
@@ -307,7 +313,7 @@ const SkillCard: React.FC<SkillCardProps> = ({ skill, status, onClick }) => {
           T{skill.tier}
         </Badge>
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-          {skill.costSkillPoints} SP
+          {costLabel ?? `${skill.costSkillPoints} SP`}
         </Badge>
       </div>
     </button>
