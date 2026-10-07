@@ -630,6 +630,8 @@ export const canDeletePollOptions = (role: UserRole) => {
     "BALANCE",
     "HEAD_CONTENT",
     "HEAD_BALANCE",
+    "HEAD_MODERATOR",
+    "MODERATOR",
   ].includes(role);
 };
 

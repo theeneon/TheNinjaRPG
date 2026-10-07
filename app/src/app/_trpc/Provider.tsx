@@ -16,8 +16,9 @@ import {
 } from "@trpc/client";
 import { useState } from "react";
 import superjson from "superjson";
+import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/components/ui/use-toast";
-import { BOTID_BLOCKED_MESSAGE } from "@/libs/botid";
+import { BOTID_BLOCKED_MESSAGE, BOTID_RELOAD_REQUIRED_MESSAGE } from "@/libs/botid";
 import { showMutationToast } from "@/libs/toast";
 import { isRetryableTrpcError } from "@/utils/error";
 import {
@@ -189,11 +190,27 @@ const handleTrpcError = (error: unknown) => {
       showMutationToast({ success: false, message: error.message });
       return;
     }
-    // A BotID block of a mutation: the server records each one with its verdict, and
-    // the toast tells the player to reload. The mutation settles as failed, so its
-    // pending state clears like any other rejection.
-    if (errorCode === "FORBIDDEN" && error.message === BOTID_BLOCKED_MESSAGE) {
-      showMutationToast({ success: false, message: error.message });
+    // A BotID rejection of a mutation: a bot verdict, or no challenge because the page
+    // is out of date. The server records each one, and the toast offers the reload that
+    // loads the current bundle and a fresh challenge. The mutation settles as failed, so
+    // its pending state clears like any other rejection.
+    if (
+      (errorCode === "FORBIDDEN" && error.message === BOTID_BLOCKED_MESSAGE) ||
+      (errorCode === "PRECONDITION_FAILED" &&
+        error.message === BOTID_RELOAD_REQUIRED_MESSAGE)
+    ) {
+      showMutationToast({
+        success: false,
+        message: error.message,
+        action: (
+          <ToastAction
+            altText="Reload the page"
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </ToastAction>
+        ),
+      });
       return;
     }
     // Expected authorization result. The screen that issued the query is responsible

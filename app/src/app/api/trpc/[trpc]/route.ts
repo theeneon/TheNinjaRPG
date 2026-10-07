@@ -2,6 +2,7 @@ import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { cookies, headers } from "next/headers";
 import type { NextRequest } from "next/server";
 import { appRouter } from "@/api/root";
+import { BOTID_CHALLENGE_HEADER } from "@/libs/botid";
 import { createAppTRPCContext } from "@/server/api/trpc";
 import { withRequestScope } from "@/server/requestScope";
 import {
@@ -20,9 +21,13 @@ const handler = async (req: NextRequest) => {
   // here overlaps its round trip with the session lookup in createContext.
   const trpcPaths = trpcPathsFromUrl(req.url);
   const botIdGuard = shouldGuardTrpcRequest(req.method, trpcPaths)
-    ? createBotIdGuard(trpcPaths)
+    ? createBotIdGuard(trpcPaths, {
+        hasChallenge: req.headers.has(BOTID_CHALLENGE_HEADER),
+        userAgent: req.headers.get("user-agent"),
+      })
     : undefined;
-  void botIdGuard?.verify();
+  // Without a challenge BotID can only answer "bot", so the request is not sent to it.
+  if (botIdGuard?.hasChallenge) void botIdGuard.verify();
 
   const readCookies = await cookies();
   const readHeaders = await headers();

@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "e89f17d5-63fb-4c85-ae5d-369bec315288",
-  "prevId": "666756e1-d19d-4a16-93a8-162e1874903e",
+  "id": "713e7106-04ff-437e-ba97-2b5adcff1014",
+  "prevId": "e89f17d5-63fb-4c85-ae5d-369bec315288",
   "tables": {
     "AbEvent": {
       "name": "AbEvent",
@@ -6112,6 +6112,35 @@
           "autoincrement": false,
           "default": false
         },
+        "auctionMinPrice": {
+          "name": "auctionMinPrice",
+          "type": "int unsigned",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "auctionMaxPrice": {
+          "name": "auctionMaxPrice",
+          "type": "int unsigned",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "purchaseLimit": {
+          "name": "purchaseLimit",
+          "type": "int unsigned",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "purchaseLimitPeriod": {
+          "name": "purchaseLimitPeriod",
+          "type": "enum('NONE','DAILY','WEEKLY','MONTHLY')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'NONE'"
+        },
         "isFarmSeed": {
           "name": "isFarmSeed",
           "type": "boolean",
@@ -6409,6 +6438,55 @@
           ]
         }
       },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "ItemPurchaseCounter": {
+      "name": "ItemPurchaseCounter",
+      "columns": {
+        "userId": {
+          "name": "userId",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "itemId": {
+          "name": "itemId",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "periodStart": {
+          "name": "periodStart",
+          "type": "datetime(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "int unsigned",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "ItemPurchaseCounter_user_item_period_key": {
+          "name": "ItemPurchaseCounter_user_item_period_key",
+          "columns": [
+            "userId",
+            "itemId",
+            "periodStart"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
@@ -13456,13 +13534,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "bloodlineId": {
-          "name": "bloodlineId",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "bloodlineReskinId": {
           "name": "bloodlineReskinId",
           "type": "varchar(191)",
@@ -13658,6 +13729,13 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
+        },
+        "bloodlineId": {
+          "name": "bloodlineId",
+          "type": "varchar(191)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "monthlySkillResets": {
           "name": "monthlySkillResets",

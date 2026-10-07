@@ -88,6 +88,11 @@ import MapError from "@/layout/MapError";
 import Modal from "@/layout/Modal";
 import NavTabs from "@/layout/NavTabs";
 import { nonCombatConsume } from "@/libs/item";
+import {
+  findNearestWalkableCoordinate,
+  isReachableCoordinate,
+  isWalkableCoordinate,
+} from "@/libs/sector-map/validation";
 import { getRemainingSensoryCooldown, getStealthStatus } from "@/libs/stealth";
 import type { GlobalTile, SectorPoint } from "@/libs/threejs/types";
 import { showMutationToast, showRewardToast } from "@/libs/toast";
@@ -864,18 +869,30 @@ function Travel() {
       setAutoDestination(null);
       return;
     }
-    const tile = currentSectorMap.tiles.find(
-      (tile) =>
-        tile.x === autoDestination.longitude && tile.y === autoDestination.latitude,
-    );
-    if (!tile || tile.blocked || tile.walkCost <= 0) {
+    // Mirror the server's moveInSector checks so an unreachable target (blocked
+    // terrain or a cut-off pocket) is reported once instead of starting a walk
+    // that the server rejects step after step.
+    const destination = {
+      x: autoDestination.longitude,
+      y: autoDestination.latitude,
+    };
+    const origin = findNearestWalkableCoordinate(currentSectorMap, {
+      x: userData.longitude,
+      y: userData.latitude,
+    });
+    if (
+      !origin ||
+      !isWalkableCoordinate(currentSectorMap, destination) ||
+      !isReachableCoordinate(currentSectorMap, origin, destination)
+    ) {
       showMutationToast({
+        id: "auto-travel-unreachable",
         success: false,
         message: "That destination cannot be walked to",
       });
     } else {
       setActiveTab(sectorLink);
-      setTargetPosition({ x: tile.x, y: tile.y });
+      setTargetPosition(destination);
     }
     setAutoDestination(null);
   }, [autoDestination, userData, currentSectorMap, isStartingTravel, sectorLink]);

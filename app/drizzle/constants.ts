@@ -1064,6 +1064,8 @@ export const TUTORIAL_JUTSU_ID = "clh4d6pxd0006tb0h4y1yudi5";
 export const TUTORIAL_ITEM_ID = "VOditPJ3X2id0yC-F5Kz3";
 export const TUTORIAL_STARTER_QUEST_ID = "eYDVpL63vPhK3lywMexdv";
 export const TUTORIAL_GENIN_EXAM_QUEST_ID = "9-t1rNWEzXbIfdUfxWrny";
+export const HEAVENLY_SONATA_BLOODLINE_ID = "clh4d6q6s000atb0h0qdqdh1z";
+export const BLUE_BLADE_EYES_BLOODLINE_ID = "clh4d6qo4000itb0hrx8t06wq";
 export const TUTORIAL_ARENA_DUMMY_ID = "ICXb49Z0Jle3GyJ-rosTi";
 
 // Recruitment analytics metric options (used by frontend and backend)
@@ -1307,7 +1309,7 @@ export const SAGE_MODE_DEFAULT_ACTIVATION_MESSAGE = "%user enters sage mode!";
 export const SAGE_MODE_DEFAULT_ACTION_COST_PERC = 80;
 
 // Skill tree config
-export const SKILL_TREE_RESET_FREE_NORMAL = 0;
+export const SKILL_TREE_RESET_FREE_NORMAL = 1;
 export const SKILL_TREE_RESET_FREE_SILVER = 1;
 export const SKILL_TREE_RESET_FREE_GOLD = 2;
 
@@ -2053,7 +2055,7 @@ export const SECTOR_TYPES = [
 ] as const;
 
 // Conversation config
-export const CONVERSATION_QUIET_MINS = 5;
+export const CONVERSATION_PAUSE_HIDDEN_MINS = 5;
 export const MESSAGING_MIN_LEVEL = 3;
 export const FORUM_MIN_LEVEL = 3;
 export const AUCTION_HOUSE_MIN_LEVEL = 15;
@@ -2790,9 +2792,9 @@ export const IMG_BATTLEFIELD_STAR =
 export const MUSIC_SHADOW_OF_THE_BLADE =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJQCH0mJjhzBPya1rwfCIqOTU0cV5xgsMeo3u2";
 export const MUSIC_WELCOME_TO_SEICHI =
-  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJrwIzM2huJPmdY8zI2ptZXAoEj1c6BMKvrQOx";
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJmJDFBGHE4IMO5Goa7cgLxPJ0VC6lU8vbt1Ap";
 export const MUSIC_SHIROHANA_THEME =
-  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJnL3NqnmojJ0EqeDCvBrNmZaXVdY97gSpOWiA";
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJ4vI0KulYIif5CL8BKvMsOh2ZnmS7yHt0jTD3";
 export const MUSIC_TSUKIMORI_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJE9b6CNLfKL5D7TAFe29bymSaPCIQ846MdzGg";
 export const MUSIC_AKIKAZE_THEME =
@@ -2801,6 +2803,20 @@ export const MUSIC_AKASUMI_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJTvL90a5IU29dZYJPoOKSh5vmlqatMub3EigH";
 export const MUSIC_SYNDICATE_THEME =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJxrcAPUWZsq9k0Von5rUfP6OgQ2TyptCKHS4u";
+export const MUSIC_HYORIN_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJe1hBMMyV3OvUJQExAi0bGoIZDF74LqSnHRdp";
+export const MUSIC_HORIZON_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJ7dGr02BXKPBOUWGyFuM4DlL1v5HNTZhkte0z";
+export const MUSIC_HALLOWEEN_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJX2KBuGqIOpAoLKbZ4nW9Rsil2V67yuFwQhqv";
+export const MUSIC_WINTER_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJMIfxyadtsO4cexqW2RDgkE3zZbNXSFGitmna";
+export const MUSIC_SHADOWS_DANCE =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJhUwWfeMfUBdnwAX5LTajlNc4mrgzi0RJtqpM";
+export const MUSIC_HEAVENLY_SONATA_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJpoak58fbKBAOsGCHyl3Sk0mZFrgWPUdjMJ75";
+export const MUSIC_BLUE_BLADE_THEME =
+  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJIvdW2M4xfOewksxBoS1HQCihpL7c42Ky9uUF";
 export const BUTTON_CLICK_SFX_URLS = [
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJSiIRUn3jWrEB7TyZlmpoAxMK5Qi16kNPVJuH",
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJDaZRDSzEwoh0WXMnscL279N8ayVQUCbRzS3p",
@@ -3400,3 +3416,6 @@ export const STORE_FEDERAL_PRODUCTS = [
 
 /** RevenueCat entitlement that grants federal status, whichever plan is active. */
 export const STORE_FEDERAL_ENTITLEMENT = "federal";
+
+export const SkillTreePathTypes = ["SKILL", "BLOODRIGHT"] as const;
+export const MAX_BLOODRIGHT_TIERS = 5;

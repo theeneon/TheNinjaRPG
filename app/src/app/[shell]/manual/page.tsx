@@ -52,6 +52,7 @@ export default function ManualMain() {
     { name: "sageMode", img: IMG_MANUAL_SAGE_MODE },
     { name: "jutsu", img: IMG_MANUAL_JUTSU },
     { name: "skillTree", img: IMG_MANUAL_SKILLTREE },
+    { name: "bloodright", img: IMG_MANUAL_SKILLTREE },
     { name: "item", img: IMG_MANUAL_ITEM },
     { name: "crafting_recipes", img: IMG_MANUAL_CRAFTING_RECIPES },
     { name: "ai", img: IMG_MANUAL_AI },

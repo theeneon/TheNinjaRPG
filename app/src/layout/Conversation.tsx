@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { format } from "date-fns";
-import { Check, RefreshCw, Search, X } from "lucide-react";
+import { RefreshCw, Search, X } from "lucide-react";
 import { nanoid } from "nanoid";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,8 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Quote } from "@/components/ui/quote";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CONVERSATION_QUIET_MINS } from "@/drizzle/constants";
+import { CONVERSATION_PAUSE_HIDDEN_MINS } from "@/drizzle/constants";
 import { useNativeShell } from "@/hooks/useNativeShell";
+import { usePageActive } from "@/hooks/usePageActive";
 import { CommentOnConversation } from "@/layout/Comment";
 import ContentBox from "@/layout/ContentBox";
 import Loader from "@/layout/Loader";
@@ -32,7 +33,6 @@ import {
   RESTRICTED_SUPPORT_TICKET_REPLY_MESSAGE,
 } from "@/utils/permissions";
 import { stripBlockquotes } from "@/utils/sanitize";
-import { secondsFromNow } from "@/utils/time";
 import type { ArrayElement } from "@/utils/typeutils";
 import { useUserData } from "@/utils/UserContext";
 import { type SearchFormSchema, searchFormSchema } from "@/validators/chat";
@@ -94,20 +94,18 @@ const Conversation: React.FC<ConversationProps> = (props) => {
   const [deletedCommentIds, setDeletedCommentIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [quietTime, setQuietTime] = useState<Date>(() =>
-    secondsFromNow(CONVERSATION_QUIET_MINS * 60),
-  );
-  // Silent once a timer confirms the current quiet time passed; any activity sets a
-  // new quiet time, which ends the silence without another state update.
-  const [expiredQuietTime, setExpiredQuietTime] = useState<Date | null>(null);
-  const silence = expiredQuietTime === quietTime;
+  // A conversation left in a hidden tab or backgrounded app stops following live
+  // events once the pause delay passes; showing the page again resumes and catches up.
+  const isPageActive = usePageActive();
+  const [isPaused, setIsPaused] = useState(false);
   useEffect(() => {
+    if (isPageActive) return;
     const timeout = setTimeout(
-      () => setExpiredQuietTime(quietTime),
-      quietTime.getTime() - Date.now(),
+      () => setIsPaused(true),
+      CONVERSATION_PAUSE_HIDDEN_MINS * 60 * 1000,
     );
     return () => clearTimeout(timeout);
-  }, [quietTime]);
+  }, [isPageActive]);
   const composeRestriction = userData ? getMessagingRestriction(userData) : null;
 
   // Typing indicator state
@@ -440,9 +438,6 @@ const Conversation: React.FC<ConversationProps> = (props) => {
   const optimisticConversationUpdate = async (
     newMessage: MutateCommentSchema | ReturnedComment,
   ) => {
-    // We are active
-    setQuietTime(secondsFromNow(CONVERSATION_QUIET_MINS * 60));
-
     if (!userData || !conversation) return {};
 
     // If we're in search mode and this is a new message, don't show it unless it matches the search
@@ -583,7 +578,7 @@ const Conversation: React.FC<ConversationProps> = (props) => {
    * Websockets event listener
    */
   useEffect(() => {
-    if (conversation && pusher) {
+    if (conversation && pusher && !isPaused) {
       const ownUserId = userData?.userId;
       const channel = pusher.subscribe(conversation.id);
       channel.bind(
@@ -597,7 +592,7 @@ const Conversation: React.FC<ConversationProps> = (props) => {
         }) => {
           switch (data.message) {
             case "new":
-              if (!silence && data.fromId !== ownUserId && data.commentId) {
+              if (data.fromId !== ownUserId && data.commentId) {
                 fetchComment({ commentId: data.commentId });
               }
               break;
@@ -636,19 +631,27 @@ const Conversation: React.FC<ConversationProps> = (props) => {
         pusher.unsubscribe(conversation.id);
       };
     }
-  }, [silence, conversation, pusher]);
+  }, [isPaused, conversation, pusher]);
+
+  // Resuming after the subscription above is restored fetches what arrived meanwhile.
+  useEffect(() => {
+    if (isPageActive && isPaused) {
+      setIsPaused(false);
+      void refetch();
+    }
+  }, [isPageActive, isPaused, refetch]);
 
   // Reconnecting restores live events but does not replay messages missed offline.
   useEffect(() => {
     if (!pusher) return;
     const refreshConversation = () => {
-      if (new Date() <= quietTime) void refetch();
+      if (!isPaused) void refetch();
     };
     pusher.connection.bind("connected", refreshConversation);
     return () => {
       pusher.connection.unbind("connected", refreshConversation);
     };
-  }, [pusher, refetch, quietTime]);
+  }, [pusher, refetch, isPaused]);
 
   // Cleanup stale typing indicators every second
   useEffect(() => {
@@ -840,23 +843,6 @@ const Conversation: React.FC<ConversationProps> = (props) => {
             onToggleQuote={toggleQuoteId}
             onDeleted={handleConversationCommentDeleted}
           />
-          {silence && (
-            <div className="absolute top-0 right-0 bottom-0 left-0 z-20 m-auto flex flex-col justify-start bg-black bg-opacity-80">
-              <div className="pt-10 text-center text-white">
-                <p className="p-5 text-5xl">Are you still there?</p>
-                <Button
-                  size="xl"
-                  onClick={async () => {
-                    setQuietTime(secondsFromNow(CONVERSATION_QUIET_MINS * 60));
-                    await invalidateComments();
-                  }}
-                >
-                  <Check className="mr-3 h-8 w-8" />
-                  Yep
-                </Button>
-              </div>
-            </div>
-          )}
         </ContentBox>
       )}
     </div>

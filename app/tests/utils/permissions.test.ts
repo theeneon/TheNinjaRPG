@@ -5,6 +5,7 @@ import {
   canApproveApplications,
   canChangeContent,
   canDeleteConceptArt,
+  canDeletePollOptions,
   canEditSeichiSilver,
   canModifyCombatSettings,
   canModifyEventGains,
@@ -57,6 +58,15 @@ test("concept art delete permission is owner and admin roles only", () => {
   expect(canDeleteConceptArt("MODERATOR-ADMIN")).toBe(true);
   expect(canDeleteConceptArt("HEAD_MODERATOR")).toBe(true);
   expect(canDeleteConceptArt("MODERATOR")).toBe(false);
+});
+
+test("moderators can delete poll options, regular users cannot", () => {
+  expect(canDeletePollOptions("MODERATOR")).toBe(true);
+  expect(canDeletePollOptions("HEAD_MODERATOR")).toBe(true);
+  expect(canDeletePollOptions("MODERATOR-ADMIN")).toBe(true);
+  expect(canDeletePollOptions("CONTENT")).toBe(true);
+  expect(canDeletePollOptions("USER")).toBe(false);
+  expect(canDeletePollOptions("CODER")).toBe(false);
 });
 
 test("non-approval staff do not get application approval access", () => {

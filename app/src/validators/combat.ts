@@ -1462,19 +1462,37 @@ export type ZodSageModeType = z.infer<typeof SageModeValidator>;
 /**
  * SkillTree Type. Used for validating a skill tree object is set up properly
  */
-export const SkillTreeValidator = z.object({
-  name: z.string().trim(),
-  image: z.string(),
-  description: z.string(),
-  target: z.enum(SkillTreeTargets).prefault("SELF"),
-  tier: z.coerce.number().int().min(1).max(10),
-  requiredSkillIds: z.array(z.string()),
-  costSkillPoints: z.coerce.number().int().min(1),
-  hidden: z.coerce.boolean().optional(),
-  skillType: z.enum(SkillTreeEntryTypes).prefault("DEFAULT"),
-  folderId: z.string().nullish(),
-  effects: z.array(AllTags).superRefine(SuperRefineEffects),
-});
+export const SkillTreeValidator = z
+  .object({
+    name: z.string().trim(),
+    image: z.string(),
+    description: z.string(),
+    target: z.enum(SkillTreeTargets).prefault("SELF"),
+    tier: z.coerce.number().int().min(1).max(10),
+    requiredSkillIds: z.array(z.string()),
+    costSkillPoints: z.coerce.number().int().min(1),
+    pathType: z.enum(["SKILL", "BLOODRIGHT"]).prefault("SKILL"),
+    bloodlineId: z.string().nullish(),
+    seichiSilverCost: z.coerce.number().int().min(0).max(2147483647).prefault(0),
+    hidden: z.coerce.boolean().optional(),
+    skillType: z.enum(SkillTreeEntryTypes).prefault("DEFAULT"),
+    folderId: z.string().nullish(),
+    effects: z.array(AllTags).superRefine(SuperRefineEffects),
+  })
+  .superRefine((tier, ctx) => {
+    if (tier.pathType === "BLOODRIGHT" && !tier.bloodlineId)
+      ctx.addIssue({
+        code: "custom",
+        path: ["bloodlineId"],
+        message: "Bloodright requires a bloodline",
+      });
+    if (tier.pathType === "SKILL" && tier.bloodlineId)
+      ctx.addIssue({
+        code: "custom",
+        path: ["bloodlineId"],
+        message: "Only Bloodright can have a bloodline",
+      });
+  });
 export type ZodSkillTreeType = z.output<typeof SkillTreeValidator>;
 export type ZodSkillTreeInput = z.input<typeof SkillTreeValidator>;
 

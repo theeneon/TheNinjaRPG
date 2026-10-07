@@ -42,6 +42,7 @@ import {
   getFreeBloodlineSwaps,
   getPityRolls,
 } from "@/libs/bloodline";
+import { bloodrightSwapRefund } from "@/libs/bloodright";
 import {
   deletedReason,
   editedReason,
@@ -253,6 +254,8 @@ export const bloodlineRouter = createTRPCRouter({
       // Guards
       if (!user) return errorResponse("User does not exist");
       if (!line) return errorResponse("Bloodline does not exist");
+      if (user.status === "BATTLE")
+        return errorResponse("You cannot change bloodline during battle");
       if (user.bloodlineId === line.id) {
         return errorResponse("You already have this bloodline");
       }
@@ -287,7 +290,15 @@ export const bloodlineRouter = createTRPCRouter({
       // Update bloodline (this creates the "Bloodline Changed" log entry)
       const swapCost = isFreeSwap ? 0 : COST_SWAP_BLOODLINE;
       const swapMessage = `Bloodline Swapped from ${user.bloodline?.name} to ${line.name}`;
-      await updateBloodline(ctx.drizzle, user, line, swapCost, swapMessage);
+      try {
+        await updateBloodline(ctx.drizzle, user, line, swapCost, swapMessage);
+      } catch (error) {
+        if (error instanceof BloodlineGrantRejectedError)
+          return errorResponse(
+            "Bloodline or battle status changed. Refresh and try again",
+          );
+        throw error;
+      }
 
       // Log federal free swaps for monthly Silver/Gold tracking (staff benefit takes priority)
       if (hasFreeSwapAvailable && !isStaffFreeSwap) {
@@ -609,11 +620,18 @@ export const bloodlineRouter = createTRPCRouter({
         return errorResponse(`Bloodline used by users: ${usernames}, cannot delete`);
       }
       // Mutate
+      const bloodrightRefund = bloodrightSwapRefund(null);
       await Promise.all([
         ctx.drizzle.delete(bloodline).where(eq(bloodline.id, input.id)),
         ctx.drizzle
           .update(userData)
-          .set({ bloodlineId: null })
+          .set({
+            // Combat retains preloaded tiers; preserve their saved refund until the battle ends.
+            seichiSilver: sql`IF(${userData.status} = 'BATTLE', ${userData.seichiSilver}, ${bloodrightRefund.seichiSilver})`,
+            bloodright: sql`IF(${userData.status} = 'BATTLE', ${userData.bloodright}, ${bloodrightRefund.bloodright})`,
+            bloodrightSpent: sql`IF(${userData.status} = 'BATTLE', ${userData.bloodrightSpent}, ${bloodrightRefund.bloodrightSpent})`,
+            bloodlineId: null,
+          })
           .where(eq(userData.bloodlineId, input.id)),
         ctx.drizzle.insert(actionLog).values({
           id: nanoid(),
@@ -847,7 +865,10 @@ export const bloodlineRouter = createTRPCRouter({
           if (randomBloodline) {
             const bloodlineUpdateResult = await ctx.drizzle
               .update(userData)
-              .set({ bloodlineId: randomBloodline.id })
+              .set({
+                ...bloodrightSwapRefund(randomBloodline.id),
+                bloodlineId: randomBloodline.id,
+              })
               .where(
                 and(
                   eq(userData.userId, ctx.userId),
@@ -1006,25 +1027,35 @@ export const bloodlineRouter = createTRPCRouter({
         fetchNaturalBloodlineRoll(ctx.drizzle, ctx.userId),
       ]);
       // Guard
+      if (user.status === "BATTLE")
+        return errorResponse("You cannot change bloodline during battle");
       if (!user.bloodlineId) {
         throw serverError("PRECONDITION_FAILED", "You do not have a bloodline");
       }
-      if (user.bloodlineId === roll?.bloodlineId) {
-        await updateBloodline(ctx.drizzle, user, null, 0, "Bloodline Removed");
-        return { success: true, message: "Bloodline removed for free" };
-      } else {
-        if (user.reputationPoints < REMOVAL_COST) {
-          return errorResponse("You do not have enough reputation points");
-        }
+      const removalCost = user.bloodlineId === roll?.bloodlineId ? 0 : REMOVAL_COST;
+      if (user.reputationPoints < removalCost)
+        return errorResponse("You do not have enough reputation points");
+      try {
         await updateBloodline(
           ctx.drizzle,
           user,
           null,
-          REMOVAL_COST,
+          removalCost,
           "Bloodline Removed",
         );
-        return { success: true, message: `Bloodline removed for ${REMOVAL_COST} reps` };
+      } catch (error) {
+        if (error instanceof BloodlineGrantRejectedError)
+          return errorResponse(
+            "Bloodline or battle status changed. Refresh and try again",
+          );
+        throw error;
       }
+      return {
+        success: true,
+        message: removalCost
+          ? `Bloodline removed for ${REMOVAL_COST} reps`
+          : "Bloodline removed for free",
+      };
     }),
   // Purchase a bloodline for session user
   purchaseBloodline: protectedProcedure
@@ -1111,6 +1142,7 @@ export const updateBloodline = async (
   const updateResult = await client
     .update(userData)
     .set({
+      ...bloodrightSwapRefund(bloodline?.id || null),
       bloodlineId: bloodline?.id || null,
       bloodlineReskinId: null,
       reputationPoints: sql`${userData.reputationPoints} - ${repCost}`,
@@ -1120,6 +1152,8 @@ export const updateBloodline = async (
     .where(
       and(
         eq(userData.userId, user.userId),
+        // Battle effects are fixed at initiation; prevent refunding an active path mid-fight.
+        ne(userData.status, "BATTLE"),
         gte(userData.reputationPoints, repCost),
         user.bloodlineId
           ? eq(userData.bloodlineId, user.bloodlineId)

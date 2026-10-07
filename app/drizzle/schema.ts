@@ -552,6 +552,7 @@ export type BloodlineReskin = InferSelectModel<typeof bloodlineReskin>;
 
 export const bloodlineRelations = relations(bloodline, ({ one, many }) => ({
   users: many(userData),
+  bloodrightTiers: many(skillTree),
   village: one(village, {
     fields: [bloodline.villageId],
     references: [village.id],
@@ -610,6 +611,9 @@ export const skillTree = mysqlTable(
     tier: tinyint("tier").default(1).notNull(),
     requiredSkillIds: json("requiredSkillIds").$type<string[]>().default([]).notNull(),
     costSkillPoints: int("costSkillPoints").default(1).notNull(),
+    pathType: mysqlEnum("pathType", consts.SkillTreePathTypes).default("SKILL").notNull(),
+    bloodlineId: varchar("bloodlineId", { length: 191 }),
+    seichiSilverCost: int("seichiSilverCost").default(0).notNull(),
     hidden: boolean("hidden").default(false).notNull(),
     skillType: mysqlEnum("skillType", consts.SkillTreeEntryTypes)
       .default("DEFAULT")
@@ -629,6 +633,7 @@ export const skillTree = mysqlTable(
       hiddenIdx: index("SkillTree_hidden_idx").on(table.hidden),
       skillTypeIdx: index("SkillTree_skillType_idx").on(table.skillType),
       folderIdIdx: index("SkillTree_folderId_idx").on(table.folderId),
+      bloodlineIdIdx: index("SkillTree_bloodlineId_idx").on(table.bloodlineId),
     };
   },
 );
@@ -636,6 +641,7 @@ export type SkillTree = InferSelectModel<typeof skillTree>;
 
 export const skillTreeRelations = relations(skillTree, ({ one, many }) => ({
   userSkills: many(userSkill),
+  bloodline: one(bloodline, { fields: [skillTree.bloodlineId], references: [bloodline.id] }),
   folder: one(skillTreeFolder, {
     fields: [skillTree.folderId],
     references: [skillTreeFolder.id],
@@ -2406,7 +2412,6 @@ export const userData = mysqlTable(
     isOutlaw: boolean("isOutlaw").default(false).notNull(),
     level: int("level").default(1).notNull(),
     villageId: varchar("villageId", { length: 191 }),
-    bloodlineId: varchar("bloodlineId", { length: 191 }),
     bloodlineReskinId: varchar("bloodlineReskinId", { length: 191 }),
     sageModeId: varchar("sageModeId", { length: 191 }),
     sageMasteryExperience: int("sageMasteryExperience").default(0).notNull(),
@@ -2434,6 +2439,11 @@ export const userData = mysqlTable(
       .default(consts.STARTING_REPUTATION_POINTS)
       .notNull(),
     seichiSilver: int("seichiSilver").default(0).notNull(),
+    bloodright: json("bloodright").$type<{ skillId: string; cost: number }[]>().default([]).notNull(),
+    bloodrightSpent: int("bloodrightSpent").default(0).notNull(),
+    // Drizzle orders SET by declaration: refund Silver and clear Bloodright before replacing the bloodline.
+    bloodlineId: varchar("bloodlineId", { length: 191 }),
+    monthlySkillResets: json("monthlySkillResets").$type<{ month: string; count: number }>().default({ month: "", count: 0 }).notNull(),
     villagePrestige: float("villagePrestige").default(0).notNull(),
     federalStatus: mysqlEnum("federalStatus", consts.FederalStatuses)
       .default("NONE")

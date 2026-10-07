@@ -36,9 +36,12 @@ export const useSkillTreeEditForm = (data: SkillTree, refetch: () => void) => {
     resolver: zodResolver(SkillTreeValidator),
   });
 
+  const watchedBloodlineId = useWatch({ control: form.control, name: "bloodlineId" });
+  const { data: bloodlines } = api.bloodline.getAllNames.useQuery();
+
   // Query for all skills for prerequisite selection
   const { data: allSkills, isPending: l1 } = api.skillTree.getAll.useInfiniteQuery(
-    { limit: 500, hidden: undefined },
+    { limit: 500, hidden: undefined, pathType: data.pathType },
     {
       refetchOnWindowFocus: false,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -102,7 +105,10 @@ export const useSkillTreeEditForm = (data: SkillTree, refetch: () => void) => {
   // Get available prerequisite skills (lower tier than current)
   const allSkillsFlat = allSkills?.pages.flatMap((p) => p.data) ?? [];
   const availablePrereqSkills = allSkillsFlat.filter(
-    (s) => s.id !== skillTree.id && s.tier < (watchedTier as number),
+    (s) =>
+      s.id !== skillTree.id &&
+      s.tier < (watchedTier as number) &&
+      s.bloodlineId === (watchedBloodlineId || null),
   );
 
   // Object for form values
@@ -111,11 +117,39 @@ export const useSkillTreeEditForm = (data: SkillTree, refetch: () => void) => {
     { id: "image", type: "avatar", href: imageUrl },
     { id: "target", type: "str_array", values: SkillTreeTargets },
     { id: "tier", type: "number" },
-    { id: "costSkillPoints", type: "number", label: "Skill Points Cost" },
+    ...(data.pathType === "BLOODRIGHT"
+      ? [
+          {
+            id: "bloodlineId" as const,
+            type: "db_values" as const,
+            values: bloodlines ?? [],
+            label: "Bloodline (required)",
+          },
+          {
+            id: "seichiSilverCost" as const,
+            type: "number" as const,
+            label: "Seichi Silver Cost",
+          },
+        ]
+      : [
+          {
+            id: "costSkillPoints" as const,
+            type: "number" as const,
+            label: "Skill Points Cost",
+          },
+        ]),
     ...(canAccessHiddenSkillTree(userData?.role)
       ? [{ id: "hidden" as const, type: "boolean" as const }]
       : []),
-    { id: "skillType", type: "str_array", values: SkillTreeEntryTypes },
+    ...(data.pathType === "SKILL"
+      ? [
+          {
+            id: "skillType" as const,
+            type: "str_array" as const,
+            values: SkillTreeEntryTypes,
+          },
+        ]
+      : []),
     {
       id: "folderId",
       type: "db_values",

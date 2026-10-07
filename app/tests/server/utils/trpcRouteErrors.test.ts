@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOTID_BLOCKED_MESSAGE } from "@/libs/botid";
+import { BOTID_BLOCKED_MESSAGE, BOTID_RELOAD_REQUIRED_MESSAGE } from "@/libs/botid";
 import { isExpectedTrpcRouteError } from "@/server/utils/sentry";
 
 const base = { message: "", userId: "user-1", method: "GET" };
@@ -57,5 +57,15 @@ describe("isExpectedTrpcRouteError", () => {
       true,
     );
     expect(isExpectedTrpcRouteError({ ...forbidden, message: "Not your clan" })).toBe(false);
+  });
+
+  it("ignores a protected mutation without a BotID challenge, but no other precondition", () => {
+    const precondition = { ...base, code: "PRECONDITION_FAILED", method: "POST" };
+    expect(
+      isExpectedTrpcRouteError({ ...precondition, message: BOTID_RELOAD_REQUIRED_MESSAGE }),
+    ).toBe(true);
+    expect(isExpectedTrpcRouteError({ ...precondition, message: "Quest changed" })).toBe(
+      false,
+    );
   });
 });

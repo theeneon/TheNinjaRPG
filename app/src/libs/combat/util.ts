@@ -50,6 +50,7 @@ import {
 } from "@/drizzle/constants";
 import type {
   Battle,
+  Bloodline,
   GameSetting,
   Item,
   UserItem,
@@ -1459,6 +1460,15 @@ export const maskBattle = (battle: Battle, userId: string) => {
     // these records. Keep the remaining catalogs for actions, summons and rendering.
     extraState: {
       ...battle.extraState,
+      // Lobby loadout changes need the server catalog; clients must not see unpurchased tiers.
+      bloodlines: Object.fromEntries(
+        Object.entries(battle.extraState?.bloodlines ?? {}).map(([id, line]) => {
+          const { bloodrightTiers: _tiers, ...bloodline } = line as Bloodline & {
+            bloodrightTiers?: unknown;
+          };
+          return [id, bloodline];
+        }),
+      ),
       userQuests: {},
       completedQuests: {},
       questData: {},

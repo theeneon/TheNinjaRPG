@@ -415,3 +415,6 @@ export const getBankInterestDateRange = (now = new Date()) => {
 /** Next UTC daily reset, used to refresh calendar-based eligibility. */
 export const nextUtcDayAt = (now = new Date()) =>
   new Date(periodStart("daily", now).getTime() + DAY_S * 1000);
+
+/** UTC key shared by monthly Skills and Bloodright reset claims. */
+export const getUtcMonthKey = (now = new Date()) => now.toISOString().slice(0, 7);

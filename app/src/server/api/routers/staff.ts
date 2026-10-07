@@ -603,6 +603,10 @@ export const staffRouter = createTRPCRouter({
             maxChakra: target.maxChakra,
             money: target.money,
             bank: target.bank,
+            // Clone the balance and saved purchase prices together, replacing the staff path.
+            seichiSilver: target.seichiSilver,
+            bloodright: target.bloodright,
+            bloodrightSpent: target.bloodrightSpent,
             experience: target.experience,
             earnedExperience: target.earnedExperience,
             rank: target.rank,
