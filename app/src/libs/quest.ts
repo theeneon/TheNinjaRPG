@@ -1532,6 +1532,8 @@ export const snapQuestTargetsToReachable = (
 ) => {
   let changed = false;
   for (const { goal, objective } of getUncheckedLocatedGoals(user, trackers)) {
+    // Without a published map (or any walkable tile) the goal stays unchecked so it is
+    // re-evaluated once the sector has a usable map.
     const map = maps.get(goal.sector as number);
     const reachable = map
       ? findNearestReachableCoordinate(map, {
@@ -1539,13 +1541,12 @@ export const snapQuestTargetsToReachable = (
           y: goal.latitude as number,
         })
       : null;
-    if (reachable) {
-      goal.longitude = reachable.x;
-      goal.latitude = reachable.y;
-      if ("sector" in objective) {
-        objective.longitude = reachable.x;
-        objective.latitude = reachable.y;
-      }
+    if (!reachable) continue;
+    goal.longitude = reachable.x;
+    goal.latitude = reachable.y;
+    if ("sector" in objective) {
+      objective.longitude = reachable.x;
+      objective.latitude = reachable.y;
     }
     goal.locationChecked = true;
     changed = true;

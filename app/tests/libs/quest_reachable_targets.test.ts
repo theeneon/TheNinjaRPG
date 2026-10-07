@@ -215,6 +215,16 @@ describe("snapQuestTargetsToReachable", () => {
     expect(goal).toMatchObject({ longitude: 3, latitude: 3, locationChecked: true });
   });
 
+  it("keeps a goal unchecked while its sector has no published map", () => {
+    const quest = makeQuest("q1", [moveObjective("m1")]);
+    const user = makeUser(quest);
+    const { trackers } = getNewTrackers(user, [{ task: "any" }]);
+
+    expect(snapQuestTargetsToReachable(user, trackers, new Map())).toBe(false);
+    expect(trackers[0]?.goals[0]?.locationChecked).toBeUndefined();
+    expect(getUncheckedQuestTargetSectors(user, trackers)).toEqual([5]);
+  });
+
   it("skips finished and placement-bound objectives", () => {
     const quest = makeQuest("q1", [
       moveObjective("m1"),
