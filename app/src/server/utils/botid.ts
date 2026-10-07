@@ -9,7 +9,6 @@ import {
   BOTID_RELOAD_REQUIRED_MESSAGE,
   type BotIdCheckLevel,
   botIdCheckLevelForPaths,
-  isBotIdBlockingProcedure,
   isBotIdProtectedProcedure,
 } from "@/libs/botid";
 
@@ -24,9 +23,8 @@ import {
  * review desk, tests and scripts) never see BotID at all.
  *
  * A classification is never allowed to break gameplay on its own: an error or timeout
- * from BotID lets the request through, blocking is limited to production by default
- * (see `isBotIdEnforced`), and `BOTID_OBSERVE_ONLY_PROCEDURES` are recorded but never
- * blocked.
+ * from BotID lets the request through, and blocking is limited to production by default
+ * (see `isBotIdEnforced`).
  *
  * A request without a challenge header is not sent to BotID at all, which would only
  * answer "bot". Current pages always attach one, so it comes from a tab still running a
@@ -79,11 +77,8 @@ export type BotIdGuard = {
   checkLevel: BotIdCheckLevel;
   /** The memoized verdict for this HTTP request. */
   verify: () => Promise<BotIdVerdict>;
-  /**
-   * Which outcomes of this request have been recorded, by whether they blocked, so a batch
-   * records each once and a block after an observe-only record is not hidden.
-   */
-  reported: Set<boolean>;
+  /** Whether this request's outcome has been recorded, so a batch records it once. */
+  reported: boolean;
   /** Whether a Sentry event was captured that the route must flush. */
   needsFlush: boolean;
   /** Round trip of the BotID check in ms, once it has settled. */
@@ -162,7 +157,7 @@ export const createBotIdGuard = (
       })();
       return pending;
     },
-    reported: new Set(),
+    reported: false,
     needsFlush: false,
     checkMs: undefined,
     timingLogged: false,
@@ -221,9 +216,9 @@ export const isBotIdEnforced = (
 
 /**
  * Called by the tRPC middleware before every procedure. Protected mutations inside a
- * guarded request wait for the verdict and, when enforcement is on and the procedure is
- * not observe-only, are rejected with FORBIDDEN when BotID classifies the request as a
- * bot, or with PRECONDITION_FAILED when the request carries no challenge at all.
+ * guarded request wait for the verdict and, when enforcement is on, are rejected with
+ * FORBIDDEN when BotID classifies the request as a bot, or with PRECONDITION_FAILED when
+ * the request carries no challenge at all.
  * Anything else passes.
  */
 export const enforceBotId = async (props: {
@@ -234,10 +229,10 @@ export const enforceBotId = async (props: {
   if (props.type !== "mutation" || !isBotIdProtectedProcedure(props.path)) return;
   const guard = storage.getStore();
   if (!guard) return;
-  const blocking = isBotIdBlockingProcedure(props.path) && isBotIdEnforced();
+  const blocking = isBotIdEnforced();
   if (!guard.hasChallenge) {
-    if (!guard.reported.has(blocking)) {
-      guard.reported.add(blocking);
+    if (!guard.reported) {
+      guard.reported = true;
       recordMissingChallenge(guard, { ...props, enforced: blocking });
     }
     if (blocking) {
@@ -270,8 +265,8 @@ export const enforceBotId = async (props: {
   }
   if (verdict.ok && !verdict.isBot) return;
   const enforced = verdict.ok && blocking;
-  if (!guard.reported.has(enforced)) {
-    guard.reported.add(enforced);
+  if (!guard.reported) {
+    guard.reported = true;
     recordBotIdOutcome(guard, verdict, { ...props, enforced });
   }
   if (enforced) {

@@ -73,25 +73,6 @@ export const isBotIdProtectedProcedure = (path: string) =>
   protectedProcedures.has(path);
 
 /**
- * Protected procedures whose verdicts are recorded but never block. They are small,
- * once-a-day claims that players fire from popups and dashboards right after a tab
- * resumes, so a false positive costs a real player their daily reward while a bot gains
- * little; the economy guards in their routers (one claim per period) already cap abuse.
- */
-export const BOTID_OBSERVE_ONLY_PROCEDURES = [
-  "activityStreak.claimStreakDay",
-  "bank.claimInterest",
-] as const satisfies readonly (typeof BOTID_PROTECTED_PROCEDURES)[number][];
-
-const observeOnlyProcedures: ReadonlySet<string> = new Set(
-  BOTID_OBSERVE_ONLY_PROCEDURES,
-);
-
-/** Whether BotID may block a protected procedure, rather than only record its verdict. */
-export const isBotIdBlockingProcedure = (path: string) =>
-  protectedProcedures.has(path) && !observeOnlyProcedures.has(path);
-
-/**
  * Request header the BotID client sets on every request it protects. A protected
  * mutation without it comes from a page that never attached a challenge: a tab still
  * running a bundle from before the procedure was protected, or a script.
