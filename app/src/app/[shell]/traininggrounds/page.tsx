@@ -748,6 +748,17 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
                           success: false,
                           message: "Already capped",
                         });
+                      else if (availableEnergy <= 0)
+                        showMutationToast({
+                          success: false,
+                          message:
+                            "No Energy available. Wait for Energy to recover before training.",
+                        });
+                      else if (!Number.isFinite(trainingEnergy) || trainingEnergy <= 0)
+                        showMutationToast({
+                          success: false,
+                          message: "Enter an Energy amount greater than zero to train.",
+                        });
                       else
                         startTraining({
                           stat,
