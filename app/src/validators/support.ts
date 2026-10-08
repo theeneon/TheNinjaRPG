@@ -36,6 +36,8 @@ export const updateSupportTicketSchema = z.object({
     .optional(),
 });
 
+export type UpdateSupportTicketSchema = z.infer<typeof updateSupportTicketSchema>;
+
 // Escalate to GitHub Schema
 export const escalateToGithubSchema = z.object({
   ticketId: z.string(),

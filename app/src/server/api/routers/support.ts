@@ -15,7 +15,11 @@ import {
   supportTicket,
   supportTicketActivity,
 } from "@/drizzle/schema";
-import { anonymizeStaffInfo } from "@/libs/support";
+import {
+  anonymizeStaffInfo,
+  getNextClosedAt,
+  getTicketUpdateActivities,
+} from "@/libs/support";
 import { fetchUser } from "@/routers/profile";
 import { createConvo } from "@/server/api/routers/comments";
 import {
@@ -190,60 +194,35 @@ export const supportRouter = createTRPCRouter({
         return errorResponse("No permission to assign tickets");
       }
 
-      // Create activity logs for changed fields
-      const activities: Array<{
-        action: SupportTicketActivityAction;
-        oldValue?: string;
-        newValue?: string;
-      }> = [];
-      if (updateData.status && updateData.status !== ticket.status) {
-        activities.push({
-          action: "STATUS_CHANGED",
-          oldValue: ticket.status,
-          newValue: updateData.status,
-        });
-      }
-      if (updateData.priority && updateData.priority !== ticket.priority) {
-        activities.push({
-          action: "PRIORITY_CHANGED",
-          oldValue: ticket.priority,
-          newValue: updateData.priority,
-        });
-      }
-      if (updateData.category && updateData.category !== ticket.category) {
-        activities.push({
-          action: "CATEGORY_CHANGED",
-          oldValue: ticket.category,
-          newValue: updateData.category,
-        });
-      }
-      if (
-        updateData?.assignedToUserId &&
-        updateData?.assignedToUserId !== ticket.assignedToUserId
-      ) {
-        activities.push({
-          action:
-            updateData.assignedToUserId && !ticket.assignedToUserId
-              ? "ASSIGNED"
-              : !updateData.assignedToUserId && ticket.assignedToUserId
-                ? "UNASSIGNED"
-                : "ASSIGNED",
-          oldValue: ticket.assignedToUserId || undefined,
-          newValue: updateData.assignedToUserId || undefined,
-        });
+      // Activity log entries for every field that actually changes
+      const { description: nextDescription, ...ticketUpdate } = updateData;
+      const cleanDescription =
+        nextDescription !== undefined ? sanitize(nextDescription) : undefined;
+      const activities = getTicketUpdateActivities(ticket, {
+        ...updateData,
+        description: cleanDescription,
+      });
+      // Nothing changed: keep updatedAt and skip the write
+      if (activities.length === 0) {
+        return { success: true, message: "No changes to save" };
       }
       // Update ticket
-      const { description: nextDescription, ...ticketUpdate } = updateData;
+      const now = new Date();
       await Promise.all([
         ctx.drizzle
           .update(supportTicket)
           .set({
             ...ticketUpdate,
-            ...(nextDescription !== undefined
-              ? { description: sanitize(nextDescription) }
+            ...(cleanDescription !== undefined
+              ? { description: cleanDescription }
               : {}),
-            updatedAt: new Date(),
-            closedAt: updateData.status === "RESOLVED" ? new Date() : ticket.closedAt,
+            updatedAt: now,
+            closedAt: getNextClosedAt(
+              ticket.status,
+              updateData.status,
+              ticket.closedAt,
+              now,
+            ),
           })
           .where(eq(supportTicket.id, ticketId)),
         // Sync conversation isPublic flag when ticket isPublic changes
@@ -255,18 +234,17 @@ export const supportRouter = createTRPCRouter({
                 .where(eq(conversation.id, ticket.conversationId)),
             ]
           : []),
-        ...(activities.length > 0
-          ? activities.map((activity) =>
-              createSupportTicketActivity(
-                ctx.drizzle,
-                ticketId,
-                ctx.userId,
-                activity.action,
-                activity.oldValue,
-                activity.newValue,
-              ),
-            )
-          : []),
+        ...activities.map((activity) =>
+          createSupportTicketActivity(
+            ctx.drizzle,
+            ticketId,
+            ctx.userId,
+            activity.action,
+            activity.oldValue,
+            activity.newValue,
+            activity.metadata,
+          ),
+        ),
       ]);
 
       return {

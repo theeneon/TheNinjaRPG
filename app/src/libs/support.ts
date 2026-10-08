@@ -1,5 +1,6 @@
 import type {
   FederalStatus,
+  SupportTicketActivityAction,
   SupportTicketCategory,
   SupportTicketPriority,
   SupportTicketStatus,
@@ -7,7 +8,8 @@ import type {
   UserRole,
 } from "@/drizzle/constants";
 import { IMG_AVATAR_DEFAULT, SUPPORT_TICKET_COLORS } from "@/drizzle/constants";
-import type { UserData } from "@/drizzle/schema";
+import type { SupportTicket, UserData } from "@/drizzle/schema";
+import type { UpdateSupportTicketSchema } from "@/validators/support";
 
 /**
  * Annonymize user information
@@ -59,3 +61,97 @@ export const getStatusColor = (status: SupportTicketStatus) => {
 };
 
 export { formatTimeAgo } from "@/utils/time";
+
+/** Statuses in which a ticket counts as closed */
+const CLOSED_TICKET_STATUSES: SupportTicketStatus[] = ["RESOLVED", "CLOSED"];
+
+/**
+ * The ticket's closedAt after a status change: stamped when it first resolves or closes,
+ * kept when it moves between RESOLVED and CLOSED, cleared when it is reopened.
+ */
+export const getNextClosedAt = (
+  fromStatus: SupportTicketStatus,
+  toStatus: SupportTicketStatus | undefined,
+  closedAt: Date | null,
+  now: Date,
+): Date | null => {
+  if (!toStatus || toStatus === fromStatus) return closedAt;
+  if (!CLOSED_TICKET_STATUSES.includes(toStatus)) return null;
+  return CLOSED_TICKET_STATUSES.includes(fromStatus) && closedAt ? closedAt : now;
+};
+
+export type SupportTicketActivityEntry = {
+  action: SupportTicketActivityAction;
+  oldValue?: string;
+  newValue?: string;
+  metadata?: Record<string, string>;
+};
+
+/**
+ * Activity log entries for every field a ticket update actually changes
+ */
+export const getTicketUpdateActivities = (
+  ticket: Pick<
+    SupportTicket,
+    | "status"
+    | "priority"
+    | "category"
+    | "assignedToUserId"
+    | "isPublic"
+    | "tags"
+    | "description"
+  >,
+  update: UpdateSupportTicketSchema,
+): SupportTicketActivityEntry[] => {
+  const activities: SupportTicketActivityEntry[] = [];
+  if (update.status && update.status !== ticket.status) {
+    activities.push({
+      action: "STATUS_CHANGED",
+      oldValue: ticket.status,
+      newValue: update.status,
+    });
+  }
+  if (update.priority && update.priority !== ticket.priority) {
+    activities.push({
+      action: "PRIORITY_CHANGED",
+      oldValue: ticket.priority,
+      newValue: update.priority,
+    });
+  }
+  if (update.category && update.category !== ticket.category) {
+    activities.push({
+      action: "CATEGORY_CHANGED",
+      oldValue: ticket.category,
+      newValue: update.category,
+    });
+  }
+  if (update.assignedToUserId && update.assignedToUserId !== ticket.assignedToUserId) {
+    activities.push({
+      action: "ASSIGNED",
+      oldValue: ticket.assignedToUserId || undefined,
+      newValue: update.assignedToUserId,
+    });
+  }
+  if (update.isPublic !== undefined && update.isPublic !== ticket.isPublic) {
+    activities.push({
+      action: "UPDATED",
+      oldValue: ticket.isPublic ? "public" : "private",
+      newValue: update.isPublic ? "public" : "private",
+      metadata: { field: "isPublic" },
+    });
+  }
+  if (update.tags) {
+    const before = new Set(ticket.tags);
+    const after = new Set(update.tags);
+    for (const tag of after) {
+      if (!before.has(tag)) activities.push({ action: "TAGGED", newValue: tag });
+    }
+    for (const tag of before) {
+      if (!after.has(tag)) activities.push({ action: "UNTAGGED", oldValue: tag });
+    }
+  }
+  if (update.description !== undefined && update.description !== ticket.description) {
+    activities.push({ action: "UPDATED", metadata: { field: "description" } });
+  }
+  return activities;
+};
