@@ -2680,21 +2680,17 @@ export const initiateBattle = async (
       "questData",
       queuedParticipants.map((entry) => JSON.stringify(entry.user.questData)),
     );
-    queueUpdate.experience = sql`${userData.experience} + CASE ${sql.join(
-      queuedParticipants.map(
-        (entry) =>
-          sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${entry.amount}`,
-      ),
-      sql` `,
-    )} ELSE 0 END`;
+    queueUpdate.experience = queueCase(
+      "experience",
+      queuedParticipants.map((entry) => sql`${userData.experience} + ${entry.amount}`),
+    );
     for (const stat of CombatStatNames) {
-      queueUpdate[stat] = sql`${userData[stat]} + CASE ${sql.join(
+      queueUpdate[stat] = queueCase(
+        stat,
         queuedParticipants.map(
-          (entry) =>
-            sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${entry.settlement.gains[stat] ?? 0}`,
+          (entry) => sql`${userData[stat]} + ${entry.settlement.gains[stat] ?? 0}`,
         ),
-        sql` `,
-      )} ELSE 0 END`;
+      );
     }
     queueUpdate.updatedAt = sql`CASE WHEN ${inArray(
       userData.userId,

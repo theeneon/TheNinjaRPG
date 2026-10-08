@@ -207,7 +207,7 @@ export default function Training() {
         )}
       </ContentBox>
       <TabsContent value={activeSection} className="mt-0">
-        {["Stats", "Masteries"].includes(activeSection) && (
+        {(activeSection === "Stats" || activeSection === "Masteries") && (
           <StatsTraining
             userData={userData}
             timeDiff={timeDiff}
@@ -250,7 +250,6 @@ interface TrainingProps {
   /** Whichever box comes second carries this: it spaces the boxes apart and
    *  demotes the heading, so the leading box is the one titling the page. */
   initialBreak?: boolean;
-  section?: string;
 }
 
 /**
@@ -494,7 +493,9 @@ const SenseiSystem: React.FC<TrainingProps> = (props) => {
 };
 
 /** Each tile gets its own art; the per-type images are matched by look, not by name */
-const StatsTraining: React.FC<TrainingProps> = (props) => {
+const StatsTraining: React.FC<TrainingProps & { section: "Stats" | "Masteries" }> = (
+  props,
+) => {
   // Settings
   const { userData, updateUser, timeDiff } = props;
   const efficiency = trainEfficiency(userData);
@@ -671,11 +672,10 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
 
   return (
     <>
-      {(!props.section || props.section === "Stats") && (
+      {props.section === "Stats" && (
         <ContentBox
-          title={props.section ? "Combat stats" : "Training"}
+          title="Combat stats"
           subtitle="Instant training"
-          defaultBackHref={props.section ? undefined : "/village"}
           initialBreak={props.initialBreak}
           topRightContent={
             <div className="my-2 ml-2 flex flex-col gap-1">
@@ -805,7 +805,7 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
           {pendingOverlay}
         </ContentBox>
       )}
-      {(!props.section || props.section === "Stats") && (
+      {props.section === "Stats" && (
         <EnergyTrainingQueue
           user={userData}
           availableEnergy={availableEnergy}
@@ -816,7 +816,7 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
           }}
         />
       )}
-      {(!props.section || props.section === "Masteries") && (
+      {props.section === "Masteries" && (
         <ContentBox
           title="Masteries"
           subtitle="Timed training · No Energy cost"

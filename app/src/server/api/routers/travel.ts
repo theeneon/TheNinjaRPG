@@ -864,7 +864,6 @@ export const travelRouter = createTRPCRouter({
             );
       // Optimistic update & query simultaneously
       const moveOutcome = await Promise.all([
-        Promise.resolve(moveUser),
         ctx.drizzle
           .update(userData)
           .set({
@@ -909,7 +908,8 @@ export const travelRouter = createTRPCRouter({
       if (!moveOutcome) {
         return errorResponse("Connection hiccup, please try moving again");
       }
-      const [user, result, sectorVillage] = moveOutcome;
+      const [result, sectorVillage] = moveOutcome;
+      const user = moveUser;
       // Check if move was successful
       if (result.rowsAffected === 1) {
         // Check for encounters / village defence
