@@ -46,6 +46,7 @@ import LevelUpBtn from "@/layout/LevelUpBtn";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
 import { LogbookActive } from "@/layout/Logbook";
+import { PendingRewardChoices } from "@/layout/RewardChoice";
 import { bankAccessBlockMessage } from "@/libs/bank";
 import { getRewardPreview } from "@/libs/objectives";
 import { calcLevelRequirements } from "@/libs/profile";
@@ -752,6 +753,7 @@ export default function ProfileDashboard({ settings }: { settings?: React.ReactN
       ),
       content: (
         <>
+          <PendingRewardChoices className="mx-0 mt-0 mb-3" />
           <div className="overflow-hidden rounded-md border bg-card">
             {hasActiveQuests ? (
               <LogbookActive />

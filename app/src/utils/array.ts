@@ -66,3 +66,13 @@ export const getMostCommonElement = <T extends string>(arr: T[]) => {
 
   return mostCommon;
 };
+
+/**
+ * Collapses repeated names into one entry with a count, keeping first-seen order,
+ * e.g. ["Sickle", "Sickle", "Bow"] -> ["Sickle ×2", "Bow"].
+ */
+export const countNames = (names: readonly string[]): string[] => {
+  const counts = new Map<string, number>();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return [...counts].map(([name, count]) => (count > 1 ? `${name} ×${count}` : name));
+};

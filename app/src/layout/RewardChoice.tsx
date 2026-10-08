@@ -125,6 +125,8 @@ export const RewardChoiceModal: React.FC = () => {
       isLoading={isClaiming}
       proceedDisabled={selectedIds.length !== required}
       keepOpenOnAccept
+      dismissOnInteractOutside={false}
+      footerClassName="flex-row gap-2 sm:space-x-0"
       confirmClassName="bg-red-700 text-white hover:bg-red-800"
       onAccept={() =>
         claim({
@@ -141,7 +143,7 @@ export const RewardChoiceModal: React.FC = () => {
             Select {required} reward{required === 1 ? "" : "s"} to claim
           </p>
         </div>
-        <fieldset className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <fieldset className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
           <legend className="sr-only">Rewards to choose from</legend>
           {current.cards.map((card) => {
             const isSelected = selectedIds.includes(card.id);
@@ -182,7 +184,9 @@ export const RewardChoiceModal: React.FC = () => {
 };
 
 /** Logbook notice for offers still waiting, with a button that reopens the modal. */
-export const PendingRewardChoices: React.FC = () => {
+export const PendingRewardChoices: React.FC<{ className?: string }> = ({
+  className,
+}) => {
   const { data: userData } = useUserData();
   const openRewardChoice = useOpenRewardChoice();
   const { data: choices } = api.quests.getPendingRewardChoices.useQuery(undefined, {
@@ -191,7 +195,12 @@ export const PendingRewardChoices: React.FC = () => {
   });
   if (!choices || choices.length === 0) return null;
   return (
-    <div className="m-2 flex flex-row items-center gap-3 rounded-md border border-amber-500/60 bg-amber-500/10 p-3">
+    <div
+      className={cn(
+        "m-2 flex flex-row items-center gap-3 rounded-md border border-amber-500/60 bg-amber-500/10 p-3",
+        className,
+      )}
+    >
       <Gift className="h-6 w-6 shrink-0 text-amber-500" />
       <div className="grow text-sm">
         <p className="font-semibold">Rewards waiting</p>
@@ -219,7 +228,7 @@ const RewardChoiceCard: React.FC<{
       aria-disabled={isBlocked}
       onClick={onToggle}
       className={cn(
-        "relative flex flex-col items-center gap-2 rounded-lg border-2 bg-card p-3 text-center transition",
+        "relative flex flex-col items-center gap-1 rounded-lg border-2 bg-card p-2 text-center transition sm:gap-2 sm:p-3",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         isSelected
           ? "border-red-600 shadow-[0_0_12px_rgba(220,38,38,0.6)]"
@@ -232,34 +241,34 @@ const RewardChoiceCard: React.FC<{
           {card.rarity}
         </Badge>
       )}
-      <div className="flex h-24 w-24 items-center justify-center">
+      <div className="flex h-14 w-14 items-center justify-center sm:h-24 sm:w-24">
         {card.image ? (
           <Image
             src={card.image}
             alt={card.name}
             width={96}
             height={96}
-            className="h-24 w-24 rounded-md object-contain"
+            className="h-14 w-14 rounded-md object-contain sm:h-24 sm:w-24"
           />
         ) : (
-          <Icon className="h-16 w-16 text-amber-500" aria-hidden />
+          <Icon className="h-10 w-10 text-amber-500 sm:h-16 sm:w-16" aria-hidden />
         )}
       </div>
-      <div className="font-bold text-lg leading-tight">
+      <div className="font-bold text-sm leading-tight sm:text-lg">
         {isAmountCard ? `${card.amount.toLocaleString()} ${card.name}` : card.name}
       </div>
-      <div className="text-orange-500 text-sm">
+      <div className="text-orange-500 text-xs sm:text-sm">
         {REWARD_CHOICE_CATEGORY_LABELS[card.field]}
         {!isAmountCard && card.amount > 1 && ` · x${card.amount}`}
       </div>
       {card.description && (
-        <div className="line-clamp-3 text-muted-foreground text-xs">
+        <div className="line-clamp-2 text-muted-foreground text-xs sm:line-clamp-3">
           {parseHtml(card.description)}
         </div>
       )}
       <div
         className={cn(
-          "mt-auto flex items-center gap-2 text-sm",
+          "mt-auto flex items-center gap-2 text-xs sm:text-sm",
           isSelected ? "font-semibold text-red-600" : "text-muted-foreground",
         )}
       >
@@ -271,7 +280,13 @@ const RewardChoiceCard: React.FC<{
         >
           {isSelected && <Check className="h-3 w-3" />}
         </span>
-        {isSelected ? "Selected" : "Select this reward"}
+        {isSelected ? (
+          "Selected"
+        ) : (
+          <>
+            Select<span className="hidden sm:inline"> this reward</span>
+          </>
+        )}
       </div>
     </button>
   );

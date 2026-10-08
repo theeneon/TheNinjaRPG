@@ -68,6 +68,7 @@ const Logbook: React.FC = () => {
         <NavTabs id="logbook-toggle" current={tab} options={tabs} setValue={setTab} />
       }
     >
+      <PendingRewardChoices />
       {tab === "Active" && <LogbookActive />}
       {tab === "History" && <LogbookHistory />}
       {tab === "Battles" && <LogbookBattles />}
@@ -234,7 +235,6 @@ export const LogbookActive: React.FC = () => {
 
   return (
     <div className="">
-      <PendingRewardChoices />
       {quests?.map((uq) => {
         const tracker = userData?.questData?.find((q) => q.id === uq.questId);
         return (
