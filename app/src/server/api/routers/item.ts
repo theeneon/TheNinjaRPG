@@ -3662,6 +3662,7 @@ export const itemDatabaseFilter = (
  * @param userItemId - The ID of the user item to split
  * @param userId - The ID of the user who owns the item (for ownership verification)
  * @param quantityToKeep - The quantity to keep in the original stack
+ * @param expectedQuantity - Reject if the source no longer matches a priced snapshot
  * @returns A response with success status, message, and new stack info on success
  */
 export const splitItemStack = async (
@@ -3669,6 +3670,7 @@ export const splitItemStack = async (
   userItemId: string,
   userId: string,
   quantityToKeep: number,
+  expectedQuantity?: number,
 ): Promise<
   | { success: true; message: string; newUserItemId: string; quantityToSplit: number }
   | { success: false; message: string }
@@ -3685,6 +3687,15 @@ export const splitItemStack = async (
 
   if (!currentUserItem) {
     return { success: false, message: "Item not found" };
+  }
+
+  // Auction totals are priced from a prior read; reject changes before splitting.
+  // The quantity CAS below protects the interval after this check.
+  if (expectedQuantity !== undefined && currentUserItem.quantity !== expectedQuantity) {
+    return {
+      success: false,
+      message: "Item quantity changed, please refresh and try again",
+    };
   }
 
   // Do not split items that are currently in auction

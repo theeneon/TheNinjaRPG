@@ -367,6 +367,13 @@ describeWithDatabase("auction item price bounds", () => {
       quantity: 2,
       startingPrice: 30,
       buyoutPrice: undefined,
+      succeeds: false,
+    },
+    {
+      currentQuantity: 5,
+      quantity: 2,
+      startingPrice: 30,
+      buyoutPrice: undefined,
       succeeds: true,
     },
   ])(
@@ -419,9 +426,10 @@ describeWithDatabase("auction item price bounds", () => {
       expect(listings).toHaveLength(succeeds ? 1 : 0);
       expect(inventory.filter((row) => row.isInAuction)).toHaveLength(succeeds ? 1 : 0);
       if (succeeds) {
-        expect(inventory.find((row) => row.isInAuction)?.quantity).toBe(3);
-        expect(JSON.parse(logs[0]!.changes as string).quantity).toBe(3);
+        expect(inventory.find((row) => row.isInAuction)?.quantity).toBe(quantity);
+        expect(JSON.parse(logs[0]!.changes as string).quantity).toBe(quantity);
       } else {
+        expect(inventory).toHaveLength(1);
         expect(logs).toHaveLength(0);
       }
     },

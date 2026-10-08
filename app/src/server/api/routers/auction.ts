@@ -363,7 +363,7 @@ export const auctionRouter = createTRPCRouter({
       }
 
       // Handle quantity splitting for stackable items
-      let listingQuantity = quantity ?? userItemData.quantity;
+      const listingQuantity = quantity ?? userItemData.quantity;
       for (const price of [startingPrice, buyoutPrice]) {
         if (price === undefined) continue;
         const priceError = getAuctionPriceError(
@@ -401,6 +401,7 @@ export const auctionRouter = createTRPCRouter({
             userItemId,
             ctx.userId,
             quantityToKeep,
+            userItemData.quantity,
           );
 
           if (!result.success) {
@@ -409,20 +410,6 @@ export const auctionRouter = createTRPCRouter({
 
           // Use the new item for the auction
           auctionUserItemId = result.newUserItemId;
-          if (result.quantityToSplit !== listingQuantity) {
-            listingQuantity = result.quantityToSplit;
-            for (const price of [startingPrice, buyoutPrice]) {
-              if (price === undefined) continue;
-              const priceError = getAuctionPriceError(
-                userItemData.item,
-                listingType,
-                price,
-                listingQuantity,
-                currencyType,
-              );
-              if (priceError) return errorResponse(priceError);
-            }
-          }
         }
       }
 
