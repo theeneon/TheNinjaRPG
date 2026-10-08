@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,9 +9,11 @@ import {
   SKILL_TREE_RESET_FREE_GOLD,
   SKILL_TREE_RESET_FREE_NORMAL,
 } from "@/drizzle/constants";
+import { BloodrightTree } from "@/layout/BloodrightTree";
 import Confirm from "@/layout/Confirm";
 import ItemWithEffects from "@/layout/ItemWithEffects";
 import Loader from "@/layout/Loader";
+import Modal from "@/layout/Modal";
 import { showMutationToast } from "@/libs/toast";
 import { useRequiredUserData } from "@/utils/UserContext";
 
@@ -28,6 +31,8 @@ export const Bloodright = () => {
   };
   const purchase = api.bloodright.purchase.useMutation({ onSuccess });
   const refund = api.bloodright.refund.useMutation({ onSuccess });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
   const isMutating = purchase.isPending || refund.isPending;
   if (isPending) return <Loader explanation="Loading Bloodright" />;
   if (isError)
@@ -51,61 +56,92 @@ export const Bloodright = () => {
         Changing bloodlines refunds all invested Silver. Refunding a tier removes it and
         every dependent tier, returning their original purchase costs.
       </p>
-      {data?.tiers.map((tier) => {
-        const isOwned = purchasedIds.includes(tier.id);
-        const hasPrerequisites = tier.requiredSkillIds.every((id) =>
-          purchasedIds.includes(id),
-        );
-        return (
-          <div key={tier.id} className="rounded border p-3">
-            <ItemWithEffects item={tier} />
-            <p>
-              Tier {tier.tier} · {tier.seichiSilverCost.toLocaleString()} Seichi Silver
-              {isOwned ? " · Active" : ""}
-            </p>
-            {tier.requiredSkillIds.length > 0 && (
-              <p className="text-sm">
-                Requires:{" "}
-                {tier.requiredSkillIds
-                  .map(
-                    (id) =>
-                      data.tiers.find((entry) => entry.id === id)?.name ??
-                      "Purchased prerequisite",
-                  )
-                  .join(", ")}
+      <BloodrightTree
+        tiers={data?.tiers ?? []}
+        purchasedIds={purchasedIds}
+        silver={user?.seichiSilver ?? 0}
+        onSelect={(id) => {
+          if (!purchase.isPending) purchase.reset();
+          if (!refund.isPending) refund.reset();
+          setSelectedId(id);
+          setIsOpen(true);
+        }}
+      />
+      {data?.tiers
+        .filter((tier) => tier.id === selectedId)
+        .map((tier) => {
+          const isOwned = purchasedIds.includes(tier.id);
+          const hasPrerequisites = tier.requiredSkillIds.every((id) =>
+            purchasedIds.includes(id),
+          );
+          return (
+            <Modal
+              key={tier.id}
+              title={tier.name}
+              isOpen={isOpen}
+              setIsOpen={setIsOpen}
+              isLoading={isMutating}
+              className="max-w-2xl"
+            >
+              <ItemWithEffects item={tier} />
+              <p>
+                Tier {tier.tier} · {tier.seichiSilverCost.toLocaleString()} Seichi
+                Silver
+                {isOwned ? " · Active" : ""}
               </p>
-            )}
-            {isOwned ? (
-              <Confirm
-                disabled={isMutating}
-                confirmDisabled={isMutating}
-                title="Refund Bloodright tier"
-                button={
-                  <Button disabled={isMutating} variant="outline">
-                    Refund tier
-                  </Button>
-                }
-                onAccept={() => refund.mutate({ skillId: tier.id })}
-              >
-                Remove this tier and all dependent tiers and refund their original
-                Seichi Silver costs?
-              </Confirm>
-            ) : (
-              <Button
-                disabled={
-                  isMutating ||
-                  !hasPrerequisites ||
-                  (user?.seichiSilver ?? 0) < tier.seichiSilverCost ||
-                  purchasedIds.length >= MAX_BLOODRIGHT_TIERS
-                }
-                onClick={() => purchase.mutate({ skillId: tier.id })}
-              >
-                {!hasPrerequisites ? "Prerequisites required" : "Unlock tier"}
-              </Button>
-            )}
-          </div>
-        );
-      })}
+              {tier.requiredSkillIds.length > 0 && (
+                <p className="text-sm">
+                  Requires:{" "}
+                  {tier.requiredSkillIds
+                    .map(
+                      (id) =>
+                        data.tiers.find((entry) => entry.id === id)?.name ??
+                        "Purchased prerequisite",
+                    )
+                    .join(", ")}
+                </p>
+              )}
+              {isOwned ? (
+                <Confirm
+                  disabled={isMutating}
+                  confirmDisabled={isMutating}
+                  title="Refund Bloodright tier"
+                  button={
+                    <Button disabled={isMutating} variant="outline">
+                      Refund tier
+                    </Button>
+                  }
+                  onAccept={() => refund.mutate({ skillId: tier.id })}
+                >
+                  Remove this tier and all dependent tiers and refund their original
+                  Seichi Silver costs?
+                </Confirm>
+              ) : (
+                <Button
+                  disabled={
+                    isMutating ||
+                    !hasPrerequisites ||
+                    (user?.seichiSilver ?? 0) < tier.seichiSilverCost ||
+                    purchasedIds.length >= MAX_BLOODRIGHT_TIERS
+                  }
+                  onClick={() => purchase.mutate({ skillId: tier.id })}
+                >
+                  {!hasPrerequisites ? "Prerequisites required" : "Unlock tier"}
+                </Button>
+              )}
+              {purchase.data && !purchase.data.success && (
+                <p role="alert" className="text-destructive">
+                  {purchase.data.message}
+                </p>
+              )}
+              {refund.data && !refund.data.success && (
+                <p role="alert" className="text-destructive">
+                  {refund.data.message}
+                </p>
+              )}
+            </Modal>
+          );
+        })}
       {data?.purchased
         .filter((entry) => !data.tiers.some((tier) => tier.id === entry.skillId))
         .map((entry) => (

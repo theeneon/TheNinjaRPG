@@ -246,9 +246,15 @@ interface SkillCardProps {
     canPurchase: boolean;
   };
   onClick: () => void;
+  costLabel?: string;
 }
 
-const SkillCard: React.FC<SkillCardProps> = ({ skill, status, onClick }) => {
+export const SkillCard: React.FC<SkillCardProps> = ({
+  skill,
+  status,
+  onClick,
+  costLabel,
+}) => {
   const effectivelyOwned = status.isOwned && status.isActivated;
   const isLocked = !effectivelyOwned && !status.hasPrereqs;
   const isUnaffordable = !effectivelyOwned && status.hasPrereqs && !status.hasPoints;
@@ -258,7 +264,7 @@ const SkillCard: React.FC<SkillCardProps> = ({ skill, status, onClick }) => {
     <button
       type="button"
       onClick={onClick}
-      aria-disabled={isLocked || isUnaffordable}
+      aria-label={`${skill.name}, Tier ${skill.tier}, ${effectivelyOwned ? "Active" : isLocked ? "Prerequisites required" : isUnaffordable ? "Unavailable" : "Available"}`}
       className={`relative w-full cursor-pointer rounded-lg border-2 p-3 text-left transition-all duration-200 hover:shadow-md ${
         effectivelyOwned
           ? "border-green-500 bg-green-50 dark:bg-green-950/30"
@@ -307,7 +313,7 @@ const SkillCard: React.FC<SkillCardProps> = ({ skill, status, onClick }) => {
           T{skill.tier}
         </Badge>
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-          {skill.costSkillPoints} SP
+          {costLabel ?? `${skill.costSkillPoints} SP`}
         </Badge>
       </div>
     </button>
