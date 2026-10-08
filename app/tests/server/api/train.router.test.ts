@@ -124,6 +124,25 @@ describeWithDatabase("Energy and mastery training against a real MySQL", () => {
     expect(await readLogs()).toHaveLength(1);
   });
 
+  it("does not write an unaffordable queue again before a recovery tick", async () => {
+    await trainee({
+      curEnergy: 0,
+      energyTrainingQueue: [{ stat: "offence", energy: 100 }],
+      regenAt: new Date(),
+    });
+    const database = await getTestDatabase();
+    await fetchUpdatedUser({ client: database, userId: USER_ID, forceRegen: true });
+    const before = await readUser();
+    await fetchUpdatedUser({ client: database, userId: USER_ID });
+    await fetchUpdatedUser({ client: database, userId: USER_ID });
+    const after = await readUser();
+    expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+    expect(after.regenAt.getTime()).toBe(before.regenAt.getTime());
+    expect(after.energyTrainingQueue).toEqual(before.energyTrainingQueue);
+    expect(after.curEnergy).toBe(before.curEnergy);
+    expect(await readLogs()).toHaveLength(0);
+  });
+
   it("claims queued spending once across concurrent profile refreshes", async () => {
     await trainee({
       curEnergy: 100,

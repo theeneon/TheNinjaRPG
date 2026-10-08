@@ -168,8 +168,8 @@ export default function Training() {
             className="px-2 text-xs sm:text-sm"
           />
         </div>
-        {(userData.currentlyTrainingMastery ||
-          userData.energyTrainingQueue?.length) && (
+        {(!!userData.currentlyTrainingMastery ||
+          !!userData.energyTrainingQueue?.length) && (
           <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-muted-foreground text-xs">
             {userData.currentlyTrainingMastery && (
               <button

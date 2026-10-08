@@ -1661,6 +1661,12 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
   useEffect(() => {
     setHasElementFilter("elements" in tag && !!tag.elements?.length);
   }, [tag.type]);
+  const incomingHasElements = "elements" in tag && !!tag.elements?.length;
+  useEffect(() => {
+    // Imported element choices must stay visible; an empty list can be a deliberate
+    // Element selection while the editor is waiting for its first choice.
+    if (incomingHasElements) setHasElementFilter(true);
+  }, [incomingHasElements]);
 
   // Get images for the different animations and statics
   const statics = assetData?.filter((a) => a.type === "STATIC");

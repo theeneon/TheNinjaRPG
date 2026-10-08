@@ -3159,9 +3159,19 @@ export const fetchUpdatedUser = async (props: {
 
     // Figure out if we're running update
     const sinceUpdate = secondsPassed(user.updatedAt);
+    const ticks = Math.max(0, Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS));
+    const queuedTraining = user.energyTrainingQueue?.length
+      ? settleEnergyTrainingQueue(user, settings, ticks)
+      : null;
+    // A queue only bypasses the overview throttle when recovery or an entry can
+    // advance, avoiding snapshot conflicts on repeated reads within one tick.
+    const hasQueueProgress =
+      queuedTraining &&
+      (ticks > 0 ||
+        queuedTraining.energyTrainingQueue.length !== user.energyTrainingQueue?.length);
     if (
       newDay ||
-      user.energyTrainingQueue?.length ||
+      hasQueueProgress ||
       sinceUpdate > 300 || // Update user in database every 5 minutes only so as to reduce server load
       forceRegen || // Hard overwrite for e.g. debugging or simply ensuring updated user
       (user.villagePrestige < 0 && !user.isOutlaw) // To trigger getting kicked out of village
@@ -3170,17 +3180,10 @@ export const fetchUpdatedUser = async (props: {
       const queuedTrainingSnapshot = user.energyTrainingQueue?.length
         ? { ...user }
         : null;
-      const ticks = Math.max(
-        0,
-        Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS),
-      );
       const regen = user.regeneration * ticks;
       user.curHealth = Math.min(user.curHealth + regen, user.maxHealth);
       user.curStamina = Math.min(user.curStamina + regen, user.maxStamina);
       user.curChakra = Math.min(user.curChakra + regen, user.maxChakra);
-      const queuedTraining = queuedTrainingSnapshot
-        ? settleEnergyTrainingQueue(user, settings, ticks)
-        : null;
       user.curEnergy =
         queuedTraining?.curEnergy ?? Math.min(user.curEnergy + regen, user.maxEnergy);
       if (queuedTraining) {
