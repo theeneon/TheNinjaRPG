@@ -1972,7 +1972,7 @@ export const initiateBattle = async (
   const queuedTraining = fetchedUsers
     .filter((user) => !user.isAi && user.energyTrainingQueue?.length)
     .map((user) => {
-      const original = structuredClone(user);
+      const original = { ...user };
       const ticks = Math.max(
         0,
         Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS),
@@ -2640,23 +2640,23 @@ export const initiateBattle = async (
   );
   const queueUpdate: Record<string, ReturnType<typeof sql>> = {};
   if (queuedParticipants.length) {
-    const queueCase = (column: keyof typeof userData.$inferSelect, values: unknown[]) =>
+    const queueCase = (
+      column: keyof typeof userData.$inferSelect,
+      value: (entry: (typeof queuedParticipants)[number]) => unknown,
+    ) =>
       sql`CASE ${sql.join(
         queuedParticipants.map(
-          (entry, index) =>
-            sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${values[index]}`,
+          (entry) =>
+            sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${value(entry)}`,
         ),
         sql` `,
       )} ELSE ${userData[column]} END`;
-    queueUpdate.energyTrainingQueue = queueCase(
-      "energyTrainingQueue",
-      queuedParticipants.map((entry) =>
-        JSON.stringify(entry.settlement.energyTrainingQueue),
-      ),
+    queueUpdate.energyTrainingQueue = queueCase("energyTrainingQueue", (entry) =>
+      JSON.stringify(entry.settlement.energyTrainingQueue),
     );
     queueUpdate.curEnergy = queueCase(
       "curEnergy",
-      queuedParticipants.map((entry) => entry.settlement.curEnergy),
+      (entry) => entry.settlement.curEnergy,
     );
     for (const pool of ["curHealth", "curChakra", "curStamina"] as const) {
       const maxPool =
@@ -2665,31 +2665,22 @@ export const initiateBattle = async (
           : pool === "curChakra"
             ? "maxChakra"
             : "maxStamina";
-      queueUpdate[pool] = queueCase(
-        pool,
-        queuedParticipants.map((entry) =>
-          Math.min(entry.original[pool] + entry.regen, entry.original[maxPool]),
-        ),
+      queueUpdate[pool] = queueCase(pool, (entry) =>
+        Math.min(entry.original[pool] + entry.regen, entry.original[maxPool]),
       );
     }
-    queueUpdate.regenAt = queueCase(
-      "regenAt",
-      queuedParticipants.map((entry) => entry.regenAt),
-    );
-    queueUpdate.questData = queueCase(
-      "questData",
-      queuedParticipants.map((entry) => JSON.stringify(entry.user.questData)),
+    queueUpdate.regenAt = queueCase("regenAt", (entry) => entry.regenAt);
+    queueUpdate.questData = queueCase("questData", (entry) =>
+      JSON.stringify(entry.user.questData),
     );
     queueUpdate.experience = queueCase(
       "experience",
-      queuedParticipants.map((entry) => sql`${userData.experience} + ${entry.amount}`),
+      (entry) => sql`${userData.experience} + ${entry.amount}`,
     );
     for (const stat of CombatStatNames) {
       queueUpdate[stat] = queueCase(
         stat,
-        queuedParticipants.map(
-          (entry) => sql`${userData[stat]} + ${entry.settlement.gains[stat] ?? 0}`,
-        ),
+        (entry) => sql`${userData[stat]} + ${entry.settlement.gains[stat] ?? 0}`,
       );
     }
     queueUpdate.updatedAt = sql`CASE WHEN ${inArray(

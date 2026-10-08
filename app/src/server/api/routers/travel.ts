@@ -630,6 +630,7 @@ export const travelRouter = createTRPCRouter({
           message: `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
         };
       }
+      const recoveryTicks = sql`FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000})`;
       const result = await ctx.drizzle
         .update(userData)
         .set({
@@ -638,11 +639,11 @@ export const travelRouter = createTRPCRouter({
           ...(user.energyTrainingQueue?.length
             ? {
                 // Travel recovers Energy, but its elapsed ticks cannot train village-only queues.
-                curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
-                curHealth: sql`LEAST(${user.maxHealth}, ${userData.curHealth} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
-                curChakra: sql`LEAST(${user.maxChakra}, ${userData.curChakra} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
-                curStamina: sql`LEAST(${user.maxStamina}, ${userData.curStamina} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
-                regenAt: sql`TIMESTAMPADD(SECOND, FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}) * ${REGEN_SECONDS}, ${userData.regenAt})`,
+                curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * ${recoveryTicks})`,
+                curHealth: sql`LEAST(${user.maxHealth}, ${userData.curHealth} + ${user.regeneration} * ${recoveryTicks})`,
+                curChakra: sql`LEAST(${user.maxChakra}, ${userData.curChakra} + ${user.regeneration} * ${recoveryTicks})`,
+                curStamina: sql`LEAST(${user.maxStamina}, ${userData.curStamina} + ${user.regeneration} * ${recoveryTicks})`,
+                regenAt: sql`TIMESTAMPADD(SECOND, ${recoveryTicks} * ${REGEN_SECONDS}, ${userData.regenAt})`,
               }
             : {}),
           updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
