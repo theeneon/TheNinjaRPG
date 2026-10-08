@@ -45,6 +45,7 @@ import {
   MAP_WAKE_ISLAND_SECTOR,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
   NonActionItemTypes,
+  PoolTypes,
   PvpBattleTypes,
   QuestBattleTypes,
   RANKS_RESTRICTED_FROM_PVP,
@@ -145,6 +146,7 @@ import {
   getBattleClaimIds,
   getBattleGrid,
   getDefaultBattleSizes,
+  getPoolKeys,
   getTurnControl,
   isEffectActive,
   maskBattle,
@@ -2658,15 +2660,10 @@ export const initiateBattle = async (
       "curEnergy",
       (entry) => entry.settlement.curEnergy,
     );
-    for (const pool of ["curHealth", "curChakra", "curStamina"] as const) {
-      const maxPool =
-        pool === "curHealth"
-          ? "maxHealth"
-          : pool === "curChakra"
-            ? "maxChakra"
-            : "maxStamina";
-      queueUpdate[pool] = queueCase(pool, (entry) =>
-        Math.min(entry.original[pool] + entry.regen, entry.original[maxPool]),
+    for (const pool of PoolTypes) {
+      const { cur, max } = getPoolKeys(pool);
+      queueUpdate[cur] = queueCase(cur, (entry) =>
+        Math.min(entry.original[cur] + entry.regen, entry.original[max]),
       );
     }
     queueUpdate.regenAt = queueCase("regenAt", (entry) => entry.regenAt);
