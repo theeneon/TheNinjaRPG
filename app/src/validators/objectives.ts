@@ -51,6 +51,7 @@ import {
   IMG_FARM_PLOT_SOIL,
   LetterRanks,
   MEDNIN_RANKS,
+  type QuestRewardMode,
   QuestTypes,
   RetryQuestDelays,
   SAGE_MASTERY_RANKS,
@@ -61,6 +62,7 @@ import { AllTags } from "@/validators/combat";
 import {
   ObjectiveReward,
   type ObjectiveRewardType,
+  questRewardModeFields,
   rewardFields,
 } from "@/validators/rewards";
 
@@ -656,6 +658,10 @@ export type ObjectiveTrackerType = z.infer<typeof ObjectiveTracker>;
 
 export type QuestContentType = {
   reward: ObjectiveRewardType;
+  /** Absent on quests saved before reward choice existed; treated as "all". */
+  rewardMode?: QuestRewardMode;
+  /** Rewards the player picks when `rewardMode` is "choose". */
+  rewardPickCount?: number;
   objectives: AllObjectivesType[];
   sceneBackground: string;
   sceneCharacters: string[];
@@ -697,6 +703,7 @@ export const QuestValidatorRawSchema = z.object({
   content: z.object({
     objectives: z.array(AllObjectives),
     reward: ObjectiveReward,
+    ...questRewardModeFields,
     sceneBackground: z.string().prefault(""),
     sceneCharacters: z.array(z.string()).prefault([]),
   }),
@@ -815,6 +822,7 @@ export const QuestFormRawSchema = QuestValidatorRawSchema.extend(
   ObjectiveReward.shape,
 ).extend(
   z.object({
+    ...questRewardModeFields,
     sceneBackground: z.string().prefault(""),
     sceneCharacters: z.array(z.string()).prefault([]),
   }).shape,

@@ -1,3 +1,4 @@
+import { nanoid } from "nanoid";
 import {
   ADDITIONAL_MISSION_REWARD_MULTIPLIER,
   ERRANDS_PER_DAY,
@@ -48,6 +49,12 @@ import {
   isSupportedOverworldBindingTask,
   pickPlaceableSector,
 } from "@/libs/overworldAi";
+import {
+  buildRewardChoiceCards,
+  getFixedChoiceRewards,
+  getRewardPickCount,
+  isRewardChoiceQuest,
+} from "@/libs/rewardChoice";
 import { getSageMasteryDisplayRank, isSageRankAtLeast } from "@/libs/sageMode";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { findNearestReachableCoordinate } from "@/libs/sector-map/validation";
@@ -70,7 +77,7 @@ import type {
   QuestTrackerType,
 } from "@/validators/objectives";
 import { ObjectiveTracker, QuestTracker } from "@/validators/objectives";
-import type { ObjectiveRewardType } from "@/validators/rewards";
+import type { ObjectiveRewardType, PendingRewardChoice } from "@/validators/rewards";
 import { ObjectiveReward, type PostProcessedRewards } from "@/validators/rewards";
 import { getQuestCounterFieldName } from "@/validators/user";
 
@@ -313,6 +320,9 @@ export const getReward = (
 ) => {
   // Derived
   let rawRewards = ObjectiveReward.parse({});
+  // Completion reward of a "choose" quest, offered as cards instead of granted outright.
+  let choiceRewards: ObjectiveRewardType | null = null;
+  let rewardChoice: PendingRewardChoice | null = null;
   const { trackers, notifications, consequences } = getNewTrackers(
     user,
     [
@@ -354,7 +364,14 @@ export const getReward = (
     const goals = tracker?.goals ?? [];
     resolved = !tracker || isQuestComplete(userQuest.quest, tracker);
     if (resolved) {
-      rawRewards = ObjectiveReward.parse(userQuest.quest.content.reward);
+      const questReward = ObjectiveReward.parse(userQuest.quest.content.reward);
+      if (isRewardChoiceQuest(userQuest.quest.content)) {
+        // Only the structural part pays now; the rest becomes a frozen pick offer below.
+        rawRewards = getFixedChoiceRewards(questReward);
+        choiceRewards = questReward;
+      } else {
+        rawRewards = questReward;
+      }
     }
     userQuest.quest.content.objectives.forEach((objective) => {
       const status = goals.find((g) => g.id === objective.id);
@@ -448,80 +465,91 @@ export const getReward = (
       factor = ADDITIONAL_MISSION_REWARD_MULTIPLIER * boostFactor;
     }
 
-    rawRewards.reward_money = Math.floor(rawRewards.reward_money * factor);
-    rawRewards.reward_clanpoints = Math.floor(rawRewards.reward_clanpoints * factor);
-    rawRewards.reward_anbupoints = Math.floor(rawRewards.reward_anbupoints * factor);
-    rawRewards.reward_exp = Math.floor(rawRewards.reward_exp * factor);
-    rawRewards.reward_tokens = Math.floor(rawRewards.reward_tokens * factor);
-    rawRewards.reward_prestige = Math.floor(rawRewards.reward_prestige * factor);
-    rawRewards.reward_reputation = Math.floor(rawRewards.reward_reputation * factor);
-    rawRewards.reward_medical_experience = Math.floor(
-      rawRewards.reward_medical_experience * factor,
-    );
-    rawRewards.reward_hunting_experience = Math.floor(
-      rawRewards.reward_hunting_experience * factor,
-    );
-    rawRewards.reward_crafting_experience = Math.floor(
-      rawRewards.reward_crafting_experience * factor,
-    );
-    rawRewards.reward_gathering_experience = Math.floor(
-      rawRewards.reward_gathering_experience * factor,
-    );
-    rawRewards.reward_sage_mastery_experience = Math.floor(
-      rawRewards.reward_sage_mastery_experience * factor,
-    );
-    rawRewards.reward_seichi_silver = Math.floor(
-      rawRewards.reward_seichi_silver * factor,
-    );
+    // Boosts, penalties and multipliers; applied identically to a reward-choice offer.
+    const scaleRewards = (target: ObjectiveRewardType) => {
+      target.reward_money = Math.floor(target.reward_money * factor);
+      target.reward_clanpoints = Math.floor(target.reward_clanpoints * factor);
+      target.reward_anbupoints = Math.floor(target.reward_anbupoints * factor);
+      target.reward_exp = Math.floor(target.reward_exp * factor);
+      target.reward_tokens = Math.floor(target.reward_tokens * factor);
+      target.reward_prestige = Math.floor(target.reward_prestige * factor);
+      target.reward_reputation = Math.floor(target.reward_reputation * factor);
+      target.reward_medical_experience = Math.floor(
+        target.reward_medical_experience * factor,
+      );
+      target.reward_hunting_experience = Math.floor(
+        target.reward_hunting_experience * factor,
+      );
+      target.reward_crafting_experience = Math.floor(
+        target.reward_crafting_experience * factor,
+      );
+      target.reward_gathering_experience = Math.floor(
+        target.reward_gathering_experience * factor,
+      );
+      target.reward_sage_mastery_experience = Math.floor(
+        target.reward_sage_mastery_experience * factor,
+      );
+      target.reward_seichi_silver = Math.floor(target.reward_seichi_silver * factor);
 
-    // Apply clan experience boosts (percentages stored in clan object)
-    // Only apply for real clans, not outlaw factions/towns
-    const clanHunterExpBoost = user.isOutlaw
-      ? 0
-      : (user.clan?.hunterExpBoost ?? 0) / 100;
-    const clanGathererExpBoost = user.isOutlaw
-      ? 0
-      : (user.clan?.gathererExpBoost ?? 0) / 100;
-    const clanCraftingExpBoost = user.isOutlaw
-      ? 0
-      : (user.clan?.craftingExpBoost ?? 0) / 100;
-    if (clanHunterExpBoost > 0 && rawRewards.reward_hunting_experience > 0) {
-      rawRewards.reward_hunting_experience = Math.floor(
-        rawRewards.reward_hunting_experience * (1 + clanHunterExpBoost),
-      );
-    }
-    if (clanGathererExpBoost > 0 && rawRewards.reward_gathering_experience > 0) {
-      rawRewards.reward_gathering_experience = Math.floor(
-        rawRewards.reward_gathering_experience * (1 + clanGathererExpBoost),
-      );
-    }
-    if (clanCraftingExpBoost > 0 && rawRewards.reward_crafting_experience > 0) {
-      rawRewards.reward_crafting_experience = Math.floor(
-        rawRewards.reward_crafting_experience * (1 + clanCraftingExpBoost),
-      );
-    }
+      // Apply clan experience boosts (percentages stored in clan object)
+      // Only apply for real clans, not outlaw factions/towns
+      const clanHunterExpBoost = user.isOutlaw
+        ? 0
+        : (user.clan?.hunterExpBoost ?? 0) / 100;
+      const clanGathererExpBoost = user.isOutlaw
+        ? 0
+        : (user.clan?.gathererExpBoost ?? 0) / 100;
+      const clanCraftingExpBoost = user.isOutlaw
+        ? 0
+        : (user.clan?.craftingExpBoost ?? 0) / 100;
+      if (clanHunterExpBoost > 0 && target.reward_hunting_experience > 0) {
+        target.reward_hunting_experience = Math.floor(
+          target.reward_hunting_experience * (1 + clanHunterExpBoost),
+        );
+      }
+      if (clanGathererExpBoost > 0 && target.reward_gathering_experience > 0) {
+        target.reward_gathering_experience = Math.floor(
+          target.reward_gathering_experience * (1 + clanGathererExpBoost),
+        );
+      }
+      if (clanCraftingExpBoost > 0 && target.reward_crafting_experience > 0) {
+        target.reward_crafting_experience = Math.floor(
+          target.reward_crafting_experience * (1 + clanCraftingExpBoost),
+        );
+      }
 
-    // Chunin mission experience bonus (≤ level 40)
-    if (
-      user.senseiId &&
-      user.level <= SENSEI_MAX_STUDENT_LEVEL &&
-      userQuest.quest.questType === "mission"
-    ) {
-      rawRewards.reward_exp = Math.floor(
-        rawRewards.reward_exp * (1 + SENSEI_STUDENT_MISSION_EXP_BOOST_PERC / 100),
-      );
-    }
+      // Chunin mission experience bonus (≤ level 40)
+      if (
+        user.senseiId &&
+        user.level <= SENSEI_MAX_STUDENT_LEVEL &&
+        userQuest.quest.questType === "mission"
+      ) {
+        target.reward_exp = Math.floor(
+          target.reward_exp * (1 + SENSEI_STUDENT_MISSION_EXP_BOOST_PERC / 100),
+        );
+      }
 
-    // Apply mission experience multiplier if available (for missions, crimes, and medical missions)
-    if (settings && (missionLike || userQuest.quest.questType === "medical")) {
-      const missionSetting = settings.find((s) => s.name === "missionExpMultiplier");
-      if (missionSetting) {
-        const secondsLeft = -secondsPassed(missionSetting.time);
-        if (secondsLeft > 0 && missionSetting.value > 0) {
-          rawRewards.reward_exp = Math.floor(
-            rawRewards.reward_exp * missionSetting.value,
-          );
+      // Apply mission experience multiplier if available (for missions, crimes, and medical missions)
+      if (settings && (missionLike || userQuest.quest.questType === "medical")) {
+        const missionSetting = settings.find((s) => s.name === "missionExpMultiplier");
+        if (missionSetting) {
+          const secondsLeft = -secondsPassed(missionSetting.time);
+          if (secondsLeft > 0 && missionSetting.value > 0) {
+            target.reward_exp = Math.floor(target.reward_exp * missionSetting.value);
+          }
         }
+      }
+    };
+    scaleRewards(rawRewards);
+    if (choiceRewards) {
+      scaleRewards(choiceRewards);
+      const cards = buildRewardChoiceCards(choiceRewards);
+      if (cards.length > 0) {
+        rewardChoice = {
+          id: nanoid(),
+          pickCount: getRewardPickCount(userQuest.quest.content),
+          cards,
+        };
       }
     }
   }
@@ -529,31 +557,7 @@ export const getReward = (
   const rewards = postProcessRewards(rawRewards);
 
   // Update trackers for experience gained from quest rewards
-  const experienceTrackerTasks = [];
-  if (rewards.reward_medical_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "medical_experience_gained" as const,
-      increment: rewards.reward_medical_experience,
-    });
-  }
-  if (rewards.reward_crafting_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "crafting_experience_gained" as const,
-      increment: rewards.reward_crafting_experience,
-    });
-  }
-  if (rewards.reward_hunting_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "hunting_experience_gained" as const,
-      increment: rewards.reward_hunting_experience,
-    });
-  }
-  if (rewards.reward_gathering_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "gathering_experience_gained" as const,
-      increment: rewards.reward_gathering_experience,
-    });
-  }
+  const experienceTrackerTasks = getExperienceTrackerTasks(rewards);
   // Fold follow-up trackers onto the already-updated questData so progress from the
   // first getNewTrackers call is preserved (single authoritative questData write).
   // complete_specific_quest fires once on the active -> completed transition: `resolved`
@@ -582,7 +586,63 @@ export const getReward = (
   }
 
   // Return results
-  return { rewards, trackers, userQuest, resolved, notifications, consequences };
+  return {
+    rewards,
+    trackers,
+    userQuest,
+    resolved,
+    notifications,
+    consequences,
+    rewardChoice,
+  };
+};
+
+/**
+ * `*_experience_gained` tracker increments for the profession experience in a reward. Emitted
+ * when a completion pays out, and again when a reward-choice pick grants experience later.
+ */
+export const getExperienceTrackerTasks = (
+  rewards: Pick<
+    ObjectiveRewardType,
+    | "reward_medical_experience"
+    | "reward_crafting_experience"
+    | "reward_hunting_experience"
+    | "reward_gathering_experience"
+  >,
+) => {
+  const tasks: {
+    task:
+      | "medical_experience_gained"
+      | "crafting_experience_gained"
+      | "hunting_experience_gained"
+      | "gathering_experience_gained";
+    increment: number;
+  }[] = [];
+  if (rewards.reward_medical_experience > 0) {
+    tasks.push({
+      task: "medical_experience_gained",
+      increment: rewards.reward_medical_experience,
+    });
+  }
+  if (rewards.reward_crafting_experience > 0) {
+    tasks.push({
+      task: "crafting_experience_gained",
+      increment: rewards.reward_crafting_experience,
+    });
+  }
+  if (rewards.reward_hunting_experience > 0) {
+    tasks.push({
+      task: "hunting_experience_gained",
+      increment: rewards.reward_hunting_experience,
+    });
+  }
+  if (rewards.reward_gathering_experience > 0) {
+    tasks.push({
+      task: "gathering_experience_gained",
+      increment: rewards.reward_gathering_experience,
+    });
+  }
+  return tasks;
 };
 
 export type GetRewardResult = ReturnType<typeof getReward>["rewards"];
@@ -1697,6 +1757,7 @@ export const mockAchievementHistoryEntries = (
       previousAttempts: 0,
       periodCompletes: 0,
       periodStartAt: null,
+      pendingRewardChoice: null,
       quest: a,
       endAt: null,
       startedAt: new Date(),

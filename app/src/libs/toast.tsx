@@ -14,6 +14,7 @@ import {
   ensureParticleOverlayCanvas,
 } from "@/libs/particleOverlay";
 import { registerParticlePlugins } from "@/libs/particlePlugins";
+import { countNames } from "@/utils/array";
 import { playPreloadedAudio, savedSfxVolume } from "@/utils/audio";
 import { parseHtml } from "@/utils/parse";
 import type { PostProcessedRewards } from "@/validators/rewards";
@@ -327,22 +328,22 @@ export const showRewardToast = (
             </span>
           )}
           {rewards.reward_jutsus.length > 0 && (
-            <span className="whitespace-nowrap">
+            <span className="break-words">
               <b>Jutsus: </b> {rewards.reward_jutsus.join(", ")}
             </span>
           )}
           {rewards.reward_badges.length > 0 && (
-            <span className="whitespace-nowrap">
+            <span className="break-words">
               <b>Badges: </b> {rewards.reward_badges.join(", ")}
             </span>
           )}
           {rewards.reward_bloodlines.length > 0 && (
-            <span className="whitespace-nowrap">
+            <span className="break-words">
               <b>Swappable Bloodlines: </b> {rewards.reward_bloodlines.join(", ")}
             </span>
           )}
           {rewards.reward_sage_modes.length > 0 && (
-            <span className="whitespace-nowrap">
+            <span className="break-words">
               <b>Sage Modes: </b> {rewards.reward_sage_modes.join(", ")}
             </span>
           )}
@@ -352,9 +353,9 @@ export const showRewardToast = (
             </span>
           )}
           {rewards.reward_items.length > 0 && (
-            <span className="whitespace-nowrap">
+            <span className="break-words">
               <b>Items: </b>
-              {rewards.reward_items.join(", ")}
+              {countNames(rewards.reward_items).join(", ")}
             </span>
           )}
           {rewards.reward_war_damage > 0 && (

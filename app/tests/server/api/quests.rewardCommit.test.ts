@@ -5,7 +5,11 @@ import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { quest, questHistory, userData } from "@/drizzle/schema";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
-import { commitQuestObjectiveRewards } from "../../../src/server/api/routers/quests";
+import {
+  claimRewardChoiceTrackers,
+  commitQuestObjectiveRewards,
+  updateRewards,
+} from "../../../src/server/api/routers/quests";
 import { PostProcessedRewardSchema } from "@/validators/rewards";
 import { insertQuestHistory, insertQuests, insertUsers } from "../../setup/factories";
 import {
@@ -401,6 +405,235 @@ describe("commitQuestObjectiveRewards compatibility", () => {
       missionHistory.questId,
     );
     expect(persisted.length).toBeGreaterThan(0);
+  });
+
+  describe("reward choice", () => {
+    const rewardChoice = {
+      id: "offer-1",
+      pickCount: 1,
+      cards: [
+        { id: "reward_money", field: "reward_money" as const, amount: 100 },
+        { id: "reward_exp", field: "reward_exp" as const, amount: 50 },
+      ],
+    };
+
+    it("stores the offer in the completion compare-and-swap", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([
+        { rowsAffected: 1 },
+        { rowsAffected: 1 },
+        { rowsAffected: 1 },
+        { rowsAffected: 1 },
+      ]);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: true,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toMatchObject({ outcome: "claimed", rewardChoicePending: true });
+      expect(sets[0]).toMatchObject({ completed: 1, pendingRewardChoice: rewardChoice });
+    });
+
+    it("never writes an offer for a non-terminal objective claim", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: false,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toMatchObject({ outcome: "claimed", rewardChoicePending: false });
+      expect(sets.some((set) => "pendingRewardChoice" in set)).toBe(false);
+    });
+
+    it("refuses to replace an earlier offer the player has not picked yet", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([{ rowsAffected: 0 }], {
+        completed: 0,
+        pendingRewardChoice: { ...rewardChoice, id: "older-offer" },
+      } as never);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: true,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toEqual({ outcome: "choice_pending" });
+      expect(sets).toHaveLength(1);
+    });
+
+    it("drops the offer together with the completion when the snapshot claim loses", async () => {
+      const { user, missionHistory } = makeUser();
+      const { client, sets } = makeClient([
+        { rowsAffected: 1 },
+        { rowsAffected: 0 },
+        { rowsAffected: 1 },
+      ]);
+
+      const result = await commitQuestObjectiveRewards({
+        client,
+        userId: user.userId,
+        user: user as never,
+        rewards: rewards(),
+        trackers: [],
+        userQuest: missionHistory as never,
+        resolved: true,
+        notifications: [],
+        consequences: [],
+        existingHistory: missionHistory,
+        rewardChoice,
+      });
+
+      expect(result).toEqual({ outcome: "state_changed" });
+      expect(sets[2]).toMatchObject({ completed: 0, pendingRewardChoice: null });
+    });
+
+    it("pays a pick without writing back the read rank, village or quest trackers", async () => {
+      // A claim does not hold the user snapshot, so echoing these columns from its read would
+      // revert a promotion, village change or tracker another request committed meanwhile.
+      const { user } = makeUser();
+      const { client, sets } = makeClient([{ rowsAffected: 1 }]);
+
+      await updateRewards({
+        client,
+        user: user as never,
+        rewards: PostProcessedRewardSchema.parse({ reward_money: 100 }),
+        reason: "QUEST",
+        persistQuestData: false,
+      });
+
+      expect(sets).toHaveLength(1);
+      expect(sets[0]).toHaveProperty("money");
+      expect(sets[0]).not.toHaveProperty("questData");
+      expect(sets[0]).not.toHaveProperty("rank");
+      expect(sets[0]).not.toHaveProperty("villageId");
+    });
+
+    it("still writes a rank the reward actually grants", async () => {
+      const { user } = makeUser();
+      const { client, sets } = makeClient([{ rowsAffected: 1 }]);
+
+      await updateRewards({
+        client,
+        user: user as never,
+        rewards: PostProcessedRewardSchema.parse({ reward_rank: "JONIN" }),
+        reason: "QUEST",
+      });
+
+      expect(sets[0]).toMatchObject({ rank: "JONIN", questData: [] });
+    });
+  });
+
+  describe("reward choice experience trackers", () => {
+    const medicalQuest = {
+      id: "medical-quest",
+      name: "Medical",
+      questType: "daily",
+      hidden: false,
+      consecutiveObjectives: false,
+      maxAttempts: 10,
+      maxCompletes: 10,
+      content: {
+        objectives: [
+          {
+            id: "heal",
+            task: "medical_experience_gained",
+            value: 100,
+            description: "",
+            successDescription: "",
+          },
+        ],
+        reward: {},
+        sceneBackground: "",
+        sceneCharacters: [],
+      },
+    };
+    const userWith = (quests: (typeof medicalQuest)[]) => {
+      const { user } = makeUser();
+      return {
+        ...user,
+        sector: 1,
+        village: { id: "village-1", sector: 1 },
+        activeWars: [],
+        userQuests: quests.map((q) => ({
+          id: `history-${q.id}`,
+          questId: q.id,
+          questType: q.questType,
+          completed: 0,
+          endAt: null,
+          quest: q,
+        })),
+      };
+    };
+    const medicalReward = PostProcessedRewardSchema.parse({
+      reward_medical_experience: 30,
+    });
+
+    it("advances other quests' experience objectives under the user snapshot", async () => {
+      const user = userWith([medicalQuest]);
+      const { client, sets } = makeClient([{ rowsAffected: 1 }]);
+
+      const saved = await claimRewardChoiceTrackers(
+        client,
+        user as never,
+        medicalReward,
+      );
+
+      expect(saved).toBe(true);
+      expect(sets).toHaveLength(1);
+      expect(sets[0]).toMatchObject({
+        updatedAt: expect.any(Date),
+        questData: [{ id: "medical-quest", goals: [{ id: "heal", value: 30 }] }],
+      });
+    });
+
+    it("reports a lost snapshot so the claim can hand the offer back", async () => {
+      const user = userWith([medicalQuest]);
+      const { client } = makeClient([{ rowsAffected: 0 }]);
+
+      expect(await claimRewardChoiceTrackers(client, user as never, medicalReward)).toBe(
+        false,
+      );
+    });
+
+    it("skips the snapshot when no quest tracks the picked experience", async () => {
+      const user = userWith([]);
+      const { client, update } = makeClient([]);
+
+      expect(await claimRewardChoiceTrackers(client, user as never, medicalReward)).toBe(
+        true,
+      );
+      expect(update).not.toHaveBeenCalled();
+    });
   });
 });
 

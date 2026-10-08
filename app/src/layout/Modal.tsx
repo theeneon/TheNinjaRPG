@@ -48,6 +48,10 @@ interface ModalProps {
   centerText?: boolean;
   /** Extra controls before the Close button (e.g. cancel listing). */
   footerExtra?: React.ReactNode;
+  /** Merges into the footer (default stacks buttons on mobile). */
+  footerClassName?: string;
+  /** Close when clicking outside the dialog (default true). */
+  dismissOnInteractOutside?: boolean;
 }
 
 export const Modal: React.FC<ModalProps> = (props) => {
@@ -147,7 +151,7 @@ export const Modal: React.FC<ModalProps> = (props) => {
           handleDialogClose();
         }}
         onInteractOutside={(event) => {
-          if (props.isLoading) {
+          if (props.isLoading || props.dismissOnInteractOutside === false) {
             event.preventDefault();
             return;
           }
@@ -172,7 +176,9 @@ export const Modal: React.FC<ModalProps> = (props) => {
           {props.children}
         </div>
 
-        <DialogFooter className={props.centerText ? "sm:justify-center" : undefined}>
+        <DialogFooter
+          className={cn(props.centerText && "sm:justify-center", props.footerClassName)}
+        >
           {props.proceed_label && (
             <>
               <Button

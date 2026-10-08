@@ -230,10 +230,12 @@ export const Objective: React.FC<ObjectiveProps> = (props) => {
 interface RewardProps {
   info?: AllObjectivesType | ObjectiveRewardType | null;
   rewardMultiplier?: number;
+  /** Set for "choose" quests: the player picks this many rewards on completion. */
+  pickCount?: number;
 }
 
 export const Reward: React.FC<RewardProps> = (props) => {
-  const { info, rewardMultiplier } = props;
+  const { info, rewardMultiplier, pickCount } = props;
   let rewards = `${info?.reward_money ? `${info.reward_money} Ryo` : ""}`;
   if (info?.reward_tokens) {
     rewards += `${rewards ? ", " : ""} ${info.reward_tokens} Tokens`;
@@ -282,9 +284,15 @@ export const Reward: React.FC<RewardProps> = (props) => {
   }
   return (
     <>
+      {pickCount && (
+        <p>
+          <b>Reward choice</b>: pick {pickCount} reward{pickCount === 1 ? "" : "s"} on
+          completion
+        </p>
+      )}
       {rewards && (
         <p>
-          <b>Rewards</b>: {rewards}
+          <b>{pickCount ? "Choose from" : "Rewards"}</b>: {rewards}
           {rewardMultiplier && rewardMultiplier !== 1.0 && (
             <>
               <br />
