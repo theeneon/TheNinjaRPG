@@ -1969,6 +1969,18 @@ export const initiateBattle = async (
       : [],
   ]);
 
+  // Capture real awake recovery before combat normalizes stats or changes loadouts.
+  const energyRegeneration = Object.fromEntries(
+    fetchedUsers.map((user) => [
+      user.userId,
+      calcActiveUserRegen({ ...user, status: "AWAKE" }, settings),
+    ]),
+  );
+
+  const energyCapacity = Object.fromEntries(
+    fetchedUsers.map((user) => [user.userId, calcMaxEnergy(user)]),
+  );
+
   // Settle authorized pre-combat training from the already loaded participant snapshots.
   // Battle claims commit these gains with status; failed partial claims retain earned training.
   const queuedTraining = fetchedUsers
@@ -2700,6 +2712,8 @@ export const initiateBattle = async (
       extraState: {
         ...extraState,
         energyRewardEligible: (previousBattleResults?.[0]?.count ?? 0) === 0,
+        energyRegeneration,
+        energyCapacity,
         jutsus: {
           ...extraState.jutsus,
           ...Object.fromEntries(injectableJutsus.map((j) => [j.id, j])),
@@ -3681,9 +3695,6 @@ export const processUsersForBattle = async (
 
   // Build extraState from all users
   const extraState: ExtraState = {
-    energyCapacity: Object.fromEntries(
-      users.map((user) => [user.userId, calcMaxEnergy(user)]),
-    ),
     jutsus: {},
     jutsuReskins: {},
     items: {},

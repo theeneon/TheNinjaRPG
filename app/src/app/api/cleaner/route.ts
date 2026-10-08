@@ -37,6 +37,7 @@ import {
   village,
   warKill,
 } from "@/drizzle/schema";
+import { combatEnergyRecoverySql } from "@/libs/combat/database";
 import { cleanupContentProposals } from "@/libs/contentReview/cleanup";
 import {
   lockWithDailyTimer,
@@ -75,9 +76,23 @@ export async function GET(request: Request) {
     );
 
     // Step 2: Update users who are in battle where the battle no longer exists to be awake and not in battle
-    await drizzleDB.execute(
-      sql`UPDATE ${userData} a SET a.battleId=NULL, a.status="AWAKE", a.travelFinishAt=NULL WHERE NOT EXISTS (SELECT id FROM ${battle} b WHERE b.id = a.battleId) AND a.battleId IS NOT NULL`,
-    );
+    await drizzleDB
+      .update(userData)
+      .set({
+        // Missing battle metadata falls back to base Energy recovery.
+        curEnergy: sql`CASE WHEN ${userData.status} = 'BATTLE' THEN ${combatEnergyRecoverySql()} ELSE ${userData.curEnergy} END`,
+        regenAt: sql`CASE WHEN ${userData.status} = 'BATTLE' THEN NOW(3) ELSE ${userData.regenAt} END`,
+        updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
+        battleId: null,
+        status: "AWAKE",
+        travelFinishAt: null,
+      })
+      .where(
+        and(
+          isNotNull(userData.battleId),
+          sql`NOT EXISTS (SELECT 1 FROM ${battle} WHERE ${battle.id} = ${userData.battleId})`,
+        ),
+      );
 
     // Step 2.5: Complete travel for users whose travel time has expired
     await drizzleDB

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import * as nextServer from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   aiProfile,
@@ -11,7 +11,7 @@ import {
   userData,
 } from "@/drizzle/schema";
 import { COMBAT_SECONDS } from "@/libs/combat/constants";
-import { updateBattle, updateUser } from "@/libs/combat/database";
+import { combatEnergyRecoverySql, updateBattle, updateUser } from "@/libs/combat/database";
 import { applyEffects } from "@/libs/combat/process";
 import type { CompleteBattle } from "@/libs/combat/types";
 import { alignBattle, calcBattleResult } from "@/libs/combat/util";
@@ -205,7 +205,7 @@ describeWithDatabase("CAS combat settlement", () => {
   });
 
   it.each([100, 15])(
-    "preserves Energy and capacity when settling combat (reward cap %s)",
+    "credits combat Energy within the preloaded capacity %s without changing base capacity",
     async (capacity) => {
       const database = await getTestDatabase();
       await database
@@ -219,7 +219,8 @@ describeWithDatabase("CAS combat settlement", () => {
       const after = (await database.query.userData.findFirst({
         where: eq(userData.userId, "winner"),
       }))!;
-      expect(after.curEnergy).toBe(10);
+      expect(after.curEnergy).toBeGreaterThanOrEqual(Math.min(capacity, 16));
+      expect(after.curEnergy).toBeLessThanOrEqual(Math.min(capacity, 16.1));
       expect(after.maxEnergy).toBe(100);
     },
   );
@@ -235,9 +236,100 @@ describeWithDatabase("CAS combat settlement", () => {
     await settle(snapshot);
     const settlementFinishedAt = Date.now();
     const after = await database.query.userData.findFirst({where: eq(userData.userId, "winner")});
-    expect(after?.curEnergy).toBe(10);
+    expect(after!.curEnergy).toBeGreaterThanOrEqual(10 + seconds * 3 / 60);
+    expect(after!.curEnergy).toBeLessThanOrEqual(10 + seconds * 3 / 60 + 0.1);
     expect(after?.regenAt.getTime()).toBeGreaterThanOrEqual(settlementStartedAt);
     expect(after?.regenAt.getTime()).toBeLessThanOrEqual(settlementFinishedAt);
+  });
+
+  it("uses preloaded boosted recovery, preserves queued training, and cannot replay release", async () => {
+    const db = await getTestDatabase();
+    const queue = [{ stat: "offence" as const, energy: 20 }];
+    await db.update(userData).set({
+      regenAt: new Date(Date.now() - 120_000), regeneration: 3,
+      energyTrainingQueue: queue, offence: 10,
+    }).where(eq(userData.userId, "winner"));
+    const snapshot = scenario(true);
+    snapshot.extraState.energyRegeneration = { winner: 6 };
+    snapshot.extraState.energyCapacity = { winner: 100 };
+    snapshot.extraState.energyRewardEligible = true;
+    await db.insert(battle).values(snapshot);
+    const result = (await settle(snapshot))!;
+    const after = (await db.query.userData.findFirst({ where: eq(userData.userId, "winner") }))!;
+    expect(after.curEnergy).toBeGreaterThanOrEqual(27);
+    expect(after.curEnergy).toBeLessThan(27.1);
+    expect(after.energyTrainingQueue).toEqual(queue);
+    expect(after.offence).toBe(10 + result.offence);
+    expect(after.curHealth).toBe(result.curHealth);
+    expect(after.curChakra).toBe(result.curChakra);
+    expect(after.curStamina).toBe(result.curStamina);
+    await updateUser(db, pusher, snapshot, result, "winner");
+    const repeated = (await db.query.userData.findFirst({ where: eq(userData.userId, "winner") }))!;
+    expect(repeated.curEnergy).toBe(after.curEnergy);
+    expect(repeated.regenAt).toEqual(after.regenAt);
+  });
+
+  it("cannot grant recovery or overwrite a newer battle during late release", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ battleId: "new-battle", regenAt: new Date(Date.now() - 120_000), regeneration: 3 }).where(eq(userData.userId, "winner"));
+    const snapshot = scenario(true);
+    const result = calcBattleResult(snapshot, "winner", [])!;
+    await updateUser(db, pusher, snapshot, result, "winner");
+    const after = await db.query.userData.findFirst({ where: eq(userData.userId, "winner") });
+    expect(after?.curEnergy).toBe(10);
+    expect(after?.battleId).toBe("new-battle");
+    expect(after?.status).toBe("BATTLE");
+  });
+
+  it("preserves stored geared Energy when legacy battle capacity metadata is missing", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ curEnergy: 150, maxEnergy: 100 }).where(eq(userData.userId, "winner"));
+    const snapshot = scenario(true);
+    await db.insert(battle).values(snapshot);
+    await settle(snapshot);
+    expect((await db.query.userData.findFirst({ where: eq(userData.userId, "winner") }))?.curEnergy).toBe(150);
+  });
+
+  it("does not grant negative elapsed recovery from a future clock", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ regenAt: new Date(Date.now() + 120_000), regeneration: 3 }).where(eq(userData.userId, "winner"));
+    const snapshot = scenario(true);
+    await db.insert(battle).values(snapshot);
+    await settle(snapshot);
+    expect((await db.query.userData.findFirst({ where: eq(userData.userId, "winner") }))?.curEnergy).toBe(10);
+  });
+
+  it("releases raid teammates with Energy recovery and hospital handling only once", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ regenAt: new Date(Date.now() - 120_000), regeneration: 3 }).where(eq(userData.userId, "loser"));
+    const snapshot = scenario(true);
+    snapshot.battleType = "RAID";
+    snapshot.extraState.energyRegeneration = { loser: 6 };
+    snapshot.extraState.energyCapacity = { loser: 100 };
+    snapshot.usersState.push(makeBattleUser("boss", { isAi: true, isSummon: false, curHealth: 0, leftBattle: true }));
+    await db.insert(battle).values(snapshot);
+    await settle(snapshot);
+    const after = (await db.query.userData.findFirst({ where: eq(userData.userId, "loser") }))!;
+    expect(after.curEnergy).toBeGreaterThanOrEqual(22);
+    expect(after.curEnergy).toBeLessThan(22.1);
+    expect(after.status).toBe("HOSPITALIZED");
+    expect(after.curHealth).toBe(0);
+    expect(after.battleId).toBeNull();
+    expect(await settle(snapshot)).toBeNull();
+    expect((await db.query.userData.findFirst({ where: eq(userData.userId, "loser") }))?.curEnergy).toBe(after.curEnergy);
+  });
+
+  it("orphan recovery credits base Energy without advancing queued stats or other pools", async () => {
+    const db = await getTestDatabase();
+    const queue = [{ stat: "offence" as const, energy: 20 }];
+    await db.update(userData).set({ regeneration: 3, regenAt: new Date(Date.now() - 120_000), curHealth: 5, curChakra: 6, curStamina: 7, energyTrainingQueue: queue }).where(eq(userData.userId, "winner"));
+    // The cleaner uses this same guarded release when battle metadata is absent.
+    await db.update(userData).set({ curEnergy: combatEnergyRecoverySql(), regenAt: sql`NOW(3)`, battleId: null, status: "AWAKE" }).where(eq(userData.userId, "winner"));
+    const after = (await db.query.userData.findFirst({ where: eq(userData.userId, "winner") }))!;
+    expect(after.curEnergy).toBeGreaterThanOrEqual(16);
+    expect(after.curEnergy).toBeLessThan(16.1);
+    expect([after.curHealth, after.curChakra, after.curStamina]).toEqual([5, 6, 7]);
+    expect(after.energyTrainingQueue).toEqual(queue);
   });
 
   it.each([
@@ -594,6 +686,8 @@ describeWithDatabase("CAS combat settlement", () => {
       const snapshot = scenario(final);
       snapshot.extraState.energyRewardEligible = true;
       snapshot.extraState.energyCapacity = {winner: 100, loser: 100};
+      snapshot.extraState.energyRegeneration = {winner: 3, loser: 0};
+      await (await getTestDatabase()).update(userData).set({ regenAt: new Date(Date.now() - 120_000) }).where(eq(userData.userId, "winner"));
       await (await getTestDatabase()).insert(battle).values(snapshot);
       const results = await Promise.allSettled([
         settle(structuredClone(snapshot)),
@@ -604,7 +698,8 @@ describeWithDatabase("CAS combat settlement", () => {
       );
       expect(await balance()).toBe(109600);
       const winner = await (await getTestDatabase()).query.userData.findFirst({where: eq(userData.userId, "winner")});
-      expect(winner?.curEnergy).toBe(15);
+      expect(winner!.curEnergy).toBeGreaterThanOrEqual(21);
+      expect(winner!.curEnergy).toBeLessThan(21.1);
       const saved = await persisted();
       if (final) {
         expect(saved).toBeUndefined();

@@ -6,6 +6,8 @@ import {
   battle,
   battleHistory,
   gameSetting,
+  item,
+  userItem,
   sectorMap,
   trainingLog,
   userData,
@@ -20,13 +22,15 @@ import {
   invalidatePublishedMapCache,
   getSectorNeighborIds,
 } from "@/server/utils/sectorMap";
-import { insertUsers } from "../../setup/factories";
+import { insertItems, insertUserItems, insertUsers } from "../../setup/factories";
 import {
   callerFor,
   describeWithDatabase,
   getTestDatabase,
   resetTables,
 } from "../../setup/testDatabase";
+
+import { makeEffect } from "../../libs/combat/helpers/battleScenario";
 
 const HOME = 30;
 const AWAY = getSectorNeighborIds(HOME).east;
@@ -133,6 +137,8 @@ describeWithDatabase("Energy queue state transitions", () => {
     await resetTables(
       battle,
       battleHistory,
+      userItem,
+      item,
       aiProfile,
       gameSetting,
       trainingLog,
@@ -257,6 +263,33 @@ describeWithDatabase("Energy queue state transitions", () => {
       energyTrainingQueue: entries,
     });
   });
+  it("preloads real Energy capacity and boosted recovery before forced combat loadouts", async () => {
+    await prepare([]);
+    const db = await getTestDatabase();
+    await patch({ isOutlaw: true, stealthActive: false, curEnergy: 250 });
+    await insertUsers([{ userId: "attacker", username: "Attacker", rank: "JONIN", level: 1, status: "AWAKE", isOutlaw: true, sector: HOME, longitude: 25, latitude: 10 }]);
+    await insertItems([{ id: "energy-armor", itemType: "ARMOR", effects: [makeEffect("increasemaxpools", { power: 200, powerPerLevel: 0, calculation: "static", rounds: 1, poolsAffected: ["Energy"] })] }]);
+    await insertUserItems([{ userId: USER, itemId: "energy-armor", equipped: "ITEM_1", durability: 100 }]);
+    await db.insert(aiProfile).values({ id: "Default", userId: "default-ai", rules: [] });
+    await db.insert(gameSetting).values({ id: "regen-gain", name: "regenGainMultiplier", value: 2, time: new Date(Date.now() + 86_400_000) });
+    const trigger = vi.spyOn(getServerPusher(), "trigger").mockResolvedValue({} as never);
+    try {
+      const result = await initiateBattle({
+        client: db, userIds: ["attacker"], targetIds: [USER], sector: HOME,
+        longitude: 25, latitude: 10, biome: "default",
+        forceLoadouts: [{ id: "empty", userId: USER, loadout: { weaponIds: [], consumableIds: [], jutsuIds: [] }, createdAt: new Date(), updatedAt: new Date() }],
+      }, "RANKED_SPARRING");
+      expect(result.success).toBe(true);
+      const state = (await db.query.battle.findFirst({ where: eq(battle.id, result.battleId!) }))!;
+      expect(state.extraState.energyCapacity?.[USER]).toBe(300);
+      expect(state.extraState.energyRegeneration?.[USER]).toBe(200);
+      expect(state.usersState.find(user => user.userId === USER)?.items).toEqual([]);
+      expect((await read())!.curEnergy).toBe(250);
+    } finally {
+      trigger.mockRestore();
+    }
+  });
+
   it.each(["success", "partial failure", "concurrent"] as const)(
     "settles pre-combat queues exactly once for %s",
     async (mode) => {
@@ -361,6 +394,7 @@ describeWithDatabase("Energy queue state transitions", () => {
           const state = await db.query.battle.findFirst({
             where: eq(battle.id, result.battleId!),
           });
+          expect(state!.extraState.energyRegeneration?.[USER]).toBe(100);
           expect(
             state!.usersState.find((fighter) => fighter.userId === USER)!.offence,
           ).toBe(270);
