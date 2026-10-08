@@ -32,7 +32,7 @@ import {
   drawCombatUsers,
   highlightUsers,
 } from "@/libs/threejs/combat";
-import { ActionSprite, SpriteMixer } from "@/libs/threejs/SpriteMixer";
+import { SpriteMixer } from "@/libs/threejs/SpriteMixer";
 import { cleanUp, loadTexture, setupScene } from "@/libs/threejs/util";
 import { preloadAudioBuffers, savedSfxVolume } from "@/utils/audio";
 import { isBunnyCdnUrl, textureImageUrl, transformImageUrl } from "@/utils/image";
@@ -228,7 +228,6 @@ export const createBattlefieldPreview = (
       return [{ ...effect, targetId: placement === "caster" ? casterId : targetId }];
     });
     sync();
-    pruneHidden();
   };
   const end = () => {
     hasEnded = true;
@@ -259,19 +258,6 @@ export const createBattlefieldPreview = (
       spriteMixer.update(step / 1000);
       if (!hasEnded && clockMs >= endAt) end();
       else if (shouldLoop && hasEnded && clockMs >= restartAt) begin();
-    }
-  };
-  // Effects of an earlier cycle are hidden by the draw after it; drop them for good.
-  const pruneHidden = () => {
-    for (const child of [...groupEffects.children]) {
-      if (child.visible) continue;
-      child.traverse((node) => {
-        if (node instanceof ActionSprite) {
-          spriteMixer.removeActionSprite(node);
-          node.material.dispose();
-        }
-      });
-      groupEffects.remove(child);
     }
   };
 

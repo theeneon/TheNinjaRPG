@@ -543,7 +543,9 @@ export const updateStatusBar = (name: string, userSpriteGroup: Group, perc: numb
 };
 
 import type { GameAsset } from "@/drizzle/schema";
-import type { SpriteMixer } from "@/libs/threejs/SpriteMixer";
+import { ActionSprite, type SpriteMixer } from "@/libs/threejs/SpriteMixer";
+
+const animationDisposers = new WeakMap<ActionSprite, () => void>();
 
 /**
  * Show animation on the hex
@@ -565,33 +567,48 @@ export const showAnimation = (info: {
     gameAsset.frames - 1,
     gameAsset.speed,
   );
+  const onFinished = (e: { action: unknown }) => {
+    if (e.action === action) dispose();
+  };
+  const dispose = () => {
+    if (!playInfinite) spriteMixer.removeEventListener("finished", onFinished);
+    actionSprite.removeFromParent();
+    spriteMixer.removeActionSprite(actionSprite);
+    // loadTexture owns the cached atlas; only this sprite's material is private.
+    actionSprite.material.dispose();
+    animationDisposers.delete(actionSprite);
+  };
+  animationDisposers.set(actionSprite, dispose);
   if (action) {
     action.hideWhenFinished = true;
     if (playInfinite) {
       action.playLoop();
     } else {
       action.playOnce();
-      // Auto-cleanup when finished
-      const onFinished = (e: { action: unknown }) => {
-        if (e.action === action) {
-          spriteMixer.removeEventListener("finished", onFinished);
-          if (actionSprite.parent) {
-            actionSprite.parent.remove(actionSprite);
-          }
-          spriteMixer.removeActionSprite(actionSprite);
-          // Clean up texture/material
-          if (actionSprite.material) {
-            if (actionSprite.material.map) actionSprite.material.map.dispose();
-            actionSprite.material.dispose();
-          }
-        }
-      };
       spriteMixer.addEventListener("finished", onFinished);
     }
   }
   actionSprite.scale.set(scale, scale, 1);
   actionSprite.position.set(position.x, position.y, layer);
   return actionSprite;
+};
+
+/** Retire animations before disposing the group's other privately owned resources. */
+export const disposeAnimatedGroup = (root: Object3D, spriteMixer: SpriteMixer) => {
+  const sprites: ActionSprite[] = [];
+  root.traverse((child) => {
+    if (child instanceof ActionSprite) sprites.push(child);
+  });
+  for (const sprite of sprites) {
+    const dispose = animationDisposers.get(sprite);
+    if (dispose) dispose();
+    else {
+      spriteMixer.removeActionSprite(sprite);
+      sprite.removeFromParent();
+      sprite.material.dispose();
+    }
+  }
+  disposeGroupPreservingShared(root);
 };
 
 /**

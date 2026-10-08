@@ -80,6 +80,7 @@ import {
   createShadowTexture,
   createSpriteMaterial,
   createTexture,
+  disposeAnimatedGroup,
   drawStatusBar,
   loadTexture,
   profiler,
@@ -544,14 +545,21 @@ export const drawCombatEffects = (info: {
     }
   });
 
-  // Hide all which are not used anymore
-  groupEffects.children.forEach((object) => {
+  const liveIds = new Set(
+    [...groundEffects, ...usersEffects].map((effect) => effect.id),
+  );
+  // Expired looping sprites must leave the mixer, otherwise hidden effects keep
+  // consuming frame time throughout the battle. Retain temporarily hidden effects.
+  for (const object of [...groupEffects.children]) {
     if (!drawnIds.has(object.name)) {
       object.visible = false;
-      // PERFORMANCE: Remove from cache when hidden
+    }
+    if (!liveIds.has(object.name)) {
+      disposeAnimatedGroup(object, spriteMixer);
+      groupEffects.remove(object);
       effectMeshCache.delete(object.name);
     }
-  });
+  }
 
   profiler.reportCount("combat_effects", drawnIds.size);
   endMark();
