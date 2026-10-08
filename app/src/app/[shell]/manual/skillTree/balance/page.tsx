@@ -157,6 +157,9 @@ const SkillTreeEffectsBalance: React.FC<SkillTreeEffectsBalanceProps> = (props) 
             showEdit={canEdit ? "skillTree" : undefined}
           />
         )}
+        {!isSkillDetailsPending && !skillDetails && (
+          <p role="alert">This skill could not be found.</p>
+        )}
       </Modal>
     </>
   );
@@ -267,6 +270,9 @@ const SkillTreeUsageBalance: React.FC<SkillTreeUsageBalanceProps> = (props) => {
             item={skillDetails}
             showEdit={canEdit ? "skillTree" : undefined}
           />
+        )}
+        {!isSkillDetailsPending && !skillDetails && (
+          <p role="alert">This skill could not be found.</p>
         )}
       </Modal>
     </>

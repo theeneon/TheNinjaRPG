@@ -1649,7 +1649,8 @@ export const dataRouter = createTRPCRouter({
       }
 
       // Run userCounts and skill queries in parallel for efficiency
-      const [userCounts, skills] = await Promise.all([
+      const [user, userCounts, skills] = await Promise.all([
+        fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
         // Get user counts per skill
         ctx.drizzle
           .select({
@@ -1660,17 +1661,20 @@ export const dataRouter = createTRPCRouter({
           .groupBy(userSkill.skillId),
 
         // Get all skills (filtered by effects/tiers if specified)
-        ctx.drizzle
-          .select({
-            id: skillTree.id,
-            name: skillTree.name,
-            tier: skillTree.tier,
-            costSkillPoints: skillTree.costSkillPoints,
-            effects: skillTree.effects,
-          })
-          .from(skillTree)
-          .where(whereConditions.length > 0 ? and(...whereConditions) : undefined),
+        ctx.drizzle.query.skillTree.findMany({
+          where: whereConditions.length > 0 ? and(...whereConditions) : undefined,
+          columns: {
+            id: true,
+            name: true,
+            tier: true,
+            costSkillPoints: true,
+            effects: true,
+            hidden: true,
+          },
+          with: { folder: { columns: { hidden: true } } },
+        }),
       ]);
+      const includeHidden = canAccessHiddenSkillTree(user?.role);
 
       // Create a map for quick lookup
       const userCountMap = new Map(
@@ -1679,6 +1683,7 @@ export const dataRouter = createTRPCRouter({
 
       // Create result for each skill
       return skills
+        .filter((skill) => isSkillVisible(skill, includeHidden))
         .map((skill) => {
           const userCount = userCountMap.get(skill.id) || 0;
 
