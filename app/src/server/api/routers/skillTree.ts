@@ -94,9 +94,10 @@ export const skillTreeRouter = createTRPCRouter({
           with: { folder: true },
         }),
       ]);
+      // React Query rejects undefined query data, so missing/hidden skills resolve to null.
       return skill && isSkillVisible(skill, canAccessHiddenSkillTree(user?.role))
         ? skill
-        : undefined;
+        : null;
     }),
 
   // Get all skills for tree view
