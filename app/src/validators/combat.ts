@@ -213,6 +213,7 @@ export const AbsorbTag = z.object({
 export const IncreaseDamageGivenTag = z.object({
   ...BaseAttributes,
   ...PowerAttributes,
+  elements: z.array(z.enum(ElementNames)).optional(),
   type: z.literal("increasedamagegiven").prefault("increasedamagegiven"),
   description: msg("Increase damage given by target"),
   calculation: z.enum(["static", "percentage"]).prefault("percentage"),
@@ -221,6 +222,7 @@ export const IncreaseDamageGivenTag = z.object({
 export const DecreaseDamageGivenTag = z.object({
   ...BaseAttributes,
   ...PowerAttributes,
+  elements: z.array(z.enum(ElementNames)).optional(),
   type: z.literal("decreasedamagegiven").prefault("decreasedamagegiven"),
   description: msg("Decrease damage given by target"),
   calculation: z.enum(["static", "percentage"]).prefault("percentage"),
@@ -229,6 +231,7 @@ export const DecreaseDamageGivenTag = z.object({
 export const IncreaseDamageTakenTag = z.object({
   ...BaseAttributes,
   ...PowerAttributes,
+  elements: z.array(z.enum(ElementNames)).optional(),
   type: z.literal("increasedamagetaken").prefault("increasedamagetaken"),
   description: msg("Increase damage taken of target"),
   calculation: z.enum(["static", "percentage"]).prefault("percentage"),
@@ -237,6 +240,7 @@ export const IncreaseDamageTakenTag = z.object({
 export const DecreaseDamageTakenTag = z.object({
   ...BaseAttributes,
   ...PowerAttributes,
+  elements: z.array(z.enum(ElementNames)).optional(),
   type: z.literal("decreasedamagetaken").prefault("decreasedamagetaken"),
   description: msg("Decrease damage taken of target"),
   calculation: z.enum(["static", "percentage"]).prefault("percentage"),

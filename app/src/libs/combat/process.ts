@@ -1408,7 +1408,7 @@ export const emptyPreBattleGearModifiers = (): PreBattleGearModifiers => ({
   drGivenFromKeystone: 0,
 });
 
-/** Armor/accessory/keystone percentage mods fold into preBattleGearModifiers at battle start. */
+/** Universal armor/accessory/keystone percentage mods fold into battle-start totals. */
 export const isConsolidatedStage1PercentageModifier = (effect: UserEffect): boolean => {
   if (
     !damageBoostTypes.includes(effect.type) &&
@@ -1423,7 +1423,10 @@ export const isConsolidatedStage1PercentageModifier = (effect: UserEffect): bool
   if (!isPreBattleGearFromType(fromType) && !isPreBattleKeystoneFromType(fromType)) {
     return false;
   }
-  return effect.calculation === "percentage";
+  return (
+    effect.calculation === "percentage" &&
+    !("elements" in effect && effect.elements?.length)
+  );
 };
 
 /** True when percentage mods are folded into preBattleGearModifiers (not pipeline lists). */
@@ -1618,6 +1621,10 @@ export type DamagePacketModifierLists = {
   staticDrEffects: UserEffect[];
   bloodlineIncreases: UserEffect[];
   bloodlineDrEffects: UserEffect[];
+  elementalGearIncreases: UserEffect[];
+  elementalGearReductions: UserEffect[];
+  elementalKeystoneIncreases: UserEffect[];
+  elementalKeystoneReductions: UserEffect[];
 };
 
 /** Bucket damage modifiers once per attacker–defender pair (reuse across consequences). */
@@ -1643,6 +1650,10 @@ export const buildDamagePacketModifierLists = (
   const staticDrEffects: UserEffect[] = [];
   const bloodlineIncreases: UserEffect[] = [];
   const bloodlineDrEffects: UserEffect[] = [];
+  const elementalGearIncreases: UserEffect[] = [];
+  const elementalGearReductions: UserEffect[] = [];
+  const elementalKeystoneIncreases: UserEffect[] = [];
+  const elementalKeystoneReductions: UserEffect[] = [];
 
   for (const effect of usersEffects) {
     const isBoost = damageBoostTypes.includes(effect.type);
@@ -1652,6 +1663,28 @@ export const buildDamagePacketModifierLists = (
     const isBloodline = isBloodlineDamageMod(effect);
     const isStatic = effect.calculation === "static";
     const isPercentage = effect.calculation === "percentage";
+
+    // Keep scoped gear in its existing additive stage, evaluated per damage packet.
+    if (
+      isPercentage &&
+      "fromType" in effect &&
+      "elements" in effect &&
+      effect.elements?.length
+    ) {
+      const isGear = isPreBattleGearFromType(effect.fromType);
+      const isKeystone = isPreBattleKeystoneFromType(effect.fromType);
+      if (isGear || isKeystone) {
+        if (isBoost && applies(effect, "increase"))
+          (isKeystone ? elementalKeystoneIncreases : elementalGearIncreases).push(
+            effect,
+          );
+        if (isDr && applies(effect, "decrease"))
+          (isKeystone ? elementalKeystoneReductions : elementalGearReductions).push(
+            effect,
+          );
+        continue;
+      }
+    }
 
     if (isBoost && applies(effect, "increase")) {
       if (isStatic) {
@@ -1697,6 +1730,10 @@ export const buildDamagePacketModifierLists = (
     staticDrEffects,
     bloodlineIncreases,
     bloodlineDrEffects,
+    elementalGearIncreases,
+    elementalGearReductions,
+    elementalKeystoneIncreases,
+    elementalKeystoneReductions,
   };
 };
 
@@ -1737,6 +1774,14 @@ export const computeDamagePacket = (
   const defenderGear =
     preBattleGearModifiers[defenderId] ?? emptyPreBattleGearModifiers();
 
+  const elementalPoints = (effects: UserEffect[], reduction = false) =>
+    effects.reduce((sum, effect) => {
+      const { power } = getPower(effect);
+      return (
+        sum +
+        (reduction ? Math.abs(power) : power) * getEfficiencyRatio(damageEffect, effect)
+      );
+    }, 0);
   let damage = ctx.rawDamage;
 
   for (const effect of modifierLists.stage1PreBattleIncreases) {
@@ -1749,7 +1794,8 @@ export const computeDamagePacket = (
   const incPoints =
     OUT_OF_COMBAT_BASE_DAMAGE_INCREASE +
     attackerGear.incDamageGivenFromGear +
-    defenderGear.incDamageTakenFromGear;
+    defenderGear.incDamageTakenFromGear +
+    elementalPoints(modifierLists.elementalGearIncreases);
   damage *= 1 + incPoints / 100;
 
   for (const effect of modifierLists.inBattleIncreases) {
@@ -1765,7 +1811,8 @@ export const computeDamagePacket = (
   const drPoints =
     OUT_OF_COMBAT_BASE_DAMAGE_REDUCTION +
     defenderGear.drTakenFromGear +
-    attackerGear.drGivenFromGear;
+    attackerGear.drGivenFromGear +
+    elementalPoints(modifierLists.elementalGearReductions, true);
   damage = applyPercentageDrMultiplier(damage, drPoints / 100);
 
   for (const effect of modifierLists.stage1PreBattleDrEffects) {
@@ -1818,11 +1865,14 @@ export const computeDamagePacket = (
 
   const keystoneIncPoints =
     (attackerGear.incDamageGivenFromKeystone ?? 0) +
-    (defenderGear.incDamageTakenFromKeystone ?? 0);
+    (defenderGear.incDamageTakenFromKeystone ?? 0) +
+    elementalPoints(modifierLists.elementalKeystoneIncreases);
   damage *= 1 + keystoneIncPoints / 100;
 
   const keystoneDrPoints =
-    (defenderGear.drTakenFromKeystone ?? 0) + (attackerGear.drGivenFromKeystone ?? 0);
+    (defenderGear.drTakenFromKeystone ?? 0) +
+    (attackerGear.drGivenFromKeystone ?? 0) +
+    elementalPoints(modifierLists.elementalKeystoneReductions, true);
   damage = applyPercentageDrMultiplier(damage, keystoneDrPoints / 100);
   damage = Math.max(minDamage, damage);
 

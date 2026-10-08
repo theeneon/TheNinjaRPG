@@ -21,6 +21,7 @@ import {
 import { alias } from "drizzle-orm/mysql-core";
 import { customAlphabet, nanoid } from "nanoid";
 import { z } from "zod";
+import type { CombatStatName } from "@/drizzle/constants";
 import {
   ACTION_LOG_RELATED_MSG_MAX_LENGTH,
   ACTIVE_VOTING_SITES,
@@ -87,6 +88,7 @@ import {
   staffApplication,
   staffApplicationApproval,
   supportTicket,
+  trainingLog,
   userAttribute,
   userBlackList,
   userData,
@@ -145,7 +147,11 @@ import {
 } from "@/libs/raids";
 import { createThumbnail } from "@/libs/replicate";
 import { callDiscordContent } from "@/libs/socials";
-import { getReducedGainsDays, inferJutsuTrainingStartedAt } from "@/libs/train";
+import {
+  getReducedGainsDays,
+  inferJutsuTrainingStartedAt,
+  settleEnergyTrainingQueue,
+} from "@/libs/train";
 import { fetchSquad, removeFromSquad } from "@/routers/anbu";
 import { fetchClan, removeFromClan } from "@/routers/clan";
 import { fetchKageReplacement } from "@/routers/kage";
@@ -3155,11 +3161,15 @@ export const fetchUpdatedUser = async (props: {
     const sinceUpdate = secondsPassed(user.updatedAt);
     if (
       newDay ||
+      user.energyTrainingQueue?.length ||
       sinceUpdate > 300 || // Update user in database every 5 minutes only so as to reduce server load
       forceRegen || // Hard overwrite for e.g. debugging or simply ensuring updated user
       (user.villagePrestige < 0 && !user.isOutlaw) // To trigger getting kicked out of village
     ) {
       const originalUpdatedAt = user.updatedAt;
+      const queuedTrainingSnapshot = user.energyTrainingQueue?.length
+        ? { ...user }
+        : null;
       const ticks = Math.max(
         0,
         Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS),
@@ -3168,7 +3178,28 @@ export const fetchUpdatedUser = async (props: {
       user.curHealth = Math.min(user.curHealth + regen, user.maxHealth);
       user.curStamina = Math.min(user.curStamina + regen, user.maxStamina);
       user.curChakra = Math.min(user.curChakra + regen, user.maxChakra);
-      user.curEnergy = Math.min(user.curEnergy + regen, user.maxEnergy);
+      const queuedTraining = queuedTrainingSnapshot
+        ? settleEnergyTrainingQueue(user, settings, ticks)
+        : null;
+      user.curEnergy =
+        queuedTraining?.curEnergy ?? Math.min(user.curEnergy + regen, user.maxEnergy);
+      if (queuedTraining) {
+        user.energyTrainingQueue = queuedTraining.energyTrainingQueue;
+        const trained = queuedTraining.completed.reduce(
+          (sum, entry) => sum + entry.amount,
+          0,
+        );
+        for (const [stat, amount] of Object.entries(queuedTraining.gains)) {
+          user[stat as CombatStatName] += amount;
+        }
+        user.experience += trained;
+        if (trained > 0)
+          user.questData = filterQuestTrackersForDbPersist(
+            getNewTrackers(user, [{ task: "stats_trained", increment: trained }])
+              .trackers,
+            user,
+          );
+      }
       user.updatedAt = now;
       user.regenAt = secondsFromDate(ticks * REGEN_SECONDS, user.regenAt);
 
@@ -3190,6 +3221,7 @@ export const fetchUpdatedUser = async (props: {
           userIp,
           forceRegen: forceRegen ?? false,
           originalUpdatedAt,
+          queuedTraining,
         });
         if (!persisted) {
           // Another mutation won the snapshot. Use its current pools and version rather than
@@ -3198,8 +3230,10 @@ export const fetchUpdatedUser = async (props: {
             where: eq(userData.userId, userId),
           });
           if (freshUser) Object.assign(user, freshUser);
+          else if (queuedTrainingSnapshot) Object.assign(user, queuedTrainingSnapshot);
         }
       } catch (error) {
+        if (queuedTrainingSnapshot) Object.assign(user, queuedTrainingSnapshot);
         // Regen is background bookkeeping and is already applied to the returned
         // in-memory user, so a database blip here must not fail the query that
         // happened to trigger it. The next request persists it instead.
@@ -3296,6 +3330,7 @@ const persistPassiveRegenToDb = async ({
   userIp,
   forceRegen,
   originalUpdatedAt,
+  queuedTraining,
 }: {
   client: DrizzleClient;
   userId: string;
@@ -3303,6 +3338,7 @@ const persistPassiveRegenToDb = async ({
   userIp?: string;
   forceRegen: boolean;
   originalUpdatedAt: Date;
+  queuedTraining?: ReturnType<typeof settleEnergyTrainingQueue> | null;
 }) => {
   const includeVillageState = forceRegen || (user.villagePrestige < 0 && user.isOutlaw);
 
@@ -3349,6 +3385,14 @@ const persistPassiveRegenToDb = async ({
     userForRegenPersist,
   );
 
+  if (queuedTraining) {
+    derivedUserUpdate.energyTrainingQueue = queuedTraining.energyTrainingQueue;
+    for (const stat of Object.keys(queuedTraining.gains)) {
+      derivedUserUpdate[stat] = user[stat as CombatStatName];
+    }
+    derivedUserUpdate.experience = user.experience;
+  }
+
   // A delayed regeneration must not restore pools from before a heal or another user claim.
   // claimUserSnapshot advances updatedAt and writes the regeneration fields together.
   delete derivedUserUpdate.updatedAt;
@@ -3360,7 +3404,24 @@ const persistPassiveRegenToDb = async ({
     where: [eq(userData.status, user.status)],
     set: derivedUserUpdate,
   });
-  if (claim.success) user.updatedAt = claim.claimedAt;
+  if (claim.success) {
+    user.updatedAt = claim.claimedAt;
+    if (queuedTraining?.completed.length) {
+      try {
+        await client.insert(trainingLog).values(
+          queuedTraining.completed.map((entry) => ({
+            userId,
+            stat: entry.stat,
+            amount: entry.amount,
+            speed: user.trainingSpeed,
+            trainingFinishedAt: claim.claimedAt,
+          })),
+        );
+      } catch (error) {
+        Sentry.captureException(error, { tags: { source: "energyTrainingQueueLog" } });
+      }
+    }
+  }
   return claim.success;
 };
 

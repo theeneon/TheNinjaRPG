@@ -1,6 +1,25 @@
 import { z } from "zod";
-import { CombatStatNames, MasteryNames, TrainingSpeeds } from "@/drizzle/constants";
+import {
+  CombatStatNames,
+  MasteryNames,
+  QUEUE_WAITING_SLOTS,
+  TrainingSpeeds,
+} from "@/drizzle/constants";
 import { baseServerResponse } from "@/validators/base";
+
+export const energyTrainingQueueEntrySchema = z.object({
+  stat: z.enum(CombatStatNames),
+  energy: z.number().finite().positive(),
+});
+export type EnergyTrainingQueueEntry = z.infer<typeof energyTrainingQueueEntrySchema>;
+
+export const updateEnergyTrainingQueueInputSchema = z.object({
+  entries: z.array(energyTrainingQueueEntrySchema).max(1 + QUEUE_WAITING_SLOTS.GOLD),
+  expectedEntries: z
+    .array(energyTrainingQueueEntrySchema)
+    .max(1 + QUEUE_WAITING_SLOTS.GOLD),
+  guess: z.string().optional(),
+});
 
 // Input schemas
 export const startTrainingInputSchema = z.object({

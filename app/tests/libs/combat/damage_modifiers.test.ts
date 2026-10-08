@@ -13,6 +13,8 @@ import {
   consolidatePreBattleDamageModifiers,
   isConsolidatedStage1PercentageModifier,
 } from "@/libs/combat/process";
+import { getAffected } from "@/libs/combat/tags";
+import { getStatTypeLabels } from "@/libs/combat/util";
 import type { Consequence } from "@/libs/combat/types";
 import {
   defaultTestGearModifiers,
@@ -809,7 +811,8 @@ describe("computeDamagePacket", () => {
       },
     });
 
-    const boostedDamage = [30, 30, 35, 35, 15].reduce(
+    // The Wind-only Gust Armor bonus does not affect this Fire packet.
+    const boostedDamage = [30, 35, 35, 15].reduce(
       (total, power) => total * (1 + power / 100),
       rawDamage * (1 + OUT_OF_COMBAT_BASE_DAMAGE_INCREASE / 100),
     );
@@ -1194,5 +1197,83 @@ describe("computeDamagePacket", () => {
     });
 
     expect(damage).toBeCloseTo(baseline - 50, 2);
+  });
+});
+
+describe("element-scoped damage modifiers", () => {
+  it("describes scoped modifiers with their elements rather than all damage", () => {
+    const universal = makeModifierEffect({ type: "increasedamagegiven", targetId: "attacker" });
+    const scoped = makeModifierEffect({
+      type: "increasedamagegiven",
+      targetId: "attacker",
+      tag: { elements: ["Fire"] },
+    });
+    expect(getAffected(universal)).toBe("all damage");
+    expect(getAffected(scoped)).toBe("Fire damage");
+    expect(getStatTypeLabels(universal)).toEqual(["All damage"]);
+    expect(getStatTypeLabels(scoped)).toEqual([]);
+  });
+  it.each(["bloodline", "jutsu", "armor", "accessory", "keystone", "skill"] as const)(
+    "limits %s bonuses to matching elements",
+    (fromType) => {
+      const effect = makeModifierEffect({
+        type: "increasedamagegiven",
+        targetId: "attacker",
+        fromType,
+        power: 40,
+        tag: { elements: ["Fire"] },
+      });
+      const { filteredEffects, preBattleGearModifiers } =
+        consolidatePreBattleDamageModifiers([effect], ["attacker", "defender"]);
+      const damage = (elements: ("Fire" | "Water")[], effects = filteredEffects) =>
+        computeDamagePacket({
+          rawDamage: 100,
+          damageEffect: makeDamageEffect({ elements }),
+          usersEffects: effects,
+          attackerId: "attacker",
+          defenderId: "defender",
+          battleRound: 2,
+          preBattleGearModifiers,
+        }).damage;
+      expect(filteredEffects).toContain(effect);
+      const factor =
+        fromType === "armor" || fromType === "accessory"
+          ? (100 + OUT_OF_COMBAT_BASE_DAMAGE_INCREASE + 40) /
+            (100 + OUT_OF_COMBAT_BASE_DAMAGE_INCREASE)
+          : 1.4;
+      expect(damage(["Fire"])).toBeCloseTo(damage(["Fire"], []) * factor);
+      expect(damage(["Water"])).toBeCloseTo(damage(["Water"], []));
+      expect(damage([])).toBeCloseTo(damage([], []));
+    },
+  );
+
+  it.each([
+    "increasedamagegiven",
+    "decreasedamagegiven",
+    "increasedamagetaken",
+    "decreasedamagetaken",
+  ] as const)("matches the element on %s", (type) => {
+    const targetId = type.endsWith("given") ? "attacker" : "defender";
+    const effect = makeModifierEffect({
+      type,
+      targetId,
+      fromType: "bloodline",
+      power: 20,
+      tag: { elements: ["Fire"] },
+    });
+    const damage = (element: "Fire" | "Water", effects = [effect]) =>
+      computeDamagePacket({
+        rawDamage: 100,
+        damageEffect: makeDamageEffect({ elements: [element] }),
+        usersEffects: effects,
+        attackerId: "attacker",
+        defenderId: "defender",
+        battleRound: 2,
+        preBattleGearModifiers: {},
+      }).damage;
+    expect(damage("Water")).toBeCloseTo(damage("Water", []));
+    expect(damage("Fire")).toBeCloseTo(
+      damage("Fire", []) * (type.startsWith("increase") ? 1.2 : 0.8),
+    );
   });
 });

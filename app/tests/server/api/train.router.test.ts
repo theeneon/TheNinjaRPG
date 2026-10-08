@@ -63,6 +63,137 @@ const backdate = async (patch: Partial<typeof userData.$inferInsert>) => {
 describeWithDatabase("Energy and mastery training against a real MySQL", () => {
   beforeEach(async () => { await resetTables(trainingLog, questHistory, quest, userVote, userItem, item, userData, bloodline); });
 
+  it.each(["AWAKE", "ASLEEP"] as const)(
+    "settles one-time %s queues offline without losing regenerated Energy to capacity",
+    async (status) => {
+      await trainee({
+        status,
+        level: 1,
+        curEnergy: 0,
+        regeneration: 100,
+        energyTrainingQueue: [
+          { stat: "offence", energy: 100 },
+          { stat: "defence", energy: 100 },
+        ],
+        regenAt: new Date(Date.now() - 195_000),
+      });
+      const before = await readUser();
+      await fetchUpdatedUser({
+        client: await getTestDatabase(),
+        userId: USER_ID,
+        forceRegen: true,
+      });
+      const after = await readUser();
+      expect(after.offence - before.offence).toBeCloseTo(130);
+      expect(after.defence - before.defence).toBeCloseTo(130);
+      expect(after.curEnergy).toBe(100);
+      expect(after.energyTrainingQueue).toEqual([]);
+      expect(after.experience - before.experience).toBeCloseTo(260);
+      await fetchUpdatedUser({
+        client: await getTestDatabase(),
+        userId: USER_ID,
+        forceRegen: true,
+      });
+      expect((await readUser()).experience).toBe(after.experience);
+      expect(await readLogs()).toHaveLength(2);
+    },
+  );
+
+  it("skips capped queued stats and spends only the Energy required for a partial cap", async () => {
+    const cap = getUserCaps("GENIN").stats_cap;
+    await trainee({
+      curEnergy: 100,
+      regeneration: 0,
+      offence: cap,
+      defence: cap - 1.3,
+      energyTrainingQueue: [
+        { stat: "offence", energy: 50 },
+        { stat: "defence", energy: 50 },
+      ],
+    });
+    await fetchUpdatedUser({
+      client: await getTestDatabase(),
+      userId: USER_ID,
+      forceRegen: true,
+    });
+    const after = await readUser();
+    expect(after.offence).toBe(cap);
+    expect(after.defence).toBeCloseTo(cap);
+    expect(after.curEnergy).toBeCloseTo(99);
+    expect(after.energyTrainingQueue).toEqual([]);
+    expect(await readLogs()).toHaveLength(1);
+  });
+
+  it("claims queued spending once across concurrent profile refreshes", async () => {
+    await trainee({
+      curEnergy: 100,
+      regeneration: 0,
+      energyTrainingQueue: [{ stat: "offence", energy: 40 }],
+    });
+    const before = await readUser();
+    const database = await getTestDatabase();
+    await Promise.all(
+      Array.from({ length: 8 }, () =>
+        fetchUpdatedUser({ client: database, userId: USER_ID, forceRegen: true }),
+      ),
+    );
+    const after = await readUser();
+    expect(after.curEnergy).toBe(60);
+    expect(after.offence - before.offence).toBeCloseTo(52);
+    expect(after.experience - before.experience).toBeCloseTo(52);
+    expect(await readLogs()).toHaveLength(1);
+  });
+
+  it("waits for the queued amount and respects capacity and federal slots", async () => {
+    await trainee({ level: 1, curEnergy: 0, regeneration: 0 });
+    const api = await caller();
+    const entries = [{ stat: "offence" as const, energy: 100 }];
+    expect(
+      (await api.updateEnergyTrainingQueue({ entries, expectedEntries: [] })).success,
+    ).toBe(true);
+    await fetchUpdatedUser({
+      client: await getTestDatabase(),
+      userId: USER_ID,
+      forceRegen: true,
+    });
+    expect((await readUser()).energyTrainingQueue).toEqual(entries);
+    expect(await readLogs()).toHaveLength(0);
+    expect(
+      (
+        await api.updateEnergyTrainingQueue({
+          entries: [{ stat: "offence", energy: 151 }],
+          expectedEntries: entries,
+        })
+      ).success,
+    ).toBe(false);
+    expect(
+      (
+        await api.updateEnergyTrainingQueue({
+          entries: [...entries, ...entries, ...entries],
+          expectedEntries: entries,
+        })
+      ).success,
+    ).toBe(false);
+    expect(
+      (await api.updateEnergyTrainingQueue({ entries: [], expectedEntries: entries }))
+        .success,
+    ).toBe(true);
+    expect((await readUser()).energyTrainingQueue).toEqual([]);
+  });
+
+  it("rejects a stale edit that would re-add a completed queue entry", async () => {
+    const entries = [{ stat: "offence" as const, energy: 40 }];
+    await trainee({ curEnergy: 100, regeneration: 0, energyTrainingQueue: entries });
+    const result = await (await caller()).updateEnergyTrainingQueue({
+      entries: [...entries, { stat: "defence", energy: 40 }],
+      expectedEntries: entries,
+    });
+    expect(result.success).toBe(false);
+    expect((await readUser()).energyTrainingQueue).toEqual([]);
+    expect((await readUser()).curEnergy).toBe(60);
+    expect(await readLogs()).toHaveLength(1);
+  });
+
   it("returns effective profile masteries from bloodline and eligible equipment without changing stored stats", async () => {
     const database = await getTestDatabase();
     const tag = {type: "increasemastery", masteryTypes: ["Ninjutsu"], power: 100, powerPerLevel: 0, calculation: "static", rounds: 1} as const;

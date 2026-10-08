@@ -6,7 +6,6 @@ import {
 } from "@/drizzle/constants";
 import { trainingLog, userData } from "@/drizzle/schema";
 import { showTrainingCapcha } from "@/libs/captcha";
-import { getGameSettingBoost } from "@/libs/gameSettingBoost";
 import { filterQuestTrackersForDbPersist, getNewTrackers } from "@/libs/quest";
 import {
   energyPerSecond,
@@ -14,6 +13,7 @@ import {
   masteryTrainingBlockMessage,
   statTrainingBlockMessage,
   trainEfficiency,
+  trainingBoost,
   trainingMultiplier,
 } from "@/libs/train";
 import { validateCaptcha } from "@/routers/misc";
@@ -27,8 +27,8 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
+import { getQueueTotalCapacity } from "@/utils/paypal";
 import { secondsPassed } from "@/utils/time";
-import { getShrineBoost, getStrucBoost } from "@/utils/village";
 import {
   startMasteryTrainingInputSchema,
   startMasteryTrainingOutputSchema,
@@ -37,10 +37,61 @@ import {
   stopMasteryTrainingOutputSchema,
   stopTrainingInputSchema,
   trainingLogInputSchema,
+  updateEnergyTrainingQueueInputSchema,
   updateTrainingSpeedInputSchema,
 } from "@/validators/train";
 
 export const trainRouter = createTRPCRouter({
+  updateEnergyTrainingQueue: protectedProcedure
+    .input(updateEnergyTrainingQueueInputSchema)
+    .output(baseServerResponse)
+    .mutation(async ({ ctx, input }) => {
+      const { user } = await fetchUpdatedUser({
+        client: ctx.drizzle,
+        userId: ctx.userId,
+        forceRegen: true,
+      });
+      if (!user) return errorResponse("User not found");
+      if (
+        JSON.stringify(user.energyTrainingQueue ?? []) !==
+        JSON.stringify(input.expectedEntries)
+      )
+        return errorResponse(
+          "Your training queue changed. Please refresh and try again",
+        );
+      if (input.entries.length > 0) {
+        const block = statTrainingBlockMessage({
+          ...user,
+          status: user.status === "ASLEEP" ? "AWAKE" : user.status,
+        });
+        if (block) return errorResponse(block);
+        if (input.entries.length > getQueueTotalCapacity(user))
+          return errorResponse("Training queue is full");
+        if (input.entries.some((entry) => entry.energy > user.maxEnergy))
+          return errorResponse("Queued Energy cannot exceed your capacity");
+        if (showTrainingCapcha(user)) {
+          if (!input.guess) return errorResponse("Captcha required");
+          if (!(await validateCaptcha(ctx.drizzle, ctx.userId, input.guess)))
+            return errorResponse("Invalid captcha");
+        }
+      }
+      const claim = await claimUserSnapshot({
+        client: ctx.drizzle,
+        userId: ctx.userId,
+        updatedAt: user.updatedAt,
+        where: [eq(userData.status, user.status)],
+        set: { energyTrainingQueue: input.entries },
+      });
+      if (!claim.success)
+        return errorResponse("Your training queue changed. Please try again");
+      return {
+        success: true,
+        message: input.entries.length
+          ? "Training queue saved"
+          : "Training queue cleared",
+      };
+    }),
+
   startTraining: protectedProcedure
     .meta({ mcp: { description: "Spend Energy to instantly train a combat stat" } })
     .input(startTrainingInputSchema)
@@ -277,25 +328,7 @@ export const trainRouter = createTRPCRouter({
     }),
 });
 
-/** Village, clan and global bonuses shared by Energy and mastery training. */
-export const trainingBoost = (
-  user: NonNullable<UserWithRelations>,
-  settings: Awaited<ReturnType<typeof fetchUpdatedUser>>["settings"],
-) => {
-  const sectors = user.village?.sectors?.length ?? 0;
-  const shrineBoost = getShrineBoost(sectors, "Training", user.village);
-  const trainSetting = getGameSettingBoost("trainingGainMultiplier", settings);
-  const warSetting = getGameSettingBoost(`war-${user.villageId}-train`, settings);
-  const boost = getStrucBoost("trainBoostPerLvl", user.village?.structures) / 100;
-  const clanBoost = user.isOutlaw ? 0 : (user.clan?.trainingBoost ?? 0) / 100;
-  return (
-    ((trainSetting?.value ?? 1) *
-      (1 + boost + clanBoost + shrineBoost) *
-      (100 + (warSetting?.value ?? 0))) /
-    100
-  );
-};
-
+/** Calculate timed mastery gains with the shared training bonuses. */
 export const calcTrainingAmount = (
   user: NonNullable<UserWithRelations>,
   settings: Awaited<ReturnType<typeof fetchUpdatedUser>>["settings"],

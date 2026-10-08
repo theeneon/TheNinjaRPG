@@ -72,6 +72,7 @@ import { ActionSelector } from "@/layout/CombatActions";
 import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";
 import Countdown from "@/layout/Countdown";
+import { EnergyTrainingQueue } from "@/layout/EnergyTrainingQueue";
 import Image from "@/layout/Image";
 import ItemWithEffects from "@/layout/ItemWithEffects";
 import JutsuFiltering, { getFilter, useFiltering } from "@/layout/JutsuFiltering";
@@ -733,6 +734,10 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
         </div>
         {pendingOverlay}
       </ContentBox>
+      <EnergyTrainingQueue
+        user={userData}
+        getGuess={() => captchaForm.getValues("guess")}
+      />
       <ContentBox
         title="Masteries"
         subtitle={`No Energy cost, experience or damage. ${efficiency}% efficiency [${userData.dailyTrainings} / ${MAX_DAILY_TRAININGS}].`}
