@@ -38,6 +38,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import type { CombatStatName, MasteryName, TrainingSpeed } from "@/drizzle/constants";
 import {
   CombatStatNames,
@@ -148,7 +149,10 @@ export default function Training() {
         : section;
 
   return (
-    <>
+    <Tabs
+      value={activeSection}
+      onValueChange={(value) => startTransition(() => setSection(value))}
+    >
       <ContentBox
         title="Training Grounds"
         subtitle="Choose a training activity"
@@ -157,6 +161,8 @@ export default function Training() {
         <div className="overflow-x-auto overflow-y-hidden">
           <div className="mx-auto w-max min-w-full">
             <NavTabs
+              accessibleTabs
+              label="Training activities"
               current={activeSection}
               options={[
                 "Stats",
@@ -165,7 +171,6 @@ export default function Training() {
                 "Covert",
                 ...(showSenseiSystem ? ["Sensei"] : []),
               ]}
-              setValue={setSection}
               icons={{
                 Stats: <Swords aria-hidden="true" className="h-4 w-4" />,
                 Masteries: <Medal aria-hidden="true" className="h-4 w-4" />,
@@ -201,34 +206,40 @@ export default function Training() {
           </div>
         )}
       </ContentBox>
-      {["Stats", "Masteries"].includes(activeSection) && (
-        <StatsTraining
-          userData={userData}
-          timeDiff={timeDiff}
-          updateUser={updateUser}
-          initialBreak
-          section={activeSection}
-        />
-      )}
-      {activeSection === "Jutsu" && (
-        <JutsuTraining
-          userData={userData}
-          timeDiff={timeDiff}
-          updateUser={updateUser}
-          initialBreak
-        />
-      )}
-      {activeSection === "Covert" && (
-        <CovertTraining
-          userData={userData}
-          timeDiff={timeDiff}
-          updateUser={updateUser}
-        />
-      )}
-      {activeSection === "Sensei" && showSenseiSystem && (
-        <SenseiSystem userData={userData} timeDiff={timeDiff} updateUser={updateUser} />
-      )}
-    </>
+      <TabsContent value={activeSection} className="mt-0">
+        {["Stats", "Masteries"].includes(activeSection) && (
+          <StatsTraining
+            userData={userData}
+            timeDiff={timeDiff}
+            updateUser={updateUser}
+            initialBreak
+            section={activeSection}
+          />
+        )}
+        {activeSection === "Jutsu" && (
+          <JutsuTraining
+            userData={userData}
+            timeDiff={timeDiff}
+            updateUser={updateUser}
+            initialBreak
+          />
+        )}
+        {activeSection === "Covert" && (
+          <CovertTraining
+            userData={userData}
+            timeDiff={timeDiff}
+            updateUser={updateUser}
+          />
+        )}
+        {activeSection === "Sensei" && showSenseiSystem && (
+          <SenseiSystem
+            userData={userData}
+            timeDiff={timeDiff}
+            updateUser={updateUser}
+          />
+        )}
+      </TabsContent>
+    </Tabs>
   );
 }
 

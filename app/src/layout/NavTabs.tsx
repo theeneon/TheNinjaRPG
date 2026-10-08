@@ -1,5 +1,6 @@
 import type React from "react";
 import { startTransition, useEffect } from "react";
+import { TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { safeLocalStorageGetItem, safeLocalStorageSetItem } from "@/hooks/localstorage";
 import { cn } from "@/libs/shadui";
 
@@ -10,6 +11,9 @@ interface NavTabsProps {
   current: string | null;
   options: string[] | readonly string[];
   icons?: Partial<Record<string, React.ReactNode>>;
+  /** Render Radix tabs inside a controlled Tabs root with matching TabsContent. */
+  accessibleTabs?: boolean;
+  label?: string;
   fontSize?: "text-xs" | "text-sm" | "text-base";
   setValue?: React.Dispatch<React.SetStateAction<any>>;
   onChange?: (value: string) => void;
@@ -35,44 +39,77 @@ const NavTabs: React.FC<NavTabsProps> = (props) => {
   // Derived features
   const fontSize = props.fontSize ? props.fontSize : "text-sm";
 
+  const tabItems = options.map((option, i) => {
+    const button = (
+      <button
+        type="button"
+        className={cn(
+          option === current
+            ? "active inline-block rounded-t-lg border-foreground/50 border-b-2 pt-2 pr-1 pb-2 pl-1 text-foreground/50"
+            : "inline-block rounded-t-lg border-gray-700 border-transparent border-b-2 pt-2 pr-1 pb-2 pl-1 hover:border-gray-300 hover:text-gray-600",
+          props.className,
+        )}
+        onClick={() => {
+          if (id && remember) safeLocalStorageSetItem(id, option);
+          // A transition lets heavy tab content render after the click is painted.
+          startTransition(() => {
+            if (setValue) setValue(option);
+            if (onChange) onChange(option);
+          });
+        }}
+      >
+        {props.icons?.[option] ? (
+          <span className="inline-flex items-center gap-2 whitespace-nowrap">
+            {props.icons[option]}
+            {option}
+          </span>
+        ) : (
+          option
+        )}
+      </button>
+    );
+    return (
+      <li
+        className="mr-2"
+        key={`${option}-${i}`}
+        id={`tutorial-${option}`}
+        role={props.accessibleTabs ? "presentation" : undefined}
+      >
+        {props.accessibleTabs ? (
+          <TabsTrigger
+            value={option}
+            asChild
+            className={cn(
+              "rounded-b-none data-[state=active]:bg-transparent data-[state=active]:text-foreground/50 data-[state=active]:shadow-none",
+              fontSize,
+              props.className,
+            )}
+          >
+            {button}
+          </TabsTrigger>
+        ) : (
+          button
+        )}
+      </li>
+    );
+  });
+
   // Render
   return (
     <div
       className={`text-center ${fontSize} flex flex-row justify-center font-medium text-foreground`}
     >
-      <ul className="-mb-px flex flex-row">
-        {options.map((option, i) => (
-          <li className="mr-2" key={`${option}-${i}`} id={`tutorial-${option}`}>
-            <button
-              type="button"
-              className={cn(
-                option === current
-                  ? "active inline-block rounded-t-lg border-foreground/50 border-b-2 pt-2 pr-1 pb-2 pl-1 text-foreground/50"
-                  : "inline-block rounded-t-lg border-gray-700 border-transparent border-b-2 pt-2 pr-1 pb-2 pl-1 hover:border-gray-300 hover:text-gray-600",
-                props.className,
-              )}
-              onClick={() => {
-                if (id && remember) safeLocalStorageSetItem(id, option);
-                // A transition lets the tab's content render after the click is
-                // painted, so heavy mounts (e.g. three.js scenes) stay out of INP
-                startTransition(() => {
-                  if (setValue) setValue(option);
-                  if (onChange) onChange(option);
-                });
-              }}
-            >
-              {props.icons?.[option] ? (
-                <span className="inline-flex items-center gap-2 whitespace-nowrap">
-                  {props.icons[option]}
-                  {option}
-                </span>
-              ) : (
-                option
-              )}
-            </button>
-          </li>
-        ))}
-      </ul>
+      {props.accessibleTabs ? (
+        <TabsList
+          asChild
+          aria-label={props.label}
+          className="w-auto flex-nowrap gap-0 rounded-none bg-transparent p-0 text-foreground"
+        >
+          <ul className="-mb-px flex flex-row">{tabItems}</ul>
+        </TabsList>
+      ) : (
+        <ul className="-mb-px flex flex-row">{tabItems}</ul>
+      )}
     </div>
   );
 };
