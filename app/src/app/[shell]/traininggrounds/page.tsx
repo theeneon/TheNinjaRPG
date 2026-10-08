@@ -699,10 +699,6 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
                   </Button>
                 </div>
               </div>
-              <span className="text-right text-muted-foreground text-xs">
-                {availableEnergy.toLocaleString()} /{" "}
-                {userData.maxEnergy.toLocaleString()} Energy
-              </span>
             </div>
           }
         >
