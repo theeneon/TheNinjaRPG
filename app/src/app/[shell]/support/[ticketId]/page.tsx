@@ -733,12 +733,20 @@ export default function TicketDetail(props: { params: Promise<{ ticketId: string
               >
                 <Clock className="h-3 w-3" />
                 <span>{activity.author?.username ?? "Deleted User"}</span>
-                <span>{activity.action.toLowerCase().replace("_", " ")}</span>
-                {activity.oldValue && activity.newValue && (
+                <span>
+                  {activity.action.toLowerCase().replaceAll("_", " ")}
+                  {typeof activity.metadata?.field === "string" &&
+                    ` ${activity.metadata.field === "isPublic" ? "visibility" : activity.metadata.field}`}
+                </span>
+                {activity.oldValue && activity.newValue ? (
                   <span>
                     from <strong>{activity.oldValue}</strong> to{" "}
                     <strong>{activity.newValue}</strong>
                   </span>
+                ) : (
+                  (activity.newValue || activity.oldValue) && (
+                    <strong>{activity.newValue || activity.oldValue}</strong>
+                  )
                 )}
                 <span>{formatTimeAgo(activity.createdAt)}</span>
               </div>
