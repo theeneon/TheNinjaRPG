@@ -128,9 +128,9 @@ export default function Training() {
   const { userData, timeDiff, access, updateUser } =
     useRequireInVillage("/traininggrounds");
   const { currentStep } = useTutorialStep();
-  // The tutorial jutsu step places the technique list first; stat training stays below it.
+  // The tutorial selects the panel containing its highlighted training action.
   const focusJutsuTraining = isTutorialJutsuPickStep(currentStep);
-  const hideOtherTraining = focusJutsuTraining;
+  const [section, setSection] = useState("Stats");
 
   // While loading userdata
   if (!userData) return <Loader explanation="Loading userdata" />;
@@ -139,46 +139,84 @@ export default function Training() {
   // Show sensei component
   const showSenseiSystem = [...SENSEI_RANKS, "GENIN"].includes(userData.rank);
 
-  // Show components if we have user
+  // Tutorial steps select the panel containing their highlighted action.
+  const activeSection =
+    focusJutsuTraining || currentStep?.title === "Jutsu Training"
+      ? "Jutsu"
+      : currentStep?.title === "Training"
+        ? "Stats"
+        : section;
+
   return (
     <>
-      {focusJutsuTraining ? (
-        <>
-          <JutsuTraining
-            userData={userData}
-            timeDiff={timeDiff}
-            updateUser={updateUser}
+      <ContentBox
+        title="Training Grounds"
+        subtitle="Choose a training activity"
+        defaultBackHref="/village"
+      >
+        <div className="overflow-x-auto overflow-y-hidden">
+          <NavTabs
+            current={activeSection}
+            options={[
+              "Stats",
+              "Masteries",
+              "Jutsu",
+              "Covert",
+              ...(showSenseiSystem ? ["Sensei"] : []),
+            ]}
+            setValue={setSection}
+            className="px-2 text-xs sm:text-sm"
           />
-          <StatsTraining
-            userData={userData}
-            timeDiff={timeDiff}
-            updateUser={updateUser}
-            initialBreak
-          />
-        </>
-      ) : (
-        <>
-          <StatsTraining
-            userData={userData}
-            timeDiff={timeDiff}
-            updateUser={updateUser}
-          />
-          <JutsuTraining
-            userData={userData}
-            timeDiff={timeDiff}
-            updateUser={updateUser}
-            initialBreak
-          />
-        </>
+        </div>
+        {(userData.currentlyTrainingMastery ||
+          userData.energyTrainingQueue?.length) && (
+          <div className="mt-2 flex flex-wrap justify-center gap-x-4 gap-y-1 text-muted-foreground text-xs">
+            {userData.currentlyTrainingMastery && (
+              <button
+                type="button"
+                className="hover:underline"
+                onClick={() => setSection("Masteries")}
+              >
+                Training {getTrainingLabel(userData.currentlyTrainingMastery)}
+              </button>
+            )}
+            {!!userData.energyTrainingQueue?.length && (
+              <button
+                type="button"
+                className="hover:underline"
+                onClick={() => setSection("Stats")}
+              >
+                {userData.energyTrainingQueue.length} queued
+              </button>
+            )}
+          </div>
+        )}
+      </ContentBox>
+      {["Stats", "Masteries"].includes(activeSection) && (
+        <StatsTraining
+          userData={userData}
+          timeDiff={timeDiff}
+          updateUser={updateUser}
+          initialBreak
+          section={activeSection}
+        />
       )}
-      {!hideOtherTraining && (
+      {activeSection === "Jutsu" && (
+        <JutsuTraining
+          userData={userData}
+          timeDiff={timeDiff}
+          updateUser={updateUser}
+          initialBreak
+        />
+      )}
+      {activeSection === "Covert" && (
         <CovertTraining
           userData={userData}
           timeDiff={timeDiff}
           updateUser={updateUser}
         />
       )}
-      {showSenseiSystem && !hideOtherTraining && (
+      {activeSection === "Sensei" && showSenseiSystem && (
         <SenseiSystem userData={userData} timeDiff={timeDiff} updateUser={updateUser} />
       )}
     </>
@@ -192,6 +230,7 @@ interface TrainingProps {
   /** Whichever box comes second carries this: it spaces the boxes apart and
    *  demotes the heading, so the leading box is the one titling the page. */
   initialBreak?: boolean;
+  section?: string;
 }
 
 /**
@@ -612,203 +651,222 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
 
   return (
     <>
-      <ContentBox
-        title="Training"
-        subtitle="Instant training"
-        defaultBackHref="/village"
-        initialBreak={props.initialBreak}
-        topRightContent={
-          <div className="my-2 ml-2 flex flex-col gap-1">
-            <div className="flex items-center justify-end gap-1">
-              <Popover>
-                <PopoverTrigger
-                  aria-label="About Energy training"
-                  className="flex h-9 w-9 items-center justify-center text-violet-500"
-                >
-                  <Zap className="h-5 w-5" />
-                </PopoverTrigger>
-                <PopoverContent className="max-w-64 text-sm">
-                  Choose how much Energy to spend, then select a stat to train it
-                  instantly. Each Energy gives {STATS_PER_ENERGY} stats before training
-                  bonuses. Max keeps the amount synced with available Energy as you
-                  spend and regenerate it. Enter an amount to turn Max off.
-                </PopoverContent>
-              </Popover>
-              <div className="flex">
-                <Input
-                  id="training-energy"
-                  aria-label="Energy to spend"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={trainingEnergy}
-                  disabled={isPending}
-                  onChange={(event) => setEnergy(Number(event.target.value))}
-                  className="w-20 rounded-r-none"
-                />
-                <Button
-                  variant={energy === null ? "default" : "outline"}
-                  size="sm"
-                  className="h-9 rounded-l-none border-l-0"
-                  aria-label="Automatically use available Energy"
-                  aria-pressed={energy === null}
-                  disabled={isPending}
-                  onClick={() => setEnergy(energy === null ? availableEnergy : null)}
-                >
-                  Max
-                </Button>
+      {(!props.section || props.section === "Stats") && (
+        <ContentBox
+          title={props.section ? "Combat stats" : "Training"}
+          subtitle="Instant training"
+          defaultBackHref={props.section ? undefined : "/village"}
+          initialBreak={props.initialBreak}
+          topRightContent={
+            <div className="my-2 ml-2 flex flex-col gap-1">
+              <div className="flex items-center justify-end gap-1">
+                <Popover>
+                  <PopoverTrigger
+                    aria-label="About Energy training"
+                    className="flex h-9 w-9 items-center justify-center text-violet-500"
+                  >
+                    <Zap className="h-5 w-5" />
+                  </PopoverTrigger>
+                  <PopoverContent className="max-w-64 text-sm">
+                    Choose how much Energy to spend, then select a stat to train it
+                    instantly. Each Energy gives {STATS_PER_ENERGY} stats before
+                    training bonuses. Max keeps the amount synced with available Energy
+                    as you spend and regenerate it. Enter an amount to turn Max off.
+                  </PopoverContent>
+                </Popover>
+                <div className="flex">
+                  <Input
+                    id="training-energy"
+                    aria-label="Energy to spend"
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={trainingEnergy}
+                    disabled={isPending}
+                    onChange={(event) => setEnergy(Number(event.target.value))}
+                    className="w-20 rounded-r-none"
+                  />
+                  <Button
+                    variant={energy === null ? "default" : "outline"}
+                    size="sm"
+                    className="h-9 rounded-l-none border-l-0"
+                    aria-label="Automatically use available Energy"
+                    aria-pressed={energy === null}
+                    disabled={isPending}
+                    onClick={() => setEnergy(energy === null ? availableEnergy : null)}
+                  >
+                    Max
+                  </Button>
+                </div>
               </div>
+              <span className="text-right text-muted-foreground text-xs">
+                {availableEnergy.toLocaleString()} /{" "}
+                {userData.maxEnergy.toLocaleString()} Energy
+              </span>
             </div>
-            <span className="text-right text-muted-foreground text-xs">
-              {availableEnergy.toLocaleString()} / {userData.maxEnergy.toLocaleString()}{" "}
-              Energy
-            </span>
-          </div>
-        }
-      >
-        {showCaptcha && captcha && (
-          <div className="mb-4">
-            {/* biome-ignore lint/performance/noImgElement: SVG captcha requires img element */}
-            <img
-              alt="captcha"
-              src={`data:image/svg+xml;utf8,${encodeURIComponent(captcha.svg)}`}
-            />
-            <Input placeholder="Enter captcha" {...captchaForm.register("guess")} />
-          </div>
-        )}
-        {/* Inert while pending: the overlay hides the controls from pointers only */}
-        <div inert={isPending}>
-          <div className="grid grid-cols-3 text-center font-bold">
-            {CombatStatNames.map((stat, i) => {
-              const label = getTrainingLabel(stat);
-              const overCap = isStatTrainingCapped(userData, stat);
-              const icon =
-                stat === "offence" ? (
-                  <Swords className={iconClassName} />
-                ) : stat === "defence" ? (
-                  <ShieldAlert className={iconClassName} />
-                ) : (
-                  <Fingerprint className={iconClassName} />
+          }
+        >
+          {showCaptcha && captcha && (
+            <div className="mb-4">
+              {/* biome-ignore lint/performance/noImgElement: SVG captcha requires img element */}
+              <img
+                alt="captcha"
+                src={`data:image/svg+xml;utf8,${encodeURIComponent(captcha.svg)}`}
+              />
+              <Input placeholder="Enter captcha" {...captchaForm.register("guess")} />
+            </div>
+          )}
+          {/* Inert while pending: the overlay hides the controls from pointers only */}
+          <div inert={isPending}>
+            <div className="grid grid-cols-3 text-center font-bold">
+              {CombatStatNames.map((stat, i) => {
+                const label = getTrainingLabel(stat);
+                const overCap = isStatTrainingCapped(userData, stat);
+                const icon =
+                  stat === "offence" ? (
+                    <Swords className={iconClassName} />
+                  ) : stat === "defence" ? (
+                    <ShieldAlert className={iconClassName} />
+                  ) : (
+                    <Fingerprint className={iconClassName} />
+                  );
+                return (
+                  <button
+                    type="button"
+                    id={`tutorial-traininggrounds-${stat.toLowerCase()}`}
+                    key={`${stat}-${i}`}
+                    onClick={() => {
+                      const block = statTrainingBlockMessage(userData);
+                      if (block) showMutationToast({ success: false, message: block });
+                      else if (overCap)
+                        showMutationToast({
+                          success: false,
+                          message: "Already capped",
+                        });
+                      else
+                        startTraining({
+                          stat,
+                          energy: trainingEnergy,
+                          guess: captchaForm.getValues("guess"),
+                        });
+                    }}
+                    className="relative"
+                  >
+                    <div
+                      className={cn(
+                        trainItemClassName,
+                        overCap ? "opacity-50 grayscale" : "",
+                      )}
+                    >
+                      <Image
+                        src={getTrainingImage(stat)}
+                        alt={label}
+                        width={256}
+                        height={256}
+                      />
+                      {icon}
+                      {label}
+                    </div>
+                    {overCap && (
+                      <UserRoundCheck className="absolute top-[50%] left-[50%] h-10 w-10 translate-x-[-50%] translate-y-[-50%] text-slate-100 hover:cursor-pointer" />
+                    )}
+                  </button>
                 );
-              return (
-                <button
-                  type="button"
-                  id={`tutorial-traininggrounds-${stat.toLowerCase()}`}
-                  key={`${stat}-${i}`}
-                  onClick={() => {
-                    const block = statTrainingBlockMessage(userData);
-                    if (block) showMutationToast({ success: false, message: block });
-                    else if (overCap)
-                      showMutationToast({ success: false, message: "Already capped" });
-                    else
-                      startTraining({
-                        stat,
-                        energy: trainingEnergy,
-                        guess: captchaForm.getValues("guess"),
-                      });
-                  }}
-                  className="relative"
-                >
-                  <div
-                    className={cn(
-                      trainItemClassName,
-                      overCap ? "opacity-50 grayscale" : "",
-                    )}
-                  >
-                    <Image
-                      src={getTrainingImage(stat)}
-                      alt={label}
-                      width={256}
-                      height={256}
-                    />
-                    {icon}
-                    {label}
-                  </div>
-                  {overCap && (
-                    <UserRoundCheck className="absolute top-[50%] left-[50%] h-10 w-10 translate-x-[-50%] translate-y-[-50%] text-slate-100 hover:cursor-pointer" />
-                  )}
-                </button>
-              );
-            })}
+              })}
+            </div>
           </div>
-        </div>
-        {pendingOverlay}
-      </ContentBox>
-      <EnergyTrainingQueue
-        user={userData}
-        getGuess={() => captchaForm.getValues("guess")}
-      />
-      <ContentBox
-        title="Masteries"
-        subtitle={`No Energy cost, experience or damage. ${efficiency}% efficiency [${userData.dailyTrainings} / ${MAX_DAILY_TRAININGS}].`}
-        topRightContent={
-          <NavTabs
-            current={userData.trainingSpeed}
-            options={TrainingSpeeds}
-            setValue={(value) => {
-              if (isPending) return;
-              if (userData.currentlyTrainingMastery) {
-                showMutationToast({
-                  success: false,
-                  message: "Cannot change training speed while training",
-                });
-                return;
-              }
-              changeSpeed({ speed: value as TrainingSpeed });
-            }}
-          />
-        }
-        initialBreak={true}
-      >
-        <div inert={isPending}>
-          <div className="grid grid-cols-3 text-center font-bold">
-            {MasteryNames.map((stat, i) => {
-              const label = getTrainingLabel(stat);
-              const overCap = userData[stat] >= mastery_cap;
-              return (
-                <button
-                  type="button"
-                  id={`tutorial-traininggrounds-${stat.toLowerCase()}`}
-                  key={`${stat}-${i}`}
-                  onClick={() => {
-                    const block = masteryTrainingBlockMessage(userData);
-                    if (block) showMutationToast({ success: false, message: block });
-                    else if (overCap)
-                      showMutationToast({ success: false, message: "Already capped" });
-                    else startMasteryTraining({ stat });
-                  }}
-                  className="relative"
-                >
-                  <div
-                    className={cn(
-                      trainItemClassName,
-                      overCap ? "opacity-50 grayscale" : "",
-                    )}
-                  >
-                    <Image
-                      src={getTrainingImage(stat)}
-                      alt={label}
-                      width={256}
-                      height={256}
-                    />
-                    <Medal className={iconClassName} />
-                    {label}
-                  </div>
-                  {overCap && (
-                    <UserRoundCheck className="absolute top-[50%] left-[50%] h-10 w-10 translate-x-[-50%] translate-y-[-50%] text-slate-100 hover:cursor-pointer" />
-                  )}
-                </button>
-              );
-            })}
+          {pendingOverlay}
+        </ContentBox>
+      )}
+      {(!props.section || props.section === "Stats") && (
+        <EnergyTrainingQueue
+          user={userData}
+          availableEnergy={availableEnergy}
+          getGuess={() => captchaForm.getValues("guess")}
+        />
+      )}
+      {(!props.section || props.section === "Masteries") && (
+        <ContentBox
+          title="Masteries"
+          subtitle="Timed training · No Energy cost"
+          initialBreak={true}
+        >
+          <div className="mb-3 space-y-2">
+            <p className="text-muted-foreground text-xs">
+              {efficiency}% efficiency · {userData.dailyTrainings} /{" "}
+              {MAX_DAILY_TRAININGS} daily sessions
+            </p>
+            <div className="overflow-x-auto overflow-y-hidden">
+              <NavTabs
+                current={userData.trainingSpeed}
+                options={TrainingSpeeds}
+                setValue={(value) => {
+                  if (isPending) return;
+                  if (userData.currentlyTrainingMastery) {
+                    showMutationToast({
+                      success: false,
+                      message: "Cannot change training speed while training",
+                    });
+                    return;
+                  }
+                  changeSpeed({ speed: value as TrainingSpeed });
+                }}
+              />
+            </div>
           </div>
-          {userData.currentlyTrainingMastery &&
-            renderTrainingOverlay(
-              userData.currentlyTrainingMastery,
-              userData.masteryTrainingStartedAt,
-            )}
-        </div>
-        {pendingOverlay}
-      </ContentBox>
+          <div inert={isPending}>
+            <div className="grid grid-cols-3 text-center font-bold">
+              {MasteryNames.map((stat, i) => {
+                const label = getTrainingLabel(stat);
+                const overCap = userData[stat] >= mastery_cap;
+                return (
+                  <button
+                    type="button"
+                    id={`tutorial-traininggrounds-${stat.toLowerCase()}`}
+                    key={`${stat}-${i}`}
+                    onClick={() => {
+                      const block = masteryTrainingBlockMessage(userData);
+                      if (block) showMutationToast({ success: false, message: block });
+                      else if (overCap)
+                        showMutationToast({
+                          success: false,
+                          message: "Already capped",
+                        });
+                      else startMasteryTraining({ stat });
+                    }}
+                    className="relative"
+                  >
+                    <div
+                      className={cn(
+                        trainItemClassName,
+                        overCap ? "opacity-50 grayscale" : "",
+                      )}
+                    >
+                      <Image
+                        src={getTrainingImage(stat)}
+                        alt={label}
+                        width={256}
+                        height={256}
+                      />
+                      <Medal className={iconClassName} />
+                      {label}
+                    </div>
+                    {overCap && (
+                      <UserRoundCheck className="absolute top-[50%] left-[50%] h-10 w-10 translate-x-[-50%] translate-y-[-50%] text-slate-100 hover:cursor-pointer" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {userData.currentlyTrainingMastery &&
+              renderTrainingOverlay(
+                userData.currentlyTrainingMastery,
+                userData.masteryTrainingStartedAt,
+              )}
+          </div>
+          {pendingOverlay}
+        </ContentBox>
+      )}
     </>
   );
 };
@@ -1066,7 +1124,7 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
     <ContentBox
       title="Techniques"
       subtitle="Jutsu Techniques"
-      defaultBackHref="/village"
+      defaultBackHref={props.initialBreak ? undefined : "/village"}
       initialBreak={props.initialBreak}
       topRightContent={
         <JutsuFiltering state={state} fixedBloodline={userData.bloodlineId} />

@@ -1,10 +1,13 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { CircleHelp, Plus, Trash2, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -21,9 +24,11 @@ import { getQueueTotalCapacity } from "@/utils/paypal";
 
 export const EnergyTrainingQueue = ({
   user,
+  availableEnergy,
   getGuess,
 }: {
   user: NonNullable<UserWithRelations>;
+  availableEnergy: number;
   getGuess: () => string;
 }) => {
   const utils = api.useUtils();
@@ -54,14 +59,27 @@ export const EnergyTrainingQueue = ({
   return (
     <ContentBox
       title="Energy queue"
-      subtitle="Each entry trains once. Works offline and while sleeping."
+      subtitle="Train automatically as Energy recovers"
       initialBreak
+      topRightContent={
+        <div className="ml-2 flex items-center gap-2 text-xs">
+          <span className="whitespace-nowrap">
+            {entries.length} / {capacity} slots
+          </span>
+          <Popover>
+            <PopoverTrigger aria-label="About the Energy queue" className="p-1">
+              <CircleHelp className="h-4 w-4" />
+            </PopoverTrigger>
+            <PopoverContent className="max-w-72 text-sm">
+              Each entry trains once when its Energy threshold is reached. Entries run
+              in order, including while sleeping. Offline progress is collected on your
+              next account refresh. Capped stats are skipped, and unused Energy is kept.
+            </PopoverContent>
+          </Popover>
+        </div>
+      }
     >
       <div className="space-y-3">
-        <p className="text-muted-foreground text-xs">
-          Entries run in order when enough Energy is available. Capped stats are
-          skipped; unused Energy is kept. {entries.length} / {capacity} slots used.
-        </p>
         {entries.length > 0 ? (
           <ol className="divide-y divide-orange-900/20 rounded border border-orange-900/30">
             {entries.map((entry, index) => (
@@ -69,7 +87,9 @@ export const EnergyTrainingQueue = ({
                 key={`${index}-${entry.stat}-${entry.energy}`}
                 className="flex items-center gap-2 px-3 py-2 text-sm"
               >
-                <span className="text-muted-foreground">{index + 1}.</span>
+                <span className="w-9 text-muted-foreground text-xs">
+                  {index === 0 ? "Next" : `${index + 1}.`}
+                </span>
                 <span className="flex-1 capitalize">
                   {entry.stat}{" "}
                   <span className="text-muted-foreground">
@@ -95,39 +115,86 @@ export const EnergyTrainingQueue = ({
             ))}
           </ol>
         ) : (
-          <p className="text-muted-foreground text-sm">Your queue is empty.</p>
+          <div className="rounded border border-orange-900/30 border-dashed p-4 text-center text-muted-foreground text-sm">
+            <Zap className="mx-auto mb-2 h-5 w-5 text-violet-500" />
+            Add a stat and an Energy threshold to start your queue.
+          </div>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={stat}
-            onValueChange={(value) => setStat(value as CombatStatName)}
-            disabled={isPending}
-          >
-            <SelectTrigger aria-label="Queued stat" className="w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CombatStatNames.map((value) => (
-                <SelectItem key={value} value={value} className="capitalize">
-                  {value}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            aria-label="Queued Energy"
-            type="number"
-            min={1}
-            max={user.maxEnergy}
-            step={1}
-            value={energy}
-            onChange={(event) => setEnergy(Number(event.target.value))}
-            disabled={isPending}
-            className="w-24"
-          />
-          <span className="text-muted-foreground text-xs">Energy</span>
+        {entries[0] && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-muted-foreground text-xs">
+              <span>Energy available</span>
+              <span>
+                {Math.floor(availableEnergy).toLocaleString()} /{" "}
+                {entries[0].energy.toLocaleString()}
+              </span>
+            </div>
+            <Progress
+              aria-label="Energy toward the next queue entry"
+              value={Math.min(100, (availableEnergy / entries[0].energy) * 100)}
+              indicatorClassName="bg-violet-500"
+              className="h-1.5 bg-violet-500/15"
+            />
+          </div>
+        )}
+        <div className="grid grid-cols-2 items-end gap-3 sm:grid-cols-[1fr_1fr_auto]">
+          <div className="space-y-1">
+            <Label htmlFor="queue-stat" className="text-xs">
+              Stat
+            </Label>
+            <Select
+              value={stat}
+              onValueChange={(value) => setStat(value as CombatStatName)}
+              disabled={isPending}
+            >
+              <SelectTrigger
+                id="queue-stat"
+                aria-label="Queued stat"
+                className="capitalize"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CombatStatNames.map((value) => (
+                  <SelectItem key={value} value={value} className="capitalize">
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="queue-energy" className="text-xs">
+              Energy threshold
+            </Label>
+            <div className="flex">
+              <Input
+                id="queue-energy"
+                aria-label="Queued Energy"
+                type="number"
+                min={1}
+                max={user.maxEnergy}
+                step={1}
+                value={energy}
+                onChange={(event) => setEnergy(Number(event.target.value))}
+                disabled={isPending}
+                className="min-w-0 rounded-r-none"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isPending}
+                onClick={() => setEnergy(user.maxEnergy)}
+                aria-label="Set queued Energy to your capacity"
+                className="h-9 rounded-l-none border-l-0 px-2"
+              >
+                Max
+              </Button>
+            </div>
+          </div>
           <Button
             size="sm"
+            className="col-span-2 h-9 sm:col-span-1"
             disabled={
               isPending ||
               !!block ||
@@ -144,16 +211,24 @@ export const EnergyTrainingQueue = ({
               })
             }
           >
-            Add to queue
+            <Plus className="mr-1 h-4 w-4" />
+            {isPending
+              ? "Saving…"
+              : entries.length >= capacity
+                ? "Queue full"
+                : "Add to queue"}
           </Button>
+        </div>
+        <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs">
+          <span>One time per entry · Works offline and asleep</span>
           {entries.length > 0 && (
             <Button
               size="sm"
-              variant="outline"
+              variant="ghost"
               disabled={isPending}
               onClick={() => saveQueue({ expectedEntries: entries, entries: [] })}
             >
-              Clear
+              Clear queue
             </Button>
           )}
         </div>

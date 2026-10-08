@@ -2022,6 +2022,17 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
       }
     });
 
+  // Keep element choices beside their scope selector instead of below animation fields.
+  if (isDamageModifier && hasElementFilter) {
+    const elementsIndex = formData.findIndex(
+      (field) => String(field.id) === "elements",
+    );
+    if (elementsIndex >= 0) {
+      const [elementsField] = formData.splice(elementsIndex, 1);
+      if (elementsField) formData.unshift(elementsField);
+    }
+  }
+
   // Consume: hide locked rounds and surface shieldRounds where Rounds normally sits.
   if (tag.type === "consume") {
     const shieldIdx = formData.findIndex((e) => String(e.id) === "shieldRounds");
