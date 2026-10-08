@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { TavernColorPresets } from "@/drizzle/constants";
+import type { UserWithRelations } from "@/routers/profile";
+import { AllTags } from "@/validators/combat";
 import { getSearchValidator } from "@/validators/register";
 import {
   getPublicUsersSchema,
+  getBloodlineElements,
   tavernColorChangeSchema,
   updateUserSchema,
 } from "@/validators/user";
@@ -115,5 +118,20 @@ describe("tavernColorChangeSchema", () => {
         currentColor: "RED",
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("bloodline elemental damage tags", () => {
+  it("preserves elemental access through parsed beneficial damage tags", () => {
+    const effects = [
+      AllTags.parse({ type: "increasedamagegiven", elements: ["Fire"], power: 40 }),
+      AllTags.parse({ type: "decreasedamagetaken", elements: ["Water"], power: 20 }),
+      AllTags.parse({ type: "increasedamagetaken", elements: ["Wind"], power: 20 }),
+    ];
+    expect(
+      getBloodlineElements({
+        bloodline: { effects },
+      } as NonNullable<UserWithRelations>),
+    ).toEqual(["Fire", "Water"]);
   });
 });

@@ -12,6 +12,7 @@ import type {
   AvatarFacing,
   BattleType,
   CombatStatType,
+  ElementName,
   PoolType,
   StatType,
 } from "@/drizzle/constants";
@@ -3064,8 +3065,10 @@ export const getStatTypeLabels = (effect: {
   type: string;
   statTypes?: readonly StatType[] | null;
   direction?: string;
+  elements?: readonly ElementName[] | null;
 }): (StatType | CombatStatType | "All damage")[] => {
-  if (damageModifierTypes.includes(effect.type)) return ["All damage"];
+  if (damageModifierTypes.includes(effect.type))
+    return effect.elements?.length ? [] : ["All damage"];
   const statTypes = effect.statTypes ?? [];
   if (effect.type !== "increasestat" && effect.type !== "decreasestat") {
     return [...statTypes];

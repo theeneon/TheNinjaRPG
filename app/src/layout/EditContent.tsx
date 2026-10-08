@@ -28,6 +28,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MultiSelect, type OptionType } from "@/components/ui/multi-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type { ContentType, IMG_ORIENTATION } from "@/drizzle/constants";
@@ -42,6 +49,7 @@ import Modal from "@/layout/Modal";
 import RichInput from "@/layout/RichInput";
 import type { ColumnDefinitionType } from "@/layout/Table";
 import Table from "@/layout/Table";
+import { damageModifierTypes } from "@/libs/combat/constants";
 import { POTENCY_TAG_LABELS } from "@/libs/combat/potency";
 import {
   isSupportedOverworldBindingTask,
@@ -1646,6 +1654,19 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
     name: "disappearAnimation",
   });
   const watchAll = useWatch({ control: form.control });
+  const isDamageModifier = damageModifierTypes.includes(tag.type);
+  const [hasElementFilter, setHasElementFilter] = useState(
+    "elements" in tag && !!tag.elements?.length,
+  );
+  useEffect(() => {
+    setHasElementFilter("elements" in tag && !!tag.elements?.length);
+  }, [tag.type]);
+  const incomingHasElements = "elements" in tag && !!tag.elements?.length;
+  useEffect(() => {
+    // Imported element choices must stay visible; an empty list can be a deliberate
+    // Element selection while the editor is waiting for its first choice.
+    if (incomingHasElements) setHasElementFilter(true);
+  }, [incomingHasElements]);
 
   // Get images for the different animations and statics
   const statics = assetData?.filter((a) => a.type === "STATIC");
@@ -1729,6 +1750,7 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
 
   // Parse how to present the tag form
   const ignore = ["timeTracker", "type"];
+  if (isDamageModifier && !hasElementFilter) ignore.push("elements");
   if (props.type === "bloodline") {
     ignore.push(...["rounds", "friendlyFire"]);
   }
@@ -2006,6 +2028,17 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
       }
     });
 
+  // Keep element choices beside their scope selector instead of below animation fields.
+  if (isDamageModifier && hasElementFilter) {
+    const elementsIndex = formData.findIndex(
+      (field) => String(field.id) === "elements",
+    );
+    if (elementsIndex >= 0) {
+      const [elementsField] = formData.splice(elementsIndex, 1);
+      if (elementsField) formData.unshift(elementsField);
+    }
+  }
+
   // Consume: hide locked rounds and surface shieldRounds where Rounds normally sits.
   if (tag.type === "consume") {
     const shieldIdx = formData.findIndex((e) => String(e.id) === "shieldRounds");
@@ -2031,6 +2064,34 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
   // Re-used EditContent component for actually showing the form
   return (
     <>
+      {isDamageModifier && (
+        <div className="mb-3 space-y-1">
+          <Label>Damage scope</Label>
+          <Select
+            value={hasElementFilter ? "element" : "offense"}
+            onValueChange={(value) => {
+              setHasElementFilter(value === "element");
+              if (value === "offense")
+                form.setValue("elements", [], {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
+            }}
+          >
+            <SelectTrigger aria-label="Damage scope" className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="offense">Offense</SelectItem>
+              <SelectItem value="element">Element</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-muted-foreground text-xs">
+            Offense affects all damage. Element limits the modifier to selected
+            elements; leave elements empty to affect all damage.
+          </p>
+        </div>
+      )}
       {(tag.type === "increasepotency" || tag.type === "decreasepotency") && (
         <p className="mb-3 text-muted-foreground text-sm">
           Static adds or subtracts power points. Percentage scales the selected tag’s

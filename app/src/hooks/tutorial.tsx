@@ -210,7 +210,7 @@ export const TUTORIAL_STEPS: TutorialStepConfig[] = [
     title: "Training",
     elementIds: ["tutorial-traininggrounds-offence"],
     description:
-      "Welcome to the training grounds. Here you can either train some of your basic stats, or train a new jutsu to use in battle. Let's start out by doing a bit of offence training, making your attacks more powerful.",
+      "Welcome to the training grounds. The Stats tab contains instant stat training and your Energy queue. Other tabs cover masteries, jutsus and covert training. Let's start by training Offence to make your attacks more powerful.",
     page: "/traininggrounds",
   },
   {
@@ -219,7 +219,7 @@ export const TUTORIAL_STEPS: TutorialStepConfig[] = [
     elementIds: ["training-energy"],
     showNextButton: true,
     description:
-      "Stat training spends Energy instantly. Energy regenerates over time and from eligible activities. Mastery training is timed and costs no Energy. Next, let's train a jutsu!",
+      "The Stats tab spends Energy instantly. Its Energy queue trains each entry once when enough Energy is available, including offline and while sleeping. Masteries have their own tab: training them is timed and costs no Energy. Next, let's open the Jutsu tab!",
     page: "/traininggrounds",
   },
   {
@@ -230,7 +230,7 @@ export const TUTORIAL_STEPS: TutorialStepConfig[] = [
       `tutorial-combat-action-${TUTORIAL_JUTSU_ID}`,
     ],
     description:
-      "Now that your character is a bit stronger, click a jutsu from the list to train. The more you train and progress the more powerful jutsu will be available for you to train.",
+      "The Jutsu tab is now open. Click a jutsu from the list to train. The more you train and progress the more powerful jutsu will be available for you to train.",
     page: "/traininggrounds",
     showNextButton: true,
   },

@@ -24,6 +24,7 @@ import {
   SENSEI_GENIN_TRAIN_EXP_BOOST_PERC,
   SENSEI_JUTSU_TRAIN_COST_REDUCTION_PERC,
   SENSEI_MAX_STUDENT_LEVEL,
+  STATS_PER_ENERGY,
   VILLAGE_LEAVE_REQUIRED_RANK,
   VILLAGE_REDUCED_GAINS_DAYS,
   VILLAGE_SYNDICATE_ID,
@@ -44,6 +45,7 @@ import { calcIsInVillage } from "@/libs/travel";
 import type { UserWithRelations } from "@/routers/profile";
 import { getUserFederalStatus } from "@/utils/paypal";
 import { secondsFromDate, secondsPassed } from "@/utils/time";
+import { getShrineBoost, getStrucBoost } from "@/utils/village";
 import { getUserElements } from "@/validators/user";
 
 type UserStatData = Pick<
@@ -758,3 +760,74 @@ export const masteryTrainingEndsAt = (
         user.masteryTrainingStartedAt,
       )
     : null;
+
+export const trainingBoost = (
+  user: NonNullable<UserWithRelations>,
+  settings: GameSetting[],
+) => {
+  const sectors = user.village?.sectors?.length ?? 0;
+  const shrineBoost = getShrineBoost(sectors, "Training", user.village);
+  const trainSetting = getGameSettingBoost("trainingGainMultiplier", settings);
+  const warSetting = getGameSettingBoost(`war-${user.villageId}-train`, settings);
+  const boost = getStrucBoost("trainBoostPerLvl", user.village?.structures) / 100;
+  const clanBoost = user.isOutlaw ? 0 : (user.clan?.trainingBoost ?? 0) / 100;
+  return (
+    ((trainSetting?.value ?? 1) *
+      (1 + boost + clanBoost + shrineBoost) *
+      (100 + (warSetting?.value ?? 0))) /
+    100
+  );
+};
+
+/** Settle one-time entries chronologically, so offline spending frees capacity for later ticks. */
+export const settleEnergyTrainingQueue = (
+  user: NonNullable<UserWithRelations>,
+  settings: GameSetting[],
+  ticks: number,
+) => {
+  const entries = [...(user.energyTrainingQueue ?? [])];
+  const gains: Partial<Record<CombatStatName, number>> = {};
+  const completed: { stat: CombatStatName; amount: number }[] = [];
+  let energy = Math.min(user.curEnergy, user.maxEnergy);
+  let remainingTicks = ticks;
+  const rate =
+    STATS_PER_ENERGY * trainingBoost(user, settings) * getTrainingMultiplierBoost(user);
+  // Sleeping is permitted for a previously authorized queue; all other training guards apply.
+  const canTrain = !statTrainingBlockMessage({
+    ...user,
+    status: user.status === "ASLEEP" ? "AWAKE" : user.status,
+  });
+  const { stats_cap, gens_cap } = getUserCaps(user.rank);
+  while (canTrain && entries.length > 0 && rate > 0) {
+    const entry = entries[0]!;
+    const cap =
+      entry.stat === "offence" || entry.stat === "defence" ? stats_cap : gens_cap;
+    const room = Math.max(0, cap - user[entry.stat] - (gains[entry.stat] ?? 0));
+    if (room === 0) {
+      entries.shift();
+      continue;
+    }
+    // A capacity reduction must not leave an entry waiting for an unreachable amount.
+    const spent = Math.min(entry.energy, user.maxEnergy, room / rate);
+    if (spent <= 0) break;
+    if (energy < spent) {
+      if (user.regeneration <= 0) break;
+      const neededTicks = Math.ceil((spent - energy) / user.regeneration);
+      if (neededTicks > remainingTicks) break;
+      energy = Math.min(user.maxEnergy, energy + neededTicks * user.regeneration);
+      remainingTicks -= neededTicks;
+    }
+    if (energy - spent === energy) break;
+    energy -= spent;
+    const amount = Math.min(room, spent * rate);
+    gains[entry.stat] = (gains[entry.stat] ?? 0) + amount;
+    completed.push({ stat: entry.stat, amount });
+    entries.shift();
+  }
+  return {
+    energyTrainingQueue: entries,
+    curEnergy: Math.min(user.maxEnergy, energy + remainingTicks * user.regeneration),
+    gains,
+    completed,
+  };
+};

@@ -14,6 +14,7 @@ import {
   JUTSU_XP_TO_LEVEL,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
   MasteryNames,
+  REGEN_SECONDS,
   STEALTH_POST_COMBAT_COOLDOWN_SECONDS,
   VILLAGE_SYNDICATE_ID,
   WAR_RECAPTURE_THRESHOLD,
@@ -237,8 +238,9 @@ export const updateBattle = async (
               .set({
                 battleId: null,
                 updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-                // Restart passive regeneration after combat, discarding elapsed time.
-                regenAt: new Date(),
+                curEnergy: combatEnergyRecoverySql(newBattle, teammate.userId),
+                // Only Energy recovers in combat; reset the shared clock for other pools.
+                regenAt: sql`NOW(3)`,
                 curHealth: teammate.curHealth,
                 curStamina: teammate.curStamina,
                 curChakra: teammate.curChakra,
@@ -248,7 +250,6 @@ export const updateBattle = async (
                 ...(sendToHospital
                   ? {
                       status: "HOSPITALIZED",
-                      regenAt: new Date(),
                       longitude: HOSPITAL_LONG,
                       latitude: HOSPITAL_LAT,
                       sector: teammate.allyVillage
@@ -1585,11 +1586,7 @@ export const updateUser = async (
         .set({
           // Settlement invalidates delayed passive-regeneration snapshots.
           updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-          ...(result.energyReward > 0
-            ? {
-                curEnergy: sql`LEAST(${curBattle.extraState.energyCapacity?.[userId] ?? user.maxEnergy ?? userData.maxEnergy}, ${userData.curEnergy} + ${result.energyReward})`,
-              }
-            : {}),
+          curEnergy: combatEnergyRecoverySql(curBattle, userId, result.energyReward),
           experience: sql`experience + ${result.experience}`,
           earnedExperience: sql`earnedExperience + ${result.earnedExperience}`,
           pvpStreak: result.pvpStreak,
@@ -1624,8 +1621,8 @@ export const updateUser = async (
           dailySageActivations: sql`dailySageActivations + ${user.sageModeUsedThisBattle ? 1 : 0}`,
           questData: updatedQuestData,
           battleId: null,
-          // Restart passive regeneration after combat, discarding elapsed time.
-          regenAt: new Date(),
+          // Only Energy recovers in combat; reset the shared clock for other pools.
+          regenAt: sql`NOW(3)`,
           // Stamp the winning war participant in the same row update (no extra roundtrip).
           // GREATEST() inside extendWarParticipantSql never shortens a longer existing stamp.
           ...(isWinningWarParticipant
@@ -1649,7 +1646,6 @@ export const updateUser = async (
           !["SPARRING", "RANKED_PVP", "RANKED_SPARRING"].includes(curBattle.battleType)
             ? {
                 status: "HOSPITALIZED",
-                regenAt: new Date(),
                 longitude: HOSPITAL_LONG,
                 latitude: HOSPITAL_LAT,
                 sector: user.allyVillage
@@ -1666,7 +1662,7 @@ export const updateUser = async (
           stealthActivatedAt: null,
           stealthCooldownAt: sql`NOW() + INTERVAL ${STEALTH_POST_COMBAT_COOLDOWN_SECONDS} SECOND`,
         })
-        .where(eq(userData.userId, userId)),
+        .where(and(eq(userData.userId, userId), eq(userData.battleId, curBattle.id))),
       // Handle dropped items transfer if present on result. Currently only AI have droppable items, so no need to delete from loser
       ...(result.droppedItems.length > 0
         ? [
@@ -1694,4 +1690,21 @@ export const updateUser = async (
     }
   }
   return { updatedQuestIds };
+};
+
+// Use the persisted balance/clock so delayed or repeated releases cannot replay recovery.
+// Fractional ticks preserve Energy across short fights while other pools stay frozen.
+export const combatEnergyRecoverySql = (
+  snapshot?: CompleteBattle,
+  userId?: string,
+  reward = 0,
+) => {
+  const regeneration =
+    (userId ? snapshot?.extraState.energyRegeneration?.[userId] : undefined) ??
+    userData.regeneration;
+  // Legacy or orphaned battles lack gear metadata; do not erase stored Energy.
+  const capacity =
+    (userId ? snapshot?.extraState.energyCapacity?.[userId] : undefined) ??
+    sql`GREATEST(${userData.maxEnergy}, ${userData.curEnergy})`;
+  return sql`LEAST(${capacity}, ${userData.curEnergy} + ${reward} + GREATEST(0, ${regeneration}) * GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000})`;
 };

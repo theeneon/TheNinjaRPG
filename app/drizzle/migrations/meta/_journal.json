@@ -414,6 +414,13 @@
       "when": 1791449353281,
       "tag": "0058_chunky_guardian",
       "breakpoints": false
+    },
+    {
+      "idx": 59,
+      "version": "5",
+      "when": 1791462881245,
+      "tag": "0059_lumpy_vin_gonzales",
+      "breakpoints": false
     }
   ]
 }

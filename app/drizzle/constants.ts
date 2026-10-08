@@ -1027,6 +1027,7 @@ export const SP_PER_LVL = 50;
 export const CP_PER_LVL = 50;
 export const ENERGY_PER_LVL = 50;
 export const STATS_PER_ENERGY = 1.3;
+export const QUEUE_WAITING_SLOTS = { NONE: 1, NORMAL: 2, SILVER: 3, GOLD: 4 } as const;
 export const ENERGY_PVE_REWARD = 1;
 export const ENERGY_EVENT_REWARD = 10;
 export const ENERGY_PVP_WIN_REWARD = 5;

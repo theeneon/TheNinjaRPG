@@ -368,6 +368,7 @@ export type ExtraState = {
   /** Repeated-opponent eligibility captured before inserting this battle. */
   energyRewardEligible?: boolean;
   energyCapacity?: Record<string, number>;
+  energyRegeneration?: Record<string, number>;
   // Static data - never changes during battle (looked up by ID)
   jutsus: Record<string, Jutsu>; // jutsuId -> Jutsu (includes user jutsus + injectable jutsus)
   jutsuReskins: Record<string, JutsuReskin>; // reskinId -> Reskin data

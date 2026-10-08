@@ -544,10 +544,13 @@ export const debuffPrevent = (
 /**
  * Human-readable summary of what an effect affects.
  * @param effect - the effect to describe
- * Damage modifiers affect all damage. Other stat tags describe unified Offence/Defence.
+ * Damage modifiers can match elements. Other stat tags describe unified Offence/Defence.
  */
 export const getAffected = (effect: UserEffect, type?: "offence" | "defence") => {
-  if (damageModifierTypes.includes(effect.type)) return "all damage";
+  if (damageModifierTypes.includes(effect.type))
+    return "elements" in effect && effect.elements?.length
+      ? `${effect.elements.join(", ")} damage`
+      : "all damage";
   const stats: string[] = [];
   if ("statTypes" in effect && effect.statTypes?.length) {
     if (type) {
@@ -3368,8 +3371,15 @@ export const getPower = (effect: UserEffect | GroundEffect) => {
  * matched in the RHS, whereas a ratio of 1 means everything is matched by a value in RHS
  */
 export const getEfficiencyRatio = (dmgEffect: UserEffect, effect: UserEffect) => {
-  // Damage increases and reductions apply universally, independent of classification.
-  if (damageModifierTypes.includes(effect.type)) return 1;
+  // Damage modifiers are universal unless explicitly limited to matching elements.
+  if (damageModifierTypes.includes(effect.type)) {
+    if (!("elements" in effect) || !effect.elements?.length) return 1;
+    const damageElements: ElementName[] =
+      "elements" in dmgEffect && dmgEffect.elements?.length
+        ? dmgEffect.elements
+        : ["None"];
+    return effect.elements.some((element) => damageElements.includes(element)) ? 1 : 0;
+  }
   // Force reflect for pierce damage, bypassing tag matching
   if (dmgEffect.type === "pierce") return 1;
   // We need to get the list of dmgEffect stats/gens/elements and effect stats/gens/elements

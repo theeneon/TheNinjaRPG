@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { EnergyTrainingQueueEntry } from "@/validators/train";
 import {
   mysqlTable,
   boolean,
@@ -2527,6 +2528,7 @@ export const userData = mysqlTable(
     trainingSpeed: mysqlEnum("trainingSpeed", consts.TrainingSpeeds)
       .default("15min")
       .notNull(),
+    energyTrainingQueue: json("energyTrainingQueue").$type<EnergyTrainingQueueEntry[]>(),
     masteryTrainingStartedAt: datetime("masteryTrainingStartedAt", {
       mode: "date",
       fsp: 3,
