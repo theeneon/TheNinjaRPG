@@ -281,7 +281,7 @@ const MenuBoxProfile: React.FC = () => {
               color="bg-violet-500"
               showText
               lastRegenAt={userData?.regenAt}
-              regen={userData?.status === "BATTLE" ? 0 : userData?.energyRegeneration}
+              regen={userData?.status === "BATTLE" ? 0 : userData?.regeneration}
               status={
                 userData &&
                 ["BATTLE", "HOSPITALIZED", "TRAVEL"].includes(userData.status)
