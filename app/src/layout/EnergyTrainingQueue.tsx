@@ -26,10 +26,12 @@ export const EnergyTrainingQueue = ({
   user,
   availableEnergy,
   getGuess,
+  refreshCaptcha,
 }: {
   user: NonNullable<UserWithRelations>;
   availableEnergy: number;
   getGuess: () => string;
+  refreshCaptcha: () => Promise<void>;
 }) => {
   const utils = api.useUtils();
   const [stat, setStat] = useState<CombatStatName>("offence");
@@ -43,12 +45,18 @@ export const EnergyTrainingQueue = ({
   });
   const { mutate: saveQueue, isPending } =
     api.train.updateEnergyTrainingQueue.useMutation({
-      onSuccess: async (result) => {
+      onSuccess: (result) => {
         showMutationToast(result);
         setError(result.success ? null : result.message);
-        await utils.profile.getUser.invalidate();
       },
       onError: (cause) => setError(cause.message),
+      onSettled: async (_result, _error, variables) => {
+        // Validation consumes a captcha even when the guess or a later write fails.
+        await Promise.all([
+          utils.profile.getUser.invalidate(),
+          ...(variables.entries.length && variables.guess ? [refreshCaptcha()] : []),
+        ]);
+      },
     });
   useEffect(() => {
     if (!entries.length) return;

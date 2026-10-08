@@ -9,6 +9,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  like,
   lt,
   ne,
   notInArray,
@@ -30,6 +31,7 @@ import {
   BattleTypes,
   COMBAT_BIOMES,
   type CombatBiome,
+  CombatStatNames,
   ID_ANIMATION_HEAL,
   ID_ANIMATION_HIT,
   ID_ANIMATION_SMOKE,
@@ -77,6 +79,7 @@ import {
   sageMode,
   sector,
   tournamentMatch,
+  trainingLog,
   userData,
   userItem,
   userJutsu,
@@ -175,6 +178,8 @@ import {
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import {
   controlShownQuestLocationInformation,
+  filterQuestTrackersForDbPersist,
+  getNewTrackers,
   mockAchievementHistoryEntries,
 } from "@/libs/quest";
 import { SAGE_MODE_ACTIVATION_JUTSU } from "@/libs/sageMode";
@@ -185,6 +190,7 @@ import {
   canUseJutsu,
   checkJutsuBloodlineItem,
   checkJutsuItems,
+  settleEnergyTrainingQueue,
 } from "@/libs/train";
 import { calcIsInVillage, getBiomeFromGlobalTile } from "@/libs/travel";
 import { findWarsWithUser } from "@/libs/war";
@@ -222,7 +228,7 @@ import { canAccessStructure } from "@/utils/village";
 import type { AssignableUserStats } from "@/validators/combat";
 import { BarrierTag, performActionSchema, statSchema } from "@/validators/combat";
 import { sectorIdSchema } from "@/validators/travel";
-import { fetchUpdatedUser, fetchUser } from "./profile";
+import { fetchUpdatedUser, fetchUser, type UserWithRelations } from "./profile";
 
 // Debug flag when testing battle
 const debug = false;
@@ -1961,6 +1967,45 @@ export const initiateBattle = async (
       : [],
   ]);
 
+  // Settle authorized pre-combat training from the already loaded participant snapshots.
+  // Battle claims commit these gains with status; failed partial claims retain earned training.
+  const queuedTraining = fetchedUsers
+    .filter((user) => !user.isAi && user.energyTrainingQueue?.length)
+    .map((user) => {
+      const original = structuredClone(user);
+      const ticks = Math.max(
+        0,
+        Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS),
+      );
+      const trainingUser = {
+        ...user,
+        regeneration: calcActiveUserRegen(user, settings),
+        maxEnergy: calcMaxEnergy(user),
+      } as unknown as NonNullable<UserWithRelations>;
+      const settlement = settleEnergyTrainingQueue(trainingUser, settings, ticks);
+      const amount = settlement.completed.reduce((sum, entry) => sum + entry.amount, 0);
+      for (const stat of CombatStatNames) user[stat] += settlement.gains[stat] ?? 0;
+      user.experience += amount;
+      user.curEnergy = settlement.curEnergy;
+      user.energyTrainingQueue = settlement.energyTrainingQueue;
+      if (amount > 0) {
+        user.questData = filterQuestTrackersForDbPersist(
+          getNewTrackers(user as unknown as NonNullable<UserWithRelations>, [
+            { task: "stats_trained", increment: amount },
+          ]).trackers,
+          user,
+        );
+      }
+      return {
+        original,
+        user,
+        settlement,
+        amount,
+        regen: ticks * trainingUser.regeneration,
+        regenAt: secondsFromDate(ticks * REGEN_SECONDS, original.regenAt),
+      };
+    });
+
   // If we have forced loadouts, overwrite user items and jutsus appropriately
   if (info.forceLoadouts && info.forceLoadouts.length > 0) {
     // Prefer equipped copies, then highest level — includes unequipped ownership.
@@ -2590,6 +2635,73 @@ export const initiateBattle = async (
     });
   const bracketImmunityAggressorIds = combatTargetsRealPlayer ? userIds : [];
 
+  const queuedParticipants = queuedTraining.filter((entry) =>
+    allParticipantIds.includes(entry.user.userId),
+  );
+  const queueUpdate: Record<string, ReturnType<typeof sql>> = {};
+  if (queuedParticipants.length) {
+    const queueCase = (column: keyof typeof userData.$inferSelect, values: unknown[]) =>
+      sql`CASE ${sql.join(
+        queuedParticipants.map(
+          (entry, index) =>
+            sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${values[index]}`,
+        ),
+        sql` `,
+      )} ELSE ${userData[column]} END`;
+    queueUpdate.energyTrainingQueue = queueCase(
+      "energyTrainingQueue",
+      queuedParticipants.map((entry) =>
+        JSON.stringify(entry.settlement.energyTrainingQueue),
+      ),
+    );
+    queueUpdate.curEnergy = queueCase(
+      "curEnergy",
+      queuedParticipants.map((entry) => entry.settlement.curEnergy),
+    );
+    for (const pool of ["curHealth", "curChakra", "curStamina"] as const) {
+      const maxPool =
+        pool === "curHealth"
+          ? "maxHealth"
+          : pool === "curChakra"
+            ? "maxChakra"
+            : "maxStamina";
+      queueUpdate[pool] = queueCase(
+        pool,
+        queuedParticipants.map((entry) =>
+          Math.min(entry.original[pool] + entry.regen, entry.original[maxPool]),
+        ),
+      );
+    }
+    queueUpdate.regenAt = queueCase(
+      "regenAt",
+      queuedParticipants.map((entry) => entry.regenAt),
+    );
+    queueUpdate.questData = queueCase(
+      "questData",
+      queuedParticipants.map((entry) => JSON.stringify(entry.user.questData)),
+    );
+    queueUpdate.experience = sql`${userData.experience} + CASE ${sql.join(
+      queuedParticipants.map(
+        (entry) =>
+          sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${entry.amount}`,
+      ),
+      sql` `,
+    )} ELSE 0 END`;
+    for (const stat of CombatStatNames) {
+      queueUpdate[stat] = sql`${userData[stat]} + CASE ${sql.join(
+        queuedParticipants.map(
+          (entry) =>
+            sql`WHEN ${userData.userId} = ${entry.user.userId} THEN ${entry.settlement.gains[stat] ?? 0}`,
+        ),
+        sql` `,
+      )} ELSE 0 END`;
+    }
+    queueUpdate.updatedAt = sql`CASE WHEN ${inArray(
+      userData.userId,
+      queuedParticipants.map((entry) => entry.user.userId),
+    )} THEN GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt})) ELSE ${userData.updatedAt} END`;
+  }
+
   // Run battle creation and user status updates in parallel for performance
   const [, , userResult] = await Promise.all([
     client.insert(battle).values({
@@ -2643,6 +2755,7 @@ export const initiateBattle = async (
     client
       .update(userData)
       .set({
+        ...queueUpdate,
         status: "BATTLE",
         battleId: battleId,
         pvpActivity: ["COMBAT"].includes(battleType)
@@ -2691,6 +2804,25 @@ export const initiateBattle = async (
           // row is never even examined (or locked) by this update. Drizzle
           // compiles an empty list to FALSE, matching expectedRows === 0.
           inArray(userData.userId, allParticipantIds),
+          // Queue spending must match its preload even if movement or another claim raced us.
+          ...queuedParticipants.map(({ original }) =>
+            or(
+              ne(userData.userId, original.userId),
+              and(
+                eq(userData.updatedAt, original.updatedAt),
+                eq(userData.status, original.status),
+                eq(userData.sector, original.sector),
+                eq(userData.longitude, original.longitude),
+                eq(userData.latitude, original.latitude),
+                eq(userData.rank, original.rank),
+                eq(userData.isBanned, original.isBanned),
+                eq(userData.isOutlaw, original.isOutlaw),
+                original.villageId
+                  ? eq(userData.villageId, original.villageId)
+                  : isNull(userData.villageId),
+              ),
+            ),
+          ),
           // A refund or swap may finish after preload but before the participant status claim.
           or(
             ...users
@@ -2754,6 +2886,37 @@ export const initiateBattle = async (
         ]
       : []),
   ]);
+
+  if (queuedParticipants.some((entry) => entry.settlement.completed.length)) {
+    // A partial multi-participant claim still legitimately settles the rows it claimed.
+    const claimedIds =
+      userResult.rowsAffected === expectedRows
+        ? allParticipantIds
+        : (
+            await client.query.userData.findMany({
+              columns: { userId: true },
+              where: eq(userData.battleId, battleId),
+            })
+          ).map((row) => row.userId);
+    const logs = queuedParticipants
+      .filter((entry) => claimedIds.includes(entry.user.userId))
+      .flatMap((entry) =>
+        entry.settlement.completed.map((completed) => ({
+          userId: entry.user.userId,
+          stat: completed.stat,
+          amount: completed.amount,
+          speed: entry.user.trainingSpeed,
+          trainingFinishedAt: new Date(),
+        })),
+      );
+    if (logs.length) {
+      try {
+        await client.insert(trainingLog).values(logs);
+      } catch (error) {
+        Sentry.captureException(error, { tags: { source: "energyTrainingQueueLog" } });
+      }
+    }
+  }
 
   // Check if expected number of users were updated - if not, rollback
   if (userResult.rowsAffected !== expectedRows) {
@@ -3814,12 +3977,17 @@ export const fetchBattleEssentials = async (client: DrizzleClient) => {
         .select()
         .from(gameSetting)
         .where(
-          inArray(gameSetting.name, [
-            "battleExpMultiplier",
-            "jutsuExpMultiplier",
-            "itemExpMultiplier",
-            "regenGainMultiplier",
-          ]),
+          or(
+            inArray(gameSetting.name, [
+              "battleExpMultiplier",
+              "jutsuExpMultiplier",
+              "itemExpMultiplier",
+              "regenGainMultiplier",
+              "trainingGainMultiplier",
+            ]),
+            like(gameSetting.name, "war-%-train"),
+            like(gameSetting.name, "war-%-regen"),
+          ),
         ),
       // Fetch villages
       client.select().from(village),

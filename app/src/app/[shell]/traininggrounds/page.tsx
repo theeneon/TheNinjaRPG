@@ -799,6 +799,10 @@ const StatsTraining: React.FC<TrainingProps> = (props) => {
           user={userData}
           availableEnergy={availableEnergy}
           getGuess={() => captchaForm.getValues("guess")}
+          refreshCaptcha={async () => {
+            await utils.misc.getCaptcha.invalidate();
+            captchaForm.reset();
+          }}
         />
       )}
       {(!props.section || props.section === "Masteries") && (

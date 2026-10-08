@@ -3178,7 +3178,7 @@ export const fetchUpdatedUser = async (props: {
     ) {
       const originalUpdatedAt = user.updatedAt;
       const queuedTrainingSnapshot = user.energyTrainingQueue?.length
-        ? { ...user }
+        ? { ...user, questData: structuredClone(user.questData) }
         : null;
       const regen = user.regeneration * ticks;
       user.curHealth = Math.min(user.curHealth + regen, user.maxHealth);
@@ -3404,7 +3404,22 @@ const persistPassiveRegenToDb = async ({
     userId,
     updatedAt: originalUpdatedAt,
     // Status transitions can occur without advancing the snapshot timestamp.
-    where: [eq(userData.status, user.status)],
+    where: [
+      eq(userData.status, user.status),
+      ...(queuedTraining
+        ? [
+            eq(userData.sector, user.sector),
+            eq(userData.longitude, user.longitude),
+            eq(userData.latitude, user.latitude),
+            user.villageId === null
+              ? isNull(userData.villageId)
+              : eq(userData.villageId, user.villageId),
+            eq(userData.isOutlaw, user.isOutlaw),
+            eq(userData.isBanned, user.isBanned),
+            eq(userData.rank, user.rank),
+          ]
+        : []),
+    ],
     set: derivedUserUpdate,
   });
   if (claim.success) {

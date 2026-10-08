@@ -10,6 +10,7 @@ import {
   ANBU_STEALTH_CHANGE_PER_LEVEL,
   IMG_AVATAR_DEFAULT,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
+  REGEN_SECONDS,
   ROBBING_IMMUNITY_DURATION,
   ROBBING_STOLLEN_AMOUNT,
   ROBBING_SUCCESS_CHANCE,
@@ -45,7 +46,7 @@ import {
 } from "@/libs/travel";
 import { isTutorialActive } from "@/libs/tutorial";
 import { initiateBattle } from "@/routers/combat";
-import { fetchUser } from "@/routers/profile";
+import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
 import { breakStealth } from "@/routers/stealth";
 import { fetchSector, fetchSectorVillage } from "@/routers/village";
 import {
@@ -494,6 +495,15 @@ export const travelRouter = createTRPCRouter({
       if (!targetSectorMap) {
         return errorResponse("The destination sector has no published map yet");
       }
+      if (user.energyTrainingQueue?.length) {
+        const updated = await fetchUpdatedUser({
+          client: ctx.drizzle,
+          userId: ctx.userId,
+          forceRegen: true,
+        });
+        if (!updated.user) return errorResponse("User not found");
+        user = updated.user;
+      }
       if (user.sector === input.sector) {
         return errorResponse("You are already in that sector");
       }
@@ -553,6 +563,7 @@ export const travelRouter = createTRPCRouter({
             eq(userData.userId, ctx.userId),
             eq(userData.status, "AWAKE"),
             eq(userData.sector, departureSector),
+            eq(userData.updatedAt, user.updatedAt),
           ),
         );
       if (result.rowsAffected === 1) {
@@ -603,19 +614,50 @@ export const travelRouter = createTRPCRouter({
     .meta({ mcp: { description: "Complete global travel" } })
     .output(baseServerResponse)
     .mutation(async ({ ctx }) => {
-      const user = await fetchUser(ctx.drizzle, ctx.userId);
+      let user = await fetchUser(ctx.drizzle, ctx.userId);
+      if (user.energyTrainingQueue?.length) {
+        const updated = await fetchUpdatedUser({
+          client: ctx.drizzle,
+          userId: ctx.userId,
+          forceRegen: true,
+        });
+        if (!updated.user) return errorResponse("User not found");
+        user = updated.user;
+      }
       if (!["TRAVEL", "AWAKE"].includes(user.status)) {
         return {
           success: false,
           message: `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
         };
       }
+      const result = await ctx.drizzle
+        .update(userData)
+        .set({
+          status: "AWAKE",
+          travelFinishAt: null,
+          ...(user.energyTrainingQueue?.length
+            ? {
+                // Travel recovers Energy, but its elapsed ticks cannot train village-only queues.
+                curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+                curHealth: sql`LEAST(${user.maxHealth}, ${userData.curHealth} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+                curChakra: sql`LEAST(${user.maxChakra}, ${userData.curChakra} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+                curStamina: sql`LEAST(${user.maxStamina}, ${userData.curStamina} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+                regenAt: sql`TIMESTAMPADD(SECOND, FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}) * ${REGEN_SECONDS}, ${userData.regenAt})`,
+              }
+            : {}),
+          updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
+        })
+        .where(
+          and(
+            eq(userData.userId, ctx.userId),
+            eq(userData.status, "TRAVEL"),
+            eq(userData.updatedAt, user.updatedAt),
+          ),
+        );
+      if (user.status === "TRAVEL" && result.rowsAffected !== 1)
+        return errorResponse("Your travel state changed. Please try again");
       user.status = "AWAKE";
       user.travelFinishAt = null;
-      await ctx.drizzle
-        .update(userData)
-        .set({ status: "AWAKE", travelFinishAt: null })
-        .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "TRAVEL")));
       // Deferred, not voided: the broadcast now runs after the write rather than
       // before it, so nothing else keeps the invocation alive long enough to finish it.
       if (!isUserCurrentlyStealthed(user)) {
@@ -703,10 +745,31 @@ export const travelRouter = createTRPCRouter({
       // When the destination looks like a default-sized border crossing, load
       // that neighbour in the same query so the walk does not wait on a
       // second sequential published-map read.
-      const maps = await fetchPublishedSectorMaps(
-        ctx.drizzle,
-        publishedMapsToPrefetchForMove(sector, { x: longitude, y: latitude }),
-      ).catch(() => null);
+      const [maps, originalUser] = await Promise.all([
+        fetchPublishedSectorMaps(
+          ctx.drizzle,
+          publishedMapsToPrefetchForMove(sector, { x: longitude, y: latitude }),
+        ).catch(() => null),
+        ctx.drizzle.query.userData.findFirst({
+          where: eq(userData.userId, userId),
+          with: { anbuSquad: true },
+        }),
+      ]);
+      if (!originalUser) return errorResponse("User not found");
+      let moveUser = originalUser;
+      if (moveUser.energyTrainingQueue?.length) {
+        const updated = await fetchUpdatedUser({
+          client: ctx.drizzle,
+          userId,
+          forceRegen: true,
+        });
+        if (!updated.user) return errorResponse("User not found");
+        moveUser = {
+          ...originalUser,
+          ...updated.user,
+          anbuSquad: originalUser.anbuSquad,
+        };
+      }
       const sectorMap = maps?.get(sector);
       if (!sectorMap) return errorResponse("This sector has no published map yet");
       // If a republish blocked the tile the player is standing on, snap them to
@@ -801,10 +864,7 @@ export const travelRouter = createTRPCRouter({
             );
       // Optimistic update & query simultaneously
       const moveOutcome = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, userId),
-          with: { anbuSquad: true },
-        }),
+        Promise.resolve(moveUser),
         ctx.drizzle
           .update(userData)
           .set({
@@ -818,6 +878,7 @@ export const travelRouter = createTRPCRouter({
               eq(userData.userId, userId),
               eq(userData.status, "AWAKE"),
               eq(userData.sector, sector),
+              eq(userData.updatedAt, moveUser.updatedAt),
               // Guard on the player's ACTUAL stored position (the raw input),
               // not the snapped walkable coordinate — otherwise a snapped move
               // never matches the row and the player is soft-locked.
@@ -951,6 +1012,8 @@ export const travelRouter = createTRPCRouter({
             "Seems like your village alliance has changed, please check profile.",
           );
         }
+        if (latest.updatedAt.getTime() !== moveUser.updatedAt.getTime())
+          return errorResponse("Your state changed. Please try moving again");
         throw serverError(
           "BAD_REQUEST",
           `Unknown error while moving. Route input: ${JSON.stringify(input)}. User information: ${JSON.stringify(

@@ -5,7 +5,9 @@ import {CombatStatNames, getUserCaps} from "@/drizzle/constants";
 import {bloodline, item, userItem, quest, questHistory, trainingLog, userData, userVote} from "@/drizzle/schema";
 import {fetchUpdatedUser} from "@/server/api/routers/profile";
 import {trainRouter} from "@/server/api/routers/train";
-import {insertItems, insertUserItems, insertUsers} from "../../setup/factories";
+import {SimpleObjective} from "@/validators/objectives";
+import {ObjectiveReward} from "@/validators/rewards";
+import {insertItems, insertUserItems, insertUsers, insertQuests, insertQuestHistory} from "../../setup/factories";
 import {callerFor, describeWithDatabase, getTestDatabase, resetTables} from "../../setup/testDatabase";
 const USER_ID = "trainee";
 const SESSION_GAIN = 100;
@@ -161,6 +163,76 @@ describeWithDatabase("Energy and mastery training against a real MySQL", () => {
     expect(after.offence - before.offence).toBeCloseTo(52);
     expect(after.experience - before.experience).toBeCloseTo(52);
     expect(await readLogs()).toHaveLength(1);
+  });
+
+  it("does not expose quest credit from queued training when its write fails", async () => {
+    await insertQuests([{
+      id: "queued-stat-quest", questType: "daily",
+      content: { objectives: [SimpleObjective.parse({ id: "queued-stat-goal", task: "stats_trained", value: 1000, description: "Train stats", successDescription: "Done" })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] },
+    }]);
+    await insertQuestHistory([{userId: USER_ID, questId: "queued-stat-quest", questType: "daily"}]);
+    await trainee({
+      curEnergy: 100, regeneration: 0,
+      energyTrainingQueue: [{stat: "offence", energy: 40}],
+      questData: [{ id: "queued-stat-quest", goals: [{ id: "queued-stat-goal", value: 0, done: false }] }],
+    });
+    const database = await getTestDatabase();
+    const before = await readUser();
+    const failedDatabase = new Proxy(database, {
+      get(target, key, receiver) {
+        if (key !== "update") return Reflect.get(target, key, receiver);
+        return (table: Parameters<typeof database.update>[0]) => {
+          const builder = database.update(table);
+          return {
+            set(values: Parameters<typeof builder.set>[0]) {
+              if (table === userData && "energyTrainingQueue" in values)
+                throw new Error("Simulated queued training write failure");
+              return builder.set(values);
+            },
+          };
+        };
+      },
+    });
+    const refreshed = await fetchUpdatedUser({client: failedDatabase, userId: USER_ID, forceRegen: true});
+    expect(refreshed.user?.questData?.find(t => t.id === "queued-stat-quest")?.goals.find(g => g.id === "queued-stat-goal")?.value).toBe(0);
+    expect(refreshed.user?.offence).toBe(before.offence);
+    expect((await readUser()).curEnergy).toBe(100);
+    expect(await readLogs()).toHaveLength(0);
+  });
+
+  it("rejects queued settlement when movement changes its eligible location", async () => {
+    await trainee({curEnergy: 100, regeneration: 0, energyTrainingQueue: [{stat: "offence", energy: 40}]});
+    const database = await getTestDatabase();
+    const before = await readUser();
+    let moved = false;
+    const movingDatabase = new Proxy(database, {
+      get(target, key, receiver) {
+        if (key !== "update") return Reflect.get(target, key, receiver);
+        return (table: Parameters<typeof database.update>[0]) => {
+          const builder = database.update(table);
+          return {
+            set(values: Parameters<typeof builder.set>[0]) {
+              const update = builder.set(values);
+              return {
+                async where(condition: Parameters<typeof update.where>[0]) {
+                  if (table === userData && "energyTrainingQueue" in values && !moved) {
+                    moved = true;
+                    await backdate({longitude: before.longitude + 1});
+                  }
+                  return update.where(condition);
+                },
+              };
+            },
+          };
+        };
+      },
+    });
+    const refreshed = await fetchUpdatedUser({client: movingDatabase, userId: USER_ID, forceRegen: true});
+    expect(moved).toBe(true);
+    expect(refreshed.user?.offence).toBe(before.offence);
+    expect((await readUser()).curEnergy).toBe(100);
+    expect((await readUser()).energyTrainingQueue).toEqual(before.energyTrainingQueue);
+    expect(await readLogs()).toHaveLength(0);
   });
 
   it("waits for the queued amount and respects capacity and federal slots", async () => {
