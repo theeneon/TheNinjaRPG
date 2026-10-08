@@ -66,18 +66,18 @@ describe("classification potency", () => {
         { targetId: "caster" },
       );
       const tags = resolvePotencyTags(action, [effect], "caster");
-      expect(tags.map((tag) => tag.power)).toEqual([70, 70, 40]);
+      expect(tags.map((tag) => tag.power)).toEqual([70, 70, 60]);
       expect(tags.slice(0, 2).map((tag) => tag.powerPerLevel)).toEqual([0, 0]);
       expect(action.effects[0]?.power).toBe(40);
     },
   );
 
   it.each([
-    ["increasepotency", "static", 70],
-    ["decreasepotency", "static", 30],
-    ["increasepotency", "percentage", 60],
-    ["decreasepotency", "percentage", 40],
-  ] as const)("handles %s %s", (type, calculation, expected) => {
+    ["increasepotency", "static", 70, 60],
+    ["decreasepotency", "static", 30, 20],
+    ["increasepotency", "percentage", 60, 48],
+    ["decreasepotency", "percentage", 40, 32],
+  ] as const)("handles %s %s", (type, calculation, expected, piercePower) => {
     const { action } = fixture();
     const effect = makeEffect(
       type,
@@ -92,7 +92,7 @@ describe("classification potency", () => {
     );
     expect(
       resolvePotencyTags(action, [effect], "caster").map((tag) => tag.power),
-    ).toEqual([expected, expected, 40]);
+    ).toEqual([expected, expected, piercePower]);
   });
 
   it.each([
@@ -135,7 +135,7 @@ describe("classification potency", () => {
       );
       expect(
         resolvePotencyTags(action, [effect], "caster").map((tag) => tag.power),
-      ).toEqual([40, 70, 40]);
+      ).toEqual([40, 70, 60]);
     },
   );
 });

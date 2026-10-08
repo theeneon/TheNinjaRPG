@@ -151,6 +151,13 @@ export const PreventTagTypes = [
 export type PreventTagType = (typeof PreventTagTypes)[number];
 
 export const PotencyTagTypes = [
+  "vamp",
+  "absorb",
+  "consume",
+  "shield",
+  "pierce",
+  "drain",
+  "poison",
   "damage",
   "increasedamagegiven",
   "decreasedamagegiven",

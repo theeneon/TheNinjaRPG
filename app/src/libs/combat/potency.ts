@@ -12,6 +12,13 @@ import { PotencyTagTypes } from "@/validators/combat";
 export const POTENCY_TAG_LABELS: Record<PotencyTag["affectedTag"], string> = {
   none: "None",
   all: "All supported tags",
+  vamp: "Vamp",
+  absorb: "Absorb",
+  consume: "Consume",
+  shield: "Shield",
+  pierce: "Pierce",
+  drain: "Drain",
+  poison: "Poison",
   damage: "Damage",
   increasedamagegiven: "Increase Damage Given",
   decreasedamagegiven: "Decrease Damage Given",
