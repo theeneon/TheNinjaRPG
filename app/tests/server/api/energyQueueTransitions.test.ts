@@ -224,6 +224,37 @@ describeWithDatabase("Energy queue state transitions", () => {
     }
   });
 
+  it.each(["queued", "bulk"])("cleaner retries a %s deadlock without replaying recovery", async mode => {
+    await prepare();
+    const db = await getTestDatabase();
+    await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() - 1000), regenAt: new Date(Date.now() - 195_000) });
+    let attempts = 0;
+    const racingDb = new Proxy(db, {
+      get(target, key, receiver) {
+        if (key !== "update") return Reflect.get(target, key, receiver);
+        return (table: Parameters<typeof db.update>[0]) => {
+          const builder = db.update(table);
+          return { set(values: Parameters<typeof builder.set>[0]) {
+            const update = builder.set(values);
+            return { async where(condition: Parameters<typeof update.where>[0]) {
+              if (table === userData && ("regenAt" in values) === (mode === "queued")) {
+                attempts++;
+                if (attempts === 1) throw new Error("Deadlock found when trying to get lock; try restarting transaction");
+              }
+              return update.where(condition);
+            } };
+          } };
+        };
+      },
+    });
+    await completeExpiredGlobalTravel(racingDb);
+    expect(attempts).toBe(2);
+    const arrived = (await read())!;
+    expect(arrived).toMatchObject({ status: "AWAKE", curEnergy: 100, offence: 10, defence: 10, energyTrainingQueue: entries });
+    await completeExpiredGlobalTravel(db);
+    expect(await read()).toEqual(arrived);
+  });
+
   it("cleaner leaves future travel untouched", async () => {
     await prepare();
     await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() + 60_000), regenAt: new Date(Date.now() - 195_000) });
