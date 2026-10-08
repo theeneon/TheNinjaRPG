@@ -22,8 +22,12 @@ import { Switch } from "@/components/ui/switch";
 import {
   IMG_TRAIN_BUKI_OFF,
   IMG_TRAIN_GEN_OFF,
+  IMG_TRAIN_INTELLIGENCE,
   IMG_TRAIN_NIN_OFF,
+  IMG_TRAIN_SPEED,
+  IMG_TRAIN_STRENGTH,
   IMG_TRAIN_TAI_OFF,
+  IMG_TRAIN_WILLPOWER,
 } from "@/drizzle/constants";
 import { useLocalStorage } from "@/hooks/localstorage";
 import { useTutorialStep } from "@/hooks/tutorial";
@@ -32,18 +36,24 @@ import ContentBox from "@/layout/ContentBox";
 import Image from "@/layout/Image";
 import NavTabs from "@/layout/NavTabs";
 import SliderField from "@/layout/SliderField";
-import { capUserStats } from "@/libs/profile";
+import { withCappedStats } from "@/libs/profile";
 import { showMutationToast } from "@/libs/toast";
 import type { UserWithRelations } from "@/routers/profile";
 import { round } from "@/utils/math";
 import { capitalizeFirstLetter } from "@/utils/string";
-import { createStatSchema, type StatSchemaType } from "@/validators/combat";
+import {
+  type AssignableUserStats,
+  createStatSchema,
+  type StatSchemaType,
+} from "@/validators/combat";
+import { createAssignedExperienceSchema } from "@/validators/user";
 
 interface StatDistributionProps {
   id?: string;
   userData: NonNullable<UserWithRelations>;
   availableStats: number;
-  onAccept: (data: StatSchemaType) => void;
+  onAccept: (data: AssignableUserStats) => void;
+  includeMasteries?: boolean;
   forceUseAll?: boolean;
   isRedistribution?: boolean;
   showWrapper?: boolean;
@@ -58,6 +68,7 @@ const DistributeStatsForm: React.FC<StatDistributionProps> = (props) => {
   // Destructure
   const {
     id,
+    includeMasteries = false,
     forceUseAll,
     isRedistribution,
     userData,
@@ -73,14 +84,14 @@ const DistributeStatsForm: React.FC<StatDistributionProps> = (props) => {
 
   // Tab state - force Advanced mode for redistribution
   const [tab, setTab] = useState<"Simple" | "Advanced">(
-    isRedistribution ? "Advanced" : "Simple",
+    isRedistribution || includeMasteries ? "Advanced" : "Simple",
   );
 
   // Tutorial hook
   const { currentStep, handleNextStep } = useTutorialStep();
 
   // Wrapper function to handle tutorial logic before calling onAccept
-  const handleAcceptWithTutorial = (data: StatSchemaType) => {
+  const handleAcceptWithTutorial = (data: AssignableUserStats) => {
     if (currentStep?.title === "Assigning Stats") {
       const formSum = Object.values(data)
         .map((v) => Number(v))
@@ -125,10 +136,10 @@ const DistributeStatsForm: React.FC<StatDistributionProps> = (props) => {
       )}
       {tab === "Simple" && !isRedistribution ? (
         <SimpleDistribution
+          includeMasteries={includeMasteries}
           userData={userData}
           availableStats={availableStats}
           onAccept={handleAcceptWithTutorial}
-          isRedistribution={isRedistribution}
           isPending={isPending}
           pendingLabel={pendingLabel}
         />
@@ -137,6 +148,7 @@ const DistributeStatsForm: React.FC<StatDistributionProps> = (props) => {
           userData={userData}
           availableStats={availableStats}
           onAccept={handleAcceptWithTutorial}
+          includeMasteries={includeMasteries}
           forceUseAll={forceUseAll}
           isRedistribution={isRedistribution}
           isPending={isPending}
@@ -168,20 +180,21 @@ const DistributeStatsForm: React.FC<StatDistributionProps> = (props) => {
  * Simple Distribution Component - Image-based stat selection
  */
 interface SimpleDistributionProps {
+  includeMasteries?: boolean;
   userData: NonNullable<UserWithRelations>;
   availableStats: number;
-  onAccept: (data: StatSchemaType) => void;
-  isRedistribution?: boolean;
+  onAccept: (data: AssignableUserStats) => void;
   isPending: boolean;
   pendingLabel?: string;
 }
 
+/** Presets only assign unused experience; redistribution always uses the advanced form. */
 const SimpleDistribution: React.FC<SimpleDistributionProps> = (props) => {
   const {
+    includeMasteries = false,
     userData,
     availableStats,
     onAccept,
-    isRedistribution,
     isPending,
     pendingLabel = "Assigning",
   } = props;
@@ -193,58 +206,79 @@ const SimpleDistribution: React.FC<SimpleDistributionProps> = (props) => {
     if (!isPending) setPendingSpecialization(null);
   }, [isPending]);
 
-  // Create stat schema to get caps
-  const { schema: statSchema, maxValues } = createStatSchema(
-    isRedistribution ? 10 : 0,
-    isRedistribution ? 10 : 0,
-    isRedistribution ? undefined : userData,
-  );
-  const defaultValues = statSchema.parse(isRedistribution ? userData : {});
+  // Caps as the room left above each stat, which the preset split fills
+  const { schema: statSchema, maxValues } = createAssignedExperienceSchema(userData);
+  const defaultValues = statSchema.parse({});
 
+  // Combat presets split points across four stats; mastery presets target one discipline.
   const specializationOptions = [
     {
-      id: "ninjutsu",
-      name: "Ninjutsu",
-      image: IMG_TRAIN_NIN_OFF,
-      description: "Master chakra manipulation",
-      stats: [
-        "willpower",
-        "intelligence",
-        "ninjutsuOffence",
-        "ninjutsuDefence",
-      ] as const,
+      id: "mind",
+      name: "Mind",
+      image: IMG_TRAIN_INTELLIGENCE,
+      description: "Willpower and intelligence",
+      stats: ["willpower", "intelligence", "offence", "defence"] as const,
     },
     {
-      id: "taijutsu",
-      name: "Taijutsu",
-      image: IMG_TRAIN_TAI_OFF,
-      description: "Master of martial arts",
-      stats: ["strength", "speed", "taijutsuOffence", "taijutsuDefence"] as const,
+      id: "body",
+      name: "Body",
+      image: IMG_TRAIN_STRENGTH,
+      description: "Strength and speed",
+      stats: ["strength", "speed", "offence", "defence"] as const,
     },
     {
-      id: "genjutsu",
-      name: "Genjutsu",
-      image: IMG_TRAIN_GEN_OFF,
-      description: "Master of illusions",
-      stats: [
-        "willpower",
-        "intelligence",
-        "genjutsuOffence",
-        "genjutsuDefence",
-      ] as const,
+      id: "resolve",
+      name: "Resolve",
+      image: IMG_TRAIN_WILLPOWER,
+      description: "Willpower and speed",
+      stats: ["willpower", "speed", "offence", "defence"] as const,
     },
     {
-      id: "bukijutsu",
-      name: "Bukijutsu",
-      image: IMG_TRAIN_BUKI_OFF,
-      description: "Weapons mastery",
-      stats: ["strength", "speed", "bukijutsuOffence", "bukijutsuDefence"] as const,
+      id: "tactics",
+      name: "Tactics",
+      image: IMG_TRAIN_SPEED,
+      description: "Intelligence and speed",
+      stats: ["intelligence", "speed", "offence", "defence"] as const,
     },
+    ...(includeMasteries
+      ? [
+          {
+            id: "ninjutsuMastery",
+            name: "Ninjutsu Mastery",
+            image: IMG_TRAIN_NIN_OFF,
+            description: "Unlock Ninjutsu content",
+            stats: ["ninjutsuMastery"] as const,
+          },
+          {
+            id: "genjutsuMastery",
+            name: "Genjutsu Mastery",
+            image: IMG_TRAIN_GEN_OFF,
+            description: "Unlock Genjutsu content",
+            stats: ["genjutsuMastery"] as const,
+          },
+          {
+            id: "taijutsuMastery",
+            name: "Taijutsu Mastery",
+            image: IMG_TRAIN_TAI_OFF,
+            description: "Unlock Taijutsu content",
+            stats: ["taijutsuMastery"] as const,
+          },
+          {
+            id: "bukijutsuMastery",
+            name: "Bukijutsu Mastery",
+            image: IMG_TRAIN_BUKI_OFF,
+            description: "Unlock Bukijutsu content",
+            stats: ["bukijutsuMastery"] as const,
+          },
+        ]
+      : []),
   ];
 
-  // Check if any stat in the specialization is capped
+  // Disable a specialization only when every one of its stats is already at cap.
+  // All presets share offence/defence, so treating a single capped combat stat as
+  // "maxed" would hide every Simple option.
   const isSpecializationDisabled = (option: (typeof specializationOptions)[number]) => {
-    return option.stats.some((stat) => {
+    return option.stats.every((stat) => {
       const maxValue = maxValues[stat];
       const currentValue = defaultValues[stat] ?? 0;
       return maxValue !== undefined && maxValue !== null && currentValue >= maxValue;
@@ -260,27 +294,45 @@ const SimpleDistribution: React.FC<SimpleDistributionProps> = (props) => {
     });
   };
 
+  /**
+   * Points this preset adds per stat: an even split, with whatever a capped stat cannot take
+   * spilled onto the stats that still have room. The confirm dialog renders this same result,
+   * so the preview always matches what gets applied.
+   */
+  const getSpecializationSplit = (
+    option: (typeof specializationOptions)[number],
+  ): Record<string, number> => {
+    const pointsPerStat = Math.floor(availableStats / option.stats.length);
+    const leftoverPoints = availableStats - pointsPerStat * option.stats.length;
+    const added: Record<string, number> = {};
+    let unusedPoints = 0;
+    option.stats.forEach((stat, index) => {
+      const room = Math.floor(maxValues[stat] ?? 0);
+      const wanted = pointsPerStat + (index < leftoverPoints ? 1 : 0);
+      const add = Math.min(room, wanted);
+      unusedPoints += wanted - add;
+      added[stat] = add;
+    });
+    for (const stat of option.stats) {
+      if (unusedPoints <= 0) break;
+      const room = Math.floor(maxValues[stat] ?? 0) - (added[stat] ?? 0);
+      const add = Math.min(room, unusedPoints);
+      added[stat] = (added[stat] ?? 0) + add;
+      unusedPoints -= add;
+    }
+    return added;
+  };
+
   const handleSpecializationSelect = (
     option: (typeof specializationOptions)[number],
   ) => {
     setPendingSpecialization(option.id);
-
-    // Build the stat distribution object
-    const distribution: Partial<StatSchemaType> = { ...defaultValues };
-
-    // Calculate 25% of available stats for each stat (4 stats total)
-    const pointsPerStat = Math.floor(availableStats / 4);
-    const leftoverPoints = availableStats - pointsPerStat * 4;
-
-    option.stats.forEach((stat, index) => {
-      // Add base points to each stat
-      const basePoints = pointsPerStat;
-      // Add 1 extra point to the first N stats where N is the number of leftover points
-      const extraPoint = index < leftoverPoints ? 1 : 0;
-      distribution[stat] = (defaultValues[stat] ?? 0) + basePoints + extraPoint;
-    });
-
-    onAccept(distribution as StatSchemaType);
+    const distribution: Partial<AssignableUserStats> = { ...defaultValues };
+    const added = getSpecializationSplit(option);
+    for (const stat of option.stats) {
+      distribution[stat] = (defaultValues[stat] ?? 0) + (added[stat] ?? 0);
+    }
+    onAccept(distribution as AssignableUserStats);
   };
 
   return (
@@ -289,6 +341,9 @@ const SimpleDistribution: React.FC<SimpleDistributionProps> = (props) => {
         const isDisabled = isSpecializationDisabled(option);
         const isAssigning = pendingSpecialization === option.id;
         const cappedStats = getCappedStats(option);
+        const split = getSpecializationSplit(option);
+        const placed = round(Object.values(split).reduce((a, b) => a + b, 0));
+        const isCapLimited = placed < round(availableStats);
 
         return (
           <Confirm
@@ -337,30 +392,39 @@ const SimpleDistribution: React.FC<SimpleDistributionProps> = (props) => {
           >
             <div>
               <p className="mb-2">
-                This will distribute {availableStats.toLocaleString()} stat points
-                across:
+                {isCapLimited
+                  ? `This will distribute ${placed.toLocaleString()} of ${availableStats.toLocaleString()} stat points across:`
+                  : `This will distribute ${availableStats.toLocaleString()} stat points across:`}
               </p>
               <ul className="mb-2 list-inside list-disc">
                 {option.stats.map((stat, index) => {
                   const isCapped = cappedStats.includes(stat);
-                  const pointsPerStat = Math.floor(availableStats / 4);
-                  const leftoverPoints = availableStats - pointsPerStat * 4;
-                  const points = pointsPerStat + (index < leftoverPoints ? 1 : 0);
+                  const points = split[stat] ?? 0;
                   return (
                     <li
                       key={`${stat}-${index}`}
                       className={`capitalize ${isCapped ? "font-semibold text-red-500" : ""}`}
                     >
-                      {capitalizeFirstLetter(noCase(stat))} (+{points})
-                      {isCapped && " (currently maxed)"}
+                      {capitalizeFirstLetter(noCase(stat))} (+
+                      {points.toLocaleString()}){isCapped && " (currently maxed)"}
                     </li>
                   );
                 })}
               </ul>
+              {isCapLimited && (
+                <p>
+                  Rank caps leave the other{" "}
+                  {round(availableStats - placed).toLocaleString()} points unassigned.
+                </p>
+              )}
             </div>
           </Confirm>
         );
       })}
+      <p className="col-span-2 mt-2 text-center text-muted-foreground text-xs sm:col-span-4">
+        Masteries unlock content without granting level XP. Use Advanced to split points
+        across multiple masteries and stats.
+      </p>
     </div>
   );
 };
@@ -371,7 +435,8 @@ const SimpleDistribution: React.FC<SimpleDistributionProps> = (props) => {
 interface AdvancedDistributionProps {
   userData: NonNullable<UserWithRelations>;
   availableStats: number;
-  onAccept: (data: StatSchemaType) => void;
+  onAccept: (data: AssignableUserStats) => void;
+  includeMasteries?: boolean;
   forceUseAll?: boolean;
   isRedistribution?: boolean;
   isPending?: boolean;
@@ -380,6 +445,7 @@ interface AdvancedDistributionProps {
 
 const AdvancedDistribution: React.FC<AdvancedDistributionProps> = (props) => {
   const {
+    includeMasteries = false,
     forceUseAll,
     isRedistribution,
     userData,
@@ -395,19 +461,21 @@ const AdvancedDistribution: React.FC<AdvancedDistributionProps> = (props) => {
     false,
   );
 
-  if (userData) capUserStats(userData);
-
-  // Stats Schema
-  const { schema: statSchema, maxValues } = createStatSchema(
-    isRedistribution ? 10 : 0,
-    isRedistribution ? 10 : 0,
-    isRedistribution ? undefined : userData,
-  );
-  const defaultValues = statSchema.parse(isRedistribution ? userData : {});
+  // Stats Schema: redistribution works in absolute rank caps, assignment in remaining room.
+  // Only a copy is capped, so the cached user keeps its stored values.
+  const cappedUser = withCappedStats(userData);
+  const { schema: statSchema, maxValues } = includeMasteries
+    ? createAssignedExperienceSchema(userData)
+    : createStatSchema(
+        isRedistribution ? 10 : 0,
+        isRedistribution ? 10 : 0,
+        isRedistribution ? { rank: userData.rank } : cappedUser,
+      );
+  const defaultValues = statSchema.parse(isRedistribution ? cappedUser : {});
   const statNames = Object.keys(defaultValues) as (keyof typeof defaultValues)[];
 
   // Form setup
-  const form = useForm<z.input<typeof statSchema>, unknown, StatSchemaType>({
+  const form = useForm<z.input<typeof statSchema>, unknown, AssignableUserStats>({
     defaultValues: defaultValues as z.input<typeof statSchema>,
     mode: "all",
     resolver: zodResolver(statSchema),

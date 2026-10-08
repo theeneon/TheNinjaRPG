@@ -1,5 +1,5 @@
 import type { RetryQuestDelay, TimeUnit } from "@/drizzle/constants";
-import { BANK_INTEREST_CLAIM_DAYS } from "@/drizzle/constants";
+import { BANK_INTEREST_CLAIM_DAYS, REGEN_SECONDS } from "@/drizzle/constants";
 
 /**
  * Get game time which is the UTC HH:MM:SS timestring
@@ -58,6 +58,14 @@ export const secondsPassed = (date: Date, timeDiff?: number, floor = true) => {
 export const secondsFromDate = (seconds: number, date: Date) => {
   return new Date(date.getTime() + seconds * 1000);
 };
+
+/** Next regeneration tick anchored to the saved clock, adjusted for client/server time. */
+export const nextRegenerationTickAt = (regenAt: Date, timeDiff?: number) =>
+  secondsFromDate(
+    (Math.max(0, Math.floor(secondsPassed(regenAt, timeDiff) / REGEN_SECONDS)) + 1) *
+      REGEN_SECONDS,
+    regenAt,
+  );
 
 /**
  * Current date plus the given number of seconds

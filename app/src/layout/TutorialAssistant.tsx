@@ -114,8 +114,8 @@ const AssistantPortrait: React.FC<{ characterImage?: string }> = ({
   return (
     <Image
       src={characterImage || defaultImage}
-      width={100}
-      height={100}
+      width={512}
+      height={768}
       alt="Assistant"
       className={className}
     />

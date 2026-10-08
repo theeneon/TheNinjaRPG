@@ -15,6 +15,7 @@ export default function AssignExperience() {
     updateUser,
     updateNotifications,
   } = useRequiredUserData();
+  const utils = api.useUtils();
   const submissionInFlight = useRef(false);
   const latestNotifications = useRef(notifications);
   latestNotifications.current = notifications;
@@ -26,6 +27,7 @@ export default function AssignExperience() {
         showMutationToast(result);
         if (result.success && result.data) {
           await updateUser(result.data);
+          await utils.profile.getUser.invalidate();
           if (result.data.earnedExperience <= 0) {
             await updateNotifications(
               latestNotifications.current?.filter(
@@ -56,6 +58,7 @@ export default function AssignExperience() {
   // Show component
   return (
     <DistributeStatsForm
+      includeMasteries
       id="tutorial-unassigned-stats-contentbox"
       userData={userData}
       onAccept={submitStats}

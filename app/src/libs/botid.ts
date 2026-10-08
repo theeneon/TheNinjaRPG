@@ -40,6 +40,7 @@ export const botIdCheckLevelForPaths = (paths: readonly string[]): BotIdCheckLev
 export const BOTID_PROTECTED_PROCEDURES = [
   // Training and grind loops
   "train.startTraining",
+  "train.startMasteryTraining",
   "jutsu.startTraining",
   "stealth.trainCovert",
   "quests.startQuest",

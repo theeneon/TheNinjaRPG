@@ -62,7 +62,7 @@ import {
   selectDashboardHighlights,
 } from "@/libs/profileDashboard";
 import { cn } from "@/libs/shadui";
-import { statTrainingEndsAt } from "@/libs/train";
+import { masteryTrainingEndsAt } from "@/libs/train";
 import { capitalizeFirstLetter } from "@/utils/string";
 import { nextUtcDayAt } from "@/utils/time";
 import { useRequiredUserData } from "@/utils/UserContext";
@@ -135,20 +135,21 @@ export default function ProfileDashboard({ settings }: { settings?: React.ReactN
     dashboard.data?.raidRewards.reduce((sum, raid) => sum + raid.claimableCount, 0) ??
     0;
 
-  const trainingFinish = userData ? statTrainingEndsAt(userData) : null;
-  const training = userData?.currentlyTraining
+  const training = sidebarTimers.data?.jutsuTraining
     ? {
-        title: capitalizeFirstLetter(noCase(userData.currentlyTraining)),
-        startedAt: userData.trainingStartedAt,
-        endsAt: trainingFinish,
+        title: `${sidebarTimers.data.jutsuTraining.name} to level ${sidebarTimers.data.jutsuTraining.level}`,
+        startedAt: sidebarTimers.data.jutsuTraining.trainingStartedAt,
+        endsAt: sidebarTimers.data.jutsuTraining.finishTraining,
       }
-    : sidebarTimers.data?.jutsuTraining
-      ? {
-          title: `${sidebarTimers.data.jutsuTraining.name} to level ${sidebarTimers.data.jutsuTraining.level}`,
-          startedAt: sidebarTimers.data.jutsuTraining.trainingStartedAt,
-          endsAt: sidebarTimers.data.jutsuTraining.finishTraining,
-        }
-      : null;
+    : null;
+  const masteryTrainingFinish = userData ? masteryTrainingEndsAt(userData) : null;
+  const masteryTraining = userData?.currentlyTrainingMastery
+    ? {
+        title: capitalizeFirstLetter(noCase(userData.currentlyTrainingMastery)),
+        startedAt: userData.masteryTrainingStartedAt,
+        endsAt: masteryTrainingFinish,
+      }
+    : null;
   const craftingTimers = [
     ...(sidebarTimers.data?.crafting
       ? [
@@ -527,6 +528,35 @@ export default function ProfileDashboard({ settings }: { settings?: React.ReactN
                     {isLoadingSector || sidebarTimers.isLoading
                       ? "Checking training..."
                       : trainingAction.action}
+                  </RowAction>
+                }
+              />
+            )}
+            {masteryTraining && (
+              <StatusRow
+                label="Mastery"
+                title={masteryTraining.title}
+                detail={
+                  masteryTraining.endsAt ? (
+                    <Countdown
+                      targetDate={masteryTraining.endsAt}
+                      timeDiff={timeDiff}
+                      onEndShow="Ready"
+                    />
+                  ) : null
+                }
+                meter={
+                  masteryTraining.startedAt && masteryTraining.endsAt ? (
+                    <ElapsedMeter
+                      startedAt={masteryTraining.startedAt}
+                      endsAt={masteryTraining.endsAt}
+                      timeDiff={timeDiff}
+                    />
+                  ) : null
+                }
+                action={
+                  <RowAction href="/traininggrounds" icon={Eye}>
+                    View
                   </RowAction>
                 }
               />

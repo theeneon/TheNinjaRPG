@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAP_WAKE_ISLAND_SECTOR,
   MAX_DAILY_TRAININGS,
+  CombatStatNames,
   UserStatNames,
   WAR_MISSIONS_PER_DAY,
   getUserCaps,
@@ -360,6 +361,7 @@ const trainableUser = () => {
     trainingSpeed: "8hrs" as const,
     isBanned: false,
     currentlyTraining: null,
+    currentlyTrainingMastery: null,
     dailyTrainings: 0,
     rank: "STUDENT" as const,
   };
@@ -370,20 +372,18 @@ describe("canStartStatTraining", () => {
     expect(canStartStatTraining(trainableUser())).toBe(true);
   });
 
-  it("hides training once the daily limit or every stat cap is reached", () => {
+  it("ignores the mastery daily limit but hides training when every stat is capped", () => {
     expect(
       canStartStatTraining({
         ...trainableUser(),
         dailyTrainings: MAX_DAILY_TRAININGS,
       }),
-    ).toBe(false);
+    ).toBe(true);
     const caps = getUserCaps("STUDENT");
     const capped = trainableUser();
-    for (const stat of UserStatNames) {
+    for (const stat of CombatStatNames) {
       capped[stat] =
-        stat.includes("Offence") || stat.includes("Defence")
-          ? caps.stats_cap
-          : caps.gens_cap;
+        stat === "offence" || stat === "defence" ? caps.stats_cap : caps.gens_cap;
     }
     expect(canStartStatTraining(capped)).toBe(false);
   });
@@ -403,7 +403,6 @@ describe("canStartStatTraining", () => {
         latitude: 0,
         trainingSpeed: "8hrs" as const,
         isBanned: false,
-        currentlyTraining: null,
       }),
     ).toBe(true);
   });
@@ -629,8 +628,12 @@ describe("dashboard training access", () => {
     expect(dashboardTrainingAction(user({ sector: 2 }), true, { ...ally, structures: [] }).href).toBe("/travel");
   });
 
-  it("explains daily limits and non-awake states without offering to start", () => {
-    expect(dashboardTrainingAction(user({ dailyTrainings: MAX_DAILY_TRAININGS }), false, village)).toMatchObject({ action: "View", reason: expect.stringContaining("24 hours") });
+  it("keeps Energy training open past the mastery daily limit", () => {
+    expect(dashboardTrainingAction(user({ dailyTrainings: MAX_DAILY_TRAININGS }), false, village)).toMatchObject({ action: "Train", reason: null });
+  });
+
+  it("explains banned and non-awake states without offering to start", () => {
+    expect(dashboardTrainingAction(user({ isBanned: true }), false, village)).toMatchObject({ action: "View", reason: "Cannot spend Energy while banned" });
     expect(dashboardTrainingAction(user({ status: "ASLEEP" }), false, village)).toMatchObject({ action: "View", reason: "Must be awake to train" });
   });
 });

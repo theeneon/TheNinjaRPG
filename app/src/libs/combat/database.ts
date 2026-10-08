@@ -3,6 +3,9 @@ import type { AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
 import type { BattleDataEntryType, BattleTypes } from "@/drizzle/constants";
 import {
+  ENERGY_PVP_LOSS_REWARD,
+  ENERGY_PVP_WIN_REWARD,
+  getUserCaps,
   HOSPITAL_LAT,
   HOSPITAL_LONG,
   ITEM_LEVEL_CAP,
@@ -10,6 +13,7 @@ import {
   JUTSU_TRAIN_LEVEL_CAP,
   JUTSU_XP_TO_LEVEL,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
+  MasteryNames,
   STEALTH_POST_COMBAT_COOLDOWN_SECONDS,
   VILLAGE_SYNDICATE_ID,
   WAR_RECAPTURE_THRESHOLD,
@@ -49,6 +53,7 @@ import {
   getVillage,
   getWarsArray,
   hydrateUserForQuests,
+  isPvpEnergyRewardBattle,
 } from "@/libs/combat/util";
 import { getPvpFarmActivityReductionSeconds } from "@/libs/farming";
 import type { PusherClient } from "@/libs/pusher";
@@ -231,6 +236,8 @@ export const updateBattle = async (
               .update(userData)
               .set({
                 battleId: null,
+                updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
+                // Restart passive regeneration after combat, discarding elapsed time.
                 regenAt: new Date(),
                 curHealth: teammate.curHealth,
                 curStamina: teammate.curStamina,
@@ -241,6 +248,7 @@ export const updateBattle = async (
                 ...(sendToHospital
                   ? {
                       status: "HOSPITALIZED",
+                      regenAt: new Date(),
                       longitude: HOSPITAL_LONG,
                       latitude: HOSPITAL_LAT,
                       sector: teammate.allyVillage
@@ -1239,6 +1247,14 @@ export const updateUser = async (
         !candidate.isAi &&
         !candidate.isSummon,
     );
+    result.energyReward =
+      isPvpEnergyRewardBattle(curBattle, userId) &&
+      curBattle.extraState.energyRewardEligible === true &&
+      (result.outcome === "Won" || result.outcome === "Lost")
+        ? result.didWin
+          ? ENERGY_PVP_WIN_REWARD
+          : ENERGY_PVP_LOSS_REWARD
+        : 0;
     const farmActivityReductionSeconds = getPvpFarmActivityReductionSeconds(
       curBattle.battleType,
       result.outcome,
@@ -1567,6 +1583,13 @@ export const updateUser = async (
       client
         .update(userData)
         .set({
+          // Settlement invalidates delayed passive-regeneration snapshots.
+          updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
+          ...(result.energyReward > 0
+            ? {
+                curEnergy: sql`LEAST(${curBattle.extraState.energyCapacity?.[userId] ?? user.maxEnergy ?? userData.maxEnergy}, ${userData.curEnergy} + ${result.energyReward})`,
+              }
+            : {}),
           experience: sql`experience + ${result.experience}`,
           earnedExperience: sql`earnedExperience + ${result.earnedExperience}`,
           pvpStreak: result.pvpStreak,
@@ -1587,19 +1610,21 @@ export const updateUser = async (
           seichiSilver: result.seichiSilver
             ? sql`seichiSilver + ${result.seichiSilver}`
             : sql`seichiSilver`,
-          ninjutsuOffence: sql`ninjutsuOffence + ${result.ninjutsuOffence}`,
-          genjutsuOffence: sql`genjutsuOffence + ${result.genjutsuOffence}`,
-          taijutsuOffence: sql`taijutsuOffence + ${result.taijutsuOffence}`,
-          bukijutsuOffence: sql`bukijutsuOffence + ${result.bukijutsuOffence}`,
-          ninjutsuDefence: sql`ninjutsuDefence + ${result.ninjutsuDefence}`,
-          genjutsuDefence: sql`genjutsuDefence + ${result.genjutsuDefence}`,
-          taijutsuDefence: sql`taijutsuDefence + ${result.taijutsuDefence}`,
-          bukijutsuDefence: sql`bukijutsuDefence + ${result.bukijutsuDefence}`,
+          // Preserve stored over-cap entitlement; concurrent gains cannot exceed the cap.
+          ...Object.fromEntries(
+            MasteryNames.map((mastery) => [
+              mastery,
+              sql`${userData[mastery]} + LEAST(${result.masteryGains?.[mastery] ?? 0}, GREATEST(0, ${getUserCaps(user.rank).mastery_cap} - ${userData[mastery]}))`,
+            ]),
+          ),
+          offence: sql`offence + ${result.offence}`,
+          defence: sql`defence + ${result.defence}`,
           villagePrestige: sql`villagePrestige + ${result.villagePrestige}`,
           dailyArenaFights: sql`dailyArenaFights + ${curBattle.battleType === "ARENA" ? 1 : 0}`,
           dailySageActivations: sql`dailySageActivations + ${user.sageModeUsedThisBattle ? 1 : 0}`,
           questData: updatedQuestData,
           battleId: null,
+          // Restart passive regeneration after combat, discarding elapsed time.
           regenAt: new Date(),
           // Stamp the winning war participant in the same row update (no extra roundtrip).
           // GREATEST() inside extendWarParticipantSql never shortens a longer existing stamp.
@@ -1624,6 +1649,7 @@ export const updateUser = async (
           !["SPARRING", "RANKED_PVP", "RANKED_SPARRING"].includes(curBattle.battleType)
             ? {
                 status: "HOSPITALIZED",
+                regenAt: new Date(),
                 longitude: HOSPITAL_LONG,
                 latitude: HOSPITAL_LAT,
                 sector: user.allyVillage

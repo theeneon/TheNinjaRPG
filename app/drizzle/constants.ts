@@ -72,7 +72,7 @@ export const IMG_ORIENTATIONS = ["square", "portrait", "landscape"] as const;
 export type IMG_ORIENTATION = (typeof IMG_ORIENTATIONS)[number];
 
 // How many seconds to regen a given regen value
-export const REGEN_SECONDS = 30;
+export const REGEN_SECONDS = 60;
 
 export const ContentTypes = [
   "activityStreak",
@@ -373,13 +373,27 @@ export const CONTENT_PROPOSAL_NOTE_MAX_LENGTH = 500;
 export const CONTENT_REVIEW_SFX_SEARCH_RESULTS = 12;
 
 export const StatTypes = [
-  "Highest",
+  "None",
   "Ninjutsu",
   "Genjutsu",
   "Taijutsu",
   "Bukijutsu",
 ] as const;
 export type StatType = (typeof StatTypes)[number];
+
+export const MasteryTypes = [
+  "Ninjutsu",
+  "Genjutsu",
+  "Taijutsu",
+  "Bukijutsu",
+  "Bloodline",
+  "Sage",
+] as const;
+export type MasteryType = (typeof MasteryTypes)[number];
+
+/** Display names of the unified combat stats that increasestat/decreasestat move. */
+export const CombatStatTypes = ["Offence", "Defence"] as const;
+export type CombatStatType = (typeof CombatStatTypes)[number];
 
 export const GeneralTypes = [
   "Highest",
@@ -404,6 +418,7 @@ export const AdjustableBasicActions = [
 export type AdjustableBasicAction = (typeof AdjustableBasicActions)[number];
 
 export const PoolTypes = ["Health", "Chakra", "Stamina"] as const;
+export const MaxPoolTypes = [...PoolTypes, "Energy"] as const;
 export type PoolType = (typeof PoolTypes)[number];
 
 export const ItemRarities = ["COMMON", "RARE", "EPIC", "LEGENDARY"] as const;
@@ -692,20 +707,27 @@ export const JUTSU_TRAIN_TO_LEARN_RESTRICTED_TYPES = [
 export type JutsuTrainToLearnRestrictedType =
   (typeof JUTSU_TRAIN_TO_LEARN_RESTRICTED_TYPES)[number];
 
-export const UserStatNames = [
-  "ninjutsuOffence",
-  "taijutsuOffence",
-  "genjutsuOffence",
-  "bukijutsuOffence",
-  "ninjutsuDefence",
-  "taijutsuDefence",
-  "genjutsuDefence",
-  "bukijutsuDefence",
+export const CombatStatNames = [
+  "offence",
+  "defence",
   "intelligence",
   "speed",
   "willpower",
   "strength",
 ] as const;
+export type CombatStatName = (typeof CombatStatNames)[number];
+
+export const MasteryNames = [
+  "ninjutsuMastery",
+  "genjutsuMastery",
+  "taijutsuMastery",
+  "bukijutsuMastery",
+  "bloodlineMastery",
+  "sageMastery",
+] as const;
+export type MasteryName = (typeof MasteryNames)[number];
+
+export const UserStatNames = [...CombatStatNames, ...MasteryNames] as const;
 export type UserStatName = (typeof UserStatNames)[number];
 
 export const BattleTypes = [
@@ -995,11 +1017,23 @@ export type ElementName = (typeof ElementNames)[number];
 export const HP_PER_LVL = 50;
 export const SP_PER_LVL = 50;
 export const CP_PER_LVL = 50;
+export const ENERGY_PER_LVL = 50;
+export const STATS_PER_ENERGY = 1.3;
+export const ENERGY_PVE_REWARD = 1;
+export const ENERGY_EVENT_REWARD = 10;
+export const ENERGY_PVP_WIN_REWARD = 5;
+export const ENERGY_PVP_LOSS_REWARD = 3;
 export const MAX_ATTRIBUTES = 5;
 export const BANK_INTEREST_CLAIM_DAYS = 8;
 export const RYO_CAP = 3000000000;
-export const MAX_STATS_CAP = 450000;
-export const MAX_GENS_CAP = 200000;
+// Independent base progression caps. Effective mastery buffs may exceed these caps.
+export const MAX_STATS_CAP = 1300000;
+export const MAX_GENS_CAP = 400000;
+export const MAX_MASTERY_CAP = 1500000;
+export const PVP_MASTERY_WIN_REWARD = 200;
+export const PVP_MASTERY_LOSS_REWARD = 100;
+// AI rows retain their catalog tuning: half the level budget over 6 stats is 1/12 each.
+export const SCALED_AI_STAT_BUDGET_SHARE = 0.5;
 export const MAX_DAILY_AI_CALLS = 100;
 
 export const ROLL_CHANCE_PERCENTAGE = {
@@ -1169,15 +1203,40 @@ export const BankTransferTypes = ["bank", "sensei", "recruiter"] as const;
 // Caps lookup table
 export const USER_CAPS: Record<
   UserRank,
-  { GENS_CAP: number; STATS_CAP: number; LVL_CAP: number }
+  { GENS_CAP: number; STATS_CAP: number; MASTERY_CAP: number; LVL_CAP: number }
 > = {
-  STUDENT: { GENS_CAP: 20000, STATS_CAP: 20000, LVL_CAP: 10 },
-  GENIN: { GENS_CAP: 60000, STATS_CAP: 60000, LVL_CAP: 30 },
-  CHUNIN: { GENS_CAP: MAX_GENS_CAP, STATS_CAP: MAX_STATS_CAP, LVL_CAP: 100 },
-  JONIN: { GENS_CAP: MAX_GENS_CAP, STATS_CAP: MAX_STATS_CAP, LVL_CAP: 100 },
-  "ELITE JONIN": { GENS_CAP: MAX_GENS_CAP, STATS_CAP: MAX_STATS_CAP, LVL_CAP: 100 },
-  ELDER: { GENS_CAP: MAX_GENS_CAP, STATS_CAP: MAX_STATS_CAP, LVL_CAP: 100 },
-  NONE: { GENS_CAP: MAX_GENS_CAP, STATS_CAP: MAX_STATS_CAP, LVL_CAP: 100 },
+  STUDENT: { GENS_CAP: 20000, STATS_CAP: 20000, MASTERY_CAP: 20000, LVL_CAP: 10 },
+  GENIN: { GENS_CAP: 60000, STATS_CAP: 60000, MASTERY_CAP: 60000, LVL_CAP: 30 },
+  CHUNIN: {
+    GENS_CAP: MAX_GENS_CAP,
+    STATS_CAP: MAX_STATS_CAP,
+    MASTERY_CAP: MAX_MASTERY_CAP,
+    LVL_CAP: 100,
+  },
+  JONIN: {
+    GENS_CAP: MAX_GENS_CAP,
+    STATS_CAP: MAX_STATS_CAP,
+    MASTERY_CAP: MAX_MASTERY_CAP,
+    LVL_CAP: 100,
+  },
+  "ELITE JONIN": {
+    GENS_CAP: MAX_GENS_CAP,
+    STATS_CAP: MAX_STATS_CAP,
+    MASTERY_CAP: MAX_MASTERY_CAP,
+    LVL_CAP: 100,
+  },
+  ELDER: {
+    GENS_CAP: MAX_GENS_CAP,
+    STATS_CAP: MAX_STATS_CAP,
+    MASTERY_CAP: MAX_MASTERY_CAP,
+    LVL_CAP: 100,
+  },
+  NONE: {
+    GENS_CAP: MAX_GENS_CAP,
+    STATS_CAP: MAX_STATS_CAP,
+    MASTERY_CAP: MAX_MASTERY_CAP,
+    LVL_CAP: 100,
+  },
 } as const;
 
 // OpenAI models
@@ -2123,19 +2182,20 @@ export const RANKED_DIVISIONS = [
 ] as const;
 export const RANKED_LEGEND_LP_REQUIREMENT =
   RANKED_DIVISIONS.find((d) => d.key === "LEGEND")?.rankedLp ?? 900;
+/** Masteries are maxed on purpose, because ranked waives progression gates. */
 export const RANKED_PVP_STATS = {
   strength: MAX_GENS_CAP,
   intelligence: MAX_GENS_CAP,
   willpower: MAX_GENS_CAP,
   speed: MAX_GENS_CAP,
-  ninjutsuOffence: MAX_STATS_CAP,
-  ninjutsuDefence: MAX_STATS_CAP,
-  genjutsuOffence: MAX_STATS_CAP,
-  genjutsuDefence: MAX_STATS_CAP,
-  taijutsuOffence: MAX_STATS_CAP,
-  taijutsuDefence: MAX_STATS_CAP,
-  bukijutsuOffence: MAX_STATS_CAP,
-  bukijutsuDefence: MAX_STATS_CAP,
+  offence: MAX_STATS_CAP,
+  defence: MAX_STATS_CAP,
+  ninjutsuMastery: MAX_MASTERY_CAP,
+  genjutsuMastery: MAX_MASTERY_CAP,
+  taijutsuMastery: MAX_MASTERY_CAP,
+  bukijutsuMastery: MAX_MASTERY_CAP,
+  bloodlineMastery: MAX_MASTERY_CAP,
+  sageMastery: MAX_MASTERY_CAP,
 };
 export const RANKED_LOADOUT_MAX_JUTSUS = 15;
 export const RANKED_LOADOUT_MAX_WEAPONS = 2;
@@ -2485,6 +2545,8 @@ export const IMG_MANUAL_TRAVEL =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJu1h1uHCyJLoOFkrcn4gxSwCfEQ9eMNXZlG8b.webp";
 export const IMG_MANUAL_BLOODLINE =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJaCMo8gYYfKMcJ2B5EmWt6VsNgqxpG8OSXAQk.webp";
+export const IMG_MANUAL_BLOODRIGHT =
+  "https://uploadthing.b-cdn.net/f/O7wpp4YNyyKzJyyr5fVHu.webp";
 export const IMG_MANUAL_SAGE_MODE =
   "https://uploadthing.b-cdn.net/f/ZV0VxZ-iWF6FW84u-0B4t.webp";
 export const IMG_MANUAL_JUTSU =
@@ -3050,9 +3112,15 @@ export function getUserCaps(rank?: UserRank | null) {
     return {
       stats_cap: MAX_STATS_CAP,
       gens_cap: MAX_GENS_CAP,
+      mastery_cap: MAX_MASTERY_CAP,
       lvl_cap: 100,
     };
-  return { stats_cap: caps.STATS_CAP, gens_cap: caps.GENS_CAP, lvl_cap: caps.LVL_CAP };
+  return {
+    stats_cap: caps.STATS_CAP,
+    gens_cap: caps.GENS_CAP,
+    mastery_cap: caps.MASTERY_CAP,
+    lvl_cap: caps.LVL_CAP,
+  };
 }
 
 // ============================================

@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import ContentBox from "@/layout/ContentBox";
+import Countdown from "@/layout/Countdown";
 import { DashboardSettings } from "@/layout/DashboardSettings";
 import DeleteUserButton from "@/layout/DeleteUserButton";
 import ItemWithEffects from "@/layout/ItemWithEffects";
@@ -34,6 +35,7 @@ import { getRankedRank } from "@/libs/ranked_pvp";
 import { getSageMasteryDisplayRank } from "@/libs/sageMode";
 import { isTutorialActive } from "@/libs/tutorial";
 import { capitalizeFirstLetter } from "@/utils/string";
+import { nextRegenerationTickAt } from "@/utils/time";
 import { useRequiredUserData } from "@/utils/UserContext";
 
 const profileTabs = ["Dashboard", "Character", "Achievements", "History"] as const;
@@ -117,7 +119,7 @@ export default function Profile() {
 
 function CharacterProfile() {
   // State
-  const { data: userData, notifications } = useRequiredUserData();
+  const { data: userData, notifications, timeDiff } = useRequiredUserData();
   const [pvpInfoModal, setPvpInfoModal] = useState<"activity" | "rank" | null>(null);
 
   // Query
@@ -179,7 +181,15 @@ function CharacterProfile() {
             <p>Money: {userData.money?.toLocaleString()}</p>
             <p>Bank: {userData.bank?.toLocaleString()}</p>
             <p>Status: {userData.status}</p>
-            <p>Regen per minute: {userData.regeneration?.toFixed(2)}</p>
+            <p>
+              Regen per minute: {userData.regeneration?.toFixed(2)} (
+              <RegenerationCountdown
+                key={userData.regenAt.getTime()}
+                regenAt={userData.regenAt}
+                timeDiff={timeDiff}
+              />
+              )
+            </p>
             <p>Gender: {userData.gender}</p>
           </div>
           <div className="flex flex-col items-start">
@@ -316,7 +326,7 @@ function CharacterProfile() {
             </p>
             <p>Medical: {capitalizeFirstLetter(calcMedninRank(userData))}</p>
             <p>
-              Sage:{" "}
+              Sage Mode Rank:{" "}
               {capitalizeFirstLetter(
                 getSageMasteryDisplayRank(
                   userData.sageMasteryExperience ?? 0,
@@ -429,5 +439,23 @@ function ProfileHistory() {
       </div>
       {tab === "Quests" ? <LogbookHistory /> : <LogbookBattles />}
     </div>
+  );
+}
+
+function RegenerationCountdown({
+  regenAt,
+  timeDiff,
+}: {
+  regenAt: Date;
+  timeDiff: number;
+}) {
+  const nextTick = () => nextRegenerationTickAt(regenAt, timeDiff);
+  const [targetDate, setTargetDate] = useState(nextTick);
+  return (
+    <Countdown
+      targetDate={targetDate}
+      timeDiff={timeDiff}
+      onFinish={() => setTargetDate(nextTick())}
+    />
   );
 }
