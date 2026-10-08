@@ -45,6 +45,7 @@ import {
   updateGameSetting,
 } from "@/libs/gamesettings";
 import { cleanupExpiredExclusiveRaids } from "@/routers/raids";
+import { completeExpiredGlobalTravel } from "@/routers/travel";
 import { drizzleDB } from "@/server/db";
 import { processAccountDeletions } from "@/server/utils/accountDeletion/process";
 import { authenticateCronRequest } from "@/server/utils/cron";
@@ -95,16 +96,7 @@ export async function GET(request: Request) {
       );
 
     // Step 2.5: Complete travel for users whose travel time has expired
-    await drizzleDB
-      .update(userData)
-      .set({ status: "AWAKE", travelFinishAt: null })
-      .where(
-        and(
-          eq(userData.status, "TRAVEL"),
-          isNotNull(userData.travelFinishAt),
-          lt(userData.travelFinishAt, new Date()),
-        ),
-      );
+    await completeExpiredGlobalTravel(drizzleDB);
 
     // Time constants
     const oneHour = 1000 * 60 * 60;

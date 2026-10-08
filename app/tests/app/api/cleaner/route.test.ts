@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as contentReviewCleanup from "@/libs/contentReview/cleanup";
 import * as gamesettings from "@/libs/gamesettings";
+import * as travel from "@/routers/travel";
 import * as raids from "@/routers/raids";
 import * as grant from "@/server/utils/purchases/grant";
 import * as processor from "@/server/utils/accountDeletion/process";
@@ -23,6 +24,7 @@ describe("account deletion in the existing cleaner", () => {
     vi.spyOn(gamesettings, "lockWithHourlyTimer").mockImplementation(mocks.lock);
     vi.spyOn(gamesettings, "lockWithDailyTimer").mockResolvedValue({ isNewDay: false } as Awaited<ReturnType<typeof gamesettings.lockWithDailyTimer>>);
     vi.spyOn(gamesettings, "updateGameSetting").mockImplementation(mocks.reset);
+    vi.spyOn(travel, "completeExpiredGlobalTravel").mockResolvedValue(undefined);
     vi.spyOn(raids, "cleanupExpiredExclusiveRaids").mockImplementation(vi.fn());
     vi.spyOn(contentReviewCleanup, "cleanupContentProposals").mockResolvedValue({ removed: 0, filesDeleted: 0 });
     vi.spyOn(grant, "reconcileFederalStatuses").mockImplementation(vi.fn());
@@ -42,6 +44,7 @@ describe("account deletion in the existing cleaner", () => {
     expect((await GET(request())).status).toBe(200);
     expect(mocks.execute).toHaveBeenCalled();
     expect(mocks.process).toHaveBeenCalledOnce();
+    expect(travel.completeExpiredGlobalTravel).toHaveBeenCalledOnce();
     expect(mocks.reset).not.toHaveBeenCalled();
   });
   it("still processes deletions when content review cleanup fails", async () => {

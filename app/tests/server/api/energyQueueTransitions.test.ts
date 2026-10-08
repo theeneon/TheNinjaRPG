@@ -17,7 +17,7 @@ import {
 import { getServerPusher } from "@/libs/pusher";
 import { initiateBattle } from "@/server/api/routers/combat";
 import { fetchUpdatedUser } from "@/server/api/routers/profile";
-import { travelRouter } from "@/server/api/routers/travel";
+import { completeExpiredGlobalTravel, travelRouter } from "@/server/api/routers/travel";
 import {
   invalidatePublishedMapCache,
   getSectorNeighborIds,
@@ -196,6 +196,72 @@ describeWithDatabase("Energy queue state transitions", () => {
     });
     expect((await read())!.defence).toBe(10);
   });
+  it.each([true, false])("cleaner preserves travel recovery policy with queued training=%s", async queued => {
+    await prepare(queued ? entries : []);
+    const db = await getTestDatabase();
+    const regenAt = new Date(Date.now() - 195_000);
+    await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() - 1000), regenAt,
+      curHealth: 0, curChakra: 0, curStamina: 0, maxHealth: 1000, maxChakra: 1000, maxStamina: 1000 });
+    await db.insert(gameSetting).values({ id: "travel-regen", name: "regenGainMultiplier", value: 2, time: new Date(Date.now() + 86_400_000) });
+    await completeExpiredGlobalTravel(db);
+    const arrived = (await read())!;
+    expect(arrived.status).toBe("AWAKE");
+    expect(arrived.travelFinishAt).toBeNull();
+    expect(arrived.curEnergy).toBe(queued ? 100 : 0);
+    expect([arrived.curHealth, arrived.curChakra, arrived.curStamina]).toEqual(queued ? [600, 600, 600] : [0, 0, 0]);
+    expect(arrived.regenAt.getTime()).toBe(regenAt.getTime() + (queued ? 180_000 : 0));
+    expect(arrived.offence).toBe(10);
+    expect(arrived.defence).toBe(10);
+    expect(arrived.energyTrainingQueue).toEqual(queued ? entries : []);
+    await completeExpiredGlobalTravel(db);
+    expect(await read()).toEqual(arrived);
+    if (queued) {
+      await fetchUpdatedUser({ client: db, userId: USER, forceRegen: true });
+      // The stored arrival Energy can train one entry, but travel ticks cannot replay.
+      expect((await read())!.offence).toBe(140);
+      expect((await read())!.defence).toBe(10);
+      expect((await read())!.energyTrainingQueue).toEqual([entries[1]]);
+    }
+  });
+
+  it("cleaner leaves future travel untouched", async () => {
+    await prepare();
+    await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() + 60_000), regenAt: new Date(Date.now() - 195_000) });
+    const before = (await read())!;
+    await completeExpiredGlobalTravel(await getTestDatabase());
+    expect(await read()).toEqual(before);
+  });
+
+  it("cleaner rejects a stale queued travel snapshot", async () => {
+    await prepare();
+    const db = await getTestDatabase();
+    const regenAt = new Date(Date.now() - 195_000);
+    await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() - 1000), regenAt });
+    const changedAt = new Date(Date.now() + 60_000);
+    let raced = false;
+    const racingDb = new Proxy(db, {
+      get(target, key, receiver) {
+        if (key !== "update") return Reflect.get(target, key, receiver);
+        return (table: Parameters<typeof db.update>[0]) => {
+          const builder = db.update(table);
+          return { set(values: Parameters<typeof builder.set>[0]) {
+            const update = builder.set(values);
+            return { async where(condition: Parameters<typeof update.where>[0]) {
+              if (table === userData && "regenAt" in values && !raced) {
+                raced = true;
+                await patch({ updatedAt: changedAt, curEnergy: 1 });
+              }
+              return update.where(condition);
+            } };
+          } };
+        };
+      },
+    });
+    await completeExpiredGlobalTravel(racingDb);
+    expect(raced).toBe(true);
+    expect(await read()).toMatchObject({ status: "TRAVEL", regenAt, updatedAt: changedAt, curEnergy: 1, offence: 10, defence: 10, energyTrainingQueue: entries });
+  });
+
   it("does not regenerate an empty queue when walking", async () => {
     await prepare([]);
     await patch({ regenAt: new Date(Date.now() - 195_000) });

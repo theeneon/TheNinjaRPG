@@ -1,6 +1,18 @@
 import { randomInt } from "node:crypto";
 import type { inferRouterOutputs } from "@trpc/server";
-import { and, asc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
 import { z } from "zod";
@@ -19,16 +31,20 @@ import {
   SECTOR_WIDTH,
   UserStatuses,
 } from "@/drizzle/constants";
+import type { UserData } from "@/drizzle/schema";
 import {
   actionLog,
   clan,
+  gameSetting,
   overworldAiPlacement,
   userData,
+  userItem,
+  userSkill,
   village,
   war,
 } from "@/drizzle/schema";
 import { placementToSectorUser } from "@/libs/overworldAi";
-import { calcLevel } from "@/libs/profile";
+import { calcActiveUserRegen, calcLevel, calcMaxEnergy } from "@/libs/profile";
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import {
   findNearestWalkableCoordinate,
@@ -57,6 +73,7 @@ import {
   ratelimitMiddleware,
   serverError,
 } from "@/server/api/trpc";
+import type { DrizzleClient } from "@/server/db";
 import { isTransientDatabaseError } from "@/server/dbRetry";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import {
@@ -631,27 +648,7 @@ export const travelRouter = createTRPCRouter({
           message: `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
         };
       }
-      const recoveryTicks = sql`FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000})`;
-      const claim = await claimUserSnapshot({
-        client: ctx.drizzle,
-        userId: ctx.userId,
-        updatedAt: user.updatedAt,
-        where: [eq(userData.status, "TRAVEL")],
-        set: {
-          status: "AWAKE",
-          travelFinishAt: null,
-          ...(user.energyTrainingQueue?.length
-            ? {
-                // Travel recovers Energy, but its elapsed ticks cannot train village-only queues.
-                curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * ${recoveryTicks})`,
-                curHealth: sql`LEAST(${user.maxHealth}, ${userData.curHealth} + ${user.regeneration} * ${recoveryTicks})`,
-                curChakra: sql`LEAST(${user.maxChakra}, ${userData.curChakra} + ${user.regeneration} * ${recoveryTicks})`,
-                curStamina: sql`LEAST(${user.maxStamina}, ${userData.curStamina} + ${user.regeneration} * ${recoveryTicks})`,
-                regenAt: sql`TIMESTAMPADD(SECOND, ${recoveryTicks} * ${REGEN_SECONDS}, ${userData.regenAt})`,
-              }
-            : {}),
-        },
-      });
+      const claim = await completeGlobalTravel(ctx.drizzle, user);
       if (user.status === "TRAVEL" && !claim.success)
         return errorResponse("Your travel state changed. Please try again");
       user.status = "AWAKE";
@@ -1067,6 +1064,71 @@ const resolveAdjacentCrossing = (
     return { valid: false, error: "You must be at the matching edge to cross over" };
   }
   return { valid: true, direction: outWest ? "west" : "east" };
+};
+
+/** Complete travel and consume its recovery ticks without training queued stats. */
+const completeGlobalTravel = (client: DrizzleClient, user: UserData) => {
+  const recoveryTicks = sql`FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000})`;
+  return claimUserSnapshot({
+    client,
+    userId: user.userId,
+    updatedAt: user.updatedAt,
+    where: [eq(userData.status, "TRAVEL")],
+    set: {
+      status: "AWAKE",
+      travelFinishAt: null,
+      ...(user.energyTrainingQueue?.length
+        ? {
+            // Travel recovers Energy, but its elapsed ticks cannot train village-only queues.
+            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * ${recoveryTicks})`,
+            curHealth: sql`LEAST(${user.maxHealth}, ${userData.curHealth} + ${user.regeneration} * ${recoveryTicks})`,
+            curChakra: sql`LEAST(${user.maxChakra}, ${userData.curChakra} + ${user.regeneration} * ${recoveryTicks})`,
+            curStamina: sql`LEAST(${user.maxStamina}, ${userData.curStamina} + ${user.regeneration} * ${recoveryTicks})`,
+            regenAt: sql`TIMESTAMPADD(SECOND, ${recoveryTicks} * ${REGEN_SECONDS}, ${userData.regenAt})`,
+          }
+        : {}),
+    },
+  });
+};
+
+/** The hourly cleaner shares the endpoint's recovery and snapshot guards. */
+export const completeExpiredGlobalTravel = async (client: DrizzleClient) => {
+  const expiredTravel = and(
+    eq(userData.status, "TRAVEL"),
+    isNotNull(userData.travelFinishAt),
+    lt(userData.travelFinishAt, new Date()),
+  );
+  const hasQueue = sql`COALESCE(JSON_LENGTH(${userData.energyTrainingQueue}), 0) > 0`;
+  const [users, settings] = await Promise.all([
+    client.query.userData.findMany({
+      where: and(expiredTravel, hasQueue),
+      with: {
+        bloodline: true,
+        clan: true,
+        village: { with: { structures: true } },
+        items: {
+          where: and(sql`${userItem.equipped} <> 'NONE'`, gt(userItem.quantity, 0)),
+          with: { item: true, imbuements: { with: { item: true } } },
+        },
+        userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
+      },
+    }),
+    client.select().from(gameSetting),
+  ]);
+  await Promise.all([
+    ...users.map((user) =>
+      completeGlobalTravel(client, {
+        ...user,
+        regeneration: calcActiveUserRegen(user, settings),
+        maxEnergy: calcMaxEnergy(user),
+      }),
+    ),
+    // Empty queues keep the existing lazy passive recovery behavior.
+    client
+      .update(userData)
+      .set({ status: "AWAKE", travelFinishAt: null })
+      .where(and(expiredTravel, sql`NOT (${hasQueue})`)),
+  ]);
 };
 
 type RouterOutput = inferRouterOutputs<typeof travelRouter>;
