@@ -1,6 +1,15 @@
 import type { RetryQuestDelay, TimeUnit } from "@/drizzle/constants";
 import { BANK_INTEREST_CLAIM_DAYS, REGEN_SECONDS } from "@/drizzle/constants";
 
+/** Calendar purchase periods follow UTC game time; weeks begin on Monday. */
+export const getItemPurchasePeriodStart = (
+  period: "NONE" | "DAILY" | "WEEKLY" | "MONTHLY",
+  now = new Date(),
+) => {
+  if (period === "NONE") return null;
+  return periodStart(period.toLowerCase() as Lowercase<typeof period>, now);
+};
+
 /**
  * Get game time which is the UTC HH:MM:SS timestring
  *

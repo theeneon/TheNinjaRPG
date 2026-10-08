@@ -7,6 +7,8 @@ import {
   RYO_FOR_REP_MIN_REPS,
   TRADEABLE_CURRENCY_TYPES,
 } from "@/drizzle/constants";
+import type { Item } from "@/drizzle/schema";
+import { getAuctionPriceError } from "@/libs/itemEconomy";
 
 // Auction listing schemas
 export const createAuctionListingSchema = z
@@ -91,6 +93,27 @@ export const getAuctionListingsSchema = z.object({
   sellerId: z.string().optional(),
   status: z.enum(AUCTION_LISTING_STATES).optional(),
 });
+
+/** Item-specific validation for the listing form; the router checks fresh item data. */
+export const auctionListingSchemaForItem = (
+  item?: Pick<Item, "canBeTraded" | "auctionMinPrice" | "auctionMaxPrice">,
+  fullQuantity = 1,
+) =>
+  createAuctionListingSchema.superRefine((data, ctx) => {
+    if (!item) return;
+    for (const field of ["startingPrice", "buyoutPrice"] as const) {
+      const price = data[field];
+      if (price === undefined) continue;
+      const message = getAuctionPriceError(
+        item,
+        data.listingType,
+        price,
+        data.quantity ?? fullQuantity,
+        data.currencyType,
+      );
+      if (message) ctx.addIssue({ code: "custom", path: [field], message });
+    }
+  });
 
 // Type exports
 export type CreateAuctionListingSchema = z.infer<typeof createAuctionListingSchema>;

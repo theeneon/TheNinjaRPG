@@ -32,6 +32,7 @@ import {
 } from "@/drizzle/constants";
 import type { Item, UserData } from "@/drizzle/schema";
 import { DateTimeRegExp } from "@/utils/regex";
+import { itemEconomySchema, refineItemEconomy } from "@/validators/itemEconomy";
 import { rewardFields } from "@/validators/rewards";
 
 /**
@@ -1529,6 +1530,7 @@ export type ZodSkillTreeInput = z.input<typeof SkillTreeValidator>;
  * Item Type. Used for validating a item object is set up properly
  */
 export const ItemValidatorRawSchema = z.object({
+  ...itemEconomySchema.shape,
   name: z.string().trim(),
   image: z.string(),
   description: z.string(),
@@ -1619,8 +1621,9 @@ export const ItemValidatorRawSchema = z.object({
     .optional()
     .nullish(),
 });
-export const ItemValidator =
-  ItemValidatorRawSchema.superRefine(SuperRefineBase).superRefine(SuperRefineItem);
+export const ItemValidator = ItemValidatorRawSchema.superRefine(SuperRefineBase)
+  .superRefine(SuperRefineItem)
+  .superRefine(refineItemEconomy);
 export type ZodItemType = z.output<typeof ItemValidator>;
 export type ZodItemInput = z.input<typeof ItemValidator>;
 

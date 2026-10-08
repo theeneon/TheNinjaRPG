@@ -400,6 +400,13 @@
       "when": 1791362226477,
       "tag": "0056_unified_combat_stats_masteries",
       "breakpoints": false
+    },
+    {
+      "idx": 57,
+      "version": "5",
+      "when": 1791446799726,
+      "tag": "0057_colossal_quentin_quire",
+      "breakpoints": false
     }
   ]
 }
