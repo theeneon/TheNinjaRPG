@@ -181,10 +181,11 @@ export const PendingRewardChoiceSchema = z.object({
 });
 export type PendingRewardChoice = z.infer<typeof PendingRewardChoiceSchema>;
 
+/** An empty `cardIds` clears an offer on which the player can no longer receive anything. */
 export const ClaimRewardChoiceSchema = z.object({
   questId: z.string().min(1),
   choiceId: z.string().min(1),
-  cardIds: z.array(z.string().min(1)).min(1).max(QUEST_REWARD_PICK_MAX),
+  cardIds: z.array(z.string().min(1)).max(QUEST_REWARD_PICK_MAX),
 });
 export type ClaimRewardChoiceInput = z.infer<typeof ClaimRewardChoiceSchema>;
 
@@ -200,6 +201,8 @@ export const RewardChoiceDisplaySchema = z.object({
       image: z.string().nullable(),
       rarity: z.string().nullable(),
       description: z.string().nullable(),
+      /** Why this player cannot pick the card (e.g. already owned), or null if pickable. */
+      unavailableReason: z.string().nullable(),
     }),
   ),
 });

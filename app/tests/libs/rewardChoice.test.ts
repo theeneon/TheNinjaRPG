@@ -1,17 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { getNewTrackers, getReward } from "@/libs/quest";
+import { getExperienceTrackerTasks, getNewTrackers, getReward } from "@/libs/quest";
 import {
   buildRewardChoiceCards,
   getFixedChoiceRewards,
   getRewardPickCount,
+  getUnavailableRewardCards,
   isRewardChoiceQuest,
+  REWARD_CHOICE_OWNED_REASON,
+  REWARD_CHOICE_SAGE_EQUIPPED_REASON,
+  type RewardChoiceOwnership,
   requiredRewardPicks,
   rewardFromChoiceCards,
   toggleRewardPick,
   validateRewardPicks,
   verifyRewardChoiceForSave,
 } from "@/libs/rewardChoice";
-import { ObjectiveReward, type PendingRewardChoice } from "@/validators/rewards";
+import {
+  ObjectiveReward,
+  type PendingRewardChoice,
+  type RewardChoiceCard,
+} from "@/validators/rewards";
 
 const reward = (input: Parameters<typeof ObjectiveReward.parse>[0]) =>
   ObjectiveReward.parse(input);
@@ -116,6 +124,170 @@ describe("validateRewardPicks", () => {
     expect(requiredRewardPicks(offer(3, 2))).toBe(2);
     expect(validateRewardPicks(offer(3, 2), ["card-0", "card-1"]).success).toBe(true);
     expect(validateRewardPicks(offer(3, 2), ["card-0"]).success).toBe(false);
+  });
+});
+
+const contentCard = (
+  field: "reward_jutsus" | "reward_bloodlines" | "reward_badges" | "reward_sage_modes",
+  contentId: string,
+): RewardChoiceCard => ({ id: `${field}:${contentId}`, field, amount: 1, contentId });
+
+const ownership = (
+  owned: Partial<Record<keyof Omit<RewardChoiceOwnership, "hasSageMode">, string[]>> = {},
+  hasSageMode = false,
+): RewardChoiceOwnership => ({
+  jutsuIds: new Set(owned.jutsuIds),
+  bloodlineIds: new Set(owned.bloodlineIds),
+  badgeIds: new Set(owned.badgeIds),
+  sageModeIds: new Set(owned.sageModeIds),
+  hasSageMode,
+});
+
+describe("rewards the player cannot receive", () => {
+  const cards = [
+    { id: "reward_money", field: "reward_money" as const, amount: 100 },
+    contentCard("reward_jutsus", "fireball"),
+    contentCard("reward_bloodlines", "sharingan"),
+    contentCard("reward_badges", "badge-1"),
+    contentCard("reward_sage_modes", "toad"),
+    contentCard("reward_sage_modes", "snake"),
+  ];
+  const choice = (pickCount: number): PendingRewardChoice => ({
+    id: "offer-1",
+    pickCount,
+    cards,
+  });
+
+  it("marks owned jutsus, bloodlines, badges and rolled sage modes", () => {
+    const unavailable = getUnavailableRewardCards(
+      cards,
+      ownership({
+        jutsuIds: ["fireball"],
+        bloodlineIds: ["sharingan"],
+        badgeIds: ["badge-1"],
+        sageModeIds: ["toad"],
+      }),
+    );
+    expect(Object.fromEntries(unavailable)).toEqual({
+      "reward_jutsus:fireball": REWARD_CHOICE_OWNED_REASON,
+      "reward_bloodlines:sharingan": REWARD_CHOICE_OWNED_REASON,
+      "reward_badges:badge-1": REWARD_CHOICE_OWNED_REASON,
+      "reward_sage_modes:toad": REWARD_CHOICE_OWNED_REASON,
+    });
+  });
+
+  it("marks every sage mode once one is equipped", () => {
+    const unavailable = getUnavailableRewardCards(cards, ownership({}, true));
+    expect([...unavailable.keys()]).toEqual([
+      "reward_sage_modes:toad",
+      "reward_sage_modes:snake",
+    ]);
+    expect(unavailable.get("reward_sage_modes:toad")).toBe(
+      REWARD_CHOICE_SAGE_EQUIPPED_REASON,
+    );
+  });
+
+  it("refuses an owned pick and keeps the count the player can still fill", () => {
+    const unavailable = getUnavailableRewardCards(
+      cards,
+      ownership({ jutsuIds: ["fireball"] }),
+    );
+    const result = validateRewardPicks(
+      choice(1),
+      ["reward_jutsus:fireball"],
+      unavailable,
+    );
+    expect(result).toEqual({
+      success: false,
+      message: `${REWARD_CHOICE_OWNED_REASON}: pick a different reward`,
+    });
+    expect(validateRewardPicks(choice(1), ["reward_money"], unavailable).success).toBe(
+      true,
+    );
+  });
+
+  it("shrinks the requirement to what can still be granted", () => {
+    // money + bloodline + badge + one sage mode remain once the jutsu is owned.
+    const someOwned = getUnavailableRewardCards(
+      cards,
+      ownership({ jutsuIds: ["fireball"] }),
+    );
+    expect(requiredRewardPicks(choice(5), someOwned)).toBe(4);
+    const allOwned = getUnavailableRewardCards(
+      [cards[1]!, cards[3]!],
+      ownership({ jutsuIds: ["fireball"], badgeIds: ["badge-1"] }),
+    );
+    const ownedOffer = { id: "offer-2", pickCount: 1, cards: [cards[1]!, cards[3]!] };
+    expect(requiredRewardPicks(ownedOffer, allOwned)).toBe(0);
+    // Nothing is grantable, so an empty pick clears the offer instead of blocking it forever.
+    expect(validateRewardPicks(ownedOffer, [], allOwned)).toEqual({
+      success: true,
+      cards: [],
+    });
+  });
+});
+
+describe("sage mode picks", () => {
+  const sageOffer: PendingRewardChoice = {
+    id: "offer-1",
+    pickCount: 2,
+    cards: [
+      { id: "reward_money", field: "reward_money", amount: 100 },
+      contentCard("reward_sage_modes", "toad"),
+      contentCard("reward_sage_modes", "snake"),
+    ],
+  };
+
+  it("allows at most one sage mode per pick", () => {
+    expect(
+      validateRewardPicks(sageOffer, ["reward_sage_modes:toad", "reward_sage_modes:snake"]),
+    ).toEqual({ success: false, message: "Only one sage mode can be picked" });
+    expect(
+      validateRewardPicks(sageOffer, ["reward_money", "reward_sage_modes:snake"]).success,
+    ).toBe(true);
+  });
+
+  it("counts several sage modes as one pickable reward", () => {
+    expect(requiredRewardPicks({ ...sageOffer, pickCount: 3 })).toBe(2);
+    const content = {
+      reward: reward({ reward_money: 1, reward_sage_modes: ["toad", "snake", "slug"] }),
+      rewardMode: "choose" as const,
+    };
+    expect(verifyRewardChoiceForSave({ ...content, rewardPickCount: 1 }).check).toBe(true);
+    expect(verifyRewardChoiceForSave({ ...content, rewardPickCount: 2 }).check).toBe(false);
+  });
+
+  it("swaps the selected sage mode instead of adding a second one", () => {
+    expect(
+      toggleRewardPick(
+        ["reward_sage_modes:toad"],
+        "reward_sage_modes:snake",
+        2,
+        sageOffer.cards,
+      ),
+    ).toEqual(["reward_sage_modes:snake"]);
+    expect(
+      toggleRewardPick(
+        ["reward_sage_modes:toad", "reward_money"],
+        "reward_sage_modes:snake",
+        2,
+        sageOffer.cards,
+      ),
+    ).toEqual(["reward_sage_modes:snake", "reward_money"]);
+  });
+});
+
+describe("getExperienceTrackerTasks", () => {
+  it("emits one increment per granted profession experience", () => {
+    expect(
+      getExperienceTrackerTasks(
+        reward({ reward_medical_experience: 30, reward_hunting_experience: 5, reward_exp: 9 }),
+      ),
+    ).toEqual([
+      { task: "medical_experience_gained", increment: 30 },
+      { task: "hunting_experience_gained", increment: 5 },
+    ]);
+    expect(getExperienceTrackerTasks(reward({ reward_exp: 100 }))).toEqual([]);
   });
 });
 

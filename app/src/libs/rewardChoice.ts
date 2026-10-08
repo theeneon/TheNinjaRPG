@@ -18,7 +18,8 @@ import {
  * jutsu, bloodline, sage mode and badge id is one card. Rank promotion, village membership and
  * the hunter/gathering material drops are structural outcomes rather than loot, so they are always
  * granted alongside the picked cards. Picked items are guaranteed: the editor's drop chance only
- * applies to quests that grant every reward.
+ * applies to quests that grant every reward. Cards for content the player already holds stay on
+ * the offer but cannot be picked, and one pick holds at most one sage mode.
  */
 
 /** Whether the quest grants a player-picked subset of its completion reward. */
@@ -77,18 +78,82 @@ export const buildRewardChoiceCards = (
   return cards;
 };
 
-/** How many cards the player must pick: the configured count, or every card if fewer exist. */
-export const requiredRewardPicks = (
-  choice: Pick<PendingRewardChoice, "pickCount" | "cards">,
-) => Math.min(choice.pickCount, choice.cards.length);
+/** Sage modes fill the single equipped slot, so one pick holds at most one of them. */
+export const isSageModeCard = (card: Pick<RewardChoiceCard, "field">) =>
+  card.field === "reward_sage_modes";
+
+/** Most cards one pick can hold: every non-sage card plus a single sage mode. */
+export const maxRewardPicks = (cards: Pick<RewardChoiceCard, "field">[]) => {
+  const sageModes = cards.filter(isSageModeCard).length;
+  return cards.length - sageModes + Math.min(sageModes, 1);
+};
+
+/** Content the player already holds, used to find cards that would grant nothing. */
+export type RewardChoiceOwnership = {
+  jutsuIds: ReadonlySet<string>;
+  bloodlineIds: ReadonlySet<string>;
+  badgeIds: ReadonlySet<string>;
+  /** Sage modes in the player's roll history. */
+  sageModeIds: ReadonlySet<string>;
+  /** The player has a sage mode equipped, so no sage mode card can be granted. */
+  hasSageMode: boolean;
+};
+
+export const REWARD_CHOICE_OWNED_REASON = "Already owned";
+export const REWARD_CHOICE_SAGE_EQUIPPED_REASON = "Sage mode already equipped";
 
 /**
- * Validates a pick against the frozen offer: distinct ids, all offered, exactly the required
- * count. Returns the picked cards in offer order.
+ * Cards this player cannot receive, keyed by card id with the reason shown on the card. Mirrors
+ * the skips in `updateRewards`, which never inserts an owned jutsu, bloodline or badge and only
+ * rolls a sage mode for a player without one.
+ */
+export const getUnavailableRewardCards = (
+  cards: RewardChoiceCard[],
+  ownership: RewardChoiceOwnership,
+): Map<string, string> => {
+  const unavailable = new Map<string, string>();
+  for (const card of cards) {
+    const id = card.contentId;
+    if (!id) continue;
+    if (card.field === "reward_sage_modes" && ownership.hasSageMode) {
+      unavailable.set(card.id, REWARD_CHOICE_SAGE_EQUIPPED_REASON);
+    } else if (
+      (card.field === "reward_jutsus" && ownership.jutsuIds.has(id)) ||
+      (card.field === "reward_bloodlines" && ownership.bloodlineIds.has(id)) ||
+      (card.field === "reward_badges" && ownership.badgeIds.has(id)) ||
+      (card.field === "reward_sage_modes" && ownership.sageModeIds.has(id))
+    ) {
+      unavailable.set(card.id, REWARD_CHOICE_OWNED_REASON);
+    }
+  }
+  return unavailable;
+};
+
+type CardIdLookup = Pick<ReadonlySet<string>, "has">;
+
+/**
+ * How many cards the player must pick: the configured count, capped by what can still be
+ * granted (cards the player cannot receive are left out and at most one sage mode counts).
+ * Zero means nothing on the offer can be granted any more; claiming it with no picks clears it.
+ */
+export const requiredRewardPicks = (
+  choice: Pick<PendingRewardChoice, "pickCount" | "cards">,
+  unavailable: CardIdLookup = new Set<string>(),
+) =>
+  Math.min(
+    choice.pickCount,
+    maxRewardPicks(choice.cards.filter((card) => !unavailable.has(card.id))),
+  );
+
+/**
+ * Validates a pick against the frozen offer: distinct ids, all offered, none the player cannot
+ * receive, at most one sage mode, exactly the required count. Returns the picked cards in
+ * offer order.
  */
 export const validateRewardPicks = (
   choice: PendingRewardChoice,
   cardIds: string[],
+  unavailable: ReadonlyMap<string, string> = new Map<string, string>(),
 ):
   | { success: true; cards: RewardChoiceCard[] }
   | { success: false; message: string } => {
@@ -96,31 +161,48 @@ export const validateRewardPicks = (
   if (picked.size !== cardIds.length) {
     return { success: false, message: "Each reward can only be picked once" };
   }
-  const required = requiredRewardPicks(choice);
+  const cards = choice.cards.filter((card) => picked.has(card.id));
+  if (cards.length !== picked.size) {
+    return { success: false, message: "That reward is not part of this offer" };
+  }
+  const blocked = cards.find((card) => unavailable.has(card.id));
+  if (blocked) {
+    return {
+      success: false,
+      message: `${unavailable.get(blocked.id)}: pick a different reward`,
+    };
+  }
+  if (cards.filter(isSageModeCard).length > 1) {
+    return { success: false, message: "Only one sage mode can be picked" };
+  }
+  const required = requiredRewardPicks(choice, unavailable);
   if (picked.size !== required) {
     return {
       success: false,
       message: `Pick exactly ${required} reward${required === 1 ? "" : "s"}`,
     };
   }
-  const cards = choice.cards.filter((card) => picked.has(card.id));
-  if (cards.length !== picked.size) {
-    return { success: false, message: "That reward is not part of this offer" };
-  }
   return { success: true, cards };
 };
 
 /**
  * Next selection after the player clicks a card: clicking a selected card deselects it, a
- * single-pick offer swaps the selection, and a full multi-pick selection ignores new cards.
+ * single-pick offer swaps the selection, a second sage mode replaces the selected one, and a
+ * full multi-pick selection ignores new cards.
  */
 export const toggleRewardPick = (
   selected: string[],
   cardId: string,
   required: number,
+  cards: Pick<RewardChoiceCard, "id" | "field">[] = [],
 ): string[] => {
   if (selected.includes(cardId)) return selected.filter((id) => id !== cardId);
   if (required === 1) return [cardId];
+  const sageIds = new Set(cards.filter(isSageModeCard).map((card) => card.id));
+  const selectedSage = selected.find((id) => sageIds.has(id));
+  if (selectedSage && sageIds.has(cardId)) {
+    return selected.map((id) => (id === selectedSage ? cardId : id));
+  }
   if (selected.length >= required) return selected;
   return [...selected, cardId];
 };
@@ -156,18 +238,21 @@ export const rewardFromChoiceCards = (
 
 /**
  * Save-time check for "choose" quests: the player must have more cards to choose from than
- * picks, otherwise the mode would just grant everything.
+ * picks, otherwise the mode would just grant everything. Several sage mode cards are allowed
+ * (choose one of them) but count as a single pickable reward.
  */
 export const verifyRewardChoiceForSave = (
   content: Pick<QuestContentType, "reward" | "rewardMode" | "rewardPickCount">,
 ): { check: boolean; message: string } => {
   if (!isRewardChoiceQuest(content)) return { check: true, message: "" };
-  const cards = buildRewardChoiceCards(ObjectiveReward.parse(content.reward));
+  const pickable = maxRewardPicks(
+    buildRewardChoiceCards(ObjectiveReward.parse(content.reward)),
+  );
   const pickCount = getRewardPickCount(content);
-  if (cards.length <= pickCount) {
+  if (pickable <= pickCount) {
     return {
       check: false,
-      message: `Reward choice needs more pickable rewards than picks: ${cards.length} reward${cards.length === 1 ? "" : "s"} for ${pickCount} pick${pickCount === 1 ? "" : "s"}`,
+      message: `Reward choice needs more pickable rewards than picks (sage modes count once): ${pickable} reward${pickable === 1 ? "" : "s"} for ${pickCount} pick${pickCount === 1 ? "" : "s"}`,
     };
   }
   return { check: true, message: "" };

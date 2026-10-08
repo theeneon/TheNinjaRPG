@@ -557,31 +557,7 @@ export const getReward = (
   const rewards = postProcessRewards(rawRewards);
 
   // Update trackers for experience gained from quest rewards
-  const experienceTrackerTasks = [];
-  if (rewards.reward_medical_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "medical_experience_gained" as const,
-      increment: rewards.reward_medical_experience,
-    });
-  }
-  if (rewards.reward_crafting_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "crafting_experience_gained" as const,
-      increment: rewards.reward_crafting_experience,
-    });
-  }
-  if (rewards.reward_hunting_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "hunting_experience_gained" as const,
-      increment: rewards.reward_hunting_experience,
-    });
-  }
-  if (rewards.reward_gathering_experience > 0) {
-    experienceTrackerTasks.push({
-      task: "gathering_experience_gained" as const,
-      increment: rewards.reward_gathering_experience,
-    });
-  }
+  const experienceTrackerTasks = getExperienceTrackerTasks(rewards);
   // Fold follow-up trackers onto the already-updated questData so progress from the
   // first getNewTrackers call is preserved (single authoritative questData write).
   // complete_specific_quest fires once on the active -> completed transition: `resolved`
@@ -619,6 +595,54 @@ export const getReward = (
     consequences,
     rewardChoice,
   };
+};
+
+/**
+ * `*_experience_gained` tracker increments for the profession experience in a reward. Emitted
+ * when a completion pays out, and again when a reward-choice pick grants experience later.
+ */
+export const getExperienceTrackerTasks = (
+  rewards: Pick<
+    ObjectiveRewardType,
+    | "reward_medical_experience"
+    | "reward_crafting_experience"
+    | "reward_hunting_experience"
+    | "reward_gathering_experience"
+  >,
+) => {
+  const tasks: {
+    task:
+      | "medical_experience_gained"
+      | "crafting_experience_gained"
+      | "hunting_experience_gained"
+      | "gathering_experience_gained";
+    increment: number;
+  }[] = [];
+  if (rewards.reward_medical_experience > 0) {
+    tasks.push({
+      task: "medical_experience_gained",
+      increment: rewards.reward_medical_experience,
+    });
+  }
+  if (rewards.reward_crafting_experience > 0) {
+    tasks.push({
+      task: "crafting_experience_gained",
+      increment: rewards.reward_crafting_experience,
+    });
+  }
+  if (rewards.reward_hunting_experience > 0) {
+    tasks.push({
+      task: "hunting_experience_gained",
+      increment: rewards.reward_hunting_experience,
+    });
+  }
+  if (rewards.reward_gathering_experience > 0) {
+    tasks.push({
+      task: "gathering_experience_gained",
+      increment: rewards.reward_gathering_experience,
+    });
+  }
+  return tasks;
 };
 
 export type GetRewardResult = ReturnType<typeof getReward>["rewards"];

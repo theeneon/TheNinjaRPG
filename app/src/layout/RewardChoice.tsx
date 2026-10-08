@@ -31,23 +31,6 @@ import { useUserData } from "@/utils/UserContext";
 import type { RewardChoiceDisplay } from "@/validators/rewards";
 
 /**
- * Requests the reward-choice modal to open, also for offers the player dismissed earlier in
- * this session (e.g. from the logbook button, or after a completion was refused because an
- * offer is still waiting).
- */
-export const rewardChoiceOpenAtom = atom<boolean>(false);
-
-/** Opens the reward-choice modal and refreshes the waiting offers. */
-export const useOpenRewardChoice = () => {
-  const utils = api.useUtils();
-  const setOpen = useSetAtom(rewardChoiceOpenAtom);
-  return async () => {
-    await utils.quests.getPendingRewardChoices.invalidate();
-    setOpen(true);
-  };
-};
-
-/**
  * Global modal where the player picks the rewards of a completed "choose" quest. It opens on
  * its own whenever an offer is waiting that the player has not dismissed in this session.
  */
@@ -90,15 +73,18 @@ export const RewardChoiceModal: React.FC = () => {
   );
   const selectedIds =
     current && selection.choiceId === current.choiceId ? selection.cardIds : [];
-  const required = current ? requiredRewardPicks(current) : 0;
+  const unavailableIds = new Set(
+    current?.cards.filter((card) => card.unavailableReason).map((card) => card.id),
+  );
+  const required = current ? requiredRewardPicks(current, unavailableIds) : 0;
   const remaining = (choices?.length ?? 0) - 1;
 
   const toggleCard = (cardId: string) => {
-    if (!current || isClaiming) return;
+    if (!current || isClaiming || unavailableIds.has(cardId)) return;
     setErrorMessage(null);
     setSelection({
       choiceId: current.choiceId,
-      cardIds: toggleRewardPick(selectedIds, cardId, required),
+      cardIds: toggleRewardPick(selectedIds, cardId, required, current.cards),
     });
   };
 
@@ -120,7 +106,9 @@ export const RewardChoiceModal: React.FC = () => {
         const isOpen = typeof open === "function" ? open(true) : open;
         if (!isOpen) dismiss();
       }}
-      proceed_label={`Claim Reward${required === 1 ? "" : "s"}`}
+      proceed_label={
+        required === 0 ? "Clear Offer" : `Claim Reward${required === 1 ? "" : "s"}`
+      }
       proceed_loading_label="Claiming..."
       isLoading={isClaiming}
       proceedDisabled={selectedIds.length !== required}
@@ -140,15 +128,21 @@ export const RewardChoiceModal: React.FC = () => {
         <div className="text-center">
           <p className="font-semibold">{current.questName}</p>
           <p className="text-muted-foreground text-sm">
-            Select {required} reward{required === 1 ? "" : "s"} to claim
+            {required === 0
+              ? "You already have every reward offered here"
+              : `Select ${required} reward${required === 1 ? "" : "s"} to claim`}
           </p>
         </div>
         <fieldset className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-3">
           <legend className="sr-only">Rewards to choose from</legend>
           {current.cards.map((card) => {
             const isSelected = selectedIds.includes(card.id);
+            // Blocked when clicking would not change the selection (e.g. a full multi-pick).
             const isBlocked =
-              !isSelected && required > 1 && selectedIds.length >= required;
+              !!card.unavailableReason ||
+              (!isSelected &&
+                toggleRewardPick(selectedIds, card.id, required, current.cards) ===
+                  selectedIds);
             return (
               <RewardChoiceCard
                 key={card.id}
@@ -280,7 +274,9 @@ const RewardChoiceCard: React.FC<{
         >
           {isSelected && <Check className="h-3 w-3" />}
         </span>
-        {isSelected ? (
+        {card.unavailableReason ? (
+          card.unavailableReason
+        ) : isSelected ? (
           "Selected"
         ) : (
           <>
@@ -299,4 +295,21 @@ const getAmountIcon = (field: string): LucideIcon => {
   if (field.endsWith("experience") || field === "reward_exp") return TrendingUp;
   if (field === "reward_reputation" || field === "reward_prestige") return Sparkles;
   return Coins;
+};
+
+/**
+ * Requests the reward-choice modal to open, also for offers the player dismissed earlier in
+ * this session (e.g. from the logbook button, or after a completion was refused because an
+ * offer is still waiting).
+ */
+export const rewardChoiceOpenAtom = atom<boolean>(false);
+
+/** Opens the reward-choice modal and refreshes the waiting offers. */
+export const useOpenRewardChoice = () => {
+  const utils = api.useUtils();
+  const setOpen = useSetAtom(rewardChoiceOpenAtom);
+  return async () => {
+    await utils.quests.getPendingRewardChoices.invalidate();
+    setOpen(true);
+  };
 };

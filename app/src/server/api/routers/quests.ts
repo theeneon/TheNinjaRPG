@@ -83,6 +83,7 @@ import {
   fallbackQuestsFilter,
   filterQuestTrackersForDbPersist,
   getActiveObjectives,
+  getExperienceTrackerTasks,
   getMissionHallSettings,
   getNewTrackers,
   getReward,
@@ -99,9 +100,11 @@ import {
   verifyQuestContentForSave,
 } from "@/libs/quest";
 import {
+  getUnavailableRewardCards,
   REWARD_CHOICE_AMOUNT_LABELS,
   REWARD_CHOICE_PENDING_MESSAGE,
   REWARD_CHOICE_READY_MESSAGE,
+  type RewardChoiceOwnership,
   rewardFromChoiceCards,
   validateRewardPicks,
   verifyRewardChoiceForSave,
@@ -1172,15 +1175,22 @@ export const questsRouter = createTRPCRouter({
     })
     .output(z.array(RewardChoiceDisplaySchema))
     .query(async ({ ctx }) => {
-      const rows = await ctx.drizzle.query.questHistory.findMany({
-        columns: { questId: true, pendingRewardChoice: true },
-        where: and(
-          eq(questHistory.userId, ctx.userId),
-          isNotNull(questHistory.pendingRewardChoice),
-        ),
-        with: { quest: { columns: { name: true } } },
-      });
-      return await resolveRewardChoiceDisplays(ctx.drizzle, rows);
+      const [user, rows] = await Promise.all([
+        ctx.drizzle.query.userData.findFirst({
+          columns: { userId: true, sageModeId: true },
+          where: eq(userData.userId, ctx.userId),
+        }),
+        ctx.drizzle.query.questHistory.findMany({
+          columns: { questId: true, pendingRewardChoice: true },
+          where: and(
+            eq(questHistory.userId, ctx.userId),
+            isNotNull(questHistory.pendingRewardChoice),
+          ),
+          with: { quest: { columns: { name: true } } },
+        }),
+      ]);
+      if (!user) return [];
+      return await resolveRewardChoiceDisplays(ctx.drizzle, user, rows);
     }),
   claimRewardChoice: protectedProcedure
     .meta({ mcp: { description: "Pick and claim rewards from a quest reward choice" } })
@@ -1221,7 +1231,15 @@ export const questsRouter = createTRPCRouter({
       if (offer.data.id !== input.choiceId) {
         return errorResponse("This reward choice is no longer available");
       }
-      const picks = validateRewardPicks(offer.data, input.cardIds);
+      // Refuse picks that would grant nothing (owned content, a second sage mode) while the
+      // offer is still stored, so the player can choose again.
+      const ownership = await fetchRewardChoiceOwnership(
+        ctx.drizzle,
+        user,
+        offer.data.cards,
+      );
+      const unavailable = getUnavailableRewardCards(offer.data.cards, ownership);
+      const picks = validateRewardPicks(offer.data, input.cardIds, unavailable);
       if (!picks.success) return errorResponse(picks.message);
       // Consume exactly the offer that was validated; a parallel claim or a newer offer
       // leaves zero rows affected, so the picked rewards are granted at most once.
@@ -1238,13 +1256,45 @@ export const questsRouter = createTRPCRouter({
       if (consumed.rowsAffected === 0) {
         return errorResponse("This reward choice was already claimed");
       }
-      // Mutations
+      const questName = history.quest?.name ?? "quest";
       const rewards = postProcessRewards(rewardFromChoiceCards(picks.cards));
+      // Nothing on the offer can be granted any more: clearing it unblocks the next completion.
+      if (picks.cards.length === 0) {
+        return {
+          success: true,
+          message: `You already have every reward offered by ${questName}`,
+          rewards,
+          badges: [],
+        };
+      }
+      // Picked profession experience advances other quests' objectives, as at completion.
+      const trackersSaved = await advanceRewardChoiceTrackers(
+        ctx.drizzle,
+        ctx.userId,
+        rewards,
+      );
+      if (!trackersSaved) {
+        // Hand the offer back (unless something newer took its place) so a retry can claim it.
+        await ctx.drizzle
+          .update(questHistory)
+          .set({ pendingRewardChoice: offer.data })
+          .where(
+            and(
+              eq(questHistory.id, history.id),
+              eq(questHistory.userId, ctx.userId),
+              isNull(questHistory.pendingRewardChoice),
+            ),
+          );
+        return errorResponse("Your character changed while claiming, please try again");
+      }
+      // Mutations. Scalars are SQL increments and a pick never carries rank or village, so the
+      // payout leaves questData to the snapshot claim above instead of writing back this read.
       const { items, jutsus, bloodlines, badges, sageModes } = await updateRewards({
         client: ctx.drizzle,
         user,
         rewards,
         reason: "QUEST",
+        persistQuestData: false,
       });
       rewards.reward_items = items.map((i) => i.name);
       rewards.reward_jutsus = jutsus.map((i) => i.name);
@@ -1253,7 +1303,7 @@ export const questsRouter = createTRPCRouter({
       rewards.reward_badges = badges.map((i) => i.name);
       return {
         success: true,
-        message: `Claimed rewards from ${history.quest?.name ?? "quest"}`,
+        message: `Claimed rewards from ${questName}`,
         rewards,
         badges,
       };
@@ -1478,6 +1528,9 @@ export const updateRewards = async (info: {
   // from `questUser`, whose in-memory history row still reads active (the completion CAS only
   // touched the DB), so without this it would rebuild a tracker the caller just dropped.
   dropTrackerForQuestId?: string;
+  // Write `user.questData` back (default). A caller that did not claim the user snapshot passes
+  // false so its possibly stale read cannot overwrite trackers another request committed.
+  persistQuestData?: boolean;
 }) => {
   // Destructure
   const {
@@ -1489,6 +1542,7 @@ export const updateRewards = async (info: {
     questUser,
     postClaimUserDataPatch,
     dropTrackerForQuestId,
+    persistQuestData = true,
   } = info;
   // Check if we need to fetch war data
   const hasWarRewards =
@@ -1692,7 +1746,7 @@ export const updateRewards = async (info: {
     !user.sageModeId && sageModes.length > 0 ? getRandomElement(sageModes) : undefined;
 
   const updatedUserData: Record<string, unknown> = {
-    questData: user.questData,
+    ...(persistQuestData ? { questData: user.questData } : {}),
     money: sql`${userData.money} + ${rewards.reward_money ?? 0}`,
     seichiSilver: sql`${userData.seichiSilver} + ${rewards.reward_seichi_silver ?? 0}`,
     earnedExperience: sql`${userData.earnedExperience} + ${rewards.reward_exp ?? 0}`,
@@ -1705,8 +1759,10 @@ export const updateRewards = async (info: {
     craftingExperience: sql`${userData.craftingExperience} + ${rewards.reward_crafting_experience ?? 0}`,
     gatheringExperience: sql`${userData.gatheringExperience} + ${rewards.reward_gathering_experience ?? 0}`,
     sageMasteryExperience: sql`LEAST(${userData.sageMasteryExperience} + ${rewards.reward_sage_mastery_experience ?? 0}, ${SAGE_MASTERY_EXP_CAP})`,
-    rank: getNewRank ? rewards.reward_rank : user.rank,
-    villageId: getNewVillage && villageData ? villageData.id : user.villageId,
+    // Only written when granted: echoing the read values back would revert a promotion or
+    // village change another request committed after this caller loaded `user`.
+    ...(getNewRank ? { rank: rewards.reward_rank } : {}),
+    ...(getNewVillage && villageData ? { villageId: villageData.id } : {}),
     ...(rolledSageMode
       ? { sageModeId: sql`COALESCE(${userData.sageModeId}, ${rolledSageMode.id})` }
       : {}),
@@ -3397,6 +3453,7 @@ export const sageQuestFilters = (
  */
 export const resolveRewardChoiceDisplays = async (
   client: DrizzleClient,
+  user: Pick<UserData, "userId" | "sageModeId">,
   rows: {
     questId: string;
     pendingRewardChoice: unknown;
@@ -3429,7 +3486,7 @@ export const resolveRewardChoiceDisplays = async (
   const bloodlineIds = idsFor("reward_bloodlines");
   const sageModeIds = idsFor("reward_sage_modes");
   const badgeIds = idsFor("reward_badges");
-  const [items, jutsus, bloodlines, sageModes, badges] = await Promise.all([
+  const [items, jutsus, bloodlines, sageModes, badges, ownership] = await Promise.all([
     itemIds.length > 0
       ? client
           .select({
@@ -3488,6 +3545,11 @@ export const resolveRewardChoiceDisplays = async (
           .from(badge)
           .where(inArray(badge.id, badgeIds))
       : [],
+    fetchRewardChoiceOwnership(
+      client,
+      user,
+      offers.flatMap((offer) => offer.cards),
+    ),
   ]);
   const content = new Map<
     string,
@@ -3513,30 +3575,156 @@ export const resolveRewardChoiceDisplays = async (
   register("reward_sage_modes", sageModes);
   register("reward_badges", badges);
 
-  return offers.map((offer) => ({
-    questId: offer.questId,
-    questName: offer.questName,
-    choiceId: offer.id,
-    pickCount: offer.pickCount,
-    cards: offer.cards.map((card) => {
-      if (!card.contentId) {
-        const field = card.field as RewardChoiceAmountField;
+  return offers.map((offer) => {
+    const unavailable = getUnavailableRewardCards(offer.cards, ownership);
+    return {
+      questId: offer.questId,
+      questName: offer.questName,
+      choiceId: offer.id,
+      pickCount: offer.pickCount,
+      cards: offer.cards.map((card) => {
+        const unavailableReason = unavailable.get(card.id) ?? null;
+        if (!card.contentId) {
+          const field = card.field as RewardChoiceAmountField;
+          return {
+            ...card,
+            name: REWARD_CHOICE_AMOUNT_LABELS[field] ?? card.field,
+            image: null,
+            rarity: null,
+            description: null,
+            unavailableReason,
+          };
+        }
+        const resolved = content.get(`${card.field}:${card.contentId}`);
         return {
           ...card,
-          name: REWARD_CHOICE_AMOUNT_LABELS[field] ?? card.field,
-          image: null,
-          rarity: null,
-          description: null,
+          name: resolved?.name ?? "Unknown reward",
+          image: resolved?.image ?? null,
+          rarity: resolved?.rarity ?? null,
+          description: resolved?.description ?? null,
+          unavailableReason,
         };
-      }
-      const resolved = content.get(`${card.field}:${card.contentId}`);
-      return {
-        ...card,
-        name: resolved?.name ?? "Unknown reward",
-        image: resolved?.image ?? null,
-        rarity: resolved?.rarity ?? null,
-        description: resolved?.description ?? null,
-      };
-    }),
-  }));
+      }),
+    };
+  });
+};
+
+/**
+ * Which of the offered jutsus, bloodlines, badges and sage modes the player already holds, using
+ * the same ownership tables `updateRewards` checks before granting them.
+ */
+export const fetchRewardChoiceOwnership = async (
+  client: DrizzleClient,
+  user: Pick<UserData, "userId" | "sageModeId">,
+  cards: RewardChoiceCard[],
+): Promise<RewardChoiceOwnership> => {
+  const idsFor = (field: RewardChoiceCard["field"]) => [
+    ...new Set(
+      cards.flatMap((card) =>
+        card.field === field && card.contentId ? [card.contentId] : [],
+      ),
+    ),
+  ];
+  const jutsuIds = idsFor("reward_jutsus");
+  const bloodlineIds = idsFor("reward_bloodlines");
+  const badgeIds = idsFor("reward_badges");
+  const sageModeIds = idsFor("reward_sage_modes");
+  const [jutsus, bloodlines, badges, sageModes] = await Promise.all([
+    jutsuIds.length > 0
+      ? client
+          .select({ id: userJutsu.jutsuId })
+          .from(userJutsu)
+          .where(
+            and(
+              eq(userJutsu.userId, user.userId),
+              inArray(userJutsu.jutsuId, jutsuIds),
+            ),
+          )
+      : [],
+    bloodlineIds.length > 0
+      ? client
+          .select({ id: bloodlineRolls.bloodlineId })
+          .from(bloodlineRolls)
+          .where(
+            and(
+              eq(bloodlineRolls.userId, user.userId),
+              inArray(bloodlineRolls.bloodlineId, bloodlineIds),
+            ),
+          )
+      : [],
+    badgeIds.length > 0
+      ? client
+          .select({ id: userBadge.badgeId })
+          .from(userBadge)
+          .where(
+            and(
+              eq(userBadge.userId, user.userId),
+              inArray(userBadge.badgeId, badgeIds),
+            ),
+          )
+      : [],
+    sageModeIds.length > 0 && !user.sageModeId
+      ? client
+          .select({ id: sageModeRolls.sageModeId })
+          .from(sageModeRolls)
+          .where(
+            and(
+              eq(sageModeRolls.userId, user.userId),
+              inArray(sageModeRolls.sageModeId, sageModeIds),
+            ),
+          )
+      : [],
+  ]);
+  const toSet = (rows: { id: string | null }[]) =>
+    new Set(rows.flatMap((row) => (row.id ? [row.id] : [])));
+  return {
+    jutsuIds: toSet(jutsus),
+    bloodlineIds: toSet(bloodlines),
+    badgeIds: toSet(badges),
+    sageModeIds: toSet(sageModes),
+    hasSageMode: !!user.sageModeId,
+  };
+};
+
+/**
+ * Emits the `*_experience_gained` increments for profession experience granted by a reward
+ * choice pick, which the completion could not emit because the experience was still a card.
+ * Uses the completion's pattern: a fresh user read, then `claimUserSnapshot` on its `updatedAt`
+ * so a tracker write committed meanwhile is never overwritten. Returns false when the snapshot
+ * moved and nothing was written.
+ */
+export const advanceRewardChoiceTrackers = async (
+  client: DrizzleClient,
+  userId: string,
+  rewards: GetRewardResult,
+) => {
+  if (getExperienceTrackerTasks(rewards).length === 0) return true;
+  const { user } = await fetchUpdatedUser({ client, userId });
+  if (!user) return false;
+  return await claimRewardChoiceTrackers(client, user, rewards);
+};
+
+/** Snapshot-claimed tracker write of `advanceRewardChoiceTrackers` for an already-read user. */
+export const claimRewardChoiceTrackers = async (
+  client: DrizzleClient,
+  user: NonNullable<UserWithRelations>,
+  rewards: GetRewardResult,
+) => {
+  const tasks = getExperienceTrackerTasks(rewards);
+  const taskNames = new Set<string>(tasks.map((entry) => entry.task));
+  const advancesObjective = user.userQuests.some((userQuest) =>
+    userQuest.quest?.content.objectives.some((objective) =>
+      taskNames.has(objective.task),
+    ),
+  );
+  // No quest listens for this experience: the payout's SQL increments need no snapshot.
+  if (!advancesObjective) return true;
+  const { trackers } = getNewTrackers(user, tasks);
+  const claim = await claimUserSnapshot({
+    client,
+    userId: user.userId,
+    updatedAt: user.updatedAt,
+    set: { questData: filterQuestTrackersForDbPersist(trackers, user) },
+  });
+  return claim.success;
 };

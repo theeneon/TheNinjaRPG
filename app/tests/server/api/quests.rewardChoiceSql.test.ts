@@ -1,8 +1,17 @@
 // @vitest-environment node
 
 import { eq } from "drizzle-orm";
-import { beforeEach, expect, it } from "vitest";
-import { item, quest, questHistory, userData, userItem } from "@/drizzle/schema";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  badge,
+  item,
+  quest,
+  questHistory,
+  sageModeRolls,
+  userBadge,
+  userData,
+  userItem,
+} from "@/drizzle/schema";
 import { questsRouter } from "@/server/api/routers/quests";
 import type { PendingRewardChoice } from "@/validators/rewards";
 import {
@@ -54,7 +63,16 @@ const playerState = async () => {
 
 describeWithDatabase("quest reward choice against a real MySQL", () => {
   beforeEach(async () => {
-    await resetTables(userData, quest, questHistory, item, userItem);
+    await resetTables(
+      userData,
+      quest,
+      questHistory,
+      item,
+      userItem,
+      badge,
+      userBadge,
+      sageModeRolls,
+    );
     await insertUsers([
       { userId: PLAYER, username: "choiceplayer", money: 0, earnedExperience: 0 },
     ]);
@@ -150,5 +168,104 @@ describeWithDatabase("quest reward choice against a real MySQL", () => {
     );
     expect(results.filter((result) => result.success)).toHaveLength(1);
     expect(await playerState()).toMatchObject({ money: 500, exp: 1000, pending: null });
+  });
+
+  describe("rewards the player already holds", () => {
+    const BADGE = "choice-badge";
+    const ownedOffer = (cards: PendingRewardChoice["cards"]): PendingRewardChoice => ({
+      id: "offer-owned",
+      pickCount: 1,
+      cards,
+    });
+    const badgeCard = {
+      id: `reward_badges:${BADGE}`,
+      field: "reward_badges" as const,
+      amount: 1,
+      contentId: BADGE,
+    };
+    const storeOffer = async (choice: PendingRewardChoice) => {
+      const database = await getTestDatabase();
+      await database
+        .update(questHistory)
+        .set({ pendingRewardChoice: choice })
+        .where(eq(questHistory.userId, PLAYER));
+    };
+
+    beforeEach(async () => {
+      const database = await getTestDatabase();
+      await database
+        .insert(badge)
+        .values({ id: BADGE, name: "Owned Badge", image: "", description: "" });
+      await database.insert(userBadge).values({ userId: PLAYER, badgeId: BADGE });
+    });
+
+    it("shows an owned card as unavailable and refuses it without consuming the offer", async () => {
+      const choice = ownedOffer([
+        { id: "reward_money", field: "reward_money", amount: 500 },
+        badgeCard,
+      ]);
+      await storeOffer(choice);
+
+      const [listed] = await (await caller()).getPendingRewardChoices();
+      expect(listed?.cards.map((card) => card.unavailableReason)).toEqual([
+        null,
+        "Already owned",
+      ]);
+
+      const refused = await (await caller()).claimRewardChoice({
+        questId: QUEST,
+        choiceId: choice.id,
+        cardIds: [badgeCard.id],
+      });
+      expect(refused.success).toBe(false);
+      expect(await playerState()).toMatchObject({ money: 0, pending: choice });
+
+      const claimed = await (await caller()).claimRewardChoice({
+        questId: QUEST,
+        choiceId: choice.id,
+        cardIds: ["reward_money"],
+      });
+      expect(claimed.success).toBe(true);
+      expect(await playerState()).toMatchObject({ money: 500, pending: null });
+    });
+
+    it("clears an offer on which nothing can be granted any more", async () => {
+      await storeOffer(ownedOffer([badgeCard]));
+
+      const result = await (await caller()).claimRewardChoice({
+        questId: QUEST,
+        choiceId: "offer-owned",
+        cardIds: [],
+      });
+      expect(result.success).toBe(true);
+      expect(await playerState()).toMatchObject({ money: 0, pending: null });
+    });
+
+    it("refuses a second sage mode and keeps the offer", async () => {
+      const sageCard = (id: string) => ({
+        id: `reward_sage_modes:${id}`,
+        field: "reward_sage_modes" as const,
+        amount: 1,
+        contentId: id,
+      });
+      const choice: PendingRewardChoice = {
+        id: "offer-sage",
+        pickCount: 2,
+        cards: [
+          { id: "reward_money", field: "reward_money", amount: 500 },
+          sageCard("toad"),
+          sageCard("snake"),
+        ],
+      };
+      await storeOffer(choice);
+
+      const result = await (await caller()).claimRewardChoice({
+        questId: QUEST,
+        choiceId: choice.id,
+        cardIds: ["reward_sage_modes:toad", "reward_sage_modes:snake"],
+      });
+      expect(result).toEqual({ success: false, message: "Only one sage mode can be picked" });
+      expect(await playerState()).toMatchObject({ pending: choice });
+    });
   });
 });

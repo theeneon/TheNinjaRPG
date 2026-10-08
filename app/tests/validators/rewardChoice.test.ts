@@ -55,7 +55,8 @@ describe("reward choice payloads", () => {
 
   it("caps a claim at the maximum pick count", () => {
     const base = { questId: "q", choiceId: "o" };
-    expect(ClaimRewardChoiceSchema.safeParse({ ...base, cardIds: [] }).success).toBe(false);
+    // Empty clears an offer whose every card the player already holds.
+    expect(ClaimRewardChoiceSchema.safeParse({ ...base, cardIds: [] }).success).toBe(true);
     expect(
       ClaimRewardChoiceSchema.safeParse({ ...base, cardIds: ["1", "2", "3", "4", "5", "6"] })
         .success,
