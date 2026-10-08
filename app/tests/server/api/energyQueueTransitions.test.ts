@@ -200,6 +200,63 @@ describeWithDatabase("Energy queue state transitions", () => {
     expect(after.regenAt).toEqual(before.regenAt);
     expect(after.updatedAt).toEqual(before.updatedAt);
   });
+  it("finishes travel repeatedly without a queue or another snapshot write", async () => {
+    await prepare([]);
+    const snapshot = new Date(Date.now() + 60_000);
+    await patch({ status: "TRAVEL", updatedAt: snapshot });
+    const caller = await callerFor(travelRouter, USER);
+    expect((await caller.finishGlobalMove()).success).toBe(true);
+    const arrived = (await read())!;
+    expect(arrived.status).toBe("AWAKE");
+    expect(arrived.travelFinishAt).toBeNull();
+    expect(arrived.updatedAt.getTime()).toBe(snapshot.getTime() + 1);
+    expect((await caller.finishGlobalMove()).success).toBe(true);
+    expect((await read())!.updatedAt).toEqual(arrived.updatedAt);
+  });
+  it("rejects a stale travel snapshot without applying recovery", async () => {
+    await prepare();
+    const regenAt = new Date(Date.now() - 195_000);
+    await patch({ status: "TRAVEL", regenAt });
+    const before = (await read())!;
+    const changedAt = new Date(before.updatedAt.getTime() + 1);
+    const db = await getTestDatabase();
+    const racingDb = new Proxy(db, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property !== "update") return value;
+        return (table: typeof userData) => {
+          const update = value.call(target, table);
+          if (table !== userData) return update;
+          return {
+            set: (values: Record<string, unknown>) => {
+              const builder = update.set(values);
+              return {
+                where: async (...conditions: unknown[]) => {
+                  await patch({ updatedAt: changedAt, curHealth: 42 });
+                  return builder.where(...conditions);
+                },
+              };
+            },
+          };
+        };
+      },
+    });
+    const result = await travelRouter
+      .createCaller({ drizzle: racingDb, userId: USER } as never)
+      .finishGlobalMove();
+    expect(result).toMatchObject({
+      success: false,
+      message: "Your travel state changed. Please try again",
+    });
+    expect(await read()).toMatchObject({
+      status: "TRAVEL",
+      regenAt,
+      curEnergy: before.curEnergy,
+      curHealth: 42,
+      updatedAt: changedAt,
+      energyTrainingQueue: entries,
+    });
+  });
   it.each(["success", "partial failure", "concurrent"] as const)(
     "settles pre-combat queues exactly once for %s",
     async (mode) => {

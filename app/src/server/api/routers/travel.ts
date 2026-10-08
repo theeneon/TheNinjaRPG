@@ -58,6 +58,7 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import { isTransientDatabaseError } from "@/server/dbRetry";
+import { claimUserSnapshot } from "@/server/utils/concurrency";
 import {
   fetchPublishedSectorMap,
   fetchPublishedSectorMaps,
@@ -631,9 +632,12 @@ export const travelRouter = createTRPCRouter({
         };
       }
       const recoveryTicks = sql`FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000})`;
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
+      const claim = await claimUserSnapshot({
+        client: ctx.drizzle,
+        userId: ctx.userId,
+        updatedAt: user.updatedAt,
+        where: [eq(userData.status, "TRAVEL")],
+        set: {
           status: "AWAKE",
           travelFinishAt: null,
           ...(user.energyTrainingQueue?.length
@@ -646,16 +650,9 @@ export const travelRouter = createTRPCRouter({
                 regenAt: sql`TIMESTAMPADD(SECOND, ${recoveryTicks} * ${REGEN_SECONDS}, ${userData.regenAt})`,
               }
             : {}),
-          updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.status, "TRAVEL"),
-            eq(userData.updatedAt, user.updatedAt),
-          ),
-        );
-      if (user.status === "TRAVEL" && result.rowsAffected !== 1)
+        },
+      });
+      if (user.status === "TRAVEL" && !claim.success)
         return errorResponse("Your travel state changed. Please try again");
       user.status = "AWAKE";
       user.travelFinishAt = null;
