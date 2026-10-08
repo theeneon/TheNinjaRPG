@@ -1455,7 +1455,7 @@ const currentTrainingEnergy = (
       ["BATTLE", "HOSPITALIZED", "TRAVEL"].includes(userData.status)
         ? "AWAKE"
         : userData.status,
-      userData.status === "BATTLE" ? 0 : userData.regeneration,
+      userData.status === "BATTLE" ? 0 : (userData.energyRegeneration ?? 0),
       userData.regenAt,
       timeDiff,
     ).current,
