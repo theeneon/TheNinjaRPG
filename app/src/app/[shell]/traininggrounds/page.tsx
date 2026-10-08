@@ -155,18 +155,27 @@ export default function Training() {
         defaultBackHref="/village"
       >
         <div className="overflow-x-auto overflow-y-hidden">
-          <NavTabs
-            current={activeSection}
-            options={[
-              "Stats",
-              "Masteries",
-              "Jutsu",
-              "Covert",
-              ...(showSenseiSystem ? ["Sensei"] : []),
-            ]}
-            setValue={setSection}
-            className="px-2 text-xs sm:text-sm"
-          />
+          <div className="mx-auto w-max min-w-full">
+            <NavTabs
+              current={activeSection}
+              options={[
+                "Stats",
+                "Masteries",
+                "Jutsu",
+                "Covert",
+                ...(showSenseiSystem ? ["Sensei"] : []),
+              ]}
+              setValue={setSection}
+              icons={{
+                Stats: <Swords aria-hidden="true" className="h-4 w-4" />,
+                Masteries: <Medal aria-hidden="true" className="h-4 w-4" />,
+                Jutsu: <Zap aria-hidden="true" className="h-4 w-4" />,
+                Covert: <Eye aria-hidden="true" className="h-4 w-4" />,
+                Sensei: <Handshake aria-hidden="true" className="h-4 w-4" />,
+              }}
+              className="min-h-11 whitespace-nowrap px-3 py-2.5 text-sm sm:text-base"
+            />
+          </div>
         </div>
         {(!!userData.currentlyTrainingMastery ||
           !!userData.energyTrainingQueue?.length) && (

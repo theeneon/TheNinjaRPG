@@ -9,6 +9,7 @@ interface NavTabsProps {
   className?: string;
   current: string | null;
   options: string[] | readonly string[];
+  icons?: Partial<Record<string, React.ReactNode>>;
   fontSize?: "text-xs" | "text-sm" | "text-base";
   setValue?: React.Dispatch<React.SetStateAction<any>>;
   onChange?: (value: string) => void;
@@ -60,7 +61,14 @@ const NavTabs: React.FC<NavTabsProps> = (props) => {
                 });
               }}
             >
-              {option}
+              {props.icons?.[option] ? (
+                <span className="inline-flex items-center gap-2 whitespace-nowrap">
+                  {props.icons[option]}
+                  {option}
+                </span>
+              ) : (
+                option
+              )}
             </button>
           </li>
         ))}
