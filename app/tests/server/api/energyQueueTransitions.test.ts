@@ -225,9 +225,10 @@ describeWithDatabase("Energy queue state transitions", () => {
   });
 
   it.each(["queued", "bulk"])("cleaner retries a %s deadlock without replaying recovery", async mode => {
-    await prepare();
+    await prepare(mode === "queued" ? entries : []);
     const db = await getTestDatabase();
-    await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() - 1000), regenAt: new Date(Date.now() - 195_000) });
+    const regenAt = new Date(Date.now() - 195_000);
+    await patch({ status: "TRAVEL", travelFinishAt: new Date(Date.now() - 1000), regenAt });
     let attempts = 0;
     const racingDb = new Proxy(db, {
       get(target, key, receiver) {
@@ -250,7 +251,8 @@ describeWithDatabase("Energy queue state transitions", () => {
     await completeExpiredGlobalTravel(racingDb);
     expect(attempts).toBe(2);
     const arrived = (await read())!;
-    expect(arrived).toMatchObject({ status: "AWAKE", curEnergy: 100, offence: 10, defence: 10, energyTrainingQueue: entries });
+    expect(arrived).toMatchObject({ status: "AWAKE", curEnergy: mode === "queued" ? 100 : 0, offence: 10, defence: 10, energyTrainingQueue: mode === "queued" ? entries : [] });
+    expect(arrived.regenAt.getTime()).toBe(regenAt.getTime() + (mode === "queued" ? 180_000 : 0));
     await completeExpiredGlobalTravel(db);
     expect(await read()).toEqual(arrived);
   });
