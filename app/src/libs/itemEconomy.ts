@@ -1,5 +1,5 @@
 import type { TradeableCurrencyType } from "@/drizzle/constants";
-import type { Item } from "@/drizzle/schema";
+import type { Item, ItemPurchaseCounter } from "@/drizzle/schema";
 import { getItemPurchasePeriodStart } from "@/utils/time";
 
 export const getAuctionPriceError = (
@@ -22,13 +22,18 @@ export const getAuctionPriceError = (
 
 export const getItemPurchaseAllowance = (
   item: Pick<Item, "purchaseLimit" | "purchaseLimitPeriod">,
-  counters: { periodStart: Date; quantity: number }[],
+  counters: Pick<ItemPurchaseCounter, "period" | "periodStart" | "quantity">[],
   now = new Date(),
 ) => {
   const periodStart = getItemPurchasePeriodStart(item.purchaseLimitPeriod, now);
+  // Period identity prevents overlapping UTC starts from sharing a quota and
+  // preserves usage if staff disable a limit or switch away and back.
   const purchased = periodStart
-    ? (counters.find((row) => row.periodStart.getTime() === periodStart.getTime())
-        ?.quantity ?? 0)
+    ? (counters.find(
+        (row) =>
+          row.period === item.purchaseLimitPeriod &&
+          row.periodStart.getTime() === periodStart.getTime(),
+      )?.quantity ?? 0)
     : 0;
   const limit = periodStart ? item.purchaseLimit : null;
   return {

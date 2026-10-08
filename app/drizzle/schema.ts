@@ -1515,6 +1515,7 @@ export const itemPurchaseCounter = mysqlTable(
   {
     userId: varchar("userId", { length: 191 }).notNull(),
     itemId: varchar("itemId", { length: 191 }).notNull(),
+    period: mysqlEnum("period", consts.ItemPurchaseLimitPeriods).notNull(),
     periodStart: datetime("periodStart", { mode: "date", fsp: 3 }).notNull(),
     quantity: int("quantity", { unsigned: true }).default(0).notNull(),
   },
@@ -1522,10 +1523,12 @@ export const itemPurchaseCounter = mysqlTable(
     periodKey: uniqueIndex("ItemPurchaseCounter_user_item_period_key").on(
       table.userId,
       table.itemId,
+      table.period,
       table.periodStart,
     ),
   }),
 );
+export type ItemPurchaseCounter = InferSelectModel<typeof itemPurchaseCounter>;
 export type ItemType = Item["itemType"];
 export type ItemSlotType = Item["slot"];
 export type ItemRarity = Item["rarity"];

@@ -2568,15 +2568,21 @@ export const itemRouter = createTRPCRouter({
       // Read userData before inventory so the transactional updatedAt CAS below
       // detects any capacity mutation that commits between these snapshots.
       const user = await fetchUser(ctx.drizzle, ctx.userId);
-      const [info, useritems, structures, questState, masterySources, purchaseCounters] =
-        await Promise.all([
-          fetchItem(ctx.drizzle, iid),
-          fetchUserItems(ctx.drizzle, uid),
-          fetchStructures(ctx.drizzle, input.villageId),
-          fetchUserQuestState(ctx.drizzle, ctx.userId),
-          fetchMasterySources(ctx.drizzle, uid),
-          fetchPurchaseCounters(ctx.drizzle, uid, iid, purchaseTime),
-        ]);
+      const [
+        info,
+        useritems,
+        structures,
+        questState,
+        masterySources,
+        purchaseCounters,
+      ] = await Promise.all([
+        fetchItem(ctx.drizzle, iid),
+        fetchUserItems(ctx.drizzle, uid),
+        fetchStructures(ctx.drizzle, input.villageId),
+        fetchUserQuestState(ctx.drizzle, ctx.userId),
+        fetchMasterySources(ctx.drizzle, uid),
+        fetchPurchaseCounters(ctx.drizzle, uid, iid, purchaseTime),
+      ]);
       // Derived — capacity counts carried stacks by dedicated inventory bucket
       const carriedItems = useritems?.filter((ui) => !ui.storedAtHome) ?? [];
       const bucketCounts = {
@@ -2751,6 +2757,7 @@ export const itemRouter = createTRPCRouter({
               .values({
                 userId: uid,
                 itemId: iid,
+                period: allowance.period,
                 periodStart: allowance.periodStart,
                 quantity: 0,
               })
@@ -2766,6 +2773,7 @@ export const itemRouter = createTRPCRouter({
                 and(
                   eq(itemPurchaseCounter.userId, uid),
                   eq(itemPurchaseCounter.itemId, iid),
+                  eq(itemPurchaseCounter.period, allowance.period),
                   eq(itemPurchaseCounter.periodStart, allowance.periodStart),
                   lte(itemPurchaseCounter.quantity, allowance.limit - input.stack),
                 ),

@@ -154,6 +154,7 @@ describeWithDatabase("item purchase quotas", () => {
         .values({
           userId: "buyer",
           itemId: "limited",
+          period: purchaseLimitPeriod,
           periodStart: new Date("2000-01-01T00:00:00Z"),
           quantity: 5,
         });
@@ -164,6 +165,24 @@ describeWithDatabase("item purchase quotas", () => {
       expect((await snapshot()).counters).toHaveLength(2);
     },
   );
+
+  it("does not reuse another period's counter with the same UTC start", async () => {
+    const db = await getTestDatabase();
+    await db.insert(itemPurchaseCounter).values({
+      userId: "buyer",
+      itemId: "limited",
+      period: "WEEKLY",
+      periodStart: getItemPurchasePeriodStart("DAILY")!,
+      quantity: 5,
+    });
+    const api = await callerFor(itemRouter, "buyer");
+    expect(await api.getPurchaseAllowance({ id: "limited" })).toMatchObject({ remaining: 5 });
+    expect(await api.buy({ itemId: "limited", villageId: "home", stack: 5 })).toMatchObject({ success: true });
+    const { counters } = await snapshot();
+    expect(counters).toHaveLength(2);
+    expect(counters.map((counter) => counter.period).sort()).toEqual(["DAILY", "WEEKLY"]);
+    expect(await api.getPurchaseAllowance({ id: "limited" })).toMatchObject({ remaining: 0 });
+  });
 
   it("does not consume quota or advance quests when funds are insufficient", async () => {
     const db = await getTestDatabase();
@@ -189,6 +208,7 @@ describeWithDatabase("item purchase quotas", () => {
             .values({
               userId: "buyer",
               itemId: "limited",
+              period: "DAILY",
               periodStart: getItemPurchasePeriodStart("DAILY")!,
               quantity: 5,
             });
