@@ -7,7 +7,7 @@ import {
   REGEN_SECONDS,
   SENSEI_GENIN_MED_EXP_SHARE_PERC,
 } from "@/drizzle/constants";
-import { userData } from "@/drizzle/schema";
+import { bloodline, userData } from "@/drizzle/schema";
 import { Pusher } from "@/libs/pusher";
 import { fetchUpdatedUser } from "@/routers/profile";
 import { hospitalRouter } from "@/server/api/routers/hospital";
@@ -330,10 +330,15 @@ describeWithDatabase("hospital healing another user", () => {
     );
   });
 
-  it("settles a hospitalized target's Energy before resetting its recovery clock", async () => {
+  it("settles a hospitalized target's Energy without regeneration bonuses", async () => {
     const database = await getTestDatabase();
+    await database.insert(bloodline).values({
+      id: "hospital-regen-line", name: "Regen Line", rank: "D",
+      image: "", description: "", effects: [], regenIncrease: 100,
+    });
     await database.update(userData).set({
       curEnergy: 20,
+      bloodlineId: "hospital-regen-line",
       regeneration: 60,
       regenAt: new Date(Date.now() - 75000),
     }).where(eq(userData.userId, TARGET_ID));

@@ -190,6 +190,9 @@ function CharacterProfile() {
               />
               )
             </p>
+            <p>
+              Energy regen per minute: {(userData.energyRegeneration ?? 0).toFixed(2)}
+            </p>
             <p>Gender: {userData.gender}</p>
           </div>
           <div className="flex flex-col items-start">

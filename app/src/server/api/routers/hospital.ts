@@ -191,7 +191,7 @@ export const hospitalRouter = createTRPCRouter({
           ? Math.min(
               u.maxEnergy,
               u.curEnergy +
-                u.regeneration *
+                u.energyRegeneration *
                   Math.floor(
                     Math.max(0, healedAt.getTime() - u.regenAt.getTime()) /
                       (REGEN_SECONDS * 1000),
@@ -229,7 +229,7 @@ export const hospitalRouter = createTRPCRouter({
             : {}),
           ...(isSelfHeal
             ? {
-                curEnergy: sql`LEAST(${u.maxEnergy}, ${userData.curEnergy} + ${u.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, ${healedAt})) / ${REGEN_SECONDS * 1_000_000}))`,
+                curEnergy: sql`LEAST(${u.maxEnergy}, ${userData.curEnergy} + ${u.energyRegeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, ${healedAt})) / ${REGEN_SECONDS * 1_000_000}))`,
                 maxEnergy: u.maxEnergy,
                 regenAt: healer.regenAt,
               }
@@ -263,7 +263,7 @@ export const hospitalRouter = createTRPCRouter({
                   }
                 : {}),
               // Settle Energy before resetting the hospital admission/regen clock.
-              curEnergy: sql`LEAST(${t.maxEnergy}, ${userData.curEnergy} + ${t.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+              curEnergy: sql`LEAST(${t.maxEnergy}, ${userData.curEnergy} + ${t.energyRegeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
               maxEnergy: t.maxEnergy,
               regenAt:
                 t.status === "HOSPITALIZED"
@@ -338,7 +338,7 @@ export const hospitalRouter = createTRPCRouter({
           .update(userData)
           .set({
             curHealth: user.maxHealth,
-            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.energyRegeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
             maxEnergy: user.maxEnergy,
             regenAt: sql`NOW(3)`,
             updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
@@ -357,7 +357,7 @@ export const hospitalRouter = createTRPCRouter({
           .set({
             curHealth: user.maxHealth,
             money: sql`${userData.money} - ${cost}`,
-            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.regeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
+            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${user.energyRegeneration} * FLOOR(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, ${userData.regenAt}, NOW(3))) / ${REGEN_SECONDS * 1_000_000}))`,
             maxEnergy: user.maxEnergy,
             regenAt: sql`NOW(3)`,
             updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
@@ -399,7 +399,7 @@ export const hospitalRouter = createTRPCRouter({
             curEnergy: Math.min(
               user.maxEnergy,
               user.curEnergy +
-                user.regeneration *
+                user.energyRegeneration *
                   Math.max(0, Math.floor(secondsPassed(user.regenAt) / REGEN_SECONDS)),
             ),
             maxEnergy: user.maxEnergy,
