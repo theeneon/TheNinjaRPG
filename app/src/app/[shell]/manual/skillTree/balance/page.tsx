@@ -64,8 +64,14 @@ const SkillTreeEffectsBalance: React.FC<SkillTreeEffectsBalanceProps> = (props) 
   );
 
   // Skill details query for modal
-  const { data: skillDetails, isPending: isSkillDetailsPending } =
-    api.skillTree.get.useQuery({ id: selectedSkillId }, { enabled: !!selectedSkillId });
+  const {
+    data: skillDetails,
+    isPending: isSkillDetailsPending,
+    isError: isSkillDetailsError,
+  } = api.skillTree.get.useQuery(
+    { id: selectedSkillId },
+    { enabled: !!selectedSkillId },
+  );
 
   // Can edit skill
   const canEdit = canChangeContent(userData?.role ?? "USER");
@@ -157,7 +163,10 @@ const SkillTreeEffectsBalance: React.FC<SkillTreeEffectsBalanceProps> = (props) 
             showEdit={canEdit ? "skillTree" : undefined}
           />
         )}
-        {!isSkillDetailsPending && !skillDetails && (
+        {isSkillDetailsError && (
+          <p role="alert">Skill details could not be loaded. Please try again.</p>
+        )}
+        {!isSkillDetailsPending && !isSkillDetailsError && !skillDetails && (
           <p role="alert">This skill could not be found.</p>
         )}
       </Modal>
@@ -186,8 +195,14 @@ const SkillTreeUsageBalance: React.FC<SkillTreeUsageBalanceProps> = (props) => {
 
   // Queries
   const { data, isPending } = api.data.getSkillTreeBalanceStatistics.useQuery(filter);
-  const { data: skillDetails, isPending: isSkillDetailsPending } =
-    api.skillTree.get.useQuery({ id: selectedSkillId }, { enabled: !!selectedSkillId });
+  const {
+    data: skillDetails,
+    isPending: isSkillDetailsPending,
+    isError: isSkillDetailsError,
+  } = api.skillTree.get.useQuery(
+    { id: selectedSkillId },
+    { enabled: !!selectedSkillId },
+  );
 
   // Check if user can change content
   const canEdit = canChangeContent(userData?.role ?? "USER");
@@ -271,7 +286,10 @@ const SkillTreeUsageBalance: React.FC<SkillTreeUsageBalanceProps> = (props) => {
             showEdit={canEdit ? "skillTree" : undefined}
           />
         )}
-        {!isSkillDetailsPending && !skillDetails && (
+        {isSkillDetailsError && (
+          <p role="alert">Skill details could not be loaded. Please try again.</p>
+        )}
+        {!isSkillDetailsPending && !isSkillDetailsError && !skillDetails && (
           <p role="alert">This skill could not be found.</p>
         )}
       </Modal>

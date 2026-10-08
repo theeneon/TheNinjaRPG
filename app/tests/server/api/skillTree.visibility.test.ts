@@ -293,7 +293,14 @@ describe("hidden skill-tree permissions", () => {
     async (role) => {
       const { drizzle, skills } = setup(role);
       const select = vi.fn(() => ({
-        from: () => ({ groupBy: () => Promise.resolve([{ skillId: "secret", userCount: 3 }]) }),
+        from: () => ({
+          groupBy: () =>
+            Promise.resolve([
+              { skillId: "secret", userCount: 3 },
+              { skillId: "public", userCount: 2 },
+              { skillId: "folder-secret", userCount: 1 },
+            ]),
+        }),
       }));
       const { resolver } = dataRouter._def.procedures.getSkillTreeBalanceStatistics
         ._def as unknown as {
@@ -305,16 +312,17 @@ describe("hidden skill-tree permissions", () => {
       const allowed = role !== null && !excluded.includes(role);
       const rows = await resolver({
         ctx: { drizzle: { ...drizzle, select }, userId: role ? "viewer" : null },
-        input: { minCount: 0 },
+        input: { minCount: 1 },
       });
       // Every listed id must resolve through skillTree.get for the same viewer.
       expect(rows.map((row) => row.skillId).sort()).toEqual(
         (allowed ? skills.map((entry) => entry.id) : ["public"]).sort(),
       );
-      expect(rows[0]).toMatchObject(
-        allowed ? { skillId: "secret", userCount: 3 } : { skillId: "public", userCount: 0 },
-      );
-      expect(rows[0]).not.toHaveProperty("hidden");
+      expect(rows.find((row) => row.skillId === "public")).toMatchObject({ userCount: 2 });
+      if (allowed) {
+        expect(rows.find((row) => row.skillId === "secret")).toMatchObject({ userCount: 3 });
+      }
+      for (const row of rows) expect(row).not.toHaveProperty("hidden");
       expect(drizzle.query.skillTree.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ with: { folder: { columns: { hidden: true } } } }),
       );
