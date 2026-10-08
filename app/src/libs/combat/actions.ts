@@ -109,6 +109,10 @@ export const availableUserActions = (
   const isQuestBattle = battle ? QuestBattleTypes.includes(battle.battleType) : false;
   const isRankedBattle =
     battle?.battleType === "RANKED_PVP" || battle?.battleType === "RANKED_SPARRING";
+  // A player-piloted summon must not hand its controller a second Clear/Cleanse
+  // on an independent cooldown. Gated here so the UI and the server-side action
+  // lookup in the combat router both lose it.
+  const isPilotedSummon = !!user?.isSummon && !!user?.isPiloted;
 
   // Handle injected jutsus
   if (battle && user) {
@@ -123,8 +127,9 @@ export const availableUserActions = (
     ...(basicMoves && !isStealth && !isStudent
       ? [
           basicActions.basicHeal,
-          basicActions.basicClear,
-          basicActions.basicCleanse,
+          ...(!isPilotedSummon
+            ? [basicActions.basicClear, basicActions.basicCleanse]
+            : []),
           basicActions.basicOffensiveStance,
           basicActions.basicDefensiveStance,
         ]
