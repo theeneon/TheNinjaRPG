@@ -3038,11 +3038,6 @@ export const fetchUpdatedUser = async (props: {
     (user as NonNullable<UserWithRelations>).activeRaids = userActiveRaids;
   }
 
-  // Energy uses base regeneration; other pools retain their regeneration bonuses.
-  let energyRegeneration = user
-    ? user.regeneration * (getReducedGainsDays(user) > 0 ? 0.5 : 1)
-    : 0;
-
   if (user) {
     // Add bloodline, structure, etc.  regen to regeneration
     user.regeneration = calcActiveUserRegen(user, settings);
@@ -3173,10 +3168,7 @@ export const fetchUpdatedUser = async (props: {
       user.curHealth = Math.min(user.curHealth + regen, user.maxHealth);
       user.curStamina = Math.min(user.curStamina + regen, user.maxStamina);
       user.curChakra = Math.min(user.curChakra + regen, user.maxChakra);
-      user.curEnergy = Math.min(
-        user.curEnergy + energyRegeneration * ticks,
-        user.maxEnergy,
-      );
+      user.curEnergy = Math.min(user.curEnergy + regen, user.maxEnergy);
       user.updatedAt = now;
       user.regenAt = secondsFromDate(ticks * REGEN_SECONDS, user.regenAt);
 
@@ -3205,11 +3197,7 @@ export const fetchUpdatedUser = async (props: {
           const freshUser = await client.query.userData.findFirst({
             where: eq(userData.userId, userId),
           });
-          if (freshUser) {
-            Object.assign(user, freshUser);
-            energyRegeneration =
-              freshUser.regeneration * (getReducedGainsDays(freshUser) > 0 ? 0.5 : 1);
-          }
+          if (freshUser) Object.assign(user, freshUser);
         }
       } catch (error) {
         // Regen is background bookkeeping and is already applied to the returned
@@ -3283,11 +3271,7 @@ export const fetchUpdatedUser = async (props: {
       });
     }
     return {
-      user: {
-        ...user,
-        energyRegeneration,
-        effectiveMasteries: effectiveMasteries(user),
-      },
+      user: { ...user, effectiveMasteries: effectiveMasteries(user) },
       settings,
       toastMessages,
       hasUnvotedPolls,
@@ -3779,7 +3763,6 @@ export const scaleEditedAi = (stored: UserData, edited: UserData) => {
 export type UserWithRelations =
   | (UserData & {
       effectiveMasteries?: MasteryStatSource;
-      energyRegeneration?: number;
       bloodline?: Bloodline | null;
       sageMode?: SageMode | null;
       activeReskin?: BloodlineReskin | null;

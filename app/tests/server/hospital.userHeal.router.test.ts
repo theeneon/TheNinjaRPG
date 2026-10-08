@@ -330,15 +330,16 @@ describeWithDatabase("hospital healing another user", () => {
     );
   });
 
-  it("settles a hospitalized target's Energy without regeneration bonuses", async () => {
+  it("settles a hospitalized target's Energy before resetting its recovery clock", async () => {
     const database = await getTestDatabase();
     await database.insert(bloodline).values({
-      id: "hospital-regen-line", name: "Regen Line", rank: "D",
+      id: "hospital-regen-line", name: "Hospital Regen Line", rank: "D",
       image: "", description: "", effects: [], regenIncrease: 100,
     });
     await database.update(userData).set({
-      curEnergy: 20,
+      level: 100,
       bloodlineId: "hospital-regen-line",
+      curEnergy: 20,
       regeneration: 60,
       regenAt: new Date(Date.now() - 75000),
     }).where(eq(userData.userId, TARGET_ID));
@@ -346,7 +347,7 @@ describeWithDatabase("hospital healing another user", () => {
     const result = await api.userHeal({ userId: TARGET_ID, healPercentage: 100 });
     expect(result.success).toBe(true);
     const saved = await readHealer(TARGET_ID);
-    const expectedEnergy = 20 + 60 * Math.floor(75 / REGEN_SECONDS);
+    const expectedEnergy = 20 + 160 * Math.floor(75 / REGEN_SECONDS);
     expect(saved?.curEnergy).toBeGreaterThanOrEqual(expectedEnergy);
     expect(saved?.curEnergy).toBeLessThan(expectedEnergy + 5);
     expect(saved?.status).toBe("HOSPITALIZED");

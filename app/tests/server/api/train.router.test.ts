@@ -184,12 +184,12 @@ describeWithDatabase("Energy and mastery training against a real MySQL", () => {
     await backdate({curEnergy: 0, regenAt});
     await Promise.all(Array.from({length: 8}, () => fetchUpdatedUser({client: database, userId: USER_ID, forceRegen: true})));
     const after = await readUser();
-    expect(after.curEnergy).toBe(2 * hydrated.user!.energyRegeneration);
+    expect(after.curEnergy).toBe(2 * hydrated.user!.regeneration);
     expect(after.regenAt.getTime()).toBe(regenAt.getTime() + 120_000);
   });
 
   it.each(["AWAKE", "ASLEEP"] as const)(
-    "%s Energy recovery excludes bloodline and housing bonuses", async (status) => {
+    "%s Energy recovery shares bloodline and housing bonuses", async (status) => {
       const database = await getTestDatabase();
       await database.insert(bloodline).values({
         id: "regen-line", name: "Regen Line", rank: "D",
@@ -203,17 +203,17 @@ describeWithDatabase("Energy and mastery training against a real MySQL", () => {
       });
       const hydrated = await fetchUpdatedUser({client: database, userId: USER_ID, forceRegen: true});
       const after = await readUser();
-      expect(hydrated.user?.energyRegeneration).toBe(60);
-      expect(after.curEnergy).toBe(60);
+      expect(after.curEnergy).toBe(hydrated.user?.regeneration);
+      expect(after.curEnergy).toBeGreaterThan(60);
       expect(after.curHealth).toBe(hydrated.user?.regeneration);
-      expect(after.curHealth).toBeGreaterThan(after.curEnergy);
+      expect(after.curHealth).toBe(after.curEnergy);
     },
   );
 
   it("Energy recovery retains the recent village-transfer penalty", async () => {
     await trainee({rank: "JONIN", level: 100, regeneration: 60, joinedVillageAt: new Date(), curEnergy: 0, regenAt: new Date(Date.now() - 75_000)});
     const hydrated = await fetchUpdatedUser({client: await getTestDatabase(), userId: USER_ID, forceRegen: true});
-    expect(hydrated.user?.energyRegeneration).toBe(30);
+    expect(hydrated.user?.regeneration).toBe(30);
     expect((await readUser()).curEnergy).toBe(30);
   });
 
@@ -255,7 +255,7 @@ describeWithDatabase("Energy and mastery training against a real MySQL", () => {
       const fetch = () => fetchUpdatedUser({client: database, userId: USER_ID, forceRegen: true});
       const hydrated = await fetch();
       const first = await readUser();
-      expect(first.curEnergy).toBe(hydrated.user?.energyRegeneration);
+      expect(first.curEnergy).toBe(hydrated.user?.regeneration);
       expect(first.regenAt.getTime()).toBe(regenAt.getTime() + 60000);
       await fetch();
       const second = await readUser();
