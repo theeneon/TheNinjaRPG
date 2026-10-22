@@ -84,6 +84,7 @@ export const getGatheringItemDrops = (
   experience: number,
   items: DroppedItem[],
   validIds: string[] = [],
+  bonusQuantity = 0,
 ) => {
   const currentRank = getGatheringRank(experience);
   const rankChances = GATHERING_ITEM_DROP_CHANCES[currentRank];
@@ -95,7 +96,8 @@ export const getGatheringItemDrops = (
   for (const item of filteredItems) {
     const chance = rankChances[item.rarity] / 100;
     if (chance > 0 && Math.random() < chance) {
-      drops.push(item);
+      // Repeat successful drops so reward insertion and herbs-gathered progress count every unit.
+      for (let quantity = 0; quantity <= bonusQuantity; quantity++) drops.push(item);
     }
   }
   return drops;

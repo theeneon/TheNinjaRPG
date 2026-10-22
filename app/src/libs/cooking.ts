@@ -3,6 +3,7 @@ import type { Item } from "@/drizzle/schema";
 import { getStatTypeLabels } from "@/libs/combat/util";
 import { getFarmingLevel } from "@/libs/farming";
 import { calcLevelRequirements } from "@/libs/profile";
+import { reduceActivitySeconds } from "@/utils/time";
 
 /** Cooking levels use the existing Farming experience curve. */
 export const getCookingLevel = getFarmingLevel;
@@ -39,25 +40,30 @@ export const getCookingRankProgress = (experience: number) => {
   };
 };
 /**
- * Rounded seconds for every output meal, with a one-second floor. Both boosts are
- * fractions: shrine boosts increase duration; Territory War reduces that result.
+ * Count every output meal and batch, with a one-second floor. Both boosts are
+ * fractions: Crafting shrine bonuses increase duration; Territory War reduces it.
  * Evaluate Territory War eligibility at the job's logical start before calling.
+ * Apply the percentage passive reduction once to the complete job, after rounding.
  */
 export const getCookingSeconds = (
   meal: Pick<Item, "cookingTimeSeconds" | "cookingOutputQuantity">,
   batches: number,
   shrineBoost: number,
   territoryBoost = 0,
+  cookingReductionPercent = 0,
 ) =>
-  Math.max(
-    1,
-    Math.round(
-      meal.cookingTimeSeconds *
-        meal.cookingOutputQuantity *
-        batches *
-        (1 + shrineBoost) *
-        (1 - territoryBoost),
+  reduceActivitySeconds(
+    Math.max(
+      1,
+      Math.round(
+        meal.cookingTimeSeconds *
+          meal.cookingOutputQuantity *
+          batches *
+          (1 + shrineBoost) *
+          (1 - territoryBoost),
+      ),
     ),
+    cookingReductionPercent,
   );
 
 /** Human-readable recipe bonus and duration. */

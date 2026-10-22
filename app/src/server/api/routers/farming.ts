@@ -18,6 +18,7 @@ import {
   userData,
   userItem,
 } from "@/drizzle/schema";
+import { getActivityBonuses } from "@/libs/activityBonuses";
 import { getTotalItemQuantity } from "@/libs/crafting";
 import { getWorldCycleState } from "@/libs/dayNight";
 import {
@@ -50,7 +51,7 @@ import {
 } from "@/libs/quest";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
-import { fetchUserSkills } from "@/routers/skillTree";
+import { fetchMasterySources, fetchUserSkills } from "@/routers/skillTree";
 import { fetchUserItems } from "@/server/api/routers/item";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
@@ -89,17 +90,28 @@ export const farmingRouter = createTRPCRouter({
     .input(z.object({ plotId: z.string(), seedItemId: z.string() }))
     .output(farmMutationResponseSchema)
     .mutation(async ({ ctx, input }) => {
-      const [user, userItems, plot, { seedItem, yieldItem }, questState, userSkills] =
-        await Promise.all([
-          fetchUser(ctx.drizzle, ctx.userId),
-          fetchUserItems(ctx.drizzle, ctx.userId),
-          ctx.drizzle.query.farmPlot.findFirst({
-            where: and(eq(farmPlot.id, input.plotId), eq(farmPlot.userId, ctx.userId)),
-          }),
-          fetchFarmSeedAndYield(ctx.drizzle, input.seedItemId),
-          fetchFarmingQuestState(ctx.drizzle, ctx.userId),
-          fetchUserSkills(ctx.drizzle, ctx.userId),
-        ]);
+      const [
+        user,
+        userItems,
+        plot,
+        { seedItem, yieldItem },
+        questState,
+        passiveSources,
+      ] = await Promise.all([
+        fetchUser(ctx.drizzle, ctx.userId),
+        fetchUserItems(ctx.drizzle, ctx.userId),
+        ctx.drizzle.query.farmPlot.findFirst({
+          where: and(eq(farmPlot.id, input.plotId), eq(farmPlot.userId, ctx.userId)),
+        }),
+        fetchFarmSeedAndYield(ctx.drizzle, input.seedItemId),
+        fetchFarmingQuestState(ctx.drizzle, ctx.userId),
+        fetchMasterySources(ctx.drizzle, ctx.userId),
+      ]);
+      const userSkills = passiveSources.userSkills;
+      const { farmingReductionPercent } = getActivityBonuses({
+        ...user,
+        ...passiveSources,
+      });
 
       const guard = guardFarmingMutation(user);
       if (guard) return guard;
@@ -146,6 +158,7 @@ export const farmingRouter = createTRPCRouter({
       const growTimeSeconds = getFarmGrowTimeSeconds(
         seedItem.farmGrowTimeSeconds,
         user,
+        farmingReductionPercent,
       );
       const finishAt = new Date(now.getTime() + growTimeSeconds * 1000);
       const baseXpGain = getFarmPlantExperience(seedItem);
@@ -537,7 +550,7 @@ export const farmingRouter = createTRPCRouter({
     .input(z.object({ seedItemId: z.string() }))
     .output(farmMutationResponseSchema)
     .mutation(async ({ ctx, input }) => {
-      const [user, userItems, seedItem, plots, questState, userSkills] =
+      const [user, userItems, seedItem, plots, questState, passiveSources] =
         await Promise.all([
           fetchUser(ctx.drizzle, ctx.userId),
           fetchUserItems(ctx.drizzle, ctx.userId),
@@ -546,8 +559,13 @@ export const farmingRouter = createTRPCRouter({
             where: eq(farmPlot.userId, ctx.userId),
           }),
           fetchFarmingQuestState(ctx.drizzle, ctx.userId),
-          fetchUserSkills(ctx.drizzle, ctx.userId),
+          fetchMasterySources(ctx.drizzle, ctx.userId),
         ]);
+      const userSkills = passiveSources.userSkills;
+      const { farmingReductionPercent } = getActivityBonuses({
+        ...user,
+        ...passiveSources,
+      });
 
       const guard = guardFarmingMutation(user);
       if (guard) return guard;
@@ -591,6 +609,7 @@ export const farmingRouter = createTRPCRouter({
       const growTimeSeconds = getFarmGrowTimeSeconds(
         seedItem.farmGrowTimeSeconds,
         user,
+        farmingReductionPercent,
       );
       const finishAt = new Date(now.getTime() + growTimeSeconds * 1000);
       const emptyPlotIds = emptyPlots.map((plot) => plot.id);
@@ -1549,6 +1568,7 @@ const resolveShopEntry = async (
 const buildShopEntries = async (
   client: DrizzleClient,
   user: Awaited<ReturnType<typeof fetchUser>>,
+  farmingReductionPercent: number,
 ): Promise<FarmShopEntryState[]> => {
   const farmingLevel = getFarmingLevel(user.farmingExperience);
   const maxPurchased = getMaxPurchasablePlots(farmingLevel);
@@ -1652,7 +1672,11 @@ const buildShopEntries = async (
       canPurchase,
       lockedReason,
       growTimeSeconds: shopItem.isFarmSeed
-        ? getFarmGrowTimeSeconds(shopItem.farmGrowTimeSeconds, user)
+        ? getFarmGrowTimeSeconds(
+            shopItem.farmGrowTimeSeconds,
+            user,
+            farmingReductionPercent,
+          )
         : undefined,
       yieldItemId: yieldItem?.id,
       yieldName: yieldItem?.name,
@@ -1675,15 +1699,20 @@ export const buildFarmState = async (
   userId: string,
 ): Promise<FarmStateResponse | { success: false; message: string }> => {
   const now = new Date();
-  const [user, activeSeedExtractions] = await Promise.all([
+  const [user, activeSeedExtractions, passiveSources] = await Promise.all([
     fetchUser(client, userId),
     settleFarmExtractions(client, userId, now),
+    fetchMasterySources(client, userId),
   ]);
+  const { farmingReductionPercent } = getActivityBonuses({
+    ...user,
+    ...passiveSources,
+  });
   const totalPlots = getTotalFarmPlots(user.farmPlotsPurchased);
 
   const plotsPromise = ensureFarmPlots(client, userId, totalPlots);
   const userItemsPromise = fetchUserItems(client, userId);
-  const shopEntriesPromise = buildShopEntries(client, user);
+  const shopEntriesPromise = buildShopEntries(client, user, farmingReductionPercent);
   const collectionLogPromise = getFarmCollectionState(client, userId);
 
   const [plotsRaw, userItems] = await Promise.all([plotsPromise, userItemsPromise]);
@@ -1799,6 +1828,7 @@ export const buildFarmState = async (
         growTimeSeconds: getFarmGrowTimeSeconds(
           userItem.item.farmGrowTimeSeconds,
           user,
+          farmingReductionPercent,
         ),
         yieldItemId: yieldItem.id,
         yieldName: yieldItem.name,

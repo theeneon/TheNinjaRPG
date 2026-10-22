@@ -7,12 +7,14 @@ import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Progress } from "@/components/ui/progress";
 import { MAX_COOKING_BATCHES } from "@/drizzle/constants";
+import { useActivityBonusRefresh } from "@/hooks/useActivityBonusRefresh";
 import { ActiveTimedBuffs } from "@/layout/ActiveTimedBuffs";
 import ContentBox from "@/layout/ContentBox";
 import ContentImage from "@/layout/ContentImage";
 import Loader from "@/layout/Loader";
 import Modal from "@/layout/Modal";
 import { TimedQueue } from "@/layout/TimedQueue";
+import { getActivityBonuses } from "@/libs/activityBonuses";
 import {
   describeMealEffect,
   getCookingLevel,
@@ -33,6 +35,9 @@ export default function Kitchen({ image }: { image?: string }) {
     ? getTerritoryWarBoost(user, new Date(Date.now() - timeDiff))
     : 0;
   const utils = api.useUtils();
+  useActivityBonusRefresh(user, () => {
+    void utils.profile.getUser.invalidate();
+  });
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [batches, setBatches] = useState(1);
@@ -96,6 +101,9 @@ export default function Kitchen({ image }: { image?: string }) {
     "Crafting",
     user?.village,
   );
+  const cookingReductionPercent = user
+    ? getActivityBonuses(user).cookingReductionPercent
+    : 0;
   const blocked =
     user?.status !== "AWAKE"
       ? "You must be awake to cook"
@@ -244,7 +252,13 @@ export default function Kitchen({ image }: { image?: string }) {
                 <p className="mt-1 text-xs">
                   {recipe.cookingOutputQuantity} meals ·{" "}
                   {formatSecondsToTimeDisplay(
-                    getCookingSeconds(recipe, 1, shrineBoost, territoryWarBoost),
+                    getCookingSeconds(
+                      recipe,
+                      1,
+                      shrineBoost,
+                      territoryWarBoost,
+                      cookingReductionPercent,
+                    ),
                   )}{" "}
                   ·{" "}
                   {Math.floor(
@@ -330,7 +344,13 @@ export default function Kitchen({ image }: { image?: string }) {
               <p className="text-sm">
                 Output: {batches * selected.cookingOutputQuantity} meals ·{" "}
                 {formatSecondsToTimeDisplay(
-                  getCookingSeconds(selected, batches, shrineBoost, territoryWarBoost),
+                  getCookingSeconds(
+                    selected,
+                    batches,
+                    shrineBoost,
+                    territoryWarBoost,
+                    cookingReductionPercent,
+                  ),
                 )}{" "}
                 ·{" "}
                 {Math.floor(

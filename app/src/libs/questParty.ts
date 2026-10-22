@@ -134,6 +134,8 @@ export const mergePartyProgress = (
       const local = personal.goals.find((entry) => entry.id === goal.id);
       // Collection timers remain tied to each player's uninterrupted stay on the tile.
       goal.timestamp = undefined;
+      goal.collectDeadline = undefined;
+      goal.gatheringBonusQuantity = undefined;
       if (local?.locationChecked && local.sector === goal.sector) {
         goal.longitude = local.longitude;
         goal.latitude = local.latitude;
@@ -173,6 +175,8 @@ export const projectPartyTracker = (
           local?.partyEffectsApplied ?? (!personal?.party && !!local?.done),
         battleValues: local?.battleValues,
         timestamp: local?.timestamp,
+        collectDeadline: local?.collectDeadline,
+        gatheringBonusQuantity: local?.gatheringBonusQuantity,
         collected: local?.collected ?? false,
       };
     }),
