@@ -1,14 +1,16 @@
 "use client";
 
 import { useClerk } from "@clerk/nextjs";
+import { useStore } from "jotai";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import ContentBox from "@/layout/ContentBox";
 import Loader from "@/layout/Loader";
 import Welcome from "@/layout/Welcome";
 import { readCampaignSource } from "@/libs/campaignSource";
+import { nativeHomeRedirectAtom } from "@/libs/native/homeRedirect";
 import { useUserData } from "@/utils/UserContext";
 
 /**
@@ -33,6 +35,8 @@ export const HomeLanding: React.FC = () => {
 
   // Navigation
   const router = useRouter();
+  const store = useStore();
+  const lastNativeRedirect = useRef<string | null>(null);
 
   // Redirect based on user status
   useEffect(() => {
@@ -46,9 +50,16 @@ export const HomeLanding: React.FC = () => {
       void router.push("/register");
     }
     if (userData && userId) {
-      void router.push("/profile");
+      // Read at navigation time: a native callback can arrive after this render but
+      // before its effect, and its destination must win over the default Profile.
+      const nativeRedirect = store.get(nativeHomeRedirectAtom);
+      // Regeneration can refresh the character while a slow destination is loading.
+      // Reissuing the same push would keep restarting that pending navigation.
+      if (nativeRedirect && nativeRedirect === lastNativeRedirect.current) return;
+      lastNativeRedirect.current = nativeRedirect;
+      void router.push(nativeRedirect ?? "/profile");
     }
-  }, [isClerkLoaded, isSignedIn, userData, userId, userStatus]);
+  }, [isClerkLoaded, isSignedIn, userData, userId, userStatus, store]);
 
   // A signed-in session can expire before the character query completes. Keep both
   // retry and sign-in available instead of trapping the player in the error boundary.
