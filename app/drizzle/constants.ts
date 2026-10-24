@@ -4061,9 +4061,9 @@ export const DISCORD_MIN_ACCOUNT_AGE_DAYS = 30;
 /** After an unlink, neither side can link to a different partner until this passes. */
 export const DISCORD_UNLINK_COOLDOWN_DAYS = 30;
 /**
- * A ban or silence with at least this much time remaining counts as indefinite and bans the
- * linked Discord account from the server. Staff impose indefinite sanctions as the longest
- * available duration, so anything over a year is treated as one.
+ * A ban or silence imposed for at least this long counts as indefinite and bans the linked
+ * Discord account from the server until it ends. Staff impose indefinite sanctions as the
+ * longest available duration, so anything of a year or more is treated as one.
  */
 export const DISCORD_INDEFINITE_SANCTION_DAYS = 365;
 /** Discord rejects guild nicknames longer than this. */

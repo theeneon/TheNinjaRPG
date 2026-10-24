@@ -5,7 +5,7 @@ import type { DiscordLinkResultDetails } from "@/libs/discordLink";
 import { drizzleDB } from "@/server/db";
 import { getDiscordConfig } from "@/server/utils/discord/config";
 import { completeDiscordLink } from "@/server/utils/discord/linking";
-import { OAUTH_STATE_COOKIE, verifyOAuthState } from "@/server/utils/discord/secrets";
+import { LINK_STATE_COOKIE, verifyLinkState } from "@/server/utils/discord/secrets";
 import { fetchSanctionIdentity } from "@/server/utils/sanctionTombstone";
 
 /**
@@ -21,16 +21,16 @@ export async function GET(request: Request) {
     if (details.hint) target.searchParams.set("hint", details.hint);
     if (details.until) target.searchParams.set("until", details.until);
     const response = NextResponse.redirect(target);
-    response.cookies.delete({ name: OAUTH_STATE_COOKIE, path: "/api/discord" });
+    response.cookies.delete({ name: LINK_STATE_COOKIE, path: "/api/discord" });
     return response;
   };
   const config = getDiscordConfig();
   if (!config) return redirect("disabled");
   const { userId } = await auth();
   if (!userId) return redirect("signed_out");
-  const nonce = (await cookies()).get(OAUTH_STATE_COOKIE)?.value;
+  const nonce = (await cookies()).get(LINK_STATE_COOKIE)?.value;
   const state = url.searchParams.get("state");
-  if (!verifyOAuthState(state, { userId, nonce, clientSecret: config.clientSecret }))
+  if (!verifyLinkState(state, { userId, nonce, clientSecret: config.clientSecret }))
     return redirect("invalid_state");
   const code = url.searchParams.get("code");
   if (url.searchParams.get("error") || !code) return redirect("cancelled");

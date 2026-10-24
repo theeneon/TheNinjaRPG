@@ -1,4 +1,4 @@
-import { asc, eq, exists, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, exists, isNull, lt, or, sql } from "drizzle-orm";
 import { after } from "next/server";
 import {
   DISCORD_SYNC_BATCH_SIZE,
@@ -314,10 +314,16 @@ export const fetchLinksNeedingSync = (client: DrizzleClient, limit: number) => {
       or(
         isNull(discordLink.syncedAt),
         lt(discordLink.syncedAt, refreshBefore),
-        sql`NOT (${discordLink.syncedUsername} <=> ${userData.username})`,
-        sql`NOT (${discordLink.syncedVillageId} <=> ${userData.villageId})`,
-        sql`NOT (${discordLink.syncedLevel} <=> ${userData.level})`,
         sql`${discordLink.syncedBanned} <> (${sanctioned})`,
+        // While banned, nickname, roles and metadata are not applied, so they cannot differ.
+        and(
+          sql`NOT (${sanctioned})`,
+          or(
+            sql`NOT (${discordLink.syncedUsername} <=> ${userData.username})`,
+            sql`NOT (${discordLink.syncedVillageId} <=> ${userData.villageId})`,
+            sql`NOT (${discordLink.syncedLevel} <=> ${userData.level})`,
+          ),
+        ),
       ),
     )
     .orderBy(asc(discordLink.syncedAt))

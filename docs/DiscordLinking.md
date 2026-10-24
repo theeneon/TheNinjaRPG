@@ -24,8 +24,8 @@ staff page `/reports/discord`.
 - Banned characters, and characters with an indefinite ban or silence, cannot link. A
   Discord id held by an active sanction tombstone cannot link; deleting a sanctioned account
   adds its linked Discord id to the tombstone.
-- A ban or silence with at least `DISCORD_INDEFINITE_SANCTION_DAYS` (365) remaining counts as
-  indefinite and bans the linked Discord account from the server, with the report id in the
+- A ban or silence imposed for at least `DISCORD_INDEFINITE_SANCTION_DAYS` (365), measured
+  from the moderation decision, counts as indefinite while it runs and bans the linked Discord account from the server, with the report id in the
   audit-log reason. Clearing or expiry lifts the Discord ban. Players cannot unlink while
   such a sanction runs; a force-unlink or account deletion leaves the Discord ban in place.
 - Linking a Discord account that differs from the account's own Clerk Discord login, or that

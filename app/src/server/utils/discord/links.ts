@@ -36,16 +36,20 @@ export const clerkDiscordIdOf = (identity: SanctionIdentity | null) =>
   )?.providerUserId ?? null;
 
 /**
- * Bans and silences that ban the linked Discord account: those with at least
- * DISCORD_INDEFINITE_SANCTION_DAYS remaining. `userId` is a value or a joined column.
+ * Bans and silences that ban the linked Discord account: still running, and imposed for at
+ * least DISCORD_INDEFINITE_SANCTION_DAYS. The length is measured from the decision
+ * (`updatedAt`, written with status and `banEnd` by `updateSanctionReport`), so a long ban
+ * keeps matching until it ends instead of dropping out once less than the window remains.
+ * `userId` is a value or a joined column.
  */
 export const indefiniteSanctionWhere = (userId: string | typeof userData.userId) =>
   and(
     eq(userReport.reportedUserId, userId),
     inArray(userReport.status, ["BAN_ACTIVATED", "SILENCE_ACTIVATED"]),
+    gt(userReport.banEnd, sql`CURRENT_TIMESTAMP(3)`),
     gte(
       userReport.banEnd,
-      sql`CURRENT_TIMESTAMP(3) + INTERVAL ${sql.raw(String(DISCORD_INDEFINITE_SANCTION_DAYS))} DAY`,
+      sql`${userReport.updatedAt} + INTERVAL ${sql.raw(String(DISCORD_INDEFINITE_SANCTION_DAYS))} DAY`,
     ),
   );
 

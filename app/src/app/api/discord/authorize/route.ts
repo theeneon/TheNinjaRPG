@@ -6,9 +6,9 @@ import { drizzleDB } from "@/server/db";
 import { getDiscordConfig } from "@/server/utils/discord/config";
 import { buildAuthorizeUrl } from "@/server/utils/discord/rest";
 import {
-  createOAuthState,
-  OAUTH_STATE_COOKIE,
-  OAUTH_STATE_TTL_MS,
+  createLinkState,
+  LINK_STATE_COOKIE,
+  LINK_STATE_TTL_MS,
 } from "@/server/utils/discord/secrets";
 
 /**
@@ -34,14 +34,14 @@ export async function GET(request: Request) {
     where: eq(userData.userId, userId),
   });
   if (!character) return NextResponse.redirect(resultUrl("no_character"));
-  const { state, nonce } = createOAuthState(userId, config.clientSecret);
+  const { state, nonce } = createLinkState(userId, config.clientSecret);
   const response = NextResponse.redirect(buildAuthorizeUrl(config, state));
-  response.cookies.set(OAUTH_STATE_COOKIE, nonce, {
+  response.cookies.set(LINK_STATE_COOKIE, nonce, {
     httpOnly: true,
     secure: new URL(request.url).protocol === "https:",
     sameSite: "lax",
     path: "/api/discord",
-    maxAge: OAUTH_STATE_TTL_MS / 1000,
+    maxAge: LINK_STATE_TTL_MS / 1000,
   });
   return response;
 }

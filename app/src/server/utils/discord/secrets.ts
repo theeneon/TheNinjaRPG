@@ -36,10 +36,10 @@ export const decryptToken = (stored: string, key: Buffer) => {
 };
 
 /** OAuth `state` lifetime: long enough to approve on Discord, short enough to limit replay. */
-export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+export const LINK_STATE_TTL_MS = 10 * 60 * 1000;
 
 /** Cookie holding the browser half of the OAuth state. */
-export const OAUTH_STATE_COOKIE = "tnr-discord-oauth";
+export const LINK_STATE_COOKIE = "tnr-discord-oauth";
 
 type StatePayload = { u: string; n: string; e: number };
 
@@ -54,7 +54,7 @@ const signState = (body: string, clientSecret: string) =>
  * as an HttpOnly cookie, so a callback only completes for the signed-in user, in the browser
  * that started the flow, before the state expires.
  */
-export const createOAuthState = (
+export const createLinkState = (
   userId: string,
   clientSecret: string,
   now = Date.now(),
@@ -64,14 +64,14 @@ export const createOAuthState = (
     JSON.stringify({
       u: userId,
       n: nonce,
-      e: now + OAUTH_STATE_TTL_MS,
+      e: now + LINK_STATE_TTL_MS,
     } satisfies StatePayload),
   ).toString("base64url");
   return { state: `${body}.${signState(body, clientSecret)}`, nonce };
 };
 
 /** Verify signature, expiry, the signed-in user and the browser nonce. */
-export const verifyOAuthState = (
+export const verifyLinkState = (
   state: string | null | undefined,
   expected: { userId: string; nonce: string | null | undefined; clientSecret: string },
   now = Date.now(),

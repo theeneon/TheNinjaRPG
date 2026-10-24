@@ -125,6 +125,7 @@ const addSanction = async (
   status: "BAN_ACTIVATED" | "SILENCE_ACTIVATED",
   days: number,
   id = `report-${userId}`,
+  decidedDaysAgo = 0,
 ) =>
   (await getTestDatabase()).insert(userReport).values({
     id,
@@ -136,6 +137,7 @@ const addSanction = async (
     aiInterpretation: "",
     status,
     banEnd: new Date(Date.now() + days * DAY),
+    updatedAt: new Date(Date.now() - decidedDaysAgo * DAY),
   });
 
 describeWithDatabase("Discord links (SQL)", () => {
@@ -352,6 +354,21 @@ describeWithDatabase("Discord links (SQL)", () => {
     expect(
       calls.some((call) => call.method === "DELETE" && call.path === `/guilds/${GUILD}/bans/${OLD_DISCORD}`),
     ).toBe(true);
+    expect((await database.query.discordLink.findFirst())?.syncedBanned).toBe(false);
+  });
+
+  it("keeps a long ban indefinite after less than the window remains", async () => {
+    const database = await getTestDatabase();
+    await insertDiscordLink(database, linkValues("user-a", OLD_DISCORD));
+    // A two-year ban decided 400 days ago still has 330 days to run.
+    await addSanction("user-a", "BAN_ACTIVATED", 330, "report-long", 400);
+    await syncDiscordMember(database, "user-a");
+    expect((await database.query.discordLink.findFirst())?.syncedBanned).toBe(true);
+    expect(await fetchLinksNeedingSync(database, 10)).toHaveLength(0);
+    // A one-month ban decided today is not indefinite.
+    await resetTables(userReport);
+    await addSanction("user-a", "BAN_ACTIVATED", 30, "report-short");
+    await syncDiscordMember(database, "user-a");
     expect((await database.query.discordLink.findFirst())?.syncedBanned).toBe(false);
   });
 
