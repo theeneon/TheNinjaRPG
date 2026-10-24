@@ -338,7 +338,6 @@ export const createBattlefieldPreview = async (
   }
 };
 
-export { EFFECT_ANIMATION_SIZE } from "@/libs/rendering/animation";
 /** Width of one hex on the viewport, as a regular battle lays them out. */
 export const previewHexWidth = (viewport: BattlefieldViewport) =>
   BATTLEFIELD_VIEWPORTS[viewport] / stacked(GAME_COLUMNS);

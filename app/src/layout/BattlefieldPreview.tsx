@@ -15,6 +15,7 @@ import {
   COMBAT_BIOMES,
   type CombatBiome,
   type ContentProposalEntityType,
+  HEX_ASPECT_RATIO,
 } from "@/drizzle/constants";
 import {
   type BattlefieldViewport,
@@ -22,7 +23,7 @@ import {
   sceneAssetIds,
   sceneSoundIds,
 } from "@/libs/contentReview/battlefield";
-import { EFFECT_ANIMATION_SIZE } from "@/libs/rendering/animation";
+import { EFFECT_ANIMATION_HEX_RATIO } from "@/libs/rendering/animation";
 import {
   createBattlefieldPreview,
   type BattlefieldPreview as FieldPreview,
@@ -203,8 +204,11 @@ export const BattlefieldPreview: React.FC<BattlefieldPreviewProps> = (props) => 
       <p className="text-xs opacity-70">
         Drawn by the combat renderer at {viewport === "desktop" ? "desktop" : "phone"}{" "}
         size: hexes are {Math.round(previewHexWidth(viewport))} px wide and animations{" "}
-        {EFFECT_ANIMATION_SIZE} px. Caster on the left, target on the right, ground
-        effects on the tile between them.
+        {Math.round(
+          previewHexWidth(viewport) * HEX_ASPECT_RATIO * EFFECT_ANIMATION_HEX_RATIO,
+        )}{" "}
+        px. Caster on the left, target on the right, ground effects on the tile between
+        them.
       </p>
     </div>
   );
