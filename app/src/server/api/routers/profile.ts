@@ -391,6 +391,7 @@ export const profileRouter = createTRPCRouter({
             level: userJutsu.level,
             jutsuRank: jutsu.jutsuRank,
             requiredRank: jutsu.requiredRank,
+            trainingStartedAt: userJutsu.trainingStartedAt,
             finishTraining: userJutsu.finishTraining,
             senseiId: userData.senseiId,
             rank: userData.rank,
@@ -467,15 +468,17 @@ export const profileRouter = createTRPCRouter({
       ? {
           name: jutsuTrainingRow.name,
           level: jutsuTrainingRow.level,
-          trainingStartedAt: inferJutsuTrainingStartedAt(
-            jutsuTrainingRow.finishTraining,
-            {
-              jutsuRank: jutsuTrainingRow.jutsuRank,
-              requiredRank: jutsuTrainingRow.requiredRank,
-            },
-            jutsuTrainingRow.level,
-            { senseiId: jutsuTrainingRow.senseiId, rank: jutsuTrainingRow.rank },
-          ),
+          trainingStartedAt:
+            jutsuTrainingRow.trainingStartedAt ??
+            inferJutsuTrainingStartedAt(
+              jutsuTrainingRow.finishTraining,
+              {
+                jutsuRank: jutsuTrainingRow.jutsuRank,
+                requiredRank: jutsuTrainingRow.requiredRank,
+              },
+              jutsuTrainingRow.level,
+              { senseiId: jutsuTrainingRow.senseiId, rank: jutsuTrainingRow.rank },
+            ),
           finishTraining: jutsuTrainingRow.finishTraining,
         }
       : null;
