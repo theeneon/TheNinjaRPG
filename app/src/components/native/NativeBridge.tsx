@@ -162,8 +162,8 @@ export default function NativeBridge() {
     return appEvents.onUrlOpen((url) => {
       const path = toInternalPath(url);
       if (path) {
-        if (pathnameRef.current === "/" && path.split(/[?#]/, 1)[0] !== "/") {
-          setNativeHomeRedirect(path);
+        if (pathnameRef.current === "/") {
+          setNativeHomeRedirect(path.split(/[?#]/, 1)[0] === "/" ? null : path);
         }
         router.push(path);
       }

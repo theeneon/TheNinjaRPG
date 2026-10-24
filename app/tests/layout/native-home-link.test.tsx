@@ -63,12 +63,45 @@ describe("native links during home startup", () => {
     expect(navigate).toHaveBeenLastCalledWith("/jutsus?tab=loadout#equipped");
     session = { ...session, isClerkLoaded: true, data: character, status: "success" };
     view.update();
+    expect(navigate).toHaveBeenCalledTimes(1);
     expect(navigate).toHaveBeenLastCalledWith("/jutsus?tab=loadout#equipped");
     const navigationCount = navigate.mock.calls.length;
     session = { ...session, data: { ...character } };
     view.update();
     expect(navigate).toHaveBeenLastCalledWith("/jutsus?tab=loadout#equipped");
     expect(navigate).toHaveBeenCalledTimes(navigationCount);
+  });
+
+  it("lets a newer Home link supersede a pending non-Home destination", () => {
+    const view = mount();
+    act(() => onUrl("https://www.theninja-rpg.com/jutsus"));
+    act(() => onUrl("https://www.theninja-rpg.com/?ref=newer"));
+    session = { ...session, isClerkLoaded: true, data: character, status: "success" };
+    view.update();
+    expect(navigate.mock.calls.map(([path]) => path)).toEqual([
+      "/jutsus", "/?ref=newer", "/profile",
+    ]);
+  });
+
+  it("reconsiders Home when the newer Home link arrives after character loading", () => {
+    const view = mount();
+    act(() => onUrl("https://www.theninja-rpg.com/jutsus"));
+    session = { ...session, isClerkLoaded: true, data: character, status: "success" };
+    view.update();
+    expect(navigate).toHaveBeenCalledTimes(1);
+    act(() => onUrl("https://www.theninja-rpg.com/"));
+    expect(navigate).toHaveBeenLastCalledWith("/profile");
+  });
+
+  it("keeps a newer native destination without duplicating either issued push", () => {
+    const view = mount();
+    act(() => onUrl("https://www.theninja-rpg.com/jutsus"));
+    act(() => onUrl("https://www.theninja-rpg.com/settings/device"));
+    session = { ...session, isClerkLoaded: true, data: character, status: "success" };
+    view.update();
+    expect(navigate.mock.calls.map(([path]) => path)).toEqual([
+      "/jutsus", "/settings/device",
+    ]);
   });
 
   it("does not replay the startup link when Home is opened later", () => {

@@ -1,9 +1,9 @@
 "use client";
 
 import { useClerk } from "@clerk/nextjs";
-import { useStore } from "jotai";
+import { useAtomValue, useStore } from "jotai";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import ContentBox from "@/layout/ContentBox";
@@ -36,7 +36,7 @@ export const HomeLanding: React.FC = () => {
   // Navigation
   const router = useRouter();
   const store = useStore();
-  const lastNativeRedirect = useRef<string | null>(null);
+  const nativeRedirect = useAtomValue(nativeHomeRedirectAtom);
 
   // Redirect based on user status
   useEffect(() => {
@@ -52,14 +52,12 @@ export const HomeLanding: React.FC = () => {
     if (userData && userId) {
       // Read at navigation time: a native callback can arrive after this render but
       // before its effect, and its destination must win over the default Profile.
-      const nativeRedirect = store.get(nativeHomeRedirectAtom);
-      // Regeneration can refresh the character while a slow destination is loading.
-      // Reissuing the same push would keep restarting that pending navigation.
-      if (nativeRedirect && nativeRedirect === lastNativeRedirect.current) return;
-      lastNativeRedirect.current = nativeRedirect;
-      void router.push(nativeRedirect ?? "/profile");
+      // NativeBridge already issued this destination. Even one duplicate push can
+      // restart a slow route; character refreshes must leave it alone entirely.
+      if (store.get(nativeHomeRedirectAtom)) return;
+      void router.push("/profile");
     }
-  }, [isClerkLoaded, isSignedIn, userData, userId, userStatus, store]);
+  }, [isClerkLoaded, isSignedIn, userData, userId, userStatus, store, nativeRedirect]);
 
   // A signed-in session can expire before the character query completes. Keep both
   // retry and sign-in available instead of trapping the player in the error boundary.
