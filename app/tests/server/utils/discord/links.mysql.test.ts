@@ -510,6 +510,27 @@ describeWithDatabase("Discord links (SQL)", () => {
     expect(calls.some((call) => call.path === "/oauth2/token/revoke")).toBe(true);
   });
 
+  it("undoes the Discord side when both characters unlink at once", async () => {
+    const database = await getTestDatabase();
+    await insertDiscordLink(database, linkValues("user-b", OLD_DISCORD));
+    await insertDiscordLink(database, { ...linkValues("user-a", OLD_DISCORD), slot: 2, isPrimary: false });
+    guildMember = { nick: "Bravo", roles: [VERIFIED_ROLE] };
+    const results = await Promise.all([
+      (await callerFor(discordRouter, "user-a")).unlink(),
+      (await callerFor(discordRouter, "user-b")).unlink(),
+    ]);
+    expect(results.every((result) => result.success)).toBe(true);
+    expect(await database.query.discordLink.findMany()).toHaveLength(0);
+    expect(
+      calls.some(
+        (call) =>
+          call.path.endsWith("/role-connection") &&
+          (call.body as { metadata: { linked: string } }).metadata.linked === "0",
+      ),
+    ).toBe(true);
+    expect(calls.some((call) => call.path === "/oauth2/token/revoke")).toBe(true);
+  });
+
   it("bans the account while either character is sanctioned and unbans when neither is", async () => {
     const database = await getTestDatabase();
     await insertDiscordLink(database, linkValues("user-b", OLD_DISCORD));

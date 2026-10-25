@@ -309,12 +309,24 @@ export const removeDiscordLink = async (
     staffUserId: input.reason === "STAFF" ? input.actorUserId : undefined,
     cooldownWaived: input.cooldownWaived,
   });
-  if (removed && sibling) {
-    await setDiscordPrimary(client, sibling);
-    const sync = await syncDiscordMember(client, sibling.userId, { force: true }).catch(
-      (error: unknown) => ({ synced: false, errors: [String(error)] }),
-    );
+  // Re-read after archiving: a concurrent unlink may have removed the sibling too, and the
+  // last link out must undo the Discord side.
+  const remaining = removed
+    ? await client.query.discordLink.findFirst({
+        columns: { id: true, userId: true, discordId: true },
+        where: eq(discordLink.discordId, link.discordId),
+      })
+    : undefined;
+  if (remaining) {
+    await setDiscordPrimary(client, remaining);
+    const sync = await syncDiscordMember(client, remaining.userId, {
+      force: true,
+    }).catch((error: unknown) => ({ synced: false, errors: [String(error)] }));
     cleanup.push(...sync.errors);
+  } else if (removed && sibling) {
+    cleanup.push(
+      ...(await releaseDiscordMember(client, link, character?.username ?? "")),
+    );
   }
   if (removed && input.reason !== "ACCOUNT_DELETED") {
     await logDiscordAction(client, {
@@ -328,7 +340,7 @@ export const removeDiscordLink = async (
         `Discord: ${link.discordUsername} (${link.discordId})`,
         ...(input.staffNote ? [`Reason: ${input.staffNote}`] : []),
         ...(input.cooldownWaived ? ["Unlink cooldown waived"] : []),
-        ...(sibling ? [`Still linked to ${sibling.userId}, now primary`] : []),
+        ...(remaining ? [`Still linked to ${remaining.userId}, now primary`] : []),
         ...(cleanup.length
           ? [`Discord cleanup incomplete: ${cleanup.join("; ")}`]
           : []),
