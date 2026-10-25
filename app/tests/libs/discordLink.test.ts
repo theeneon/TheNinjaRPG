@@ -67,7 +67,7 @@ describe("result copy", () => {
       expect(isDiscordLinkResult(result)).toBe(true);
     }
     expect(isDiscordLinkResult("hacked")).toBe(false);
-    expect(describeDiscordLinkResult("linked_elsewhere", { hint: "T***r" }).description).toContain(
+    expect(describeDiscordLinkResult("discord_full", { hint: "T***r" }).description).toContain(
       "T***r",
     );
     expect(describeDiscordLinkResult("cooldown", { until: "2026-11-01T00:00:00.000Z" }).description).toContain(

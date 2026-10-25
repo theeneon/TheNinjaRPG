@@ -1,9 +1,10 @@
 "use client";
 
-import { Link2, Unlink } from "lucide-react";
+import { Link2, Star, Unlink } from "lucide-react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import {
+  DISCORD_MAX_CHARACTERS_PER_ACCOUNT,
   DISCORD_MIN_ACCOUNT_AGE_DAYS,
   DISCORD_UNLINK_COOLDOWN_DAYS,
 } from "@/drizzle/constants";
@@ -22,6 +23,13 @@ export const DiscordLinkSettings: React.FC = () => {
       if (result.success) await utils.discord.getStatus.invalidate();
     },
   });
+  const { mutate: setPrimary, isPending: isSettingPrimary } =
+    api.discord.setPrimary.useMutation({
+      onSuccess: async (result) => {
+        showMutationToast(result);
+        if (result.success) await utils.discord.getStatus.invalidate();
+      },
+    });
 
   if (isPending) return <Loader explanation="Loading Discord link" />;
   if (!data?.enabled) return null;
@@ -35,7 +43,8 @@ export const DiscordLinkSettings: React.FC = () => {
         </p>
         <ul className="list-disc pl-5 text-muted-foreground text-sm">
           <li>
-            One Discord account per character, and one character per Discord account.
+            One Discord account per character; a Discord account can link up to{" "}
+            {DISCORD_MAX_CHARACTERS_PER_ACCOUNT} characters.
           </li>
           <li>
             Discord accounts must be at least {DISCORD_MIN_ACCOUNT_AGE_DAYS} days old.
@@ -58,10 +67,36 @@ export const DiscordLinkSettings: React.FC = () => {
   return (
     <div className="space-y-3 p-4">
       <p className="text-sm">
-        Linked to <span className="font-bold">{data.link.discordUsername}</span> since{" "}
-        {new Date(data.link.linkedAt).toLocaleDateString()}.
-        {data.link.tokenSource === "CLERK" && ` ${DISCORD_AUTOMATIC_LINK_TEXT}`}
+        Linked to Discord <span className="font-bold">{data.link.discordUsername}</span>{" "}
+        since {new Date(data.link.linkedAt).toLocaleDateString()}
+        {data.link.sibling && (
+          <>
+            {" "}
+            · also linked: <span className="font-bold">{data.link.sibling}</span>
+          </>
+        )}
+        .{data.link.tokenSource === "CLERK" && ` ${DISCORD_AUTOMATIC_LINK_TEXT}`}
       </p>
+      {data.link.sibling && (
+        <div className="flex flex-row flex-wrap items-center gap-2">
+          <p className="text-muted-foreground text-sm">
+            {data.link.isPrimary
+              ? "Primary: your server nickname and village role follow this character."
+              : `Your server nickname and village role follow ${data.link.sibling}.`}
+          </p>
+          {!data.link.isPrimary && (
+            <Button
+              variant="secondary"
+              className="gap-2"
+              disabled={isSettingPrimary}
+              onClick={() => setPrimary()}
+            >
+              <Star className="h-4 w-4" />
+              Set as primary for Discord
+            </Button>
+          )}
+        </div>
+      )}
       {data.link.needsRelink && (
         <div className="space-y-2">
           <p className="text-red-600 text-sm">
@@ -93,14 +128,16 @@ export const DiscordLinkSettings: React.FC = () => {
         }}
       >
         <p>
-          Unlinking removes your Verified Ninja role, so the Discord server channels
-          lock again.
+          {data.link.sibling
+            ? `${data.link.discordUsername} stays linked to ${data.link.sibling}, which keeps the Verified Ninja role and becomes primary.`
+            : "Unlinking removes your Verified Ninja role, so the Discord server channels lock again."}
         </p>
         <p className="pt-2 font-bold">
           For {DISCORD_UNLINK_COOLDOWN_DAYS} days afterwards you cannot link a different
-          Discord account, and {data.link.discordUsername} cannot be linked to another
-          character. Relinking {data.link.discordUsername} to this character stays
-          possible.
+          Discord account, and this character still counts toward the{" "}
+          {DISCORD_MAX_CHARACTERS_PER_ACCOUNT}-character limit of{" "}
+          {data.link.discordUsername}. Relinking {data.link.discordUsername} to this
+          character stays possible.
         </p>
       </Confirm>
     </div>

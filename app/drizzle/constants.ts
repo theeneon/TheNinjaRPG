@@ -4065,7 +4065,12 @@ export const STORE_ORDER_RESERVATION_MINUTES = 30;
  * this old, measured from its snowflake id, before it can be linked.
  */
 export const DISCORD_MIN_ACCOUNT_AGE_DAYS = 30;
-/** After an unlink, neither side can link to a different partner until this passes. */
+/** Characters one Discord account may be linked to (game rules: two accounts per person). */
+export const DISCORD_MAX_CHARACTERS_PER_ACCOUNT = 2;
+/**
+ * After an unlink, the character cannot link a different Discord account until this passes,
+ * and the Discord account keeps counting the character toward its limit for as long.
+ */
 export const DISCORD_UNLINK_COOLDOWN_DAYS = 30;
 /**
  * A ban or silence imposed for at least this long counts as indefinite and bans the linked
