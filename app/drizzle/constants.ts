@@ -889,6 +889,7 @@ export const BattleTypes = [
   "CLAN_CHALLENGE",
   "CLAN_BATTLE",
   "SHRINE_WAR",
+  "TERRITORY_WAR",
   "TOURNAMENT",
   "QUEST",
   "RANDOM_ENCOUNTER",
@@ -914,6 +915,7 @@ export const PvpBattleTypes: BattleType[] = [
 ];
 
 export const PveBattleTypes: BattleType[] = [
+  "TERRITORY_WAR",
   "HUNTING",
   "ARENA",
   "QUEST",
@@ -2245,6 +2247,7 @@ export const WAR_TORN_SECTOR_BASE_MONEY = 2000; // Base money reward for battles
 
 // MPVP Battle Types (for generalized multiplayer PvP battles)
 export const MPVP_BATTLE_TYPES = [
+  "TERRITORY_WAR",
   "CLAN_BATTLE",
   "SHRINE_BATTLE",
   "RAID_BATTLE",
@@ -4086,3 +4089,14 @@ export type DiscordUnlinkReason = (typeof DiscordUnlinkReasons)[number];
  */
 export const DiscordTokenSources = ["OAUTH", "CLERK"] as const;
 export type DiscordTokenSource = (typeof DiscordTokenSources)[number];
+
+// Global competition; the next event opens after the preceding event has ended.
+export const TERRITORY_WAR_INTERVAL_HOURS = 5;
+export const TERRITORY_WAR_DURATION_MINUTES = 60;
+export const TERRITORY_WAR_TARGET_POINTS = 400;
+export const TERRITORY_WAR_AI_POINTS = 5;
+export const TERRITORY_WAR_PVP_POINTS = 3;
+export const TERRITORY_WAR_TEAM_SIZE = 3;
+export const TERRITORY_WAR_TOKEN_REWARD = 300_000;
+export const TERRITORY_WAR_BOOST_PERCENT = 15;
+export const TERRITORY_WAR_BOOST_HOURS = 1;

@@ -65,6 +65,7 @@ import { staffRouter } from "./routers/staff";
 import { stealthRouter } from "./routers/stealth";
 import { stripeRouter } from "./routers/stripe";
 import { supportRouter } from "./routers/support";
+import { territoryWarRouter } from "./routers/territoryWar";
 import { titleRouter } from "./routers/title";
 import { tournamentRouter } from "./routers/tournament";
 import { towerDefenseRouter } from "./routers/towerDefense";
@@ -94,6 +95,7 @@ export const appRouter = createTRPCRouter({
   blackmarket: blackMarketRouter,
   bloodline: bloodlineRouter,
   combat: combatRouter,
+  territoryWar: territoryWarRouter,
   comments: commentsRouter,
   conceptart: conceptartRouter,
   contentReview: contentReviewRouter,
