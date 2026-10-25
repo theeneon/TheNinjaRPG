@@ -127,9 +127,22 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
     enabled: !!userData,
     refetchInterval: 30000,
   });
+  // Clock state keeps deadline expiry visible to React Compiler memoization.
+  const [territoryWarNow, setTerritoryWarNow] = useState(() => Date.now());
+  const territoryWarEndsAt = territoryWar.data?.endsAt.getTime();
+  const territoryWarDeadlines = useMemo(
+    () => [territoryWarEndsAt],
+    [territoryWarEndsAt],
+  );
+  useEffect(() => {
+    setTerritoryWarNow(Date.now());
+  }, [territoryWarEndsAt, timeDiff, isPageActive]);
   useRefreshAt(
-    [territoryWar.data?.endsAt],
-    () => void territoryWar.refetch(),
+    territoryWarDeadlines,
+    () => {
+      setTerritoryWarNow(Date.now());
+      void territoryWar.refetch();
+    },
     timeDiff,
     !!userData,
   );
@@ -222,10 +235,12 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
   };
 
   const navbarMenuItems = getMainNavbarLinks(notifications);
+  // Receipt time also rejects notices that expired while their request was in flight.
   const activeTerritoryWar =
     userData &&
     territoryWar.data &&
-    territoryWar.data.endsAt.getTime() > Date.now() - timeDiff
+    territoryWar.data.endsAt.getTime() >
+      Math.max(territoryWarNow, territoryWar.dataUpdatedAt) - timeDiff
       ? territoryWar.data
       : null;
   const shownNotifications = useMemo(() => {
