@@ -48,6 +48,12 @@ type SyncCharacter = { username: string; level: number; villageId: string | null
 const errorText = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, 200);
 
+/** Discord answers 401 to a token the player revoked; only re-linking restores it. */
+const tokenErrorText = (error: unknown) =>
+  isDiscordRequestError(error) && error.status === 401
+    ? relinkRequired("Discord rejected the token").message
+    : errorText(error);
+
 /** A member the bot may not edit (owner, higher role); retrying cannot help. */
 const isPermissionDenied = (error: unknown) =>
   isDiscordRequestError(error) &&
@@ -213,7 +219,7 @@ export const syncDiscordMember = async (
       });
       update.syncedLevel = character.level;
     } catch (error) {
-      errors.push(`metadata: ${errorText(error)}`);
+      errors.push(`metadata: ${tokenErrorText(error)}`);
     }
   }
 
