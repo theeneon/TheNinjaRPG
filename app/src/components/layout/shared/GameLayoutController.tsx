@@ -136,7 +136,7 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
   );
   useEffect(() => {
     setTerritoryWarNow(Date.now());
-  }, [territoryWarEndsAt, timeDiff, isPageActive]);
+  }, [territoryWarEndsAt, timeDiff, isPageActive, !!userData]);
   useRefreshAt(
     territoryWarDeadlines,
     () => {
