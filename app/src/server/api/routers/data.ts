@@ -122,15 +122,19 @@ export const dataRouter = createTRPCRouter({
 
       // Join completions to filtered exposures: a later completion belongs to the
       // first-visit cohort, without loading successes from unrelated experiments.
+      // The unique experiment/event/IP key prevents non-null IPs from fanning out.
+      // Aggregate exposure user-agent cohorts before transferring retained history.
       const completion = alias(abEvent, "completion");
       const rows = await ctx.drizzle
         .select({
-          completionId: completion.id,
-          ipHash: abEvent.ipHash,
-          experiment: abEvent.experiment,
-          variant: abEvent.variant,
-          event: abEvent.event,
-          userAgent: abEvent.userAgent,
+          experiment: sql<string>`ANY_VALUE(${abEvent.experiment})`,
+          variant: sql<string>`ANY_VALUE(${abEvent.variant})`,
+          userAgent: sql<string | null>`ANY_VALUE(${abEvent.userAgent})`,
+          loaded: sql`COUNT(*)`.mapWith(Number),
+          register:
+            sql`COUNT(CASE WHEN LENGTH(${abEvent.ipHash}) > 0 AND LENGTH(${completion.id}) > 0 THEN 1 END)`.mapWith(
+              Number,
+            ),
         })
         .from(abEvent)
         .leftJoin(
@@ -142,14 +146,15 @@ export const dataRouter = createTRPCRouter({
             eq(completion.event, "success"),
           ),
         )
-        .where(and(eq(abEvent.event, "loaded"), ...whereConds));
+        .where(and(eq(abEvent.event, "loaded"), ...whereConds))
+        // Keep history in SQL and preserve the helper's case-sensitive keys.
+        .groupBy(
+          sql`BINARY ${abEvent.experiment}`,
+          sql`BINARY ${abEvent.variant}`,
+          sql`BINARY ${abEvent.userAgent}`,
+        );
 
-      return aggregateExperiments(
-        rows.flatMap((row) =>
-          row.completionId ? [row, { ...row, event: "success" }] : [row],
-        ),
-        input.deviceType,
-      );
+      return aggregateExperiments(rows, input.deviceType);
     }),
   // Visitor analytics
   getVisitorUtmSources: protectedProcedure.query(async ({ ctx }) => {

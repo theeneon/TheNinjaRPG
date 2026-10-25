@@ -1,36 +1,24 @@
 import { WALLPAPER_EXPERIMENT, WALLPAPER_VARIANTS } from "@/libs/wallpaperExperiment";
 import { type DeviceType, getDeviceType } from "@/utils/hardware";
 
-type ExperimentEvent = {
+type ExperimentCohort = {
   experiment: string;
   variant: string;
-  event: string;
-  ipHash: string | null;
   userAgent: string | null;
+  loaded: number;
+  register: number;
 };
 export const aggregateExperiments = (
-  rows: ExperimentEvent[],
+  rows: ExperimentCohort[],
   devices?: DeviceType[],
 ) => {
-  const successes = new Set(
-    rows
-      .filter((row) => row.event === "success" && row.ipHash)
-      .map((row) => JSON.stringify([row.experiment, row.ipHash, row.variant])),
-  );
   const experiments = new Map<
     string,
     Map<string, { loaded: number; register: number }>
   >();
-  const exposures = new Set<string>();
   for (const row of rows) {
-    if (
-      row.event !== "loaded" ||
-      (devices?.length && !devices.includes(getDeviceType(row.userAgent ?? undefined)))
-    )
+    if (devices?.length && !devices.includes(getDeviceType(row.userAgent ?? undefined)))
       continue;
-    const key = JSON.stringify([row.experiment, row.ipHash, row.variant]);
-    if (row.ipHash && exposures.has(key)) continue;
-    exposures.add(key);
     let variants = experiments.get(row.experiment);
     if (!variants) {
       variants = new Map();
@@ -41,8 +29,8 @@ export const aggregateExperiments = (
       experiments.set(row.experiment, variants);
     }
     const counts = variants.get(row.variant) ?? { loaded: 0, register: 0 };
-    counts.loaded++;
-    if (row.ipHash && successes.has(key)) counts.register++;
+    counts.loaded += row.loaded;
+    counts.register += row.register;
     variants.set(row.variant, counts);
   }
   return Array.from(experiments, ([experiment, variants]) => ({
