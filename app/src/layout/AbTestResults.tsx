@@ -389,20 +389,23 @@ const ExperimentRow: React.FC<{ exp: ExperimentAgg }> = ({ exp }) => {
   );
 };
 
+/** Show full-history results for recently active tests, with source/device filters. */
 export const AbTestResults: React.FC = () => {
   const visitorFilterState = useVisitorFiltering();
 
   const { data, isFetching, isError, refetch } = api.data.getAbTests.useQuery(
-    { ...getVisitorFilter(visitorFilterState) },
+    { ...getVisitorFilter(visitorFilterState, false) },
     { staleTime: 60_000 },
   );
 
   return (
     <ContentBox
       title="A/B/C Tests"
-      subtitle="Unique visits and tutorial completions, grouped by first visit"
+      subtitle="All-time unique visits and tutorial completions for tests active in the last 7 days"
       initialBreak
-      topRightContent={<VisitorFiltering state={visitorFilterState} />}
+      topRightContent={
+        <VisitorFiltering state={visitorFilterState} includeDates={false} />
+      }
     >
       {isFetching && <Loader explanation="Loading A/B test results" />}
       {isError && (
@@ -414,7 +417,7 @@ export const AbTestResults: React.FC = () => {
         </p>
       )}
       {!isFetching && !isError && (!data || data.length === 0) && (
-        <p>No experiments found.</p>
+        <p>No experiments with activity in the last 7 days match these filters.</p>
       )}
       {!isFetching && data && data.length > 0 && (
         <div className="flex flex-col gap-4">

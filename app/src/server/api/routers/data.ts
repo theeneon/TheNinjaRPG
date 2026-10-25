@@ -75,8 +75,8 @@ import {
   canViewRecruitmentAnalytics,
   canViewRevenueAnalytics,
 } from "@/utils/permissions";
+import { WEEK_S } from "@/utils/time";
 import type { QueryCondition } from "@/utils/typeutils";
-import { abTestFilterSchema } from "@/validators/analytics";
 import { bloodlineFilteringSchema } from "@/validators/bloodline";
 import { itemFilteringSchema } from "@/validators/item";
 import { jutsuFilteringSchema } from "@/validators/jutsu";
@@ -93,9 +93,14 @@ import {
 } from "./skillTree";
 
 export const dataRouter = createTRPCRouter({
-  // AB tests summaries (protected)
+  /** Return full-history variant counts for tests with an event in the last week. */
   getAbTests: protectedProcedure
-    .input(abTestFilterSchema)
+    .input(
+      z.object({
+        utmSource: z.string().max(191).optional(),
+        deviceType: z.array(z.enum(["mobile", "desktop", "unknown"])).optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       // Query
       const user = await fetchUser(ctx.drizzle, ctx.userId);
@@ -104,32 +109,33 @@ export const dataRouter = createTRPCRouter({
         throw serverError("UNAUTHORIZED", "Insufficient permissions to get AB tests");
       }
       // Query
-      const whereConds: QueryCondition[] = [];
-      if (input?.startDate)
-        whereConds.push(gte(abEvent.createdAt, new Date(input.startDate)));
-      if (input?.endDate)
-        whereConds.push(
-          input.endDate.length === 10
-            ? lt(
-                abEvent.createdAt,
-                new Date(new Date(input.endDate).getTime() + 24 * 60 * 60 * 1000),
-              )
-            : lte(abEvent.createdAt, new Date(input.endDate)),
-        );
+      // Recent activity selects experiments; their cohorts include all history.
+      const activeExperiments = ctx.drizzle
+        .selectDistinct({ experiment: abEvent.experiment })
+        .from(abEvent)
+        .where(gte(abEvent.createdAt, new Date(Date.now() - WEEK_S * 1000)));
+      const whereConds: QueryCondition[] = [
+        inArray(abEvent.experiment, activeExperiments),
+      ];
       if (input?.utmSource && input.utmSource.length > 0)
         whereConds.push(eq(abEvent.source, input.utmSource));
 
       // Join completions to filtered exposures: a later completion belongs to the
       // first-visit cohort, without loading successes from unrelated experiments.
+      // The unique experiment/event/IP key prevents non-null IPs from fanning out.
+      // Aggregate exposure user-agent cohorts before transferring retained history.
       const completion = alias(abEvent, "completion");
       const rows = await ctx.drizzle
         .select({
-          completionId: completion.id,
-          ipHash: abEvent.ipHash,
-          experiment: abEvent.experiment,
-          variant: abEvent.variant,
-          event: abEvent.event,
-          userAgent: abEvent.userAgent,
+          experiment: sql<string>`ANY_VALUE(${abEvent.experiment})`,
+          variant: sql<string>`ANY_VALUE(${abEvent.variant})`,
+          userAgent: sql<string | null>`ANY_VALUE(${abEvent.userAgent})`,
+          loaded: sql`COUNT(*)`.mapWith(Number),
+          // Empty IPs and completion IDs cannot identify an attributable conversion.
+          register:
+            sql`COUNT(CASE WHEN LENGTH(${abEvent.ipHash}) > 0 AND LENGTH(${completion.id}) > 0 THEN 1 END)`.mapWith(
+              Number,
+            ),
         })
         .from(abEvent)
         .leftJoin(
@@ -141,14 +147,15 @@ export const dataRouter = createTRPCRouter({
             eq(completion.event, "success"),
           ),
         )
-        .where(and(eq(abEvent.event, "loaded"), ...whereConds));
+        .where(and(eq(abEvent.event, "loaded"), ...whereConds))
+        // Binary groups keep keys exact; ANY_VALUE returns their original text.
+        .groupBy(
+          sql`BINARY ${abEvent.experiment}`,
+          sql`BINARY ${abEvent.variant}`,
+          sql`BINARY ${abEvent.userAgent}`,
+        );
 
-      return aggregateExperiments(
-        rows.flatMap((row) =>
-          row.completionId ? [row, { ...row, event: "success" }] : [row],
-        ),
-        input.deviceType,
-      );
+      return aggregateExperiments(rows, input.deviceType);
     }),
   // Visitor analytics
   getVisitorUtmSources: protectedProcedure.query(async ({ ctx }) => {

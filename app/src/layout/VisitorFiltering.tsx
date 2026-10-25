@@ -45,25 +45,33 @@ const visitorFilteringSchema = defineFilteringSchema({
       label: "First Visit (From)",
       type: "date",
       defaultValue: dateStringMonthsAgo(1),
+      visibleIf: (ctx) =>
+        (ctx as { includeDates?: boolean } | undefined)?.includeDates !== false,
     },
     {
       id: "endDate",
       label: "First Visit (To)",
       type: "date",
       defaultValue: "",
+      visibleIf: (ctx) =>
+        (ctx as { includeDates?: boolean } | undefined)?.includeDates !== false,
     },
   ] as const,
 });
 
 interface VisitorFilteringProps {
   state: VisitorFilteringState;
+  /** Show date controls by default; use the same option when calling getFilter. */
+  includeDates?: boolean;
 }
 
+/** Render shared visitor cohort controls with optional first-visit date fields. */
 const VisitorFiltering: React.FC<VisitorFilteringProps> = (props) => {
   return (
     <ContentFiltering
       schema={visitorFilteringSchema}
       state={props.state.cf}
+      context={{ includeDates: props.includeDates }}
       triggerButtonId="filter-visitor"
     />
   );
@@ -71,8 +79,19 @@ const VisitorFiltering: React.FC<VisitorFilteringProps> = (props) => {
 
 export default VisitorFiltering;
 
-export const getFilter = (state: VisitorFilteringState) =>
-  buildFilter(state.cf, visitorFilteringSchema);
+/**
+ * Build visitor query filters, optionally excluding first-visit date bounds.
+ * Visibility guards only hide controls; full-history callers must also remove
+ * their default date values from the request.
+ */
+export const getFilter = (state: VisitorFilteringState, includeDates = true) => {
+  const filter = buildFilter(state.cf, visitorFilteringSchema);
+  if (!includeDates) {
+    delete filter.startDate;
+    delete filter.endDate;
+  }
+  return filter;
+};
 
 export const useFiltering = () => {
   const cf = useContentFiltering(visitorFilteringSchema);
