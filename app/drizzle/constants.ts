@@ -3589,9 +3589,9 @@ export function getUserCaps(rank?: UserRank | null) {
   };
 }
 
-// =====================================
+// ============================================
 // Tower Defense Constants
-// =====================================
+// ============================================
 
 export const TD_ENEMY_DIRECTIONS = [
   "n",
@@ -3692,9 +3692,9 @@ export const TD_SHURIKEN_IMAGE_URL =
   "https://uploadthing.b-cdn.net/f/4a3100e5-97c6-4e5a-96e2-1c3520838179-gwm3dh.svg";
 export const TD_HEX_SIZE = 100;
 
-// =====================================
+// ============================================
 // Stealth & Sensory System Constants
-// =====================================
+// ============================================
 export const STEALTH_SENSORY_CAP = 20000;
 export const STEALTH_SENSORY_DEFAULT = 1000;
 export const STEALTH_BASE_DURATION_SECONDS = 60; // 1 minute base
