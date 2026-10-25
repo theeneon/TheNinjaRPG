@@ -1,6 +1,8 @@
 import { and, asc, eq, exists, isNull, lt, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/mysql-core";
 import { after } from "next/server";
 import {
+  DISCORD_INDEFINITE_SANCTION_DAYS,
   DISCORD_SYNC_BATCH_SIZE,
   DISCORD_SYNC_REFRESH_DAYS,
 } from "@/drizzle/constants";
@@ -10,8 +12,11 @@ import type { DrizzleClient } from "@/server/db";
 import { fetchClerkDiscordToken } from "@/server/utils/discord/clerk";
 import { type DiscordConfig, getDiscordConfig } from "@/server/utils/discord/config";
 import {
-  fetchIndefiniteSanction,
+  discordTombstoneHash,
+  fetchDiscordAccountLinks,
+  fetchDiscordAccountSanctions,
   indefiniteSanctionWhere,
+  setDiscordPrimary,
 } from "@/server/utils/discord/links";
 import {
   addGuildMember,
@@ -29,6 +34,7 @@ import {
   unbanMember,
 } from "@/server/utils/discord/rest";
 import { decryptToken, encryptToken } from "@/server/utils/discord/secrets";
+import { fetchActiveSanctionTombstones } from "@/server/utils/sanctionTombstone";
 
 /**
  * Discord side of a link: Linked Roles metadata, server membership, nickname, village role
@@ -151,68 +157,105 @@ const desiredRoles = (config: DiscordConfig, character: SyncCharacter) =>
   ].filter((role): role is string => !!role);
 
 /**
- * Bring Discord in line with the character. With `force`, everything is re-applied even when
- * the stored state already matches (the periodic full refresh and staff resync).
+ * Bring Discord in line with the character's Discord account. The account shows its primary
+ * character (see `syncDiscordAccount`), so syncing either linked character syncs both.
  */
 export const syncDiscordMember = async (
   client: DrizzleClient,
   userId: string,
   options: { force?: boolean } = {},
 ) => {
+  if (!getDiscordConfig()) return { synced: false, errors: ["disabled"] };
+  const link = await client.query.discordLink.findFirst({
+    columns: { discordId: true },
+    where: eq(discordLink.userId, userId),
+  });
+  if (!link) return { synced: false, errors: ["not linked"] };
+  return syncDiscordAccount(client, link.discordId, options);
+};
+
+type AccountLink = Awaited<ReturnType<typeof fetchDiscordAccountLinks>>[number];
+
+/**
+ * Bring a Discord account in line with its linked characters. Nickname, village role and
+ * Linked Roles metadata follow the primary character; the account is banned while any linked
+ * character has an indefinite sanction, or while the tombstone of a deleted linked account
+ * holds one. With `force`, everything is re-applied even when the stored state already matches
+ * (the periodic full refresh and staff resync). The applied state is written to every link of
+ * the account, so a primary switch shows up as a mismatch on the new primary.
+ */
+export const syncDiscordAccount = async (
+  client: DrizzleClient,
+  discordId: string,
+  options: { force?: boolean } = {},
+) => {
   const config = getDiscordConfig();
   if (!config) return { synced: false, errors: ["disabled"] };
-  const [link, sanction] = await Promise.all([
-    client.query.discordLink.findFirst({
-      where: eq(discordLink.userId, userId),
-      with: { user: { columns: { username: true, level: true, villageId: true } } },
-    }),
-    fetchIndefiniteSanction(client, userId),
+  const [links, sanctions, tombstones] = await Promise.all([
+    fetchDiscordAccountLinks(client, discordId),
+    fetchDiscordAccountSanctions(client, discordId),
+    fetchActiveSanctionTombstones(client),
   ]);
-  if (!link?.user) return { synced: false, errors: ["not linked"] };
-  const character = link.user;
+  const primary = links.find((link) => link.user);
+  if (!primary?.user) return { synced: false, errors: ["not linked"] };
+  const character = primary.user;
   const force = options.force ?? false;
   const errors: string[] = [];
   const update: Partial<typeof discordLink.$inferInsert> = {};
+  if (links.filter((link) => link.isPrimary).length !== 1 || !primary.isPrimary)
+    await setDiscordPrimary(client, primary);
 
   // Indefinite sanction: ban from the server and skip everything else.
-  if (sanction) {
-    if (force || !link.syncedBanned) {
+  const banReason = discordBanReason(discordId, sanctions, tombstones);
+  if (banReason) {
+    if (force || links.some((link) => !link.syncedBanned)) {
       try {
-        await banMember(
-          config,
-          link.discordId,
-          `TNR report ${sanction.id}: indefinite ${sanction.status === "BAN_ACTIVATED" ? "ban" : "silence"}`,
-        );
+        await banMember(config, discordId, banReason);
         update.syncedBanned = true;
       } catch (error) {
         errors.push(`ban: ${errorText(error)}`);
       }
     }
-    await saveSyncState(client, link.id, update, errors);
+    await saveSyncState(client, discordId, update, errors);
     return { synced: errors.length === 0, errors };
   }
-  if (link.syncedBanned) {
+  if (links.some((link) => link.syncedBanned)) {
     try {
-      await unbanMember(config, link.discordId, "TNR sanction lifted");
+      await unbanMember(config, discordId, "TNR sanction lifted");
       update.syncedBanned = false;
     } catch (error) {
       errors.push(`unban: ${errorText(error)}`);
     }
   }
 
-  // Linked Roles metadata needs the player's own token.
-  let accessToken: string | null = null;
-  const tokenFor = async () => {
-    accessToken ??= await getLinkAccessToken(client, config, link);
-    return accessToken;
+  // Linked Roles metadata needs one of the player's own tokens: the primary's, else another.
+  const tokens = new Map<string, Promise<string>>();
+  const tokenOf = (link: AccountLink) => {
+    let token = tokens.get(link.id);
+    if (!token) {
+      token = getLinkAccessToken(client, config, link);
+      tokens.set(link.id, token);
+    }
+    return token;
+  };
+  const anyToken = async () => {
+    let firstError: unknown = null;
+    for (const link of links) {
+      try {
+        return await tokenOf(link);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    throw firstError;
   };
   if (
     force ||
-    link.syncedLevel !== character.level ||
-    link.syncedUsername !== character.username
+    primary.syncedLevel !== character.level ||
+    primary.syncedUsername !== character.username
   ) {
     try {
-      await putRoleConnection(config, await tokenFor(), {
+      await putRoleConnection(config, await anyToken(), {
         platformUsername: character.username,
         linked: true,
         level: character.level,
@@ -228,19 +271,18 @@ export const syncDiscordMember = async (
   const wanted = desiredRoles(config, character);
   const needsMember =
     force ||
-    link.syncedUsername !== character.username ||
-    link.syncedVillageId !== character.villageId ||
+    primary.syncedUsername !== character.username ||
+    primary.syncedVillageId !== character.villageId ||
     update.syncedBanned === false;
   if (needsMember) {
     let applied = true;
     try {
-      const member = await getGuildMember(config, link.discordId);
+      const member = await getGuildMember(config, discordId);
       if (!member) {
-        // A CLERK link learns Clerk's current scopes when it fetches the token.
-        if (link.tokenSource === "CLERK") await tokenFor();
-        if (link.scopes.split(" ").includes("guilds.join")) {
-          await addGuildMember(config, link.discordId, {
-            accessToken: await tokenFor(),
+        const joinToken = await guildJoinToken(links, tokenOf);
+        if (joinToken) {
+          await addGuildMember(config, discordId, {
+            accessToken: joinToken,
             nick,
             roles: wanted,
           });
@@ -248,7 +290,7 @@ export const syncDiscordMember = async (
       } else {
         if (member.nick !== nick) {
           try {
-            await setNickname(config, link.discordId, nick, AUDIT_REASON);
+            await setNickname(config, discordId, nick, AUDIT_REASON);
           } catch (error) {
             if (!isPermissionDenied(error)) throw error;
             errors.push(`nickname: ${errorText(error)}`);
@@ -256,11 +298,11 @@ export const syncDiscordMember = async (
         }
         const managed = managedRoles(config);
         for (const role of wanted.filter((role) => !member.roles.includes(role)))
-          await addRole(config, link.discordId, role, AUDIT_REASON);
+          await addRole(config, discordId, role, AUDIT_REASON);
         for (const role of member.roles.filter(
           (role) => managed.has(role) && !wanted.includes(role),
         ))
-          await removeRole(config, link.discordId, role, AUDIT_REASON);
+          await removeRole(config, discordId, role, AUDIT_REASON);
       }
     } catch (error) {
       applied = false;
@@ -271,13 +313,61 @@ export const syncDiscordMember = async (
       update.syncedVillageId = character.villageId;
     }
   }
-  await saveSyncState(client, link.id, update, errors);
+  await saveSyncState(client, discordId, update, errors);
   return { synced: errors.length === 0, errors };
+};
+
+/**
+ * Audit-log reason for banning a Discord account, or null when nothing bans it. A deleted
+ * account's tombstone keeps the ban while its sanction is at least as long as an indefinite
+ * one, measured from the deletion, so deleting the sanctioned character does not lift the
+ * ban of the Discord account its sibling still uses.
+ */
+const discordBanReason = (
+  discordId: string,
+  sanctions: Awaited<ReturnType<typeof fetchDiscordAccountSanctions>>,
+  tombstones: Awaited<ReturnType<typeof fetchActiveSanctionTombstones>>,
+) => {
+  const sanction =
+    sanctions.find((entry) => entry.status === "BAN_ACTIVATED") ?? sanctions[0];
+  if (sanction)
+    return `TNR report ${sanction.id}: indefinite ${sanction.status === "BAN_ACTIVATED" ? "ban" : "silence"}`;
+  const hash = discordTombstoneHash(discordId);
+  const tombstone = tombstones.find(
+    (entry) =>
+      entry.accountHashes.includes(hash) &&
+      entry.sanctionEndsAt.getTime() >=
+        entry.createdAt.getTime() + DISCORD_INDEFINITE_SANCTION_DAYS * 86_400_000,
+  );
+  return tombstone
+    ? `TNR report ${tombstone.sourceId}: indefinite sanction of a deleted linked account`
+    : null;
+};
+
+/**
+ * A token allowed to add the member to the server, from the first link with `guilds.join`.
+ * A CLERK link learns Clerk's current scopes when it fetches the token.
+ */
+const guildJoinToken = async (
+  links: AccountLink[],
+  tokenOf: (link: AccountLink) => Promise<string>,
+) => {
+  for (const link of links) {
+    if (link.tokenSource !== "CLERK" && !link.scopes.split(" ").includes("guilds.join"))
+      continue;
+    try {
+      const token = await tokenOf(link);
+      if (link.scopes.split(" ").includes("guilds.join")) return token;
+    } catch {
+      // Reported by the metadata step; try the next link.
+    }
+  }
+  return null;
 };
 
 const saveSyncState = (
   client: DrizzleClient,
-  linkId: string,
+  discordId: string,
   update: Partial<typeof discordLink.$inferInsert>,
   errors: string[],
 ) =>
@@ -288,12 +378,14 @@ const saveSyncState = (
       syncedAt: new Date(),
       syncError: errors.length ? errors.join("; ").slice(0, 500) : null,
     })
-    .where(eq(discordLink.id, linkId));
+    .where(eq(discordLink.discordId, discordId));
 
 /**
- * Undo the Discord side before a link is removed: report the role connection as unlinked so
- * Discord drops the Linked Role, remove managed roles and the nickname, and revoke the
- * tokens. A Discord ban stays in place. Never throws.
+ * Undo the Discord side before the last link of a Discord account is removed: report the role
+ * connection as unlinked so Discord drops the Linked Role, remove managed roles and the
+ * nickname, and revoke the tokens. A Discord ban stays in place. Never throws. While another
+ * character stays linked, none of this runs: the account keeps its role, the remaining link
+ * may share the authorization a revoke would end, and a sync applies the remaining character.
  */
 export const releaseDiscordMember = async (
   client: DrizzleClient,
@@ -358,19 +450,37 @@ export const scheduleDiscordSync = (client: DrizzleClient, userId: string | null
 };
 
 /**
- * Links whose Discord state no longer matches the character, plus links due for the periodic
- * full refresh, oldest sync first.
+ * Links whose Discord account no longer matches its characters, plus links due for the
+ * periodic full refresh, oldest sync first. A Discord account banned only through a deleted
+ * account's tombstone (keyed hashes, matched in code) shows up hourly; the sync then finds
+ * nothing to change.
  */
 export const fetchLinksNeedingSync = (client: DrizzleClient, limit: number) => {
   const refreshBefore = new Date(Date.now() - DISCORD_SYNC_REFRESH_DAYS * 86_400_000);
+  const linked = alias(discordLink, "linked");
+  const primary = alias(discordLink, "primaryLink");
+  // Any character linked to the same Discord account has an indefinite sanction.
   const sanctioned = exists(
     client
       .select({ id: userReport.id })
-      .from(userReport)
-      .where(indefiniteSanctionWhere(userData.userId)),
+      .from(linked)
+      .innerJoin(userReport, indefiniteSanctionWhere(linked.userId))
+      .where(eq(linked.discordId, discordLink.discordId)),
+  );
+  const hasPrimary = exists(
+    client
+      .select({ id: primary.id })
+      .from(primary)
+      .where(
+        and(eq(primary.discordId, discordLink.discordId), eq(primary.isPrimary, true)),
+      ),
   );
   return client
-    .select({ userId: discordLink.userId, syncedAt: discordLink.syncedAt })
+    .select({
+      userId: discordLink.userId,
+      discordId: discordLink.discordId,
+      syncedAt: discordLink.syncedAt,
+    })
     .from(discordLink)
     .innerJoin(userData, eq(userData.userId, discordLink.userId))
     .where(
@@ -378,9 +488,11 @@ export const fetchLinksNeedingSync = (client: DrizzleClient, limit: number) => {
         isNull(discordLink.syncedAt),
         lt(discordLink.syncedAt, refreshBefore),
         sql`${discordLink.syncedBanned} <> (${sanctioned})`,
+        sql`NOT (${hasPrimary})`,
         // While banned, nickname, roles and metadata are not applied, so they cannot differ.
         and(
           sql`NOT (${sanctioned})`,
+          eq(discordLink.isPrimary, true),
           or(
             sql`NOT (${discordLink.syncedUsername} <=> ${userData.username})`,
             sql`NOT (${discordLink.syncedVillageId} <=> ${userData.villageId})`,
@@ -401,17 +513,21 @@ export const reconcileDiscordLinks = async (
   if (!getDiscordConfig()) return { processed: 0, failed: 0, skipped: true };
   const refreshBefore = Date.now() - DISCORD_SYNC_REFRESH_DAYS * 86_400_000;
   const links = await fetchLinksNeedingSync(client, limit);
-  let failed = 0;
+  // Both links of a Discord account sync together; force when either is due.
+  const accounts = new Map<string, boolean>();
   for (const link of links) {
+    const due = !link.syncedAt || link.syncedAt.getTime() < refreshBefore;
+    accounts.set(link.discordId, (accounts.get(link.discordId) ?? false) || due);
+  }
+  let failed = 0;
+  for (const [discordId, force] of accounts) {
     try {
-      const result = await syncDiscordMember(client, link.userId, {
-        force: !link.syncedAt || link.syncedAt.getTime() < refreshBefore,
-      });
+      const result = await syncDiscordAccount(client, discordId, { force });
       if (!result.synced) failed++;
     } catch (error) {
       failed++;
       console.error("[Discord] Reconcile failed", errorText(error));
     }
   }
-  return { processed: links.length, failed, skipped: false };
+  return { processed: accounts.size, failed, skipped: false };
 };

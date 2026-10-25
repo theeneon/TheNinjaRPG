@@ -1,6 +1,7 @@
 "use client";
 
-import { Bot, Eraser, MessageCircle, Presentation } from "lucide-react";
+import { SiDiscord } from "@icons-pack/react-simple-icons";
+import { Bot, Eraser, Presentation } from "lucide-react";
 import { useRef, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
@@ -131,8 +132,12 @@ export default function Reports() {
                 </Link>
                 {discordStatus?.enabled && canViewDiscordLinks(userData.role) && (
                   <Link href="/reports/discord">
-                    <Button id="discord-links" hoverText="Discord Links">
-                      <MessageCircle className="h-6 w-6" />
+                    <Button
+                      id="discord-links"
+                      hoverText="Discord Links"
+                      aria-label="Discord links"
+                    >
+                      <SiDiscord className="h-6 w-6" title="" aria-hidden />
                     </Button>
                   </Link>
                 )}

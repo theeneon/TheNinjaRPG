@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import {
+  DISCORD_MAX_CHARACTERS_PER_ACCOUNT,
   DISCORD_MIN_ACCOUNT_AGE_DAYS,
   DISCORD_UNLINK_COOLDOWN_DAYS,
 } from "@/drizzle/constants";
@@ -139,14 +140,16 @@ const DiscordLinkStart: React.FC = () => {
       )}
       <ul className="list-disc pl-5 text-muted-foreground text-sm">
         <li>
-          One Discord account per character, and one character per Discord account.
+          One Discord account per character; a Discord account can link up to{" "}
+          {DISCORD_MAX_CHARACTERS_PER_ACCOUNT} characters.
         </li>
         <li>
           Discord accounts must be at least {DISCORD_MIN_ACCOUNT_AGE_DAYS} days old.
         </li>
         <li>
-          After unlinking, linking to a different partner takes{" "}
-          {DISCORD_UNLINK_COOLDOWN_DAYS} days.
+          After unlinking, linking a different Discord account takes{" "}
+          {DISCORD_UNLINK_COOLDOWN_DAYS} days, and unlinked characters count toward the
+          limit for as long.
         </li>
         <li>Indefinite bans and silences in the game also apply on Discord.</li>
       </ul>

@@ -176,6 +176,13 @@ const DiscordLinkCard: React.FC<{ link: StaffLink; canManage: boolean }> = ({
           <Link href={`/userid/${link.userId}`} className="font-bold hover:underline">
             {link.username ?? link.userId}
           </Link>
+          {link.sameOwner.length > 0 && (
+            <span
+              className={`ml-2 rounded px-1.5 py-0.5 text-xs ${link.isPrimary ? "bg-green-600 text-white" : "bg-muted"}`}
+            >
+              {link.isPrimary ? "Primary" : "Secondary"}
+            </span>
+          )}
           <p className="text-sm">
             Discord: <span className="font-bold">{link.discordUsername}</span> (
             {link.discordId})
@@ -186,6 +193,17 @@ const DiscordLinkCard: React.FC<{ link: StaffLink; canManage: boolean }> = ({
             {new Date(link.linkedAt).toLocaleDateString()}
             {link.clerkDiscordId ? ` · Clerk Discord login ${link.clerkDiscordId}` : ""}
           </p>
+          {link.sameOwner.map((other) => (
+            <p key={other.userId} className="text-sm">
+              Same owner (declared via Discord link):{" "}
+              <Link
+                href={`/userid/${other.userId}`}
+                className="font-bold hover:underline"
+              >
+                {other.username}
+              </Link>
+            </p>
+          ))}
         </div>
       </div>
       <div className="grid grid-cols-1 gap-1 pt-2 text-sm sm:grid-cols-2">

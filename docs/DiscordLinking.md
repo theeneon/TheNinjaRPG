@@ -1,6 +1,8 @@
 # Discord account linking
 
-Players link exactly one Discord account to exactly one character. The TNR Discord server
+Players link one Discord account per character, and a Discord account can be linked to up to
+`DISCORD_MAX_CHARACTERS_PER_ACCOUNT` (2) characters, matching the game rule of at most two
+accounts per person. The TNR Discord server
 gates its channels behind a **Verified Ninja** role that Discord grants through
 [Linked Roles](https://discord.com/developers/docs/tutorials/configuring-app-metadata-for-linked-roles):
 the role requires the application's `linked` metadata, which the game pushes when a player
@@ -14,23 +16,63 @@ staff page `/reports/discord`.
 
 ## Rules
 
-- Unique keys on `DiscordLink.userId` and `DiscordLink.discordId`: one active link per
-  character and per Discord account. A Discord account linked elsewhere shows a masked name.
+- A unique key on `DiscordLink.userId` allows one link per character. Each link of a Discord
+  account takes a numbered `slot` (1 or 2), and the unique key on (`discordId`, `slot`) caps the
+  account at two characters even when two links race. A Discord account that already has two
+  characters is refused with "Discord account full" and the masked names of both.
+- Linking a second character to a Discord account declares both characters as the same owner.
+  The ActionLog of both characters records it, and the staff page lists the two characters
+  together, marked "same owner (declared via Discord link)".
+- One link per Discord account is **primary** (`isPrimary`): its character sets the server
+  nickname, the village role and the Linked Roles metadata. The first link is primary; a
+  second link keeps the existing primary. Either character can take over with "Set as primary
+  for Discord" in the profile. When the primary unlinks or is deleted, the other character
+  becomes primary and the account is synced to it. Should no link be flagged (an unlink racing
+  a link), the lowest slot counts as primary and the next sync writes the flag back.
 - Discord accounts younger than `DISCORD_MIN_ACCOUNT_AGE_DAYS` (30) are refused, measured
   from the snowflake id.
-- After an unlink, neither the character nor the Discord account can link to a *different*
-  partner for `DISCORD_UNLINK_COOLDOWN_DAYS` (30). Relinking the same pair is allowed. Staff
-  can waive the cooldown when force-unlinking. Ended links stay in `DiscordLinkHistory`.
+- Unlink cooldown (`DISCORD_UNLINK_COOLDOWN_DAYS`, 30), from `DiscordLinkHistory`:
+  - A character that unlinked a Discord account cannot link a *different* Discord account for
+    30 days. Relinking the same Discord account is allowed.
+  - A Discord account counts every character it was linked to within the last 30 days, active
+    or unlinked, and cannot reach more than two distinct characters in that window. A
+    character that was linked within the window can always come back. So a player can link a
+    second character right away, but a Discord account that unlinked a character cannot take a
+    different third one until that unlink is 30 days old.
+  - Staff can waive the cooldown when force-unlinking; waived unlinks do not count.
 - Banned characters, and characters with an indefinite ban or silence, cannot link. A
-  Discord id held by an active sanction tombstone cannot link; deleting a sanctioned account
-  adds its linked Discord id to the tombstone.
+  Discord id held by an active sanction tombstone cannot link, nor can a Discord account
+  that is banned through its other character. Deleting a sanctioned account adds its linked
+  Discord id to the tombstone.
 - A ban or silence imposed for at least `DISCORD_INDEFINITE_SANCTION_DAYS` (365), measured
-  from the moderation decision, counts as indefinite while it runs and bans the linked Discord account from the server, with the report id in the
-  audit-log reason. Clearing or expiry lifts the Discord ban. Players cannot unlink while
-  such a sanction runs; a force-unlink or account deletion leaves the Discord ban in place.
+  from the moderation decision, counts as indefinite while it runs and bans the linked
+  Discord account from the server, with the report id in the audit-log reason. The account
+  is banned while *either* linked character has such a sanction and unbanned only when
+  neither has one. Players cannot unlink while such a sanction runs; a force-unlink or account
+  deletion of the last link leaves the Discord ban in place. When a sanctioned character is
+  deleted while its sibling stays linked, the deletion's tombstone keeps the ban as long as
+  the remaining sanction is at least 365 days from the deletion. A staff force-unlink of a
+  sanctioned character while its unsanctioned sibling stays linked lifts the ban on the next
+  sync.
 - Linking a Discord account that differs from the account's own Clerk Discord login, or that
-  is another linked character's Clerk Discord login, writes a staff-visible ActionLog flag
-  without blocking.
+  is the Clerk Discord login of a character linked to another Discord account, writes a
+  staff-visible ActionLog flag without blocking.
+
+## Two characters on one Discord account
+
+The sync works per Discord account: syncing either character re-applies the account from its
+primary, and the applied state is stored on both links. Linked Roles metadata is stored by
+Discord per user and application, so with two links the primary's values are pushed
+(`linked=1`). Each link keeps its own token source: two characters usually belong to two
+Clerk users, so one link can be CLERK and the other OAUTH. The sync uses the primary's token
+and falls back to the other link's.
+
+Unlinking one of two characters keeps the account's Linked Role, roles and nickname (they now
+follow the remaining character) and never revokes a token: Discord may end the whole
+authorization, which the remaining link can share. Refused links skip the revoke for the same
+reason when the Discord account already has a link. Unlinking the last character works as
+with a single link: `linked=0` metadata, managed roles and nickname removed, OAuth token
+revoked.
 
 ## Linking from the Discord sign-in
 
@@ -41,7 +83,8 @@ top-level navigation per the `Sec-Fetch-*` headers), the route first asks Clerk 
 (`users.getUserOauthAccessToken(userId, "discord")`). If that token carries `identify` and
 `role_connections.write`, and Discord's `/oauth2/@me` confirms it was issued to this
 application for the same Discord account, the link is completed right away with that token,
-without a consent screen. The same rules apply as for the consent flow, and the result page
+without a consent screen. The same rules apply as for the consent flow (including the
+two-character limit), and the result page
 and profile say "Linked automatically from your Discord sign-in."
 
 Without a Discord sign-in, with a Clerk token from before the scopes were added (the player

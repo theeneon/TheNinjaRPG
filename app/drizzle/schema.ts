@@ -6753,9 +6753,11 @@ export const sanctionTombstone = mysqlTable(
 export type SanctionTombstone = InferSelectModel<typeof sanctionTombstone>;
 
 /**
- * The one Discord account linked to a character (see `server/utils/discord/`). The unique
- * keys on both `userId` and `discordId` guarantee at most one active link per character and
- * per Discord account. OAuth tokens are AES-256-GCM encrypted at rest and only used to push
+ * The Discord account linked to a character (see `server/utils/discord/`). The unique key on
+ * `userId` allows one link per character; the unique key on (`discordId`, `slot`) caps a
+ * Discord account at DISCORD_MAX_CHARACTERS_PER_ACCOUNT characters, since each link takes one
+ * of the numbered slots. The `isPrimary` link of a Discord account decides its server
+ * nickname, village role and Linked Roles metadata. OAuth tokens are AES-256-GCM encrypted at rest and only used to push
  * Linked Roles metadata and to add the member to the server. Links made from the player's
  * Clerk Discord sign-in (`tokenSource` CLERK) store no token and fetch Clerk's on each use.
  *
@@ -6771,6 +6773,10 @@ export const discordLink = mysqlTable(
     /** Discord snowflake id. */
     discordId: varchar("discordId", { length: 32 }).notNull(),
     discordUsername: varchar("discordUsername", { length: 191 }).notNull(),
+    /** 1..DISCORD_MAX_CHARACTERS_PER_ACCOUNT; unique per Discord account. */
+    slot: tinyint("slot").default(1).notNull(),
+    /** The character whose name, village and level the Discord account shows. */
+    isPrimary: boolean("isPrimary").default(true).notNull(),
     /** Creation time encoded in the Discord snowflake. */
     discordCreatedAt: datetime("discordCreatedAt", { mode: "date", fsp: 3 }).notNull(),
     /** Discord id the character signs in with through Clerk, when it has one. */
@@ -6795,7 +6801,10 @@ export const discordLink = mysqlTable(
   },
   (table) => ({
     userIdKey: uniqueIndex("DiscordLink_userId_key").on(table.userId),
-    discordIdKey: uniqueIndex("DiscordLink_discordId_key").on(table.discordId),
+    discordIdSlotKey: uniqueIndex("DiscordLink_discordId_slot_key").on(
+      table.discordId,
+      table.slot,
+    ),
     clerkDiscordIdIdx: index("DiscordLink_clerkDiscordId_idx").on(table.clerkDiscordId),
     syncedAtIdx: index("DiscordLink_syncedAt_idx").on(table.syncedAt),
   }),

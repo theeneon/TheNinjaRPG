@@ -1,4 +1,5 @@
 import {
+  DISCORD_MAX_CHARACTERS_PER_ACCOUNT,
   DISCORD_MIN_ACCOUNT_AGE_DAYS,
   DISCORD_NICKNAME_MAX_LENGTH,
   DISCORD_UNLINK_COOLDOWN_DAYS,
@@ -10,8 +11,9 @@ import {
  */
 export const DiscordLinkResults = [
   "linked",
+  "linked_second",
   "relinked",
-  "linked_elsewhere",
+  "discord_full",
   "character_has_link",
   "too_new",
   "cooldown",
@@ -32,7 +34,7 @@ export const isDiscordLinkResult = (value: unknown): value is DiscordLinkResult 
 
 /** Optional details a result page may show; never another player's full name. */
 export type DiscordLinkResultDetails = {
-  /** Masked username of the character the Discord account is linked to. */
+  /** Masked usernames of the characters the Discord account is linked to. */
   hint?: string;
   /** When the cooldown or account-age requirement is met, as an ISO date. */
   until?: string;
@@ -71,17 +73,23 @@ export const describeDiscordLinkResult = (
         title: "Discord linked",
         description: `${details.automatic ? `${DISCORD_AUTOMATIC_LINK_TEXT} ` : ""}Your Discord account is now linked to your character. Return to Discord: the Verified Ninja role unlocks the server channels.`,
       };
+    case "linked_second":
+      return {
+        success: true,
+        title: "Second character linked",
+        description: `${details.automatic ? `${DISCORD_AUTOMATIC_LINK_TEXT} ` : ""}This Discord account is now linked to two characters. Your other character stays primary for your server nickname and village role; you can switch that in profile settings.`,
+      };
     case "relinked":
       return {
         success: true,
         title: "Already linked",
         description: `${details.automatic ? `${DISCORD_AUTOMATIC_LINK_TEXT} ` : ""}This Discord account was already linked to your character. Your Discord roles and nickname have been refreshed.`,
       };
-    case "linked_elsewhere":
+    case "discord_full":
       return {
         success: false,
-        title: "Linked to another character",
-        description: `This Discord account is already linked to another character${details.hint ? ` (${details.hint})` : ""}. Each Discord account can be linked to one character only. Unlink it from that character first.`,
+        title: "Discord account full",
+        description: `This Discord account is already linked to ${DISCORD_MAX_CHARACTERS_PER_ACCOUNT} characters${details.hint ? ` (${details.hint})` : ""}, the most allowed. Unlink one of them first.`,
       };
     case "character_has_link":
       return {
@@ -100,7 +108,7 @@ export const describeDiscordLinkResult = (
       return {
         success: false,
         title: "Unlink cooldown",
-        description: `After unlinking, a character and a Discord account must wait ${DISCORD_UNLINK_COOLDOWN_DAYS} days before linking to a different partner.${untilText ? ` You can link again from ${untilText}.` : ""}`,
+        description: `After unlinking, a character must wait ${DISCORD_UNLINK_COOLDOWN_DAYS} days before linking a different Discord account, and a Discord account cannot be linked to more than ${DISCORD_MAX_CHARACTERS_PER_ACCOUNT} different characters within ${DISCORD_UNLINK_COOLDOWN_DAYS} days.${untilText ? ` You can link again from ${untilText}.` : ""}`,
       };
     case "banned":
       return {
@@ -114,7 +122,7 @@ export const describeDiscordLinkResult = (
         success: false,
         title: "Discord account blocked",
         description:
-          "This Discord account cannot be linked because of an active sanction. Contact a moderator through a support ticket if you believe this is a mistake.",
+          "This Discord account cannot be linked because of an active sanction on it or on a character linked to it. Contact a moderator through a support ticket if you believe this is a mistake.",
       };
     case "no_character":
       return {

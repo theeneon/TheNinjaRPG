@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { DiscordTokenSource, DiscordUnlinkReason } from "@/drizzle/constants";
 import { discordLink, userData } from "@/drizzle/schema";
@@ -17,6 +17,7 @@ import {
   insertDiscordLink,
   loadLinkCandidate,
   logDiscordAction,
+  setDiscordPrimary,
 } from "@/server/utils/discord/links";
 import {
   DISCORD_OAUTH_SCOPES,
@@ -126,11 +127,15 @@ const grantTokenColumns = (config: DiscordConfig, grant: DiscordLinkGrant) => ({
   scopes: grant.scope,
 });
 
+/** Attempts at inserting a link; each lost race re-reads the Discord account's links. */
+const LINK_ATTEMPTS = 3;
+
 /**
  * Link with a verified grant: apply the linking rules, store the link and push the Discord
  * side. The OAuth callback and the Clerk auto-link share this path, so both enforce the same
  * rules. A refused OAuth grant is revoked right away, so nothing is kept for players who were
- * refused.
+ * refused, unless the Discord account is linked already: revoking can end the authorization
+ * its existing links share.
  */
 export const completeDiscordLink = async (
   client: DrizzleClient,
@@ -140,79 +145,113 @@ export const completeDiscordLink = async (
   const { grant } = input;
   const discordUser = grant.discordUser;
   const discordCreatedAt = discordSnowflakeCreatedAt(discordUser.id);
-  const { candidate, character, existing } = await loadLinkCandidate(client, {
-    userId: input.userId,
-    discordId: discordUser.id,
-    discordCreatedAt,
-  });
-  const decision = evaluateDiscordLink(candidate);
-  if (!decision.allowed) {
-    await revokeGrant(config, grant.tokens);
-    const { allowed: _allowed, ...outcome } = decision;
-    return outcome;
-  }
   const tokenColumns = grantTokenColumns(config, grant);
   const handle = discordHandle(discordUser);
   const clerkDiscordId = clerkDiscordIdOf(input.identity);
-  if (decision.relink && existing) {
-    // Same pair again (e.g. the Linked Roles flow from Discord): keep the link, store the
-    // fresh token source and re-apply everything. A replaced OAuth pair is not revoked:
-    // Discord may end the whole authorization, which the new token and Clerk's share.
-    await client
-      .update(discordLink)
-      .set({ ...tokenColumns, discordUsername: handle, clerkDiscordId, syncedAt: null })
-      .where(eq(discordLink.id, existing.id));
+  for (let attempt = 1; ; attempt++) {
+    const { candidate, character, existing } = await loadLinkCandidate(client, {
+      userId: input.userId,
+      discordId: discordUser.id,
+      discordCreatedAt,
+    });
+    const decision = evaluateDiscordLink(candidate);
+    if (!decision.allowed) {
+      if (candidate.linksForDiscord.length === 0)
+        await revokeGrant(config, grant.tokens);
+      const { allowed: _allowed, ...outcome } = decision;
+      return outcome;
+    }
+    if (decision.relink) {
+      // Same pair again (e.g. the Linked Roles flow from Discord): keep the link, store the
+      // fresh token source and re-apply everything. A replaced OAuth pair is not revoked:
+      // Discord may end the whole authorization, which the new token and Clerk's share.
+      if (existing)
+        await client
+          .update(discordLink)
+          .set({
+            ...tokenColumns,
+            discordUsername: handle,
+            clerkDiscordId,
+            syncedAt: null,
+          })
+          .where(eq(discordLink.id, existing.id));
+      await syncDiscordMember(client, input.userId, { force: true });
+      return { result: "relinked" };
+    }
+    const inserted = await insertDiscordLink(client, {
+      id: nanoid(),
+      userId: input.userId,
+      discordId: discordUser.id,
+      discordUsername: handle,
+      discordCreatedAt,
+      clerkDiscordId,
+      slot: decision.slot,
+      isPrimary: decision.isPrimary,
+      ...tokenColumns,
+    });
+    if (!inserted) {
+      // A concurrent callback took this character or the slot first; decide again.
+      if (attempt < LINK_ATTEMPTS) continue;
+      if (candidate.linksForDiscord.length === 0)
+        await revokeGrant(config, grant.tokens);
+      return { result: "error" };
+    }
+    const sibling = decision.sibling;
+    const flags = await findClerkDiscordFlags(client, {
+      userId: input.userId,
+      discordId: discordUser.id,
+      clerkDiscordId,
+    });
+    const siblingText = sibling
+      ? `Same owner (declared via Discord link) as ${sibling.username ?? sibling.userId} (${sibling.userId}), which stays primary`
+      : null;
+    await Promise.all([
+      logDiscordAction(client, {
+        actorUserId: input.userId,
+        targetUserId: input.userId,
+        message: sibling
+          ? `Linked Discord ${handle} as second character of ${sibling.username ?? sibling.userId}`
+          : `Linked Discord ${handle}`,
+        changes: [
+          `Discord: ${handle} (${discordUser.id})`,
+          `Discord account created: ${discordCreatedAt.toISOString()}`,
+          `Scopes: ${grant.scope}`,
+          grant.source === "CLERK"
+            ? "Linked automatically from the Clerk Discord sign-in"
+            : "Linked through the Discord consent screen",
+          ...(siblingText ? [siblingText] : []),
+        ],
+        image: character?.avatarLight,
+      }),
+      ...(sibling
+        ? [
+            logDiscordAction(client, {
+              actorUserId: input.userId,
+              targetUserId: sibling.userId,
+              message: `${character?.username ?? input.userId} linked the same Discord ${handle}`,
+              changes: [
+                `Second character: ${character?.username ?? input.userId} (${input.userId})`,
+                "Same owner (declared via Discord link)",
+              ],
+              image: character?.avatarLight,
+            }),
+          ]
+        : []),
+      ...(flags.length
+        ? [
+            logDiscordAction(client, {
+              actorUserId: input.userId,
+              targetUserId: input.userId,
+              message: `Discord link flag: ${flags[0]}`,
+              changes: flags,
+              image: character?.avatarLight,
+            }),
+          ]
+        : []),
+    ]);
     await syncDiscordMember(client, input.userId, { force: true });
-    return { result: "relinked" };
+    return { result: sibling ? "linked_second" : "linked" };
   }
-  const inserted = await insertDiscordLink(client, {
-    id: nanoid(),
-    userId: input.userId,
-    discordId: discordUser.id,
-    discordUsername: handle,
-    discordCreatedAt,
-    clerkDiscordId,
-    ...tokenColumns,
-  });
-  if (!inserted) {
-    // A concurrent callback linked one side first.
-    await revokeGrant(config, grant.tokens);
-    return { result: "linked_elsewhere" };
-  }
-  const flags = await findClerkDiscordFlags(client, {
-    userId: input.userId,
-    discordId: discordUser.id,
-    clerkDiscordId,
-  });
-  await Promise.all([
-    logDiscordAction(client, {
-      actorUserId: input.userId,
-      targetUserId: input.userId,
-      message: `Linked Discord ${handle}`,
-      changes: [
-        `Discord: ${handle} (${discordUser.id})`,
-        `Discord account created: ${discordCreatedAt.toISOString()}`,
-        `Scopes: ${grant.scope}`,
-        grant.source === "CLERK"
-          ? "Linked automatically from the Clerk Discord sign-in"
-          : "Linked through the Discord consent screen",
-      ],
-      image: character?.avatarLight,
-    }),
-    ...(flags.length
-      ? [
-          logDiscordAction(client, {
-            actorUserId: input.userId,
-            targetUserId: input.userId,
-            message: `Discord link flag: ${flags[0]}`,
-            changes: flags,
-            image: character?.avatarLight,
-          }),
-        ]
-      : []),
-  ]);
-  await syncDiscordMember(client, input.userId, { force: true });
-  return { result: "linked" };
 };
 
 /** The /discord/link page showing an outcome of the linking flow. */
@@ -236,8 +275,10 @@ export const describeScopes = (scopes: string) =>
   );
 
 /**
- * Remove a link and its Discord side, then archive it for the cooldown. Returns false when
- * the character had no link.
+ * Remove a link and archive it for the cooldown. The last link of a Discord account also
+ * undoes the Discord side; with another character still linked, that character becomes the
+ * primary and the Discord account is synced to it instead. Returns false when the character
+ * had no link.
  */
 export const removeDiscordLink = async (
   client: DrizzleClient,
@@ -257,11 +298,24 @@ export const removeDiscordLink = async (
     }),
   ]);
   if (!link) return false;
-  const cleanup = await releaseDiscordMember(client, link, character?.username ?? "");
+  const sibling = await client.query.discordLink.findFirst({
+    columns: { id: true, userId: true, discordId: true },
+    where: and(eq(discordLink.discordId, link.discordId), ne(discordLink.id, link.id)),
+  });
+  const cleanup = sibling
+    ? []
+    : await releaseDiscordMember(client, link, character?.username ?? "");
   const removed = await archiveDiscordLink(client, link, input.reason, {
     staffUserId: input.reason === "STAFF" ? input.actorUserId : undefined,
     cooldownWaived: input.cooldownWaived,
   });
+  if (removed && sibling) {
+    await setDiscordPrimary(client, sibling);
+    const sync = await syncDiscordMember(client, sibling.userId, { force: true }).catch(
+      (error: unknown) => ({ synced: false, errors: [String(error)] }),
+    );
+    cleanup.push(...sync.errors);
+  }
   if (removed && input.reason !== "ACCOUNT_DELETED") {
     await logDiscordAction(client, {
       actorUserId: input.actorUserId,
@@ -274,6 +328,7 @@ export const removeDiscordLink = async (
         `Discord: ${link.discordUsername} (${link.discordId})`,
         ...(input.staffNote ? [`Reason: ${input.staffNote}`] : []),
         ...(input.cooldownWaived ? ["Unlink cooldown waived"] : []),
+        ...(sibling ? [`Still linked to ${sibling.userId}, now primary`] : []),
         ...(cleanup.length
           ? [`Discord cleanup incomplete: ${cleanup.join("; ")}`]
           : []),
