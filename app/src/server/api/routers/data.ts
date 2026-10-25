@@ -93,7 +93,7 @@ import {
 } from "./skillTree";
 
 export const dataRouter = createTRPCRouter({
-  // AB tests summaries (protected)
+  /** Return full-history variant counts for tests with an event in the last week. */
   getAbTests: protectedProcedure
     .input(
       z.object({
@@ -131,6 +131,7 @@ export const dataRouter = createTRPCRouter({
           variant: sql<string>`ANY_VALUE(${abEvent.variant})`,
           userAgent: sql<string | null>`ANY_VALUE(${abEvent.userAgent})`,
           loaded: sql`COUNT(*)`.mapWith(Number),
+          // Empty IPs and completion IDs cannot identify an attributable conversion.
           register:
             sql`COUNT(CASE WHEN LENGTH(${abEvent.ipHash}) > 0 AND LENGTH(${completion.id}) > 0 THEN 1 END)`.mapWith(
               Number,
@@ -147,7 +148,7 @@ export const dataRouter = createTRPCRouter({
           ),
         )
         .where(and(eq(abEvent.event, "loaded"), ...whereConds))
-        // Keep history in SQL and preserve the helper's case-sensitive keys.
+        // Binary groups keep keys exact; ANY_VALUE returns their original text.
         .groupBy(
           sql`BINARY ${abEvent.experiment}`,
           sql`BINARY ${abEvent.variant}`,

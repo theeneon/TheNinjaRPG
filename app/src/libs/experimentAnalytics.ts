@@ -1,13 +1,21 @@
 import { WALLPAPER_EXPERIMENT, WALLPAPER_VARIANTS } from "@/libs/wallpaperExperiment";
 import { type DeviceType, getDeviceType } from "@/utils/hardware";
 
+/** SQL-counted exposures and matched completions for one exact user-agent cohort. */
 type ExperimentCohort = {
   experiment: string;
   variant: string;
   userAgent: string | null;
   loaded: number;
+  /** Tutorial completions attributed to this cohort's exposures. */
   register: number;
 };
+
+/**
+ * Sum SQL-counted cohorts into variant totals, filtering by the exposure's device.
+ * The query owns visitor deduplication and completion matching; omitted or empty
+ * device filters include every cohort. Wallpaper arms retain zero-count entries.
+ */
 export const aggregateExperiments = (
   rows: ExperimentCohort[],
   devices?: DeviceType[],

@@ -389,6 +389,7 @@ const ExperimentRow: React.FC<{ exp: ExperimentAgg }> = ({ exp }) => {
   );
 };
 
+/** Show full-history results for recently active tests, with source/device filters. */
 export const AbTestResults: React.FC = () => {
   const visitorFilterState = useVisitorFiltering();
 
