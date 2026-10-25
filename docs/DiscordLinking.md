@@ -36,8 +36,8 @@ staff page `/reports/discord`.
 
 Clerk's "Sign in with Discord" and account linking use the same Discord application (TNR,
 `DISCORD_CLIENT_ID`). When a signed-in player starts linking (`/discord/link` or the profile
-button, both `/api/discord/authorize`) after clicking on our own pages (`Sec-Fetch-Site:
-same-origin`), the route first asks Clerk for the token of the player's Discord sign-in
+button, both `/api/discord/authorize`) by clicking on our own pages (a same-origin
+top-level navigation per the `Sec-Fetch-*` headers), the route first asks Clerk for the token of the player's Discord sign-in
 (`users.getUserOauthAccessToken(userId, "discord")`). If that token carries `identify` and
 `role_connections.write`, and Discord's `/oauth2/@me` confirms it was issued to this
 application for the same Discord account, the link is completed right away with that token,
@@ -46,7 +46,8 @@ and profile say "Linked automatically from your Discord sign-in."
 
 Without a Discord sign-in, with a Clerk token from before the scopes were added (the player
 has not signed in with Discord since), or when anything in that check fails, the route falls
-back to the consent flow unchanged.
+back to the consent flow unchanged. A failure after the token was accepted shows the error
+result instead.
 
 Such links have `tokenSource = CLERK` and store no token: Clerk stores and refreshes its own,
 so every sync asks Clerk for the current one and the game never revokes it. Clerk's scopes are

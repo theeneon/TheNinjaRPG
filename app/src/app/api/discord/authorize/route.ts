@@ -42,12 +42,25 @@ export async function GET(request: Request) {
   });
   if (!character)
     return NextResponse.redirect(discordLinkResultUrl(request.url, "no_character"));
-  // Linking without a consent screen only follows a click on our own pages, so another site
-  // cannot link a visitor's Discord sign-in by sending them here.
-  if (request.headers.get("sec-fetch-site") === "same-origin") {
+  // Linking without a consent screen only follows a click on our own pages: a same-origin
+  // top-level navigation. Another site, or an image embedded in user content, gets the
+  // consent screen instead.
+  const headers = request.headers;
+  if (
+    headers.get("sec-fetch-site") === "same-origin" &&
+    headers.get("sec-fetch-mode") === "navigate" &&
+    headers.get("sec-fetch-dest") === "document"
+  ) {
+    let grant: Awaited<ReturnType<typeof resolveClerkDiscordGrant>> = null;
     try {
-      const grant = await resolveClerkDiscordGrant(config, userId);
-      if (grant) {
+      grant = await resolveClerkDiscordGrant(config, userId);
+    } catch (error) {
+      console.error("[Discord] Clerk sign-in token unavailable, using consent", error);
+    }
+    if (grant) {
+      // Once a link may have been stored, a failure is reported instead of starting the
+      // consent flow, which would only answer "relinked" for the half-finished link.
+      try {
         const identity = await fetchSanctionIdentity(userId);
         const outcome = await completeDiscordLink(drizzleDB, config, {
           userId,
@@ -60,9 +73,10 @@ export async function GET(request: Request) {
             automatic: true,
           }),
         );
+      } catch (error) {
+        console.error("[Discord] Linking from the Clerk sign-in failed", error);
+        return NextResponse.redirect(discordLinkResultUrl(request.url, "error"));
       }
-    } catch (error) {
-      console.error("[Discord] Linking from the Clerk sign-in failed", error);
     }
   }
   const { state, nonce } = createLinkState(userId, config.clientSecret);

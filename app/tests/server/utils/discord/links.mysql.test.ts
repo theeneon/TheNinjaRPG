@@ -187,6 +187,13 @@ const fakeClerk = (
   return { getUserOauthAccessToken };
 };
 
+/** Headers of a click on one of our own links. */
+const NAVIGATION = {
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "navigate",
+  "sec-fetch-dest": "document",
+};
+
 const clerkIdentity = (discordId = OLD_DISCORD) => ({
   primaryEmailAddressId: null,
   emailAddresses: [],
@@ -543,7 +550,7 @@ describeWithDatabase("Discord links (SQL)", () => {
     vi.spyOn(clerk, "auth").mockResolvedValue({ userId: "user-a" } as never);
     const response = await authorizeDiscord(
       new Request("http://localhost:3000/api/discord/authorize", {
-        headers: { "sec-fetch-site": "same-origin" },
+        headers: NAVIGATION,
       }),
     );
     expect(response.headers.get("location")).toBe(
@@ -564,14 +571,14 @@ describeWithDatabase("Discord links (SQL)", () => {
     vi.spyOn(clerk, "auth").mockResolvedValue({ userId: "user-a" } as never);
     const response = await authorizeDiscord(
       new Request("http://localhost:3000/api/discord/authorize", {
-        headers: { "sec-fetch-site": "same-origin" },
+        headers: NAVIGATION,
       }),
     );
     expect(response.headers.get("location")).toStartWith("https://discord.com/oauth2/authorize");
     expect(await (await getTestDatabase()).query.discordLink.findMany()).toHaveLength(0);
   });
 
-  it("uses the consent flow without a Discord sign-in, a cross-site start or a foreign token", async () => {
+  it("uses the consent flow without a Discord sign-in, for a foreign token or a non-click start", async () => {
     const config = getDiscordConfig();
     if (!config) throw new Error("config");
     fakeClerk({ discordId: null });
@@ -585,10 +592,18 @@ describeWithDatabase("Discord links (SQL)", () => {
     vi.spyOn(clerk, "auth").mockResolvedValue({ userId: "user-a" } as never);
     const response = await authorizeDiscord(
       new Request("http://localhost:3000/api/discord/authorize", {
-        headers: { "sec-fetch-site": "cross-site" },
+        headers: { ...NAVIGATION, "sec-fetch-site": "cross-site" },
       }),
     );
     expect(response.headers.get("location")).toStartWith("https://discord.com/oauth2/authorize");
+    // Nor does an image in user content on our own pages.
+    const image = await authorizeDiscord(
+      new Request("http://localhost:3000/api/discord/authorize", {
+        headers: { "sec-fetch-site": "same-origin", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
+      }),
+    );
+    expect(image.headers.get("location")).toStartWith("https://discord.com/oauth2/authorize");
+    expect(await (await getTestDatabase()).query.discordLink.findMany()).toHaveLength(0);
   });
 
   it("applies the linking rules to Clerk grants and never revokes Clerk's token", async () => {
