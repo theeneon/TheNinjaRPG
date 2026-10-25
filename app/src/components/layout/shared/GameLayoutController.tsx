@@ -16,6 +16,7 @@ import {
 } from "@/hooks/localstorage";
 import { FONT_SCALE_STORAGE_KEY } from "@/hooks/useFontScale";
 import { usePageActive } from "@/hooks/usePageActive";
+import { useRefreshAt } from "@/hooks/useRefreshAt";
 import { GlobalAudioProvider } from "@/layout/GameSettings";
 import TutorialAssistant from "@/layout/TutorialAssistant";
 import { getGameLayout } from "@/libs/gameLayouts";
@@ -47,6 +48,7 @@ import type { GameLayoutControllerProps, GameLayoutRenderProps } from "./layoutT
 import { shouldCloseRightSidebar } from "./layoutUtils";
 import { getImageSet, layoutVariantClasses } from "./layoutVariants";
 
+/** Share navigation, live notifications and sidebar state across layout variants. */
 const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
   variant,
   renderer: Renderer,
@@ -66,6 +68,7 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
     isSignedIn,
     status: userStatus,
     userId,
+    timeDiff,
     updateUser,
   } = useUserData();
   const pathname = usePublicPathname();
@@ -117,6 +120,18 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
       refetchInterval: 10_000,
       refetchIntervalInBackground: false,
     },
+  );
+
+  // One read-only event poll feeds both desktop and mobile notification lists.
+  const territoryWar = api.territoryWar.getNotice.useQuery(undefined, {
+    enabled: !!userData,
+    refetchInterval: 30000,
+  });
+  useRefreshAt(
+    [territoryWar.data?.endsAt],
+    () => void territoryWar.refetch(),
+    timeDiff,
+    !!userData,
   );
 
   useEffect(() => {
@@ -207,6 +222,12 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
   };
 
   const navbarMenuItems = getMainNavbarLinks(notifications);
+  const activeTerritoryWar =
+    userData &&
+    territoryWar.data &&
+    territoryWar.data.endsAt.getTime() > Date.now() - timeDiff
+      ? territoryWar.data
+      : null;
   const shownNotifications = useMemo(() => {
     const base =
       notifications?.filter(
@@ -215,6 +236,14 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
           n.color !== "hidden" &&
           (n.alwaysShow || n.href !== pathname),
       ) ?? [];
+    if (activeTerritoryWar) {
+      base.push({
+        href: "/territory-war",
+        name: `Territory War · Sector ${activeTerritoryWar.sector}`,
+        color: "blue",
+        alwaysShow: true,
+      });
+    }
     if (!userId || rankedQueueCount <= 0) return base;
     return [
       ...base,
@@ -228,7 +257,7 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
         alwaysShow: true,
       },
     ];
-  }, [notifications, pathname, rankedQueueCount, userId]);
+  }, [notifications, pathname, rankedQueueCount, userId, activeTerritoryWar]);
   const navbarMenuItemsLeft = navbarMenuItems.slice(0, 3);
   const navbarMenuItemsRight = navbarMenuItems.slice(3);
   const isSignedInLayout = isClerkLoaded ? isSignedIn : initialIsSignedIn;
