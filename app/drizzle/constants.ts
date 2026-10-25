@@ -4075,3 +4075,10 @@ export const DISCORD_SYNC_REFRESH_DAYS = 7;
 /** Why a Discord link ended; kept in DiscordLinkHistory for cooldowns and staff review. */
 export const DiscordUnlinkReasons = ["USER", "STAFF", "ACCOUNT_DELETED"] as const;
 export type DiscordUnlinkReason = (typeof DiscordUnlinkReasons)[number];
+/**
+ * Where a link's Discord token comes from. OAUTH links store their own encrypted token pair
+ * from the consent flow; CLERK links reuse the token of the player's Discord sign-in, which
+ * Clerk stores and refreshes, so nothing is stored and each use asks Clerk for it.
+ */
+export const DiscordTokenSources = ["OAUTH", "CLERK"] as const;
+export type DiscordTokenSource = (typeof DiscordTokenSources)[number];

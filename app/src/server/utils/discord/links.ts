@@ -14,6 +14,7 @@ import {
   userReport,
 } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
+import { isClerkDiscordProvider } from "@/server/utils/discord/clerk";
 import type { DiscordLinkCandidate } from "@/server/utils/discord/rules";
 import { isMysqlDuplicateKeyError } from "@/server/utils/mysqlErrors";
 import {
@@ -31,9 +32,8 @@ export const discordTombstoneHash = (discordId: string) =>
 
 /** The Discord id a character signs in with through Clerk, if any. */
 export const clerkDiscordIdOf = (identity: SanctionIdentity | null) =>
-  identity?.externalAccounts.find(
-    (account) => account.provider.replace(/^oauth_/, "").toLowerCase() === "discord",
-  )?.providerUserId ?? null;
+  identity?.externalAccounts.find((account) => isClerkDiscordProvider(account.provider))
+    ?.providerUserId ?? null;
 
 /**
  * Bans and silences that ban the linked Discord account: still running, and imposed for at

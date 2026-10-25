@@ -5,8 +5,9 @@ import {
   DISCORD_SYNC_REFRESH_DAYS,
 } from "@/drizzle/constants";
 import { type DiscordLink, discordLink, userData, userReport } from "@/drizzle/schema";
-import { discordNicknameFor } from "@/libs/discordLink";
+import { DISCORD_RELINK_REQUIRED, discordNicknameFor } from "@/libs/discordLink";
 import type { DrizzleClient } from "@/server/db";
+import { fetchClerkDiscordToken } from "@/server/utils/discord/clerk";
 import { type DiscordConfig, getDiscordConfig } from "@/server/utils/discord/config";
 import {
   fetchIndefiniteSanction,
@@ -18,6 +19,7 @@ import {
   banMember,
   DISCORD_ERROR,
   getGuildMember,
+  hasRequiredScopes,
   isDiscordRequestError,
   putRoleConnection,
   refreshAccessToken,
@@ -46,26 +48,58 @@ type SyncCharacter = { username: string; level: number; villageId: string | null
 const errorText = (error: unknown) =>
   (error instanceof Error ? error.message : String(error)).slice(0, 200);
 
+/** Discord answers 401 to a token the player revoked; only re-linking restores it. */
+const tokenErrorText = (error: unknown) =>
+  isDiscordRequestError(error) && error.status === 401
+    ? relinkRequired("Discord rejected the token").message
+    : errorText(error);
+
 /** A member the bot may not edit (owner, higher role); retrying cannot help. */
 const isPermissionDenied = (error: unknown) =>
   isDiscordRequestError(error) &&
   (error.status === 403 || error.code === DISCORD_ERROR.missingPermissions);
 
+/** The link has no usable Discord token; only re-linking can restore it. */
+const relinkRequired = (detail: string) =>
+  new Error(`${DISCORD_RELINK_REQUIRED}: ${detail}`);
+
 /**
- * A valid access token for the link, refreshing and storing a new pair when the current one
- * is about to expire. Discord rotates refresh tokens, so the new pair is saved immediately.
+ * A valid access token for the link. OAUTH links refresh and store a new pair when the
+ * current one is about to expire (Discord rotates refresh tokens, so the new pair is saved
+ * immediately). CLERK links ask Clerk, which refreshes its own token, every time.
  */
 export const getLinkAccessToken = async (
   client: DrizzleClient,
   config: DiscordConfig,
-  link: Pick<DiscordLink, "id" | "accessToken" | "refreshToken" | "tokenExpiresAt">,
+  link: Pick<
+    DiscordLink,
+    | "id"
+    | "userId"
+    | "discordId"
+    | "tokenSource"
+    | "accessToken"
+    | "refreshToken"
+    | "tokenExpiresAt"
+    | "scopes"
+  >,
 ) => {
+  if (link.tokenSource === "CLERK") return getClerkLinkAccessToken(client, link);
+  if (!link.accessToken || !link.refreshToken || !link.tokenExpiresAt)
+    throw relinkRequired("no stored token");
   if (link.tokenExpiresAt.getTime() - TOKEN_REFRESH_MARGIN_MS > Date.now())
     return decryptToken(link.accessToken, config.tokenKey);
-  const tokens = await refreshAccessToken(
-    config,
-    decryptToken(link.refreshToken, config.tokenKey),
-  );
+  let tokens: Awaited<ReturnType<typeof refreshAccessToken>>;
+  try {
+    tokens = await refreshAccessToken(
+      config,
+      decryptToken(link.refreshToken, config.tokenKey),
+    );
+  } catch (error) {
+    // invalid_grant: the player revoked the app or the refresh token expired.
+    if (isDiscordRequestError(error) && [400, 401].includes(error.status))
+      throw relinkRequired("refresh token rejected");
+    throw error;
+  }
   await client
     .update(discordLink)
     .set({
@@ -76,6 +110,30 @@ export const getLinkAccessToken = async (
     })
     .where(eq(discordLink.id, link.id));
   return tokens.access_token;
+};
+
+/**
+ * Clerk's token for a CLERK link. It must still belong to the linked Discord account and
+ * carry `role_connections.write`; otherwise the link needs a re-link. Scope changes on
+ * Clerk's side (e.g. `guilds.join` added later) are written back to the link.
+ */
+const getClerkLinkAccessToken = async (
+  client: DrizzleClient,
+  link: Pick<DiscordLink, "id" | "userId" | "discordId" | "scopes">,
+) => {
+  const token = await fetchClerkDiscordToken(link.userId, link.discordId);
+  if (!token) throw relinkRequired("no Discord sign-in token in Clerk");
+  if (!hasRequiredScopes(token.scopes))
+    throw relinkRequired("Clerk token lacks role_connections.write");
+  const scopes = token.scopes.join(" ");
+  if (scopes !== link.scopes)
+    await client
+      .update(discordLink)
+      .set({ scopes: scopes.slice(0, 191) })
+      .where(eq(discordLink.id, link.id));
+  // The caller's guilds.join check reads the same object.
+  link.scopes = scopes;
+  return token.accessToken;
 };
 
 /** Roles the sync owns: the verified role and every mapped village role. */
@@ -161,7 +219,7 @@ export const syncDiscordMember = async (
       });
       update.syncedLevel = character.level;
     } catch (error) {
-      errors.push(`metadata: ${errorText(error)}`);
+      errors.push(`metadata: ${tokenErrorText(error)}`);
     }
   }
 
@@ -178,6 +236,8 @@ export const syncDiscordMember = async (
     try {
       const member = await getGuildMember(config, link.discordId);
       if (!member) {
+        // A CLERK link learns Clerk's current scopes when it fetches the token.
+        if (link.tokenSource === "CLERK") await tokenFor();
         if (link.scopes.split(" ").includes("guilds.join")) {
           await addGuildMember(config, link.discordId, {
             accessToken: await tokenFor(),
@@ -267,10 +327,13 @@ export const releaseDiscordMember = async (
       errors.push(`member: ${errorText(error)}`);
     }
   }
-  try {
-    await revokeToken(config, decryptToken(link.refreshToken, config.tokenKey));
-  } catch (error) {
-    errors.push(`revoke: ${errorText(error)}`);
+  // Clerk's sign-in token is Clerk's to keep; only an OAuth pair of our own is revoked.
+  if (link.tokenSource === "OAUTH" && link.refreshToken) {
+    try {
+      await revokeToken(config, decryptToken(link.refreshToken, config.tokenKey));
+    } catch (error) {
+      errors.push(`revoke: ${errorText(error)}`);
+    }
   }
   if (errors.length) console.error("[Discord] Unlink cleanup incomplete", errors);
   return errors;

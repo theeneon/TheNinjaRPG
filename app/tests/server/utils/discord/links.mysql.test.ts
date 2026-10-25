@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
+import * as clerk from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
 import { DISCORD_INDEFINITE_SANCTION_DAYS } from "@/drizzle/constants";
 import {
@@ -9,6 +10,8 @@ import {
   userData,
   userReport,
 } from "@/drizzle/schema";
+import { GET as authorizeDiscord } from "@/app/api/discord/authorize/route";
+import { DISCORD_RELINK_REQUIRED, needsDiscordRelink } from "@/libs/discordLink";
 import { discordRouter } from "@/server/api/routers/discord";
 import { deleteUser } from "@/server/api/routers/staff";
 import { getDiscordConfig } from "@/server/utils/discord/config";
@@ -18,7 +21,11 @@ import {
   insertDiscordLink,
   loadLinkCandidate,
 } from "@/server/utils/discord/links";
-import { completeDiscordLink } from "@/server/utils/discord/linking";
+import {
+  completeDiscordLink,
+  exchangeDiscordCode,
+  resolveClerkDiscordGrant,
+} from "@/server/utils/discord/linking";
 import { encryptToken } from "@/server/utils/discord/secrets";
 import {
   fetchLinksNeedingSync,
@@ -60,9 +67,22 @@ const originalEnv = Object.fromEntries(
 );
 const originalFetch = globalThis.fetch;
 
-type Call = { method: string; path: string; body: unknown; reason: string | null };
+type Call = {
+  method: string;
+  path: string;
+  body: unknown;
+  reason: string | null;
+  auth: string | null;
+};
 let calls: Call[] = [];
 let guildMember: { nick: string | null; roles: string[] } | null = null;
+/** What Discord reports for a bearer token at /oauth2/@me. */
+let authorization = {
+  application: { id: "1111111111111111111" },
+  scopes: ["identify", "role_connections.write", "guilds.join"],
+  expires: "2030-01-01T00:00:00.000Z",
+  user: { id: OLD_DISCORD, username: "naruto_fan" },
+};
 
 /** A small fake of the Discord endpoints the feature calls. */
 const fakeDiscord = (user = { id: OLD_DISCORD, username: "naruto_fan" }) => {
@@ -84,6 +104,7 @@ const fakeDiscord = (user = { id: OLD_DISCORD, username: "naruto_fan" }) => {
       reason: headers["X-Audit-Log-Reason"]
         ? decodeURIComponent(headers["X-Audit-Log-Reason"])
         : null,
+      auth: headers.Authorization ?? null,
     });
     const ok = (data: unknown, status = 200) =>
       new Response(data === null ? null : JSON.stringify(data), { status });
@@ -96,6 +117,7 @@ const fakeDiscord = (user = { id: OLD_DISCORD, username: "naruto_fan" }) => {
         token_type: "Bearer",
       });
     if (path === "/oauth2/token/revoke") return ok({});
+    if (path === "/oauth2/@me") return ok(authorization);
     if (path === "/users/@me") return ok(user);
     if (path.endsWith("/role-connection")) return ok({});
     if (path.startsWith(`/guilds/${GUILD}/members/`) && method === "GET")
@@ -118,6 +140,64 @@ const linkValues = (userId: string, discordId: string) => ({
   refreshToken: encryptToken("refresh-0", KEY),
   tokenExpiresAt: new Date(Date.now() + 7 * DAY),
   scopes: "identify role_connections.write guilds.join",
+});
+
+/** The OAuth callback: exchange the code, then link. */
+const linkThroughOAuth = async (
+  userId: string,
+  identity: Parameters<typeof completeDiscordLink>[2]["identity"],
+) => {
+  const config = getDiscordConfig();
+  if (!config) throw new Error("config");
+  const grant = await exchangeDiscordCode(config, "code-1");
+  if (!grant) throw new Error("grant");
+  return completeDiscordLink(await getTestDatabase(), config, { userId, grant, identity });
+};
+
+type ClerkToken = { token: string; scopes: string[]; externalAccountId: string };
+
+/** Fake Clerk Backend API holding a Discord sign-in for every user. */
+const fakeClerk = (
+  options: { discordId?: string | null; tokens?: ClerkToken[] } = {},
+) => {
+  const discordId = options.discordId === undefined ? OLD_DISCORD : options.discordId;
+  const tokens = options.tokens ?? [
+    {
+      token: "clerk-access",
+      scopes: ["identify", "email", "role_connections.write", "guilds.join"],
+      externalAccountId: "eac_discord",
+    },
+  ];
+  const getUserOauthAccessToken = vi.fn(async () => ({
+    data: discordId ? tokens : [],
+    totalCount: tokens.length,
+  }));
+  vi.spyOn(clerk, "clerkClient").mockResolvedValue({
+    users: {
+      getUser: vi.fn(async () => ({
+        primaryEmailAddressId: null,
+        emailAddresses: [],
+        externalAccounts: discordId
+          ? [{ id: "eac_discord", provider: "oauth_discord", providerUserId: discordId }]
+          : [],
+      })),
+      getUserOauthAccessToken,
+    },
+  } as unknown as Awaited<ReturnType<typeof clerk.clerkClient>>);
+  return { getUserOauthAccessToken };
+};
+
+/** Headers of a click on one of our own links. */
+const NAVIGATION = {
+  "sec-fetch-site": "same-origin",
+  "sec-fetch-mode": "navigate",
+  "sec-fetch-dest": "document",
+};
+
+const clerkIdentity = (discordId = OLD_DISCORD) => ({
+  primaryEmailAddressId: null,
+  emailAddresses: [],
+  externalAccounts: [{ provider: "oauth_discord", providerUserId: discordId }],
 });
 
 const addSanction = async (
@@ -145,6 +225,12 @@ describeWithDatabase("Discord links (SQL)", () => {
     Object.assign(process.env, ENV);
     calls = [];
     guildMember = null;
+    authorization = {
+      ...authorization,
+      application: { id: ENV.DISCORD_CLIENT_ID },
+      scopes: ["identify", "role_connections.write", "guilds.join"],
+      user: { id: OLD_DISCORD, username: "naruto_fan" },
+    };
     fakeDiscord();
     await resetTables(
       userData,
@@ -161,6 +247,7 @@ describeWithDatabase("Discord links (SQL)", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     globalThis.fetch = originalFetch;
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key];
@@ -252,22 +339,13 @@ describeWithDatabase("Discord links (SQL)", () => {
 
   it("links through the OAuth callback and pushes metadata, nickname and roles", async () => {
     const database = await getTestDatabase();
-    const config = getDiscordConfig();
-    if (!config) throw new Error("config");
-    const outcome = await completeDiscordLink(database, config, {
-      userId: "user-a",
-      code: "code-1",
-      identity: {
-        primaryEmailAddressId: null,
-        emailAddresses: [],
-        externalAccounts: [{ provider: "oauth_discord", providerUserId: OTHER_DISCORD }],
-      },
-    });
+    const outcome = await linkThroughOAuth("user-a", clerkIdentity(OTHER_DISCORD));
     expect(outcome).toEqual({ result: "linked" });
     const link = await database.query.discordLink.findFirst({
       where: eq(discordLink.userId, "user-a"),
     });
     expect(link).toMatchObject({
+      tokenSource: "OAUTH",
       discordId: OLD_DISCORD,
       discordUsername: "naruto_fan",
       clerkDiscordId: OTHER_DISCORD,
@@ -301,13 +379,7 @@ describeWithDatabase("Discord links (SQL)", () => {
   it("refuses a Discord account linked to another character and revokes its token", async () => {
     const database = await getTestDatabase();
     await insertDiscordLink(database, linkValues("user-b", OLD_DISCORD));
-    const config = getDiscordConfig();
-    if (!config) throw new Error("config");
-    const outcome = await completeDiscordLink(database, config, {
-      userId: "user-a",
-      code: "code-1",
-      identity: null,
-    });
+    const outcome = await linkThroughOAuth("user-a", null);
     expect(outcome).toEqual({ result: "linked_elsewhere", hint: "B***o" });
     expect(calls.some((call) => call.path === "/oauth2/token/revoke")).toBe(true);
     expect(calls.some((call) => call.path.includes("/guilds/"))).toBe(false);
@@ -319,15 +391,7 @@ describeWithDatabase("Discord links (SQL)", () => {
   it("refuses linking while banned", async () => {
     const database = await getTestDatabase();
     await database.update(userData).set({ isBanned: true }).where(eq(userData.userId, "user-a"));
-    const config = getDiscordConfig();
-    if (!config) throw new Error("config");
-    expect(
-      await completeDiscordLink(database, config, {
-        userId: "user-a",
-        code: "code-1",
-        identity: null,
-      }),
-    ).toEqual({ result: "banned" });
+    expect(await linkThroughOAuth("user-a", null)).toEqual({ result: "banned" });
   });
 
   it("bans the linked Discord account for an indefinite sanction and unbans when lifted", async () => {
@@ -440,5 +504,182 @@ describeWithDatabase("Discord links (SQL)", () => {
     expect(await database.query.discordLinkHistory.findMany()).toEqual([
       expect.objectContaining({ userId: "user-a", reason: "ACCOUNT_DELETED" }),
     ]);
+  });
+
+  it("links from the Clerk Discord sign-in without a consent redirect", async () => {
+    const database = await getTestDatabase();
+    const config = getDiscordConfig();
+    if (!config) throw new Error("config");
+    fakeClerk();
+    const grant = await resolveClerkDiscordGrant(config, "user-a");
+    expect(grant).toMatchObject({ source: "CLERK", accessToken: "clerk-access", tokens: null });
+    if (!grant) throw new Error("grant");
+    const outcome = await completeDiscordLink(database, config, {
+      userId: "user-a",
+      grant,
+      identity: clerkIdentity(),
+    });
+    expect(outcome).toEqual({ result: "linked" });
+    const link = await database.query.discordLink.findFirst();
+    expect(link).toMatchObject({
+      userId: "user-a",
+      discordId: OLD_DISCORD,
+      clerkDiscordId: OLD_DISCORD,
+      tokenSource: "CLERK",
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+      syncError: null,
+      syncedLevel: 20,
+    });
+    // Clerk's token pushes metadata and joins the server; no code exchange or revoke.
+    expect(calls.some((call) => call.path.startsWith("/oauth2/token"))).toBe(false);
+    expect(calls.find((call) => call.path.endsWith("/role-connection"))?.auth).toBe(
+      "Bearer clerk-access",
+    );
+    expect(
+      calls.find(
+        (call) => call.method === "PUT" && call.path === `/guilds/${GUILD}/members/${OLD_DISCORD}`,
+      )?.body,
+    ).toMatchObject({ access_token: "clerk-access" });
+    expect(needsDiscordRelink(link?.syncError)).toBe(false);
+  });
+
+  it("completes the link in the authorize route when Clerk's token has the scope", async () => {
+    fakeClerk();
+    vi.spyOn(clerk, "auth").mockResolvedValue({ userId: "user-a" } as never);
+    const response = await authorizeDiscord(
+      new Request("http://localhost:3000/api/discord/authorize", {
+        headers: NAVIGATION,
+      }),
+    );
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/discord/link?result=linked&auto=1",
+    );
+    expect((await (await getTestDatabase()).query.discordLink.findFirst())?.tokenSource).toBe(
+      "CLERK",
+    );
+  });
+
+  it("falls back to the consent redirect when Clerk's token lacks the scope", async () => {
+    const config = getDiscordConfig();
+    if (!config) throw new Error("config");
+    fakeClerk({
+      tokens: [{ token: "old", scopes: ["identify", "email"], externalAccountId: "eac_discord" }],
+    });
+    expect(await resolveClerkDiscordGrant(config, "user-a")).toBeNull();
+    vi.spyOn(clerk, "auth").mockResolvedValue({ userId: "user-a" } as never);
+    const response = await authorizeDiscord(
+      new Request("http://localhost:3000/api/discord/authorize", {
+        headers: NAVIGATION,
+      }),
+    );
+    expect(response.headers.get("location")).toStartWith("https://discord.com/oauth2/authorize");
+    expect(await (await getTestDatabase()).query.discordLink.findMany()).toHaveLength(0);
+  });
+
+  it("uses the consent flow without a Discord sign-in, for a foreign token or a non-click start", async () => {
+    const config = getDiscordConfig();
+    if (!config) throw new Error("config");
+    fakeClerk({ discordId: null });
+    expect(await resolveClerkDiscordGrant(config, "user-a")).toBeNull();
+    // A token Discord issued to another application cannot write this app's role connection.
+    fakeClerk();
+    authorization = { ...authorization, application: { id: "9999999999999999999" } };
+    expect(await resolveClerkDiscordGrant(config, "user-a")).toBeNull();
+    // Another site sending the player to the route never links without consent.
+    authorization = { ...authorization, application: { id: ENV.DISCORD_CLIENT_ID } };
+    vi.spyOn(clerk, "auth").mockResolvedValue({ userId: "user-a" } as never);
+    const response = await authorizeDiscord(
+      new Request("http://localhost:3000/api/discord/authorize", {
+        headers: { ...NAVIGATION, "sec-fetch-site": "cross-site" },
+      }),
+    );
+    expect(response.headers.get("location")).toStartWith("https://discord.com/oauth2/authorize");
+    // Nor does an image in user content on our own pages.
+    const image = await authorizeDiscord(
+      new Request("http://localhost:3000/api/discord/authorize", {
+        headers: { "sec-fetch-site": "same-origin", "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" },
+      }),
+    );
+    expect(image.headers.get("location")).toStartWith("https://discord.com/oauth2/authorize");
+    expect(await (await getTestDatabase()).query.discordLink.findMany()).toHaveLength(0);
+  });
+
+  it("applies the linking rules to Clerk grants and never revokes Clerk's token", async () => {
+    const database = await getTestDatabase();
+    const config = getDiscordConfig();
+    if (!config) throw new Error("config");
+    await insertDiscordLink(database, linkValues("user-b", OLD_DISCORD));
+    fakeClerk();
+    const grant = await resolveClerkDiscordGrant(config, "user-a");
+    if (!grant) throw new Error("grant");
+    expect(
+      await completeDiscordLink(database, config, {
+        userId: "user-a",
+        grant,
+        identity: clerkIdentity(),
+      }),
+    ).toEqual({ result: "linked_elsewhere", hint: "B***o" });
+    await database.update(userData).set({ isBanned: true }).where(eq(userData.userId, "user-a"));
+    await resetTables(discordLink);
+    expect(
+      await completeDiscordLink(database, config, {
+        userId: "user-a",
+        grant,
+        identity: clerkIdentity(),
+      }),
+    ).toEqual({ result: "banned" });
+    expect(calls.some((call) => call.path === "/oauth2/token/revoke")).toBe(false);
+  });
+
+  it("syncs a Clerk-sourced link with a fresh token from Clerk", async () => {
+    const database = await getTestDatabase();
+    await insertDiscordLink(database, {
+      ...linkValues("user-a", OLD_DISCORD),
+      tokenSource: "CLERK",
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+      scopes: "identify role_connections.write",
+    });
+    const { getUserOauthAccessToken } = fakeClerk();
+    expect((await syncDiscordMember(database, "user-a", { force: true })).synced).toBe(true);
+    expect(getUserOauthAccessToken).toHaveBeenCalledWith("user-a", "discord");
+    expect(calls.find((call) => call.path.endsWith("/role-connection"))?.auth).toBe(
+      "Bearer clerk-access",
+    );
+    // guilds.join granted to Clerk later is picked up and used to join the server.
+    const link = await database.query.discordLink.findFirst();
+    expect(link?.scopes).toBe("identify email role_connections.write guilds.join");
+    expect(
+      calls.some(
+        (call) => call.method === "PUT" && call.path === `/guilds/${GUILD}/members/${OLD_DISCORD}`,
+      ),
+    ).toBe(true);
+    // Unlinking leaves Clerk's token alone.
+    calls = [];
+    expect((await (await callerFor(discordRouter, "user-a")).unlink()).success).toBe(true);
+    expect(calls.some((call) => call.path === "/oauth2/token/revoke")).toBe(false);
+  });
+
+  it("asks for a re-link when Clerk no longer holds a usable token", async () => {
+    const database = await getTestDatabase();
+    await insertDiscordLink(database, {
+      ...linkValues("user-a", OLD_DISCORD),
+      tokenSource: "CLERK",
+      accessToken: null,
+      refreshToken: null,
+      tokenExpiresAt: null,
+    });
+    // The player replaced their Discord sign-in with another Discord account.
+    fakeClerk({ discordId: OTHER_DISCORD });
+    const result = await syncDiscordMember(database, "user-a", { force: true });
+    expect(result.synced).toBe(false);
+    expect(calls.some((call) => call.path.endsWith("/role-connection"))).toBe(false);
+    const link = await database.query.discordLink.findFirst();
+    expect(link?.syncError).toContain(DISCORD_RELINK_REQUIRED);
+    // The profile reads this to offer "Re-link Discord".
+    expect(needsDiscordRelink(link?.syncError)).toBe(true);
   });
 });

@@ -194,7 +194,12 @@ const DiscordLinkCard: React.FC<{ link: StaffLink; canManage: boolean }> = ({
           {link.syncedAt ? new Date(link.syncedAt).toLocaleString() : "never"}
           {link.syncedBanned ? " · banned on Discord" : ""}
         </p>
-        <p>Scopes: {link.scopes.join(", ")}</p>
+        <p>
+          Scopes: {link.scopes.join(", ")}
+          {link.tokenSource === "CLERK"
+            ? " · token from the Clerk Discord sign-in"
+            : ""}
+        </p>
         {link.syncError && (
           <p className="text-red-600 sm:col-span-2">Sync error: {link.syncError}</p>
         )}

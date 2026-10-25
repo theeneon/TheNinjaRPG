@@ -36,7 +36,23 @@ export type DiscordLinkResultDetails = {
   hint?: string;
   /** When the cooldown or account-age requirement is met, as an ISO date. */
   until?: string;
+  /** The link reused the player's Discord sign-in instead of a consent screen. */
+  automatic?: boolean;
 };
+
+/** Shown wherever a link was made from the player's Discord sign-in. */
+export const DISCORD_AUTOMATIC_LINK_TEXT =
+  "Linked automatically from your Discord sign-in.";
+
+/**
+ * Start of the sync error stored when the link no longer has a usable Discord token (the
+ * player removed Discord from their sign-in methods, revoked the app, or the scope is gone);
+ * the profile then asks them to re-link.
+ */
+export const DISCORD_RELINK_REQUIRED = "Discord authorization missing";
+
+export const needsDiscordRelink = (syncError: string | null | undefined) =>
+  !!syncError?.includes(DISCORD_RELINK_REQUIRED);
 
 type ResultCopy = { title: string; description: string; success: boolean };
 
@@ -53,15 +69,13 @@ export const describeDiscordLinkResult = (
       return {
         success: true,
         title: "Discord linked",
-        description:
-          "Your Discord account is now linked to your character. Return to Discord: the Verified Ninja role unlocks the server channels.",
+        description: `${details.automatic ? `${DISCORD_AUTOMATIC_LINK_TEXT} ` : ""}Your Discord account is now linked to your character. Return to Discord: the Verified Ninja role unlocks the server channels.`,
       };
     case "relinked":
       return {
         success: true,
         title: "Already linked",
-        description:
-          "This Discord account was already linked to your character. Your Discord roles and nickname have been refreshed.",
+        description: `${details.automatic ? `${DISCORD_AUTOMATIC_LINK_TEXT} ` : ""}This Discord account was already linked to your character. Your Discord roles and nickname have been refreshed.`,
       };
     case "linked_elsewhere":
       return {
