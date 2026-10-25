@@ -75,8 +75,8 @@ import {
   canViewRecruitmentAnalytics,
   canViewRevenueAnalytics,
 } from "@/utils/permissions";
+import { WEEK_S } from "@/utils/time";
 import type { QueryCondition } from "@/utils/typeutils";
-import { abTestFilterSchema } from "@/validators/analytics";
 import { bloodlineFilteringSchema } from "@/validators/bloodline";
 import { itemFilteringSchema } from "@/validators/item";
 import { jutsuFilteringSchema } from "@/validators/jutsu";
@@ -95,7 +95,12 @@ import {
 export const dataRouter = createTRPCRouter({
   // AB tests summaries (protected)
   getAbTests: protectedProcedure
-    .input(abTestFilterSchema)
+    .input(
+      z.object({
+        utmSource: z.string().max(191).optional(),
+        deviceType: z.array(z.enum(["mobile", "desktop", "unknown"])).optional(),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       // Query
       const user = await fetchUser(ctx.drizzle, ctx.userId);
@@ -104,18 +109,14 @@ export const dataRouter = createTRPCRouter({
         throw serverError("UNAUTHORIZED", "Insufficient permissions to get AB tests");
       }
       // Query
-      const whereConds: QueryCondition[] = [];
-      if (input?.startDate)
-        whereConds.push(gte(abEvent.createdAt, new Date(input.startDate)));
-      if (input?.endDate)
-        whereConds.push(
-          input.endDate.length === 10
-            ? lt(
-                abEvent.createdAt,
-                new Date(new Date(input.endDate).getTime() + 24 * 60 * 60 * 1000),
-              )
-            : lte(abEvent.createdAt, new Date(input.endDate)),
-        );
+      // Recent activity selects experiments; their cohorts include all history.
+      const activeExperiments = ctx.drizzle
+        .selectDistinct({ experiment: abEvent.experiment })
+        .from(abEvent)
+        .where(gte(abEvent.createdAt, new Date(Date.now() - WEEK_S * 1000)));
+      const whereConds: QueryCondition[] = [
+        inArray(abEvent.experiment, activeExperiments),
+      ];
       if (input?.utmSource && input.utmSource.length > 0)
         whereConds.push(eq(abEvent.source, input.utmSource));
 

@@ -45,18 +45,23 @@ const visitorFilteringSchema = defineFilteringSchema({
       label: "First Visit (From)",
       type: "date",
       defaultValue: dateStringMonthsAgo(1),
+      visibleIf: (ctx) =>
+        (ctx as { includeDates?: boolean } | undefined)?.includeDates !== false,
     },
     {
       id: "endDate",
       label: "First Visit (To)",
       type: "date",
       defaultValue: "",
+      visibleIf: (ctx) =>
+        (ctx as { includeDates?: boolean } | undefined)?.includeDates !== false,
     },
   ] as const,
 });
 
 interface VisitorFilteringProps {
   state: VisitorFilteringState;
+  includeDates?: boolean;
 }
 
 const VisitorFiltering: React.FC<VisitorFilteringProps> = (props) => {
@@ -64,6 +69,7 @@ const VisitorFiltering: React.FC<VisitorFilteringProps> = (props) => {
     <ContentFiltering
       schema={visitorFilteringSchema}
       state={props.state.cf}
+      context={{ includeDates: props.includeDates }}
       triggerButtonId="filter-visitor"
     />
   );
@@ -71,8 +77,14 @@ const VisitorFiltering: React.FC<VisitorFilteringProps> = (props) => {
 
 export default VisitorFiltering;
 
-export const getFilter = (state: VisitorFilteringState) =>
-  buildFilter(state.cf, visitorFilteringSchema);
+export const getFilter = (state: VisitorFilteringState, includeDates = true) => {
+  const filter = buildFilter(state.cf, visitorFilteringSchema);
+  if (!includeDates) {
+    delete filter.startDate;
+    delete filter.endDate;
+  }
+  return filter;
+};
 
 export const useFiltering = () => {
   const cf = useContentFiltering(visitorFilteringSchema);
