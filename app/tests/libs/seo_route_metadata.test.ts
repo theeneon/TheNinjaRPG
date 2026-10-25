@@ -189,3 +189,27 @@ describe("isProfileIndexable", () => {
     );
   });
 });
+
+describe("discord link share card", () => {
+  // /discord/link gets pasted into Discord itself, so its preview has to describe the
+  // linking flow instead of falling back to the homepage card.
+  it("uses its own title, description and 1200x630 image", async () => {
+    const { metadata } = await import("@/app/[shell]/discord/layout");
+    const image = {
+      url: `${SITE_URL}/images/discord-link-og.png`,
+      width: 1200,
+      height: 630,
+      alt: "Link your TheNinja-RPG character to Discord",
+    };
+    expect(metadata.openGraph).toMatchObject({
+      title: "Link your Discord account | TheNinja-RPG",
+      url: `${SITE_URL}/discord/link`,
+      images: [image],
+    });
+    expect(metadata.openGraph?.description).toContain("Verified Ninja role");
+    expect(metadata.twitter).toMatchObject({ card: "summary_large_image", images: [image] });
+    expect(metadata.robots).toEqual({ index: false });
+    const asset = join(import.meta.dirname, "..", "..", "public", "images", "discord-link-og.png");
+    expect(existsSync(asset)).toBe(true);
+  });
+});
