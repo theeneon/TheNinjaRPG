@@ -2,6 +2,7 @@ import { desc, eq, like, or } from "drizzle-orm";
 import { z } from "zod";
 import { DISCORD_UNLINK_COOLDOWN_DAYS } from "@/drizzle/constants";
 import { discordLink, discordLinkHistory, userData } from "@/drizzle/schema";
+import { needsDiscordRelink } from "@/libs/discordLink";
 import { fetchUser } from "@/routers/profile";
 import {
   baseServerResponse,
@@ -27,10 +28,20 @@ export const discordRouter = createTRPCRouter({
     if (!isDiscordLinkingEnabled() || !ctx.userId)
       return { enabled: isDiscordLinkingEnabled(), link: null };
     const link = await ctx.drizzle.query.discordLink.findFirst({
-      columns: { discordUsername: true, linkedAt: true },
+      columns: {
+        discordUsername: true,
+        linkedAt: true,
+        tokenSource: true,
+        syncError: true,
+      },
       where: eq(discordLink.userId, ctx.userId),
     });
-    return { enabled: true, link: link ?? null };
+    if (!link) return { enabled: true, link: null };
+    const { syncError, ...rest } = link;
+    return {
+      enabled: true,
+      link: { ...rest, needsRelink: needsDiscordRelink(syncError) },
+    };
   }),
   /** Unlink the signed-in character's Discord account. */
   unlink: protectedProcedure.output(baseServerResponse).mutation(async ({ ctx }) => {
@@ -79,6 +90,7 @@ export const discordRouter = createTRPCRouter({
             clerkDiscordId: discordLink.clerkDiscordId,
             linkedAt: discordLink.linkedAt,
             scopes: discordLink.scopes,
+            tokenSource: discordLink.tokenSource,
             syncedAt: discordLink.syncedAt,
             syncedBanned: discordLink.syncedBanned,
             syncError: discordLink.syncError,

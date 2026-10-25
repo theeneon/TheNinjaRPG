@@ -9,6 +9,7 @@ import {
 } from "@/drizzle/constants";
 import Confirm from "@/layout/Confirm";
 import Loader from "@/layout/Loader";
+import { DISCORD_AUTOMATIC_LINK_TEXT } from "@/libs/discordLink";
 import { showMutationToast } from "@/libs/toast";
 
 /** Link status and actions for the signed-in character's Discord account. */
@@ -59,7 +60,22 @@ export const DiscordLinkSettings: React.FC = () => {
       <p className="text-sm">
         Linked to <span className="font-bold">{data.link.discordUsername}</span> since{" "}
         {new Date(data.link.linkedAt).toLocaleDateString()}.
+        {data.link.tokenSource === "CLERK" && ` ${DISCORD_AUTOMATIC_LINK_TEXT}`}
       </p>
+      {data.link.needsRelink && (
+        <div className="space-y-2">
+          <p className="text-red-600 text-sm">
+            Discord no longer accepts updates for this link, so your Verified Ninja role
+            may lapse. Re-link to restore it.
+          </p>
+          <Button asChild className="gap-2">
+            <a href="/api/discord/authorize">
+              <Link2 className="h-4 w-4" />
+              Re-link Discord
+            </a>
+          </Button>
+        </div>
+      )}
       <Confirm
         title="Unlink Discord"
         proceed_label={isUnlinking ? null : "Unlink"}

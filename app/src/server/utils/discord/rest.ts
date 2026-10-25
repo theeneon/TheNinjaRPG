@@ -204,6 +204,27 @@ export const fetchCurrentUser = (accessToken: string) =>
     auth: { bearer: accessToken },
   });
 
+/** What an access token was issued for: its application, scopes and user. */
+export type DiscordAuthorization = {
+  application: { id: string };
+  scopes: string[];
+  expires: string;
+  user?: DiscordUser;
+};
+
+export const fetchAuthorization = (accessToken: string) =>
+  discordRequest<DiscordAuthorization>({
+    method: "GET",
+    path: "/oauth2/@me",
+    auth: { bearer: accessToken },
+  });
+
+/** Scopes a link cannot work without; guilds.join is optional. */
+export const DISCORD_REQUIRED_SCOPES = ["identify", "role_connections.write"];
+
+export const hasRequiredScopes = (scopes: string[]) =>
+  DISCORD_REQUIRED_SCOPES.every((scope) => scopes.includes(scope));
+
 /** Linked Roles metadata values; Discord expects every value as a string. */
 export type DiscordRoleConnection = {
   platformUsername: string;

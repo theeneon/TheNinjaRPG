@@ -4,7 +4,11 @@ import { NextResponse } from "next/server";
 import type { DiscordLinkResultDetails } from "@/libs/discordLink";
 import { drizzleDB } from "@/server/db";
 import { getDiscordConfig } from "@/server/utils/discord/config";
-import { completeDiscordLink } from "@/server/utils/discord/linking";
+import {
+  completeDiscordLink,
+  discordLinkResultUrl,
+  exchangeDiscordCode,
+} from "@/server/utils/discord/linking";
 import { LINK_STATE_COOKIE, verifyLinkState } from "@/server/utils/discord/secrets";
 import { fetchSanctionIdentity } from "@/server/utils/sanctionTombstone";
 
@@ -16,11 +20,9 @@ import { fetchSanctionIdentity } from "@/server/utils/sanctionTombstone";
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const redirect = (result: string, details: DiscordLinkResultDetails = {}) => {
-    const target = new URL("/discord/link", request.url);
-    target.searchParams.set("result", result);
-    if (details.hint) target.searchParams.set("hint", details.hint);
-    if (details.until) target.searchParams.set("until", details.until);
-    const response = NextResponse.redirect(target);
+    const response = NextResponse.redirect(
+      discordLinkResultUrl(request.url, result, details),
+    );
     response.cookies.delete({ name: LINK_STATE_COOKIE, path: "/api/discord" });
     return response;
   };
@@ -35,10 +37,12 @@ export async function GET(request: Request) {
   const code = url.searchParams.get("code");
   if (url.searchParams.get("error") || !code) return redirect("cancelled");
   try {
+    const grant = await exchangeDiscordCode(config, code);
+    if (!grant) return redirect("cancelled");
     const identity = await fetchSanctionIdentity(userId);
     const outcome = await completeDiscordLink(drizzleDB, config, {
       userId,
-      code,
+      grant,
       identity,
     });
     return redirect(outcome.result, outcome);

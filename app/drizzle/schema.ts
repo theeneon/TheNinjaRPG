@@ -6750,7 +6750,8 @@ export type SanctionTombstone = InferSelectModel<typeof sanctionTombstone>;
  * The one Discord account linked to a character (see `server/utils/discord/`). The unique
  * keys on both `userId` and `discordId` guarantee at most one active link per character and
  * per Discord account. OAuth tokens are AES-256-GCM encrypted at rest and only used to push
- * Linked Roles metadata and to add the member to the server.
+ * Linked Roles metadata and to add the member to the server. Links made from the player's
+ * Clerk Discord sign-in (`tokenSource` CLERK) store no token and fetch Clerk's on each use.
  *
  * The `synced*` columns record what was last applied on Discord. The sync cron compares them
  * with the character's current state, so a failed or skipped update is retried until both
@@ -6771,9 +6772,13 @@ export const discordLink = mysqlTable(
     linkedAt: datetime("linkedAt", { mode: "date", fsp: 3 })
       .default(sql`(CURRENT_TIMESTAMP(3))`)
       .notNull(),
-    accessToken: text("accessToken").notNull(),
-    refreshToken: text("refreshToken").notNull(),
-    tokenExpiresAt: datetime("tokenExpiresAt", { mode: "date", fsp: 3 }).notNull(),
+    tokenSource: mysqlEnum("tokenSource", consts.DiscordTokenSources)
+      .default("OAUTH")
+      .notNull(),
+    /** Encrypted OAuth token pair; null for CLERK links, whose token Clerk holds. */
+    accessToken: text("accessToken"),
+    refreshToken: text("refreshToken"),
+    tokenExpiresAt: datetime("tokenExpiresAt", { mode: "date", fsp: 3 }),
     scopes: varchar("scopes", { length: 191 }).notNull(),
     syncedAt: datetime("syncedAt", { mode: "date", fsp: 3 }),
     syncedUsername: varchar("syncedUsername", { length: 191 }),

@@ -14,6 +14,7 @@ import ContentBox from "@/layout/ContentBox";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
 import {
+  DISCORD_AUTOMATIC_LINK_TEXT,
   type DiscordLinkResult,
   describeDiscordLinkResult,
   isDiscordLinkResult,
@@ -22,7 +23,8 @@ import { useUserData } from "@/utils/UserContext";
 
 /**
  * Discord Linked Roles verification page. Discord opens it when a member claims the
- * Verified Ninja role; the OAuth callback returns here with `?result=`.
+ * Verified Ninja role; the OAuth callback and the Clerk auto-link return here with
+ * `?result=` (plus `auto=1` when the link reused the Discord sign-in).
  */
 export default function DiscordLinkPage() {
   return (
@@ -47,6 +49,7 @@ const DiscordLinkContent: React.FC = () => {
         result={result}
         hint={searchParams.get("hint") ?? undefined}
         until={searchParams.get("until") ?? undefined}
+        automatic={searchParams.get("auto") === "1"}
       />
     );
   return <DiscordLinkStart />;
@@ -64,8 +67,9 @@ const DiscordLinkOutcome: React.FC<{
   result: DiscordLinkResult;
   hint?: string;
   until?: string;
-}> = ({ result, hint, until }) => {
-  const copy = describeDiscordLinkResult(result, { hint, until });
+  automatic?: boolean;
+}> = ({ result, hint, until, automatic }) => {
+  const copy = describeDiscordLinkResult(result, { hint, until, automatic });
   const Icon = copy.success ? CheckCircle2 : XCircle;
   return (
     <div className="flex flex-col items-center gap-3 p-4 text-center">
@@ -120,7 +124,10 @@ const DiscordLinkStart: React.FC = () => {
         <p>
           Your character <span className="font-bold">{userData.username}</span> is
           linked to <span className="font-bold">{data.link.discordUsername}</span>.
-          Continue with Discord to refresh your roles and nickname.
+          {data.link.tokenSource === "CLERK" && ` ${DISCORD_AUTOMATIC_LINK_TEXT}`}{" "}
+          {data.link.needsRelink
+            ? "Discord no longer accepts updates for this link. Re-link to restore your roles."
+            : "Continue with Discord to refresh your roles and nickname."}
         </p>
       ) : (
         <p>
@@ -147,7 +154,7 @@ const DiscordLinkStart: React.FC = () => {
         <Button asChild className="gap-2">
           <a href="/api/discord/authorize">
             <Link2 className="h-4 w-4" />
-            Continue with Discord
+            {data.link?.needsRelink ? "Re-link Discord" : "Continue with Discord"}
           </a>
         </Button>
       </div>
