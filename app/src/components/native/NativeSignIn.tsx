@@ -11,8 +11,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { type NativeAuthResult, useNativeAuth } from "@/hooks/useNativeAuth";
 import { useNativeShell } from "@/hooks/useNativeShell";
-import { appleAuth, type oauthBrowser } from "@/libs/native";
-import { showMutationToast } from "@/libs/toast";
+import { appleAuth, haptics, type oauthBrowser } from "@/libs/native";
 
 /**
  * Providers offered in the app. Must match what is enabled in the Clerk dashboard — an
@@ -38,10 +37,12 @@ export default function NativeSignIn() {
   const isNativeShell = useNativeShell();
   const { isPending, signInWithApple, signInWithProvider } = useNativeAuth();
   const [activeProvider, setActiveProvider] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isNativeShell) return null;
 
   const handle = async (id: string, run: () => Promise<NativeAuthResult>) => {
+    setError(null);
     setActiveProvider(id);
     const result = await run();
     setActiveProvider(null);
@@ -53,7 +54,8 @@ export default function NativeSignIn() {
     }
     // A dismissed sheet is the player changing their mind, not something to report.
     if (result.status === "error") {
-      showMutationToast({ success: false, message: result.message });
+      void haptics.notify("ERROR");
+      setError(result.message);
     }
   };
 
@@ -90,6 +92,12 @@ export default function NativeSignIn() {
           Continue with {label}
         </Button>
       ))}
+
+      {error && (
+        <p role="alert" className="text-[14px] text-destructive">
+          {error}
+        </p>
+      )}
 
       <p className="mt-1 text-pretty text-center text-muted-foreground text-xs">
         Sign in securely, then return to the game.
