@@ -66,6 +66,7 @@ export default clerkMiddleware(
   },
   (request) => ({
     clockSkewInMs: 1000 * 60 * 30,
+    jwtKey: env.CLERK_JWT_KEY,
     // Session refresh must stay on the game origin inside the native WebView; the proxy
     // is served ahead of enabling native traffic so Clerk can verify it.
     frontendApiProxy:

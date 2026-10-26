@@ -69,6 +69,8 @@ export const serverSchema = z.object({
   SENDGRID_API_KEY: z.string().optional(),
   CAPTCHA_SALT: z.string().optional(),
   CLERK_SECRET_KEY: z.string().optional(),
+  // Optional instance PEM public key for networkless token verification.
+  CLERK_JWT_KEY: z.string().optional(),
   NATIVE_CLERK_PROXY_ENABLED: z.enum(["true", "false"]).optional(),
   /**
    * Vercel BotID on tRPC mutations (src/server/utils/botid.ts). Unset blocks detected bots
@@ -162,6 +164,7 @@ export const serverEnv = {
   SENDGRID_API_KEY: process.env.SENDGRID_API_KEY,
   CAPTCHA_SALT: process.env.CAPTCHA_SALT,
   CLERK_SECRET_KEY: process.env.CLERK_SECRET_KEY,
+  CLERK_JWT_KEY: process.env.CLERK_JWT_KEY,
   NATIVE_CLERK_PROXY_ENABLED: /** @type {"true" | "false" | undefined} */ (
     process.env.NATIVE_CLERK_PROXY_ENABLED
   ),
