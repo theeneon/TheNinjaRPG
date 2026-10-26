@@ -7,7 +7,7 @@ import type { DrizzleClient } from "@/server/db";
 import { settleDungeonBattle, expireDungeonRun, rollbackDungeonStart } from "@/server/utils/dungeon";
 import { dungeonContent, dungeonBattleState } from "../../setup/dungeon";
 import { insertUsers, insertItems } from "../../setup/factories";
-import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 import { makeCompleteBattle, makeUser } from "../../libs/combat/helpers/battleScenario";
 
 describeWithDatabase("Dungeon parties and settlement", () => {
@@ -37,6 +37,31 @@ describeWithDatabase("Dungeon parties and settlement", () => {
     if (!result.success || !("id" in result)) throw Error("Lobby creation failed");
     return {a, id: result.id};
   };
+
+  it("skips the unchanged run refresh while preserving membership and invitation guards", async () => {
+    const db = await getTestDatabase();
+    const { a, id } = await lobby();
+    await a.act({ id, action: "invite", userId: "b" });
+    const run = await db.query.dungeonRun.findFirst({ where: eq(dungeonRun.id, id) });
+    if (!run) throw Error("Missing lobby");
+    const measured = await recordQueries(() => a.getState());
+    expect(measured.result.runs[0]?.id).toBe(id);
+    expect(measured.statements.filter((statement) => /^select .* from .DungeonRun./is.test(statement))).toHaveLength(1);
+    await db.update(dungeonRun).set({ state: { ...run.state, memberIds: ["c"], invitedIds: ["b"] } }).where(eq(dungeonRun.id, id));
+    expect((await a.getState()).runs).toHaveLength(0);
+    expect((await (await callerFor(dungeonRouter, "c")).getState()).runs).toHaveLength(0);
+    expect((await (await callerFor(dungeonRouter, "b")).getState()).runs[0]?.id).toBe(id);
+    await db.update(dungeonRun).set({ status: "ENDED" }).where(eq(dungeonRun.id, id));
+    expect((await (await callerFor(dungeonRouter, "b")).getState()).runs).toHaveLength(0);
+  });
+
+  it("refreshes an expired run before returning its terminal state", async () => {
+    const db = await getTestDatabase();
+    const { a, id } = await lobby();
+    await db.update(dungeonRun).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(dungeonRun.id, id));
+    expect((await a.getState()).runs[0]).toMatchObject({ id, status: "ENDED", battleId: null });
+  });
+
   it("loads lobby membership and invitations through the state query", async () => {
     const {a, id} = await lobby(); const b = await callerFor(dungeonRouter, "b");
     await a.act({id, action:"invite", userId:"b"});

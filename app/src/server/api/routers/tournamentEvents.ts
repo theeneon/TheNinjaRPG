@@ -108,8 +108,14 @@ export const eventTournamentProcedures = {
         (initial.eventData.status === "DRAFT" && !canManageTournaments(user.role))
       )
         return null;
-      await syncEventTournament(ctx.drizzle, input.tournamentId);
-      const row = await fetchEvent(ctx.drizzle, input.tournamentId);
+      const needsRefresh = await syncEventTournament(
+        ctx.drizzle,
+        input.tournamentId,
+        initial,
+      );
+      const row = needsRefresh
+        ? await fetchEvent(ctx.drizzle, input.tournamentId)
+        : initial;
       if (!row?.eventData) return null;
       const participant = row.eventData.participants.find(
         (p) => p.userId === ctx.userId && !p.withdrawn,
@@ -476,21 +482,25 @@ const editEvent = async (
 /**
  * Reconcile combat results, recover abandoned launches and apply scheduled starts or event
  * expiry. Terminal events retry unpaid rewards; unscheduled rounds remain under staff control.
+ * Return whether a write or competing claim requires readers to refresh their loaded snapshot.
  */
-export const syncEventTournament = async (client: DrizzleClient, id: string) => {
-  const row = await fetchEvent(client, id);
-  if (!row?.eventData) return;
+export const syncEventTournament = async (
+  client: DrizzleClient,
+  id: string,
+  loadedRow?: EventRow,
+) => {
+  const row = loadedRow ?? (await fetchEvent(client, id));
+  if (!row?.eventData) return false;
   const event = structuredClone(row.eventData);
   const now = Date.now();
   if (["COMPLETED", "CANCELLED"].includes(event.status)) {
-    await payEventRewards(client, row);
-    return;
+    return payEventRewards(client, row);
   }
   if (
     event.status === "DRAFT" ||
     (event.status === "REGISTRATION" && now < event.config.endsAt)
   )
-    return;
+    return false;
   for (const series of event.series.filter((s) => !s.complete)) {
     const game = series.games.at(-1);
     if (!game) continue;
@@ -630,17 +640,21 @@ export const syncEventTournament = async (client: DrizzleClient, id: string) => 
     for (const s of event.series)
       if (s.scheduledAt && now >= s.scheduledAt) beginEventRound(event, now, s.id);
   const changed = JSON.stringify(event) !== JSON.stringify(row.eventData);
-  if (changed && !(await saveEventState(client, row, event))) return;
+  if (changed && !(await saveEventState(client, row, event))) return true;
   if (["COMPLETED", "CANCELLED"].includes(event.status)) {
-    await payEventRewards(client, { ...row, eventData: event });
-    return;
+    const paid = await payEventRewards(client, { ...row, eventData: event });
+    return changed || paid;
   }
+  let needsRefresh = changed;
   // Each launch first claims the event version. Acceptance never starts a second battle.
   for (const series of event.series.filter((s) => !s.complete)) {
     const game = series.games.at(-1);
-    if (game?.status === "READY" && game.accepted.length === 2 && now >= game.opensAt)
+    if (game?.status === "READY" && game.accepted.length === 2 && now >= game.opensAt) {
       await launchEventGame(client, id, series.id);
+      needsRefresh = true;
+    }
   }
+  return needsRefresh;
 };
 
 /** Claim the current ready roster once, then publish the revocable token combat must claim. */
@@ -815,7 +829,7 @@ const recordLaunchFailure = async (
  */
 const payEventRewards = async (client: DrizzleClient, row: EventRow) => {
   const event = row.eventData;
-  if (!event?.payRewards) return;
+  if (!event?.payRewards) return false;
   const users = [
     ...new Set(
       event.participants
@@ -826,7 +840,8 @@ const payEventRewards = async (client: DrizzleClient, row: EventRow) => {
   const receipts = await client.query.tournamentRewardClaim.findMany({
     where: eq(tournamentRewardClaim.tournamentId, row.id),
   });
-  for (const userId of users.filter((id) => !receipts.some((r) => r.userId === id))) {
+  const unpaid = users.filter((id) => !receipts.some((r) => r.userId === id));
+  for (const userId of unpaid) {
     try {
       await retryOnDeadlock(() =>
         client.transaction(async (tx) => {
@@ -869,6 +884,7 @@ const payEventRewards = async (client: DrizzleClient, row: EventRow) => {
       if (!isMysqlDuplicateKeyError(error)) throw error;
     }
   }
+  return unpaid.length > 0;
 };
 
 /** Synchronize events and remove expired terminal events only after pending payouts finish. */

@@ -405,13 +405,26 @@ export const clanRouter = createTRPCRouter({
     .input(clanGetRequestSchema)
     .query(async ({ ctx, input }) => {
       // Fetch
-      const user = await fetchUser(ctx.drizzle, ctx.userId);
+      const [user, requests] = await Promise.all([
+        ctx.drizzle.query.userData.findFirst({
+          where: eq(userData.userId, ctx.userId),
+          columns: { userId: true, clanId: true },
+          with: { clan: true },
+        }),
+        fetchRequests(ctx.drizzle, ["CLAN"], 3600 * 12, [
+          ctx.userId,
+          input.clanLeaderId,
+        ]),
+      ]);
       // Early Return For Non Clan User
+      if (!user) return [];
       if (!user.clanId) {
-        return await fetchRequests(ctx.drizzle, ["CLAN"], 3600 * 12, ctx.userId);
+        return requests.filter(
+          (r) => r.senderId === ctx.userId || r.receiverId === ctx.userId,
+        );
       }
-      // Fetch clan by user's clanId (resilient to leader changes)
-      const fetchedClan = await fetchClan(ctx.drizzle, user.clanId);
+      // Authorize against the user's clan before exposing speculatively loaded requests.
+      const fetchedClan = user.clan;
       // Guards
       if (!fetchedClan) {
         return [];
@@ -423,7 +436,9 @@ export const clanRouter = createTRPCRouter({
       if (!isLeader && !isColeader) {
         return [];
       }
-      return await fetchRequests(ctx.drizzle, ["CLAN"], 3600 * 12, input.clanLeaderId);
+      return requests.filter(
+        (r) => r.senderId === input.clanLeaderId || r.receiverId === input.clanLeaderId,
+      );
     }),
   searchClans: protectedProcedure
     .meta({ mcp: { description: "Search clans/factions by name" } })

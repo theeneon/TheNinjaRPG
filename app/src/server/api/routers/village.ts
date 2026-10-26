@@ -219,7 +219,8 @@ export const villageRouter = createTRPCRouter({
         user.sector,
         user.isOutlaw,
       );
-      const structures = await fetchStructures(ctx.drizzle, sectorVillage?.id);
+      const structures =
+        sectorVillage?.structures ?? (await fetchStructures(ctx.drizzle));
       // Calculate cost
       const discount = getStrucBoost("ramenDiscountPerLvl", structures);
       const factor = (100 - discount) / 100;

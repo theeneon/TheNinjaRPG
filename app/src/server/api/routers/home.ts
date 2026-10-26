@@ -631,7 +631,7 @@ export const homeRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Query
-      // Read userData before inventory so the transactional updatedAt CAS below
+      // Read userData before inventory so the updatedAt CAS below
       // detects any capacity mutation that commits between these snapshots.
       const { user } = await fetchUpdatedUser({
         client: ctx.drizzle,
@@ -657,34 +657,6 @@ export const homeRouter = createTRPCRouter({
         if (bucketCount >= getInventoryBucketCapacity(inventoryBucket, user)) {
           return errorResponse(getInventoryBucketFullMessage(inventoryBucket));
         }
-        const moved = await ctx.drizzle.transaction(async (tx) => {
-          const claimResult = await tx
-            .update(userData)
-            .set({ updatedAt: getNextUserSnapshotAt(user.updatedAt) })
-            .where(
-              and(
-                eq(userData.userId, ctx.userId),
-                eq(userData.updatedAt, user.updatedAt),
-              ),
-            );
-          if (claimResult.rowsAffected !== 1) return false;
-          const result = await tx
-            .update(userItem)
-            .set({ storedAtHome: false })
-            .where(
-              and(
-                eq(userItem.id, input.userItemId),
-                eq(userItem.userId, ctx.userId),
-                eq(userItem.storedAtHome, true),
-                gt(userItem.quantity, 0),
-              ),
-            );
-          return result.rowsAffected === 1;
-        });
-        if (!moved) {
-          return errorResponse("Inventory changed, please refresh and try again");
-        }
-        return { success: true, message: "Item retrieved from your home." };
       } else {
         // Check storage limits based on home-storage bucket
         const homeBucket = getHomeStorageBucket(userItemResult.item);
@@ -697,35 +669,33 @@ export const homeRouter = createTRPCRouter({
         ) {
           return errorResponse(getHomeStorageBucketFullMessage(homeBucket));
         }
-        const moved = await ctx.drizzle.transaction(async (tx) => {
-          const claimResult = await tx
-            .update(userData)
-            .set({ updatedAt: getNextUserSnapshotAt(user.updatedAt) })
-            .where(
-              and(
-                eq(userData.userId, ctx.userId),
-                eq(userData.updatedAt, user.updatedAt),
-              ),
-            );
-          if (claimResult.rowsAffected !== 1) return false;
-          const result = await tx
-            .update(userItem)
-            .set({ storedAtHome: true })
-            .where(
-              and(
-                eq(userItem.id, input.userItemId),
-                eq(userItem.userId, ctx.userId),
-                eq(userItem.storedAtHome, false),
-                gt(userItem.quantity, 0),
-              ),
-            );
-          return result.rowsAffected === 1;
-        });
-        if (!moved) {
-          return errorResponse("Inventory changed, please refresh and try again");
-        }
-        return { success: true, message: "Item stored in your home." };
       }
+      // Publish the item move and capacity snapshot together. Literal assignments avoid
+      // depending on MySQL's unspecified joined-UPDATE assignment order.
+      const result = await retryOnDeadlock(() =>
+        ctx.drizzle.execute(sql`
+          UPDATE ${userData}
+          INNER JOIN ${userItem} ON ${userItem.userId} = ${userData.userId}
+          SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt)},
+              ${userItem.storedAtHome} = ${!userItemResult.storedAtHome}
+          WHERE ${and(
+            eq(userData.userId, ctx.userId),
+            eq(userData.updatedAt, user.updatedAt),
+            eq(userItem.id, input.userItemId),
+            eq(userItem.storedAtHome, userItemResult.storedAtHome),
+            gt(userItem.quantity, 0),
+          )}
+        `),
+      );
+      if (result.rowsAffected === 0) {
+        return errorResponse("Inventory changed, please refresh and try again");
+      }
+      return {
+        success: true,
+        message: userItemResult.storedAtHome
+          ? "Item retrieved from your home."
+          : "Item stored in your home.",
+      };
     }),
 });
 

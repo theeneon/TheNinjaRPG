@@ -500,6 +500,8 @@ export const warRouter = createTRPCRouter({
           ctx.drizzle.query.war.findFirst({
             where: eq(war.id, input.warId),
             with: {
+              attackerVillage: { columns: { sector: true } },
+              defenderVillage: { columns: { sector: true } },
               warMercenaries: { where: activeWarMercenaryWhere() },
               warAllies: { where: activeWarAllyWhere() },
             },
@@ -549,10 +551,10 @@ export const warRouter = createTRPCRouter({
         side === activeWar.attackerVillageId
           ? activeWar.defenderVillageId
           : activeWar.attackerVillageId;
-      const target = await ctx.drizzle.query.village.findFirst({
-        where: eq(village.id, enemyId),
-        columns: { sector: true },
-      });
+      const target =
+        side === activeWar.attackerVillageId
+          ? activeWar.defenderVillage
+          : activeWar.attackerVillage;
       if (objective.task === "espionage" && user.sector !== target?.sector)
         return errorResponse("Travel to the enemy village to conduct espionage");
       if (
@@ -721,10 +723,23 @@ export const warRouter = createTRPCRouter({
   attackWarCamp: protectedProcedure
     .input(warCampSchema)
     .mutation(async ({ ctx, input }) => {
-      const [camp, user, mercenaryWarId] = await Promise.all([
+      const [camp, user, mercenaryWarId, activeWar] = await Promise.all([
         ctx.drizzle.query.warCamp.findFirst({ where: eq(warCamp.id, input.campId) }),
         fetchUser(ctx.drizzle, ctx.userId),
         fetchMercenaryWarId(ctx.drizzle, ctx.userId),
+        ctx.drizzle.query.war.findFirst({
+          where: eq(
+            war.id,
+            ctx.drizzle
+              .select({ warId: warCamp.warId })
+              .from(warCamp)
+              .where(eq(warCamp.id, input.campId)),
+          ),
+          with: {
+            warMercenaries: { where: activeWarMercenaryWhere() },
+            warAllies: { where: activeWarAllyWhere() },
+          },
+        }),
       ]);
       if (
         !camp ||
@@ -733,13 +748,6 @@ export const warRouter = createTRPCRouter({
         camp.endsAt <= new Date()
       )
         return errorResponse("War camp is closed");
-      const activeWar = await ctx.drizzle.query.war.findFirst({
-        where: eq(war.id, camp.warId),
-        with: {
-          warMercenaries: { where: activeWarMercenaryWhere() },
-          warAllies: { where: activeWarAllyWhere() },
-        },
-      });
       const side = activeWar
         ? getWarSide(activeWar, user.villageId, user.userId, mercenaryWarId)
         : null;
@@ -772,11 +780,11 @@ export const warRouter = createTRPCRouter({
    * the player's exclusive mercenary appointment.
    */
   getWarCampNotices: protectedProcedure.query(async ({ ctx }) => {
-    const user = await fetchUser(ctx.drizzle, ctx.userId);
     return ctx.drizzle
       .select({ id: warCamp.id, sector: warCamp.sector, endsAt: warCamp.endsAt })
       .from(warCamp)
       .innerJoin(war, eq(war.id, warCamp.warId))
+      .innerJoin(userData, eq(userData.userId, ctx.userId))
       .where(
         and(
           isNull(war.endedAt),
@@ -788,10 +796,10 @@ export const warRouter = createTRPCRouter({
           isNull(warCamp.resolvedAt),
           sql`${warCamp.startsAt} <= SYSDATE(3) AND ${warCamp.endsAt} > SYSDATE(3)`,
           or(
-            user.villageId ? eq(war.attackerVillageId, user.villageId) : undefined,
-            user.villageId ? eq(war.defenderVillageId, user.villageId) : undefined,
+            eq(war.attackerVillageId, userData.villageId),
+            eq(war.defenderVillageId, userData.villageId),
             sql`EXISTS (SELECT 1 FROM WarMercenary m WHERE m.warId = ${war.id} AND m.userId = ${ctx.userId} AND m.acceptedAt IS NOT NULL AND m.endedAt IS NULL)`,
-            sql`EXISTS (SELECT 1 FROM WarAlly WHERE warId = ${war.id} AND villageId = ${user.villageId} AND acceptedAt IS NOT NULL AND endedAt IS NULL)`,
+            sql`EXISTS (SELECT 1 FROM WarAlly WHERE warId = ${war.id} AND villageId = ${userData.villageId} AND acceptedAt IS NOT NULL AND endedAt IS NULL)`,
           ),
         ),
       );

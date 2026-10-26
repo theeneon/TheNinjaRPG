@@ -1,4 +1,4 @@
-import { currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { and, eq, gt, isNotNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { FileRouter } from "uploadthing/next";
@@ -71,11 +71,11 @@ const moderateUploadedImage = async (
  */
 const adminMiddleware = async () => {
   // Fetch & Guard
-  const sessionUser = await currentUser();
-  if (!sessionUser) throw new UploadThingError("Unauthorized");
+  const { userId } = await auth();
+  if (!userId) throw new UploadThingError("Unauthorized");
 
   const user = await drizzleDB.query.userData.findFirst({
-    where: eq(userData.userId, sessionUser.id),
+    where: eq(userData.userId, userId),
   });
   if (!user) throw new UploadThingError("User not found");
   if (user.isBanned) throw new UploadThingError("You are banned");
@@ -87,7 +87,7 @@ const adminMiddleware = async () => {
     );
   }
 
-  return { userId: sessionUser.id };
+  return { userId };
 };
 
 export const ourFileRouter = {
@@ -285,10 +285,10 @@ export type OurFileRouter = typeof ourFileRouter;
 /** Shared identity and ban checks; each upload route owns its own allowance. */
 const fetchUploadUser = async () => {
   // Fetch & Guard
-  const sessionUser = await currentUser();
-  if (!sessionUser) throw new UploadThingError("Unauthorized");
+  const { userId } = await auth();
+  if (!userId) throw new UploadThingError("Unauthorized");
   const user = await drizzleDB.query.userData.findFirst({
-    where: eq(userData.userId, sessionUser.id),
+    where: eq(userData.userId, userId),
   });
   if (!user) throw new UploadThingError("User not found");
   if (user.isBanned) throw new UploadThingError("You are banned");

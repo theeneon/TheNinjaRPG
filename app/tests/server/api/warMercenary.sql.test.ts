@@ -21,7 +21,7 @@ import { fetchActiveWars, warRouter } from "@/server/api/routers/war";
 import { canEnterWarCampSector } from "@/server/utils/warMercenary";
 import { defaultWarRules } from "@/validators/war";
 import { insertUsers } from "../../setup/factories";
-import { callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 
 const seed = async () => {
   const db = await getTestDatabase();
@@ -34,6 +34,27 @@ const seed = async () => {
 describeWithDatabase("war mercenary contracts", () => {
   beforeEach(seed);
   afterAll(async () => { await resetTables(warMercenary); });
+
+  it("loads camp notices in one statement with village, ally and mercenary authorization intact", async () => {
+    const db = await getTestDatabase();
+    await db.insert(warCamp).values({ id: "camp", warId: "w", sector: 5, guardianId: "guardian", startsAt: new Date(Date.now() - 60000), endsAt: new Date(Date.now() + 3600000) });
+    const kage = callerForDatabase(warRouter, "kage", db);
+    const merc = callerForDatabase(warRouter, "merc", db);
+    const measured = await recordQueries(() => kage.getWarCampNotices());
+    expect(measured.statements).toHaveLength(1);
+    expect(measured.result.map(({ id }) => id)).toEqual(["camp"]);
+    expect(await merc.getWarCampNotices()).toEqual([]);
+    await db.insert(warAlly).values({ id: "ally", warId: "w", villageId: "c", supportVillageId: "a", tokensPaid: 0, acceptedAt: new Date() });
+    expect((await merc.getWarCampNotices()).map(({ id }) => id)).toEqual(["camp"]);
+    await db.update(warAlly).set({ endedAt: new Date() }).where(eq(warAlly.id, "ally"));
+    expect(await merc.getWarCampNotices()).toEqual([]);
+    await db.update(userData).set({ villageId: null }).where(eq(userData.userId, "merc"));
+    await db.insert(warMercenary).values({ id: "contract", warId: "w", sideVillageId: "a", userId: "merc", invitedById: "kage", tokens: 0, slot: 0, acceptedAt: new Date() });
+    expect((await merc.getWarCampNotices()).map(({ id }) => id)).toEqual(["camp"]);
+    await db.update(warCamp).set({ resolvedAt: new Date() }).where(eq(warCamp.id, "camp"));
+    expect(await merc.getWarCampNotices()).toEqual([]);
+  });
+
   it("accepts and pays once across concurrent retries, then releases the slot on resignation", async () => {
     const db = await getTestDatabase();
     const kage = callerForDatabase(warRouter, "kage", db);

@@ -1,4 +1,4 @@
-import { currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { IMG_BUILDING_GLOBALANBU } from "@/drizzle/constants";
 import { FancyForumThreads } from "@/layout/FancyForumThreads";
 import QuestPicker from "@/layout/QuestPicker";
@@ -11,12 +11,12 @@ export const dynamic = "force-dynamic";
 
 export default async function GlobalAnbuHQ() {
   // Session information
-  const user = await currentUser();
+  const { userId } = await auth();
   // Initial data from server for speed
   const { initialThreads, userData, canPost } = await fetchForumPageData(
     drizzleDB,
     "ANBU HQ",
-    user?.id ?? null,
+    userId,
   );
 
   // Show board

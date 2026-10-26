@@ -48,7 +48,7 @@ describeWithDatabase("uploaded avatar cache responses", () => {
     ).toString("base64");
     await resetTables(historicalAvatar, userData);
     await insertUsers([{ userId, username: "UploadAvatarCache", staffAccount: false, federalStatus: "NORMAL" }]);
-    vi.spyOn(clerk, "currentUser").mockResolvedValue({ id: userId } as never);
+    vi.spyOn(clerk, "auth").mockResolvedValue({ userId } as never);
     vi.spyOn(moderator, "classifyNsfwImage").mockResolvedValue({
       isNsfw: false,
       reason: "",
