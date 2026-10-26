@@ -2,13 +2,14 @@ import { unflaggedModeration } from "../../setup/moderation";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { Moderations } from "openai/resources/moderations";
-import { conversation, conversationComment, parentalControl, user2conversation, userData } from "@/drizzle/schema";
+import { conversation, conversationComment, parentalControl, user2conversation, userBlackList, userData } from "@/drizzle/schema";
 import { parentalControlsRouter } from "@/server/api/routers/parentalControls";
-import { commentsRouter, fetchUsersToNotify } from "@/server/api/routers/comments";
+import { commentsRouter, fetchConversation, fetchUsersToNotify } from "@/server/api/routers/comments";
 import { Pusher } from "@/libs/pusher";
 import { hashParentalPin, renameParentalContact } from "@/server/utils/parentalControls";
+import { createTRPCRouter } from "@/server/api/trpc";
 import { insertUsers } from "../../setup/factories";
-import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 
 const settings = { enabled: true, tavernDisabled: true, privateMessages: "APPROVED" as const,
   approvedUserIds: ["friend"], pin: "012345", version: 0 };
@@ -34,10 +35,68 @@ describeWithDatabase("parental controls", () => {
   beforeEach(async () => {
     stubRateLimitTransport();
     vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
-    await resetTables(parentalControl, conversationComment, user2conversation, conversation, userData);
+    await resetTables(parentalControl, userBlackList, conversationComment, user2conversation, conversation, userData);
     await insertUsers([{ userId: "child", level: 50 }, { userId: "friend", level: 50 }, { userId: "stranger", level: 50 }]);
   });
   afterEach(() => vi.restoreAllMocks());
+  it("loads public history and live messages without a serial policy or reader lookup", async () => {
+    const db = await getTestDatabase();
+    await db.insert(conversation).values({ id: "public", title: "Global", isPublic: true, createdById: "child" });
+    await db.insert(conversationComment).values({ id: "live", conversationId: "public", content: "Hello", userId: "friend", authorId: "friend" });
+    const api = (await callerFor(createTRPCRouter({ comments: commentsRouter }), "child")).comments;
+    const page = await recordQueries(() => api.getConversationComments({ convo_title: "Global", limit: 10 }));
+    expect(page.result.data.map((c) => c.id)).toEqual(["live"]);
+    expect(page.statements).toHaveLength(4);
+    const live = await recordQueries(() => api.fetchConversationComment({ commentId: "live", conversationId: "public" }));
+    expect(live.result?.id).toBe("live");
+    expect(live.result).not.toHaveProperty("readerRole");
+    expect(live.statements).toHaveLength(3);
+    const livePolicies = live.statements.filter((sql) => sql.includes("from `ParentalControl`"));
+    expect(livePolicies).toHaveLength(1);
+    expect(livePolicies[0]).not.toContain("UsersInConversation");
+    expect(live.statements.some((sql) => sql.includes("QuestHistory"))).toBe(false);
+    expect(live.statements.some((sql) => sql.includes("pinHash"))).toBe(false);
+    expect((await api.fetchConversationComment({ commentId: "live" }))?.id).toBe("live");
+  });
+  it("requires a live message to belong to the supplied conversation and preserves both blacklist directions", async () => {
+    const db = await getTestDatabase();
+    await db.insert(conversation).values([
+      { id: "public", title: "Global", isPublic: true, createdById: "child" },
+      { id: "private", title: "Private", isPublic: false, createdById: "friend" },
+    ]);
+    await db.insert(conversationComment).values([
+      { id: "live", conversationId: "public", content: "Hello", userId: "friend", authorId: "friend" },
+      { id: "secret", conversationId: "private", content: "Secret", userId: "friend", authorId: "friend" },
+    ]);
+    const api = await callerFor(commentsRouter, "child");
+    expect(await api.fetchConversationComment({ commentId: "secret", conversationId: "public" })).toBeNull();
+    expect(await api.fetchConversationComment({ commentId: "secret", conversationId: "private" })).toBeNull();
+    for (const [creatorUserId, targetUserId] of [["friend", "child"], ["child", "friend"]] as const) {
+      await db.insert(userBlackList).values({ id: 1, creatorUserId, targetUserId });
+      expect(await api.fetchConversationComment({ commentId: "live", conversationId: "public" })).toBeNull();
+      await db.delete(userBlackList).where(eq(userBlackList.id, 1));
+    }
+    expect((await api.fetchConversationComment({ commentId: "live", conversationId: "public" }))?.id).toBe("live");
+  });
+  it("covers participant policies for ID lookups and private title fallbacks", async () => {
+    const db = await getTestDatabase();
+    await db.insert(conversation).values({ id: "private", title: "Private fallback", isPublic: false, createdById: "child" });
+    await db.insert(user2conversation).values(["child", "friend"].map((userId) => ({ userId, conversationId: "private" })));
+    await db.insert(parentalControl).values({ userId: "friend", ...settings, privateMessages: "NONE", pinHash: "unused" });
+    for (const lookup of [{ id: "private" }, { title: "Private fallback" }]) {
+      const convo = await fetchConversation({ client: db, userId: "child", ...lookup });
+      expect(convo?.id).toBe("private");
+      expect(convo?.readRestriction).toBeNull();
+      expect(convo?.sendRestriction).toContain("disabled");
+    }
+    const api = await callerFor(commentsRouter, "child");
+    const events = vi.spyOn(Pusher.prototype, "trigger");
+    events.mockClear();
+    expect((await api.sendTypingIndicator({ conversationId: "private" })).success).toBe(false);
+    expect(events).not.toHaveBeenCalled();
+    await db.insert(conversation).values({ id: "public", title: "Private fallback", isPublic: true, createdById: "child" });
+    expect((await fetchConversation({ client: db, userId: "child", title: "Private fallback" }))?.id).toBe("public");
+  });
   it("requires the parent PIN, never returns its hash, and rejects stale settings", async () => {
     const api = await callerFor(parentalControlsRouter, "child");
     expect((await api.save(settings)).success).toBe(true);
@@ -138,20 +197,20 @@ describeWithDatabase("parental controls", () => {
       const page = await api.getConversationComments({ convo_id: id, limit: 10 });
       expect(page.data).toEqual([]);
       expect(page.restrictionMessage).toBeTruthy();
-      expect(await api.fetchConversationComment({ commentId: `${id}-message` })).toBeNull();
+      expect(await api.fetchConversationComment({ commentId: `${id}-message`, conversationId: id })).toBeNull();
       expect((await api.reactConversationComment({ commentId: `${id}-message`, emoji: "👍" })).success).toBe(false);
     }
     for (const id of ["approved", "support"]) {
       expect((await api.getConversationComments({ convo_id: id, limit: 10 })).data).toHaveLength(1);
-      expect(await api.fetchConversationComment({ commentId: `${id}-message` })).not.toBeNull();
+      expect(await api.fetchConversationComment({ commentId: `${id}-message`, conversationId: id })).not.toBeNull();
     }
     const outsider = await callerFor(commentsRouter, "stranger");
-    expect(await outsider.fetchConversationComment({ commentId: "approved-message" })).toBeNull();
+    expect(await outsider.fetchConversationComment({ commentId: "approved-message", conversationId: "approved" })).toBeNull();
     expect((await outsider.reactConversationComment({ commentId: "approved-message", emoji: "👍" })).success).toBe(false);
     expect((await outsider.exitConversation({ convo_id: "support" })).success).toBe(true);
     await db.update(parentalControl).set({ privateMessages: "NONE" }).where(eq(parentalControl.userId, "child"));
     expect((await api.getConversationComments({ convo_id: "support", limit: 10 })).data).toHaveLength(1);
-    expect(await api.fetchConversationComment({ commentId: "support-message" })).not.toBeNull();
+    expect(await api.fetchConversationComment({ commentId: "support-message", conversationId: "support" })).not.toBeNull();
   });
   for (const mode of ["NONE", "APPROVED"] as const) {
     it(`keeps retained stranger history restricted after leaving (${mode})`, async () => {
@@ -169,7 +228,7 @@ describeWithDatabase("parental controls", () => {
       const page = await child.getConversationComments({ convo_id: "retained", limit: 10 });
       expect(page.data).toEqual([]);
       expect(page.restrictionMessage).toBeTruthy();
-      expect(await child.fetchConversationComment({ commentId: "retained-message" })).toBeNull();
+      expect(await child.fetchConversationComment({ commentId: "retained-message", conversationId: "retained" })).toBeNull();
       expect(await child.getUserConversations({})).toEqual([]);
       expect((await child.reactConversationComment({ commentId: "retained-message", emoji: "👍" })).success).toBe(false);
       expect((await child.sendTypingIndicator({ conversationId: "retained" })).success).toBe(false);
@@ -181,9 +240,9 @@ describeWithDatabase("parental controls", () => {
       }
       expect((await parent.save({ ...settings, version: 1, privateMessages: mode === "NONE" ? "EVERYONE" : mode, approvedUserIds: ["friend", "stranger"] })).success).toBe(true);
       expect((await child.getConversationComments({ convo_id: "retained", limit: 10 })).data).toHaveLength(1);
-      expect(await child.fetchConversationComment({ commentId: "retained-message" })).not.toBeNull();
+      expect(await child.fetchConversationComment({ commentId: "retained-message", conversationId: "retained" })).not.toBeNull();
       expect((await child.getUserConversations({})).map((c) => c.id)).toEqual(["retained"]);
-      expect(await stranger.fetchConversationComment({ commentId: "retained-message" })).toBeNull();
+      expect(await stranger.fetchConversationComment({ commentId: "retained-message", conversationId: "retained" })).toBeNull();
       await db.insert(user2conversation).values({ userId: "stranger", conversationId: "retained" });
       expect((await child.getConversationComments({ convo_id: "retained", limit: 10 })).data).toHaveLength(1);
     });
@@ -211,7 +270,7 @@ describeWithDatabase("parental controls", () => {
     expect((await db.query.conversation.findFirst({ where: eq(conversation.id, convoId) }))?.updatedAt).toEqual(before.convo?.updatedAt);
     expect(events).not.toHaveBeenCalled();
     expect((await child.getConversationComments({ convo_id: convoId, limit: 10 })).data).toHaveLength(1);
-    expect(await child.fetchConversationComment({ commentId: before.data[0]!.id })).not.toBeNull();
+    expect(await child.fetchConversationComment({ commentId: before.data[0]!.id, conversationId: convoId })).not.toBeNull();
     expect((await child.getUserConversations({})).map((c) => c.id)).toEqual([convoId]);
 
     expect((await staff.createConversationComment({ object_id: convoId, comment: "Normal approved reply", quoteIds: null, senderId: null })).success).toBe(true);
@@ -235,7 +294,7 @@ describeWithDatabase("parental controls", () => {
     expect(row?.authorId).toBe("staff");
     const child = await callerFor(commentsRouter, "child");
     expect((await child.getConversationComments({ convo_id: convoId, limit: 10 })).data).toHaveLength(2);
-    expect(await child.fetchConversationComment({ commentId: reply.commentId! })).not.toBeNull();
+    expect(await child.fetchConversationComment({ commentId: reply.commentId!, conversationId: convoId })).not.toBeNull();
     expect((await child.getUserConversations({})).map((c) => c.id)).toEqual([convoId]);
     const outsider = await callerFor(commentsRouter, "outsider");
     expect((await outsider.createConversationComment({ object_id: convoId, comment: "Nonmember AI reply", quoteIds: null, senderId: "ai" })).success).toBe(false);

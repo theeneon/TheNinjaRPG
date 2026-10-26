@@ -463,83 +463,109 @@ export const commentsRouter = createTRPCRouter({
     .meta({
       mcp: { description: "Fetch a single conversation comment" },
     })
-    .input(z.object({ commentId: z.string() }))
+    .input(
+      z.object({
+        commentId: z.string(),
+        conversationId: z.string().min(1).optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const posterUser = alias(userData, "posterUser");
       const readerUser = alias(userData, "readerUser");
       const posterBlacklist = alias(userBlackList, "posterBlacklist");
       const readerBlacklist = alias(userBlackList, "readerBlacklist");
-      const comment = await ctx.drizzle
-        .select({
-          id: conversationComment.id,
-          createdAt: conversationComment.createdAt,
-          content: conversationComment.content,
-          conversationId: conversationComment.conversationId,
-          authorId: conversationComment.authorId,
-          isPinned: conversationComment.isPinned,
-          isReported: conversationComment.isReported,
-          reactions: conversationComment.reactions,
-          villageName: village.name,
-          villageHexColor: village.hexColor,
-          villageKageId: village.kageId,
-          userId: posterUser.userId,
-          username: posterUser.username,
-          avatar: posterUser.avatar,
-          rank: posterUser.rank,
-          isOutlaw: posterUser.isOutlaw,
-          level: posterUser.level,
-          role: posterUser.role,
-          displayTitle: displayTitleSql(posterUser),
-          federalStatus: posterUser.federalStatus,
-          tavernUsernameColor: posterUser.tavernUsernameColor,
-          tavernTitleColor: posterUser.tavernTitleColor,
-          nRecruited: posterUser.nRecruited,
-          tavernMessages: posterUser.tavernMessages,
-          isStaffOnly: conversationComment.isStaffOnly,
-        })
-        .from(conversationComment)
-        .innerJoin(posterUser, eq(posterUser.userId, conversationComment.userId))
-        .innerJoin(readerUser, eq(readerUser.userId, ctx.userId))
-        .leftJoin(
-          posterBlacklist,
-          and(
-            notInArray(readerUser.role, canModerateRoles),
-            eq(posterBlacklist.creatorUserId, conversationComment.userId),
-            eq(posterBlacklist.targetUserId, ctx.userId),
+      const [comment, initialConvo] = await Promise.all([
+        ctx.drizzle
+          .select({
+            id: conversationComment.id,
+            createdAt: conversationComment.createdAt,
+            content: conversationComment.content,
+            conversationId: conversationComment.conversationId,
+            authorId: conversationComment.authorId,
+            isPinned: conversationComment.isPinned,
+            isReported: conversationComment.isReported,
+            reactions: conversationComment.reactions,
+            villageName: village.name,
+            villageHexColor: village.hexColor,
+            villageKageId: village.kageId,
+            userId: posterUser.userId,
+            username: posterUser.username,
+            avatar: posterUser.avatar,
+            rank: posterUser.rank,
+            isOutlaw: posterUser.isOutlaw,
+            level: posterUser.level,
+            role: posterUser.role,
+            readerRole: readerUser.role,
+            displayTitle: displayTitleSql(posterUser),
+            federalStatus: posterUser.federalStatus,
+            tavernUsernameColor: posterUser.tavernUsernameColor,
+            tavernTitleColor: posterUser.tavernTitleColor,
+            nRecruited: posterUser.nRecruited,
+            tavernMessages: posterUser.tavernMessages,
+            isStaffOnly: conversationComment.isStaffOnly,
+          })
+          .from(conversationComment)
+          .innerJoin(posterUser, eq(posterUser.userId, conversationComment.userId))
+          .innerJoin(readerUser, eq(readerUser.userId, ctx.userId))
+          .leftJoin(
+            posterBlacklist,
+            and(
+              notInArray(readerUser.role, canModerateRoles),
+              eq(posterBlacklist.creatorUserId, conversationComment.userId),
+              eq(posterBlacklist.targetUserId, ctx.userId),
+            ),
+          )
+          .leftJoin(
+            readerBlacklist,
+            and(
+              eq(readerBlacklist.creatorUserId, ctx.userId),
+              eq(readerBlacklist.targetUserId, conversationComment.userId),
+            ),
+          )
+          .leftJoin(village, eq(village.id, posterUser.villageId))
+          .where(
+            and(
+              eq(conversationComment.id, input.commentId),
+              input.conversationId
+                ? eq(conversationComment.conversationId, input.conversationId)
+                : undefined,
+              or(
+                isNull(readerBlacklist.id),
+                inArray(posterUser.role, canModerateRoles),
+              ),
+              isNull(posterBlacklist.id),
+            ),
           ),
-        )
-        .leftJoin(
-          readerBlacklist,
-          and(
-            eq(readerBlacklist.creatorUserId, ctx.userId),
-            eq(readerBlacklist.targetUserId, conversationComment.userId),
-          ),
-        )
-        .leftJoin(village, eq(village.id, posterUser.villageId))
-        .where(
-          and(
-            eq(conversationComment.id, input.commentId),
-            or(isNull(readerBlacklist.id), inArray(posterUser.role, canModerateRoles)),
-            isNull(posterBlacklist.id),
-          ),
-        );
-      const found = comment?.[0];
-      if (!found?.conversationId) return null;
-      const [convo, user] = await Promise.all([
-        fetchConversation({
-          client: ctx.drizzle,
-          id: found.conversationId,
-          userId: ctx.userId,
-        }),
-        fetchUser(ctx.drizzle, ctx.userId),
+        input.conversationId
+          ? fetchConversation({
+              client: ctx.drizzle,
+              id: input.conversationId,
+              userId: ctx.userId,
+            })
+          : undefined,
       ]);
+      const found = comment?.[0];
+      if (
+        !found?.conversationId ||
+        (input.conversationId && found.conversationId !== input.conversationId)
+      )
+        return null;
+      // Open tabs may still send only the comment ID; preserve their authorized read path.
+      const convo = input.conversationId
+        ? initialConvo
+        : await fetchConversation({
+            client: ctx.drizzle,
+            id: found.conversationId,
+            userId: ctx.userId,
+          });
       if (
         !convo ||
         convo.readRestriction ||
-        !canViewConversation(convo, ctx.userId, user.role)
+        !canViewConversation(convo, ctx.userId, found.readerRole)
       )
         return null;
-      return found;
+      const { readerRole: _readerRole, ...result } = found;
+      return result;
     }),
   getConversationComments: protectedProcedure
     .meta({ mcp: { description: "Get messages in a conversation" } })
@@ -974,14 +1000,17 @@ export const commentsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       if (!ctx.userId) return errorResponse("You are not logged in");
       const [user, convo] = await Promise.all([
-        fetchUser(ctx.drizzle, ctx.userId),
+        ctx.drizzle.query.userData.findFirst({
+          where: eq(userData.userId, ctx.userId),
+          columns: { username: true, role: true },
+        }),
         fetchConversation({
           client: ctx.drizzle,
           id: input.conversationId,
           userId: ctx.userId,
         }),
       ]);
-      if (!convo || !canViewConversation(convo, ctx.userId, user.role))
+      if (!user || !convo || !canViewConversation(convo, ctx.userId, user.role))
         return errorResponse("Conversation not found");
       if (convo.sendRestriction) return errorResponse(convo.sendRestriction);
       const pusher = getServerPusher();
@@ -1130,9 +1159,18 @@ export const fetchConversation = async (params: FetchConvoOptions) => {
       throw serverError("BAD_REQUEST", "Invalid request");
     }
   };
-  const convo = await getConvo();
+  // The reader is known before either lookup, including public title lookups.
+  const [convo, initialPolicies] = await Promise.all([
+    getConvo(),
+    fetchCommunicationPolicies(client, [userId]),
+  ]);
   if (!convo) return undefined;
   const participantIds = [...new Set([userId, ...convo.users.map((u) => u.userId)])];
+  // Only private, non-staff send restrictions need the other participants' policies.
+  const otherParticipantIds =
+    convo.isPublic || convo.isStaffAvailable
+      ? []
+      : participantIds.filter((participantId) => participantId !== userId);
   // A support ticket's creator keeps access to its conversation through the
   // ticket after leaving it, so only non-members of private staff threads need
   // the lookup.
@@ -1140,8 +1178,10 @@ export const fetchConversation = async (params: FetchConvoOptions) => {
     convo.isStaffAvailable &&
     !convo.isPublic &&
     !convo.users.some((u) => u.userId === userId);
-  const [policies, senders, linkedSupportTicket] = await Promise.all([
-    fetchCommunicationPolicies(client, participantIds),
+  const [participantPolicies, senders, linkedSupportTicket] = await Promise.all([
+    otherParticipantIds.length > 0
+      ? fetchCommunicationPolicies(client, otherParticipantIds)
+      : [],
     convo.isPublic || convo.isStaffAvailable
       ? []
       : fetchPrivateConversationSenders(client, userId, convo.id),
@@ -1152,6 +1192,7 @@ export const fetchConversation = async (params: FetchConvoOptions) => {
         })
       : undefined,
   ]);
+  const policies = [...initialPolicies, ...participantPolicies];
   const senderIds = senders.map((sender) => sender.userId);
   const readRestriction = conversationReadRestriction(
     policies.find((p) => p.userId === userId),
