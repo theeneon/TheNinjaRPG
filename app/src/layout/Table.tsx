@@ -117,7 +117,6 @@ const Table = <T, K extends keyof T>(props: TableProps<T, K>) => {
                         alt={row[column.key] as string}
                         size={avatarSize}
                         hover_effect={true}
-                        priority
                       />
                     </div>
                   )}
@@ -127,7 +126,6 @@ const Table = <T, K extends keyof T>(props: TableProps<T, K>) => {
                       alt={row[column.key] as string}
                       size={avatarSize}
                       hover_effect={true}
-                      priority
                     />
                   )}
                   {column.type === "string" && (

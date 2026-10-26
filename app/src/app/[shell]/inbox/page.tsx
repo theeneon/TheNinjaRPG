@@ -204,7 +204,6 @@ const ShowConversations: React.FC<ShowConversationsProps> = (props) => {
                             userId={user.userId}
                             alt={user.username}
                             size={50}
-                            priority
                           />
                         </div>
                       );

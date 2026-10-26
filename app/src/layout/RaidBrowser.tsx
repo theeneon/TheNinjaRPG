@@ -955,7 +955,6 @@ const RaidUserSlot: React.FC<RaidUserSlotProps> = ({ username, avatar, isLeader 
           alt={username}
           size={48}
           hover_effect={true}
-          priority
           className="h-full w-full rounded-md object-cover"
         />
         {isLeader && (

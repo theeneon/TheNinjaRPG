@@ -63,7 +63,6 @@ export default function ANBU() {
           alt={squad.name}
           size={100}
           hover_effect={true}
-          priority
         />
         {squad.name}
       </div>
@@ -77,7 +76,6 @@ export default function ANBU() {
               alt={squad.name}
               size={100}
               hover_effect={true}
-              priority
             />
             {squad.leader.username}
           </div>

@@ -433,7 +433,6 @@ const SenseiSystem: React.FC<TrainingProps> = (props) => {
                       alt={user.username}
                       userId={user.userId}
                       hover_effect={true}
-                      priority={true}
                       size={100}
                     />
                     {user.rank === "GENIN" && (

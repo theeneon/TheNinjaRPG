@@ -2674,7 +2674,6 @@ const StudentsTab: React.FC<StudentsTabProps> = ({ students }) => {
                 alt={user.username}
                 userId={user.userId}
                 hover_effect={true}
-                priority={true}
                 size={100}
               />
               <div>
@@ -2723,7 +2722,6 @@ const MarriagesTab: React.FC<MarriagesTabProps> = ({ userId, username, isActive 
                 alt={user.username}
                 userId={user.userId}
                 hover_effect={true}
-                priority={true}
                 size={100}
               />
               <div>
@@ -3287,7 +3285,6 @@ const RecruitedUsersTab: React.FC<RecruitedUsersTabProps> = ({
                   alt={user.username}
                   userId={user.userId}
                   hover_effect={true}
-                  priority={true}
                   size={100}
                 />
                 <div>

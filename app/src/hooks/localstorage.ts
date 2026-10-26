@@ -166,7 +166,10 @@ export const useLocalStorage = <T>(
 
   // Update the local storage when the value changes using safe utility
   useEffect(() => {
-    safeLocalStorageSetItem(key, JSON.stringify(value));
+    const serializedValue = JSON.stringify(value);
+    if (safeLocalStorageGetItem(key) !== serializedValue) {
+      safeLocalStorageSetItem(key, serializedValue);
+    }
   }, [key, value]);
 
   // Listen for storage changes from other tabs (StorageEvent) and same-page instances (CustomEvent)

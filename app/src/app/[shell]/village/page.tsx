@@ -250,7 +250,7 @@ export default function VillageOverview() {
         )}
         {/* Keep mobile building tiles compact to reduce scrolling. */}
         <div className="grid grid-cols-3 items-start sm:grid-cols-4">
-          {shownStructures?.map((structure) => (
+          {shownStructures?.map((structure, index) => (
             <div
               key={structure.id}
               className="p-2"
@@ -260,6 +260,7 @@ export default function VillageOverview() {
                 structure={structure}
                 village={villageData}
                 textPosition="bottom"
+                eager={index < 3}
                 showBar
                 showUpgrade
               />

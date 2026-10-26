@@ -173,7 +173,6 @@ const ChatBox: React.FC<ChatBoxProps> = ({
                         className="h-10 w-10 border-0"
                         size={100}
                         hover_effect={true}
-                        priority
                       />
                     ) : (
                       <BrainCircuit className="h-10 w-10" />

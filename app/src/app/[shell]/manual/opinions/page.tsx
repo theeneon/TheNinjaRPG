@@ -147,7 +147,6 @@ const ReportImage: React.FC<ReportimageProps> = (props) => {
         alt={user.username}
         userId={user.userId}
         hover_effect={isLoggedIn}
-        priority={true}
         size={100}
       />
       <div>

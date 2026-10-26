@@ -3521,7 +3521,6 @@ export const SorroundingUsers: React.FC<SorroundingUsersProps> = (props) => {
                   userId={user.userId}
                   alt={user.username}
                   size={512}
-                  priority
                 />
               </div>
               <div className="relative">

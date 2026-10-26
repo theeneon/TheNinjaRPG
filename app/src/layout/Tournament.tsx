@@ -409,7 +409,6 @@ const UserMatch: React.FC<UserMatchProps> = (props) => {
             alt={user.userId}
             size={100}
             hover_effect={true}
-            priority
           />
         </div>
       )}
