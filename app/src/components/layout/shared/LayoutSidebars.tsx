@@ -536,12 +536,7 @@ export const StrongestUsersBanner: React.FC = () => {
               >
                 <p className="pl-2">{i + 1}</p>
                 <div className="col-span-2">
-                  <AvatarImage
-                    href={user.avatarLight}
-                    alt={user.username}
-                    size={100}
-                    priority
-                  />
+                  <AvatarImage href={user.avatarLight} alt={user.username} size={100} />
                 </div>
                 <p className="col-span-5">{user.username}</p>
                 <p className="col-span-4">{user.rankedLp}</p>
