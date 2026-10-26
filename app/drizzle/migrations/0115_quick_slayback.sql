@@ -1,0 +1,1 @@
+CREATE INDEX `TournamentMatch_battleId_idx` ON `TournamentMatch` (`battleId`);

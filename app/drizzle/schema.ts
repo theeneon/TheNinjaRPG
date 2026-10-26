@@ -1159,6 +1159,7 @@ export const tournamentMatch = mysqlTable(
   (table) => {
     return {
       tournamentIdIdx: index("TournamentMatch_tournamentId_idx").on(table.tournamentId),
+      battleIdIdx: index("TournamentMatch_battleId_idx").on(table.battleId),
       userId1Idx: index("TournamentMatch_userId1_idx").on(table.userId1),
       userId2Idx: index("TournamentMatch_userId2_idx").on(table.userId2),
       winnerIdIdx: index("TournamentMatch_winnerId_idx").on(table.winnerId),
