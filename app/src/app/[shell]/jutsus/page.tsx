@@ -201,23 +201,41 @@ export default function MyJutsu() {
 
   // Mutations
   const { mutate: equip, isPending: isToggling } = api.jutsu.toggleEquip.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: async (data, variables) => {
       showMutationToast(data);
       if (data.success) {
+        // Cancel older reads before applying the confirmed state to every cached filter.
+        await utils.jutsu.getUserJutsus.cancel();
+        const change = data.data;
+        if (change) {
+          utils.jutsu.getUserJutsus.setQueriesData({}, {}, (rows) =>
+            rows?.map((row) =>
+              row.id === variables.userJutsuId
+                ? { ...row, equipped: change.equipped }
+                : row,
+            ),
+          );
+        }
+        // Reconcile in the background so a completed equip can close its dialog.
         // Sharing exports saved IDs, so equipment edits must refresh that query too.
-        await Promise.all([
+        void Promise.allSettled([
+          ...(change
+            ? [
+                updateUser((current) => {
+                  const jutsuIds = current.loadout?.jutsuIds ?? [];
+                  return {
+                    loadout: {
+                      jutsuIds: change.equipped
+                        ? [...new Set([...jutsuIds, change.jutsuId])]
+                        : jutsuIds.filter((id) => id !== change.jutsuId),
+                    },
+                  };
+                }),
+              ]
+            : []),
           utils.jutsu.getUserJutsus.invalidate(),
           utils.jutsu.getLoadouts.invalidate(),
         ]);
-      }
-      // Optimistically update loadout
-      if (data?.data && userData) {
-        const currentLoadout = userData?.loadout?.jutsuIds || [];
-        const jutsuId = data.data.jutsuId;
-        const newLoadout = data?.data.equipped
-          ? [...currentLoadout, jutsuId]
-          : currentLoadout.filter((id) => id !== jutsuId);
-        await updateUser({ loadout: { jutsuIds: newLoadout } });
       }
     },
     onSettled: () => {

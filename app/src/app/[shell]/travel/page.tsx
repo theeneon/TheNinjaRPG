@@ -680,7 +680,8 @@ function Travel() {
         showMutationToast(data);
       }
       if (data.success) {
-        await Promise.all([
+        // The action is complete; keep reconciliation off the dialog's pending path.
+        void Promise.allSettled([
           utils.profile.getUser.invalidate(),
           utils.item.getUserItems.invalidate(),
           utils.bloodline.getItemRolls.invalidate(),

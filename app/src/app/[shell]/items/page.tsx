@@ -906,7 +906,8 @@ const Backpack: React.FC<BackpackProps> = (props) => {
         showMutationToast({ success: data.success, message });
       }
       if (data.success) {
-        await Promise.all([
+        // The action is complete; keep reconciliation off the dialog's pending path.
+        void Promise.allSettled([
           utils.profile.getUser.invalidate(),
           utils.item.getUserItemsWithVariants.invalidate(),
           utils.bloodline.getItemRolls.invalidate(),
@@ -944,10 +945,10 @@ const Backpack: React.FC<BackpackProps> = (props) => {
   });
 
   const { mutate: equip, isPending: isEquipping } = api.item.toggleEquip.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: (data) => {
       showMutationToast(data);
       if (data.success) {
-        await Promise.all([
+        void Promise.allSettled([
           utils.item.getUserItemsWithVariants.invalidate(),
           utils.item.getUserItems.invalidate(),
         ]);
@@ -1554,10 +1555,10 @@ const Character: React.FC<CharacterProps> = (props) => {
 
   // Mutations
   const { mutate: equip, isPending: isEquipping } = api.item.toggleEquip.useMutation({
-    onSuccess: async (data) => {
+    onSuccess: (data) => {
       showMutationToast(data);
       if (data.success) {
-        await Promise.all([
+        void Promise.allSettled([
           utils.item.getUserItemsWithVariants.invalidate(),
           utils.item.getUserItems.invalidate(),
         ]);
