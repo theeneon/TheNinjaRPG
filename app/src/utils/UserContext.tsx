@@ -28,9 +28,9 @@ import type { NavBarDropdownLink } from "@/libs/menus";
 import { getTerritoryWarBoostUntil } from "@/libs/territoryWar";
 import { showMutationToast } from "@/libs/toast";
 import { parseHtml } from "@/utils/parse";
-import { secondsFromDate } from "@/utils/time";
 import {
   prepareUserUpdate as captureUserUpdate,
+  shareUserCache,
   type UserPatch,
   type UserUpdateOptions,
   updateUserCache,
@@ -141,6 +141,7 @@ export function UserContextProvider(props: {
     enabled: !!userId && isSignedIn && isLoaded,
     retry: false,
     refetchInterval: 300000,
+    structuralSharing: shareUserCache,
   });
 
   // Profile reads collect completed sessions and start their queued successors.
@@ -208,18 +209,11 @@ export function UserContextProvider(props: {
   useEffect(() => {
     if (data?.serverTime) {
       const discrepancy = Date.now() - data.serverTime;
-      if (data.userData) {
-        // Adjust updatedAt to client-time, effectively making client-time
-        // seem the same as server-time, although server-time is still used
-        // for all calculations
-        data.userData.updatedAt = secondsFromDate(
-          -discrepancy / 1000,
-          data.userData.updatedAt,
-        );
-      }
-      // Save the time-discrepancy between client and server for reference
-      // e.g. in the battle system
-      setTimeDiff(discrepancy);
+      // Ignore subsecond transfer/render jitter so timers keep their current schedule.
+      // Cached timestamps stay in server time; consumers apply timeDiff when needed.
+      setTimeDiff((current) =>
+        Math.abs(current - discrepancy) < 1000 ? current : discrepancy,
+      );
     }
   }, [data?.serverTime]);
 
