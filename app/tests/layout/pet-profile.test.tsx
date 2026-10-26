@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, setDefaultTimeout, vi } from "bun:te
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TRPCClientError } from "@trpc/client";
-import { createTRPCReact } from "@trpc/react-query";
+import { createTRPCReact, getQueryKey } from "@trpc/react-query";
 import { observable } from "@trpc/server/observable";
 import * as navigation from "next/navigation";
 import type { AppRouter } from "@/api/root";
@@ -36,6 +36,7 @@ type PetView = RouterOutputs["pets"]["getPet"];
 let owner: {
   userId: string; role: string; status: string; rank: string; reputationPoints: number; seichiSilver: number;
   sector: number; battleId: string | null; isOutlaw: boolean;
+  updatedAt: Date; experience: number; earnedExperience: number; petExperience: number;
   petTask?: PetTask | null;
   village: { name: string; type: string; sector: number; structures: { route: string }[]; relationshipA: []; relationshipB: [] };
 };
@@ -74,6 +75,7 @@ beforeEach(() => {
   owner = {
     userId: "owner", role: "USER", status: "AWAKE", rank: "JONIN", reputationPoints: 1000, seichiSilver: 100,
     sector: 1, battleId: null, isOutlaw: false,
+    updatedAt: new Date("2026-10-26T10:00:00Z"), experience: 100, earnedExperience: 100, petExperience: 0,
     village: { name: "Horizon", type: "VILLAGE", sector: 1, structures: [{ route: "/home" }], relationshipA: [], relationshipB: [] },
   };
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -145,7 +147,7 @@ afterEach(() => {
   });
 });
 
-const mount = () => {
+const mount = (strictMode = false) => {
   const trpcClient = testApi.createClient({ links: [() => ({ op }) => observable((observer) => {
     const respond = async () => {
       if (op.path === "pets.getPet") {
@@ -163,7 +165,10 @@ const mount = () => {
     };
     void respond().then((value) => { observer.next({ result: { data: value } }); observer.complete(); }, (error) => observer.error(error));
   })] });
-  return render(<testApi.Provider client={trpcClient} queryClient={queryClient}><QueryClientProvider client={queryClient}><PetProfile /></QueryClientProvider></testApi.Provider>);
+  return render(<PetProfile />, {
+    wrapper: ({ children }) => <testApi.Provider client={trpcClient} queryClient={queryClient}><QueryClientProvider client={queryClient}>{children}</QueryClientProvider></testApi.Provider>,
+    reactStrictMode: strictMode,
+  });
 };
 const selectTab = (view: ReturnType<typeof mount>, name: string) => fireEvent.mouseDown(view.getByRole("tab", { name }), { button: 0, ctrlKey: false });
 const mealButton = (view: ReturnType<typeof mount>) => view.getAllByRole("button", { name: "Feed one meal" }).find((button) => button.tagName === "BUTTON") as HTMLButtonElement;
@@ -176,6 +181,74 @@ const openSlotDialog = async (view: ReturnType<typeof mount>) => {
   fireEvent.click(await view.findByRole("button", { name: "Add slot" }));
   return view.findByRole("dialog", { name: "Add a companion slot" });
 };
+
+it.each([false, true])("refreshes cached companions once on remount with StrictMode %s", async (strictMode) => {
+  const initial = mount();
+  await initial.findByRole("tab", { name: "Training" });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  initial.unmount();
+  getPet.mockClear();
+
+  const returned = mount(strictMode);
+  await returned.findByRole("tab", { name: "Training" });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  expect(getPet).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  [false, null], [true, null], [false, "companion"], [true, "companion"],
+] as const)("replaces an inherited companion refetch after unmounted rewards with StrictMode %s and pet %s", async (strictMode, petId) => {
+  requestedPetId = petId;
+  const initial = mount();
+  await initial.findByRole("tab", { name: "Training" });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  const staleData = data;
+  let finishPrevious: (value: PetView) => void = () => undefined;
+  getPet.mockImplementationOnce(() => new Promise<PetView>((resolve) => { finishPrevious = resolve; }));
+  const previousFetch = queryClient.refetchQueries({ queryKey: getQueryKey(testApi.pets.getPet, petId ? { petId } : undefined, "query"), exact: true });
+  await waitFor(() => expect(getPet).toHaveBeenCalledTimes(2));
+  initial.unmount();
+  getPet.mockClear();
+  owner = { ...owner, experience: owner.experience + 100, petExperience: owner.petExperience + 150 };
+  data = { ...data, unusedExperience: 250 };
+
+  const returned = mount(strictMode);
+  selectTab(returned, "Training");
+  await act(async () => { finishPrevious(staleData); await previousFetch; });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  expect(returned.getByText(/\d+ training points available/).textContent).toBe("250 training points available");
+  expect(getPet).toHaveBeenCalledTimes(1);
+});
+
+it.each(["updatedAt", "experience", "earnedExperience", "petExperience"] as const)("refreshes the companion bank when owner %s changes while mounted", async (field) => {
+  const view = mount(true);
+  await view.findByRole("tab", { name: "Training" });
+  selectTab(view, "Training");
+  await view.findByText("100 training points available");
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  getPet.mockClear();
+
+  data = { ...data, unusedExperience: 250 };
+  if (field === "updatedAt") owner = { ...owner, updatedAt: new Date(owner.updatedAt.getTime() + 1000) };
+  else owner = { ...owner, [field]: owner[field] + 100 };
+  view.rerender(<PetProfile />);
+
+  await view.findByText("250 training points available");
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  expect(getPet).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the companion query idle when owner progress values are unchanged", async () => {
+  const view = mount(true);
+  await view.findByRole("tab", { name: "Training" });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  getPet.mockClear();
+
+  owner = { ...owner, updatedAt: new Date(owner.updatedAt), reputationPoints: owner.reputationPoints + 1 };
+  await act(async () => { view.rerender(<PetProfile />); });
+  expect(queryClient.isFetching()).toBe(0);
+  expect(getPet).not.toHaveBeenCalled();
+});
 
 it("chooses daily cosmetics for a gifted founder, keeps its saved look available and resets cancelled drafts", async () => {
   const savedPalette = PET_PALETTES.find((entry) => !data.options.palettes.some(({ index }) => index === entry.index))!;
