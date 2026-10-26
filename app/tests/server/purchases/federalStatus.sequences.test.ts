@@ -1951,6 +1951,28 @@ describeWithDatabase("federal status across real webhook sequences", () => {
     expect(await statusOf()).toBe("NONE");
   });
 
+  it("bulk reconciliation only updates the selected candidate ids", async () => {
+    const database = await db();
+    await database.update(userData).set({ federalStatus: "GOLD" }).where(eq(userData.userId, USER));
+    const concurrent = beforeStatements(database, userData, [async () => {
+      await insertUsers([{ userId: DESTINATION, username: "destination", federalStatus: "NONE" }]);
+      await database.insert(paypalSubscription).values({
+        id: "new-subscription", createdById: DESTINATION, affectedUserId: DESTINATION,
+        subscriptionId: "new-subscription",
+        status: "ACTIVE", federalStatus: "GOLD",
+      });
+    }]);
+    await reconcileFederalStatuses(concurrent);
+    expect(await statusOf()).toBe("NONE");
+    expect((await database.query.userData.findFirst({
+      where: eq(userData.userId, DESTINATION),
+    }))?.federalStatus).toBe("NONE");
+    await reconcileFederalStatuses(database);
+    expect((await database.query.userData.findFirst({
+      where: eq(userData.userId, DESTINATION),
+    }))?.federalStatus).toBe("GOLD");
+  });
+
   it("bulk reconciliation downgrades expired GOLD to a live store SILVER", async () => {
     const goldTransactionId = await buyFederal("GOLD");
     const database = await db();

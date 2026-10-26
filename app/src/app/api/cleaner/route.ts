@@ -335,7 +335,7 @@ export async function GET(request: Request) {
       { id: mpvpBattleUser.id },
       notExists(
         drizzleDB
-          .select({ id: mpvpBattleQueue.id })
+          .select({ id: sql`/*+ NO_SEMIJOIN() */ ${mpvpBattleQueue.id}` })
           .from(mpvpBattleQueue)
           .where(eq(mpvpBattleQueue.id, mpvpBattleUser.clanBattleId))
           .limit(1),

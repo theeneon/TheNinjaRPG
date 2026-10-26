@@ -119,6 +119,33 @@ describeWithDatabase("cleaner consistent-read candidate batches", () => {
     }
   });
 
+  it("keeps full orphan batches from waiting on an unrelated parent insertion", async () => {
+    const db = await getTestDatabase();
+    await insertUsers(Array.from({ length: 1000 }, (_, index) => ({
+      userId: `live-${index}`, username: `live-${index}`,
+    })));
+    await db.insert(userItem).values([
+      { id: "live-item", userId: "live", itemId: "item" },
+      ...Array.from({ length: 1000 }, (_, index) => ({
+        id: `orphan-${index}`, userId: `missing-${index}`, itemId: "item",
+      })),
+    ]);
+    const locker = await mysql.createConnection(process.env.TEST_MYSQL_URL!);
+    const cleaner = await mysql.createConnection(process.env.TEST_MYSQL_URL!);
+    try {
+      await cleaner.query("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      await cleaner.query("SET SESSION innodb_lock_wait_timeout = 1");
+      await locker.beginTransaction();
+      await locker.query("INSERT INTO UserData (userId, username, gender) VALUES ('registering', 'registering', 'Male')");
+      const client = drizzle(cleaner, { schema, mode: "default" }) as unknown as DrizzleClient;
+      await cleanupOrphanRows(client);
+      expect(await db.select({ id: userItem.id }).from(userItem)).toEqual([{ id: "live-item" }]);
+    } finally {
+      await locker.rollback();
+      await Promise.all([locker.end(), cleaner.end()]);
+    }
+  });
+
   it("has a date-leading interest expiry index", async () => {
     expect(await indexColumns("DailyBankInterest", "DailyBankInterest_date_idx"))
       .toEqual({ columns: ["date"], unique: false });

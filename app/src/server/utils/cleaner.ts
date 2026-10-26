@@ -108,13 +108,13 @@ export const cleanupOrphanRows = async (
   ) =>
     notExists(
       client
-        .select({ id: parentKey })
+        .select({ id: sql`/*+ NO_SEMIJOIN() */ ${parentKey}` })
         .from(parent)
         .where(eq(parentKey, childKey))
         .limit(1),
     );
-  // LIMIT keeps the correlated recheck from becoming a materialized scan of the
-  // whole parent table inside DELETE. Only the selected children's parents matter.
+  // Disable antijoin materialization: LIMIT alone can still scan and lock every
+  // parent inside DELETE. Recheck only the selected children's indexed parents.
   const withoutUser = (childKey: AnyMySqlColumn) =>
     missing(userData, userData.userId, childKey);
   const sweeps: Array<{
