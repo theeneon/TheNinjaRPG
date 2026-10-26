@@ -3484,14 +3484,15 @@ const fetchUpdatedUserOnce = async (
     includeNotifications ? fetchActiveRaids(client, now) : [],
     fetchQuestBootstrap(client, userId),
   ]);
+  const publishedAchievementIds = achievements
+    .filter((entry) => !questHasOverworldObjectives(entry))
+    .map((entry) => entry.id);
   if (props.rejectIsolatedPyramid && getIsolatedPyramid(fetchedUser)) {
     return {
       user: undefined,
       isPyramidIsolated: true,
       settings,
-      publishedAchievementIds: achievements
-        .filter((entry) => !questHasOverworldObjectives(entry))
-        .map((entry) => entry.id),
+      publishedAchievementIds,
       progressionQuestCandidates: [],
       questBootstrap,
       requiresProgressionRefresh: false,
@@ -3552,9 +3553,6 @@ const fetchUpdatedUserOnce = async (
     user.bloodline = getReskinnedBloodline(user.bloodline, user.activeReskin);
   }
 
-  const publishedAchievementIds = achievements
-    .filter((entry) => !questHasOverworldObjectives(entry))
-    .map((entry) => entry.id);
   // Add votes entry if it doesn't exist
   if (user && !user.votes) {
     const smallNanoid = customAlphabet("1234567890abcdefghijklmnopqrstuvwxyzABCDEF", 8);
