@@ -1650,7 +1650,7 @@ export const setFederalStatusWithStoreFloor = async (
  * It therefore performs downgrades as well as clearing or restoring a status.
  */
 export const reconcileFederalStatuses = async (
-  client: Pick<DrizzleClient, "update">,
+  client: Pick<DrizzleClient, "select" | "execute">,
 ) => {
   const sandboxUserIds = sandboxGranteeUserIds();
   const sandboxEligibility = sandboxUserIds.length
@@ -1659,16 +1659,14 @@ export const reconcileFederalStatuses = async (
         sql`, `,
       )}))`
     : sql`AND s.isSandbox = FALSE`;
-  return await client
-    .update(userData)
-    .set({
-      federalStatus: sql`CASE
+  const federalStatus = sql`CASE
       WHEN EXISTS (
         SELECT 1 FROM ${paypalSubscription} p
         WHERE p.affectedUserId = ${userData.userId}
           AND p.status = 'ACTIVE'
           AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
           AND p.federalStatus = 'GOLD'
+      LIMIT 1
       ) OR EXISTS (
         SELECT 1 FROM ${storePurchase} s
         WHERE s.userId = ${userData.userId}
@@ -1677,6 +1675,7 @@ export const reconcileFederalStatuses = async (
           ${sandboxEligibility}
           AND s.revokedAt IS NULL
           AND (s.expiresAt >= CURRENT_TIMESTAMP(3) OR (s.expiresAt IS NULL AND s.createdAt >= CURRENT_TIMESTAMP(3) - INTERVAL 63 DAY))
+      LIMIT 1
       ) OR (
         -- Cancelling on the web sets status without moving updatedAt, and the player has
         -- already paid through the period. Bounded by the tier they currently hold, so it
@@ -1689,7 +1688,8 @@ export const reconcileFederalStatuses = async (
           WHERE p.affectedUserId = ${userData.userId}
             AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
             AND p.federalStatus = 'GOLD'
-        )
+        LIMIT 1
+      )
       ) OR EXISTS (
         SELECT 1 FROM ${stripePayment} sp
         WHERE sp.affectedUserId = ${userData.userId}
@@ -1698,6 +1698,7 @@ export const reconcileFederalStatuses = async (
           ${env.NODE_ENV === "production" ? sql`AND sp.isSandbox = FALSE` : sql``}
           AND sp.purchasedAt <= CURRENT_TIMESTAMP(3)
           AND sp.expiresAt > CURRENT_TIMESTAMP(3)
+      LIMIT 1
       ) THEN 'GOLD'
       WHEN EXISTS (
         SELECT 1 FROM ${paypalSubscription} p
@@ -1705,6 +1706,7 @@ export const reconcileFederalStatuses = async (
           AND p.status = 'ACTIVE'
           AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
           AND p.federalStatus = 'SILVER'
+      LIMIT 1
       ) OR EXISTS (
         SELECT 1 FROM ${storePurchase} s
         WHERE s.userId = ${userData.userId}
@@ -1713,6 +1715,7 @@ export const reconcileFederalStatuses = async (
           ${sandboxEligibility}
           AND s.revokedAt IS NULL
           AND (s.expiresAt >= CURRENT_TIMESTAMP(3) OR (s.expiresAt IS NULL AND s.createdAt >= CURRENT_TIMESTAMP(3) - INTERVAL 63 DAY))
+      LIMIT 1
       ) OR (
         -- Cancelling on the web sets status without moving updatedAt, and the player has
         -- already paid through the period. Bounded by the tier they currently hold, so it
@@ -1725,7 +1728,8 @@ export const reconcileFederalStatuses = async (
           WHERE p.affectedUserId = ${userData.userId}
             AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
             AND p.federalStatus = 'SILVER'
-        )
+        LIMIT 1
+      )
       ) OR EXISTS (
         SELECT 1 FROM ${stripePayment} sp
         WHERE sp.affectedUserId = ${userData.userId}
@@ -1734,6 +1738,7 @@ export const reconcileFederalStatuses = async (
           ${env.NODE_ENV === "production" ? sql`AND sp.isSandbox = FALSE` : sql``}
           AND sp.purchasedAt <= CURRENT_TIMESTAMP(3)
           AND sp.expiresAt > CURRENT_TIMESTAMP(3)
+      LIMIT 1
       ) THEN 'SILVER'
       WHEN EXISTS (
         SELECT 1 FROM ${paypalSubscription} p
@@ -1741,6 +1746,7 @@ export const reconcileFederalStatuses = async (
           AND p.status = 'ACTIVE'
           AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
           AND p.federalStatus = 'NORMAL'
+      LIMIT 1
       ) OR EXISTS (
         SELECT 1 FROM ${storePurchase} s
         WHERE s.userId = ${userData.userId}
@@ -1749,6 +1755,7 @@ export const reconcileFederalStatuses = async (
           ${sandboxEligibility}
           AND s.revokedAt IS NULL
           AND (s.expiresAt >= CURRENT_TIMESTAMP(3) OR (s.expiresAt IS NULL AND s.createdAt >= CURRENT_TIMESTAMP(3) - INTERVAL 63 DAY))
+      LIMIT 1
       ) OR (
         -- Cancelling on the web sets status without moving updatedAt, and the player has
         -- already paid through the period. Bounded by the tier they currently hold, so it
@@ -1761,7 +1768,8 @@ export const reconcileFederalStatuses = async (
           WHERE p.affectedUserId = ${userData.userId}
             AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
             AND p.federalStatus = 'NORMAL'
-        )
+        LIMIT 1
+      )
       ) OR EXISTS (
         SELECT 1 FROM ${stripePayment} sp
         WHERE sp.affectedUserId = ${userData.userId}
@@ -1770,18 +1778,21 @@ export const reconcileFederalStatuses = async (
           ${env.NODE_ENV === "production" ? sql`AND sp.isSandbox = FALSE` : sql``}
           AND sp.purchasedAt <= CURRENT_TIMESTAMP(3)
           AND sp.expiresAt > CURRENT_TIMESTAMP(3)
+      LIMIT 1
       ) THEN 'NORMAL'
       ELSE 'NONE'
-    END`,
-    })
-    .where(sql`${userData.federalStatus} != 'NONE'
+    END`;
+  const eligible = sql`${userData.federalStatus} != 'NONE'
       OR EXISTS (SELECT 1 FROM ${stripePayment} sp WHERE sp.affectedUserId = ${userData.userId} AND sp.grantedAt IS NOT NULL ${env.NODE_ENV === "production" ? sql`AND sp.isSandbox = FALSE` : sql``} AND sp.purchasedAt <= CURRENT_TIMESTAMP(3)
-          AND sp.expiresAt > CURRENT_TIMESTAMP(3))
+          AND sp.expiresAt > CURRENT_TIMESTAMP(3)
+      LIMIT 1
+      )
       OR EXISTS (
         SELECT 1 FROM ${paypalSubscription} p
         WHERE p.affectedUserId = ${userData.userId}
           AND p.status = 'ACTIVE'
           AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY
+      LIMIT 1
       )
       OR EXISTS (
         SELECT 1 FROM ${storePurchase} s
@@ -1791,5 +1802,20 @@ export const reconcileFederalStatuses = async (
           ${sandboxEligibility}
           AND s.revokedAt IS NULL
           AND (s.expiresAt >= CURRENT_TIMESTAMP(3) OR (s.expiresAt IS NULL AND s.createdAt >= CURRENT_TIMESTAMP(3) - INTERVAL 63 DAY))
-      )`);
+      LIMIT 1
+      )`;
+  // Discover candidates with a consistent read, then evaluate the latest receipts
+  // and tier in each bounded write so concurrent grants/revocations still win.
+  const candidates = await client
+    .select({ userId: userData.userId })
+    .from(userData)
+    .where(eligible);
+  for (let offset = 0; offset < candidates.length; offset += 1000) {
+    const ids = candidates.slice(offset, offset + 1000).map(({ userId }) => userId);
+    await retryOnDeadlock(() =>
+      client.execute(sql`UPDATE ${userData} FORCE INDEX (PRIMARY)
+      SET ${userData.federalStatus} = ${federalStatus}
+      WHERE ${and(inArray(userData.userId, ids), eligible)}`),
+    );
+  }
 };

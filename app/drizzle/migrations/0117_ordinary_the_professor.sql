@@ -1,0 +1,1 @@
+CREATE INDEX `DailyBankInterest_date_idx` ON `DailyBankInterest` (`date`);

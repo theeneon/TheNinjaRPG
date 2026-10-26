@@ -813,6 +813,13 @@
       "when": 1793001371703,
       "tag": "0116_active_war_defense_indexes",
       "breakpoints": false
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1793002992858,
+      "tag": "0117_ordinary_the_professor",
+      "breakpoints": false
     }
   ]
 }
