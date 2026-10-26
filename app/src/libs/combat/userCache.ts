@@ -49,6 +49,8 @@ export type CombatProfileUpdate = {
   battleId: string;
   baseline: CombatCacheBaseline;
   userDelta: UserDelta;
+  /** Removed loaded trackers; presence marks a sparse patch, older responses are complete. */
+  removedQuestIds?: string[];
   userPatch: {
     status: "AWAKE" | "BATTLE";
     curHealth: number;
@@ -180,6 +182,19 @@ export const combatProfilePatch = (
   });
   return {
     ...update.userPatch,
+    // Retain omitted public trackers, but respect removals from loaded quests.
+    questData: update.removedQuestIds
+      ? [
+          ...new Map(
+            [
+              ...(current.questData ?? []).filter(
+                (tracker) => !update.removedQuestIds?.includes(tracker.id),
+              ),
+              ...(update.userPatch.questData ?? []),
+            ].map((tracker) => [tracker.id, tracker]),
+          ).values(),
+        ]
+      : update.userPatch.questData,
     items,
     battleId: null,
     stealthActive: false,

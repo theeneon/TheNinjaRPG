@@ -70,13 +70,13 @@ import type {
 import { actionPointsAfterAction } from "@/libs/combat/actions";
 import { combatMasteryGains } from "@/libs/combat/mastery";
 import { areBattleAllies } from "@/libs/combat/participants";
+import type { CombatQuestTrackerTask } from "@/libs/combat/quests";
 import { isSummonTemplate, spliceOrphanedSummons } from "@/libs/combat/summon";
 import { getTargetTiles } from "@/libs/combat/targeting";
 import type { BattleEffect, GroundEffect, UserEffect } from "@/libs/combat/types";
 import { dungeonCombatResult } from "@/libs/dungeon";
 import { getWarSide } from "@/libs/objectiveWar";
 import { boostPvpGain, pvpExperienceReward } from "@/libs/pvpExperience";
-import type { ObjectiveTrackerTaskInput as ObjectiveTrackerTask } from "@/libs/quest";
 import { calculateLpEloChange } from "@/libs/ranked_pvp";
 import { getVillageLoyaltyBonuses, percentageMultiplier } from "@/libs/villageLoyalty";
 import { randomInt, round, secureRandomInt } from "@/utils/math";
@@ -625,8 +625,8 @@ export const buildCombatTrackerTasks = (
   curBattle: CompleteBattle,
   user: BattleUserState,
   result: CombatResult,
-): ObjectiveTrackerTask[] => {
-  const tasks: ObjectiveTrackerTask[] = [];
+): CombatQuestTrackerTask[] => {
+  const tasks: CombatQuestTrackerTask[] = [];
 
   // Each cast counts, including repeated casts and battles lost or fled.
   const isPvp = curBattle.usersState.some(
