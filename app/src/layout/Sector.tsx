@@ -2891,12 +2891,12 @@ const Sector: React.FC<SectorProps> = (props) => {
         safeRemoveRendererElement(renderer, sceneRef);
 
         profiler.reset();
-        // Detach static wrappers before disposing the scene; live users and
-        // quest layers remain in worldRoot and are disposed with the renderer.
+        // Dispose shared materials while static wrappers are still attached,
+        // releasing their renderer listeners. CPU geometry remains reusable.
+        cleanUp(scene, renderer);
         for (const sectorId of [...registry.entries.keys()]) {
           disposeSectorRender(sectorId);
         }
-        cleanUp(scene, renderer);
 
         // Note: Do NOT call clearTextureCaches() here as it clears module-wide caches
         // that may be in use by other Sector instances. Texture caches are shared across
