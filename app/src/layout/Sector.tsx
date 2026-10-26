@@ -339,6 +339,8 @@ const Sector: React.FC<SectorProps> = (props) => {
   // Client-authoritative sector id: updated imperatively the moment a
   // crossing commits (the prop lags a render behind), synced on prop change
   const walkAnimatingRef = useRef(false);
+  const movePendingRef = useRef(false);
+  const mountedRef = useRef(true);
   const activeSceneTeardownRef = useRef<(() => void) | null>(null);
   const sectorRef = useRef(sector);
   useEffect(() => {
@@ -852,6 +854,7 @@ const Sector: React.FC<SectorProps> = (props) => {
     if (!userData) return;
     walkAnimatingRef.current = true;
     for (const tile of path) {
+      if (!mountedRef.current || userRef.current?.status !== "AWAKE") break;
       originRef.current = tile;
       animatedPositionRef.current = { x: tile.col, y: tile.row };
       void updateUsersList(
@@ -921,6 +924,7 @@ const Sector: React.FC<SectorProps> = (props) => {
     if (!userData || !nav) return;
     walkAnimatingRef.current = true;
     for (const unifiedTile of unifiedPath) {
+      if (!mountedRef.current || userRef.current?.status !== "AWAKE") break;
       const local = nav.fromUnified(unifiedTile);
       const entry = sectorWindowRef.current.sectors.find(
         (candidate) => candidate.dx === local.dx && candidate.dy === local.dy,
@@ -959,20 +963,16 @@ const Sector: React.FC<SectorProps> = (props) => {
    * sector) is requested while the steps animate, so its round trip is
    * hidden behind the walk and the border costs no extra pause.
    */
-  const runJourneySegment = async (data: {
-    sector: number;
-    longitude: number;
-    latitude: number;
-    location: string;
-  }): Promise<void> => {
-    if (!userData || !pathFinderRef.current || !originRef.current) return;
-    const target = findHex(gridRef.current, {
-      x: data.longitude,
-      y: data.latitude,
-    });
-    if (!target) return;
-    const path = pathFinderRef.current.getShortestPath(originRef.current, target);
-    if (!path) return;
+  const runJourneySegment = async (
+    data: {
+      sector: number;
+      longitude: number;
+      latitude: number;
+      location: string;
+    },
+    walk: Promise<void>,
+  ): Promise<void> => {
+    if (!userData || !mountedRef.current) return;
     // The crossing round trip is fired while the steps animate. When the
     // clicked tile lies in the sector across this border, the character keeps
     // walking straight across it CLIENT-SIDE the instant it reaches the edge,
@@ -996,10 +996,19 @@ const Sector: React.FC<SectorProps> = (props) => {
         crossingPromise = moveStepAsync(
           buildCrossingPayload(cross, { x: data.longitude, y: data.latitude }, dest),
         );
+        // Attach a rejection handler immediately; handleCrossing awaits the
+        // original promise after the walk and lets the movement error handler recover.
+        void crossingPromise.catch(() => undefined);
       }
     }
-    // Show movement 1 step at a time with a small sleep between moves
-    await animateWalk(path, data.location);
+    // onMutate already started this walk; crossing requests may overlap it
+    // only after the preceding move has committed.
+    await walk;
+    if (!mountedRef.current) {
+      // Finish any pre-fired crossing before onSettled refreshes the profile.
+      await crossingPromise?.catch(() => undefined);
+      return;
+    }
     setMoves((prev) => prev + 1);
     if (crossingPromise) {
       await handleCrossing(
@@ -1010,6 +1019,8 @@ const Sector: React.FC<SectorProps> = (props) => {
       );
       return;
     }
+    // Reconcile even when a stale client map could not animate a path.
+    snapMovementPosition(data);
     // Update all state only once at the end to avoid excessive re-renders
     setPosition({ x: data.longitude, y: data.latitude });
     await updateUser({
@@ -1026,7 +1037,9 @@ const Sector: React.FC<SectorProps> = (props) => {
   // Crossing steps that are pre-fired during walk animations resolve
   // through this handler-less mutation; their responses are applied via
   // applyCrossing exactly when the local animation reaches the border
-  const { mutateAsync: moveStepAsync } = api.travel.moveInSector.useMutation();
+  const { mutateAsync: moveStepAsync } = api.travel.moveInSector.useMutation({
+    meta: { handlesTransportError: true },
+  });
 
   /**
    * Assemble the travel.moveInSector input for a single step from `from` to
@@ -1289,48 +1302,58 @@ const Sector: React.FC<SectorProps> = (props) => {
       await applyCrossing(crossingRes.data);
       return;
     }
-    pendingWorldTargetRef.current = null;
-    setTarget(null);
-    if (!crossingRes.success) showMutationToast(crossingRes);
+    await reconcileCrossing(crossingRes);
   };
 
-  /** Commit the server's crossing result after an optimistic client walk */
+  /** Restore every movement ref together so the next request uses the server tile. */
+  const snapMovementPosition = (data: {
+    sector: number;
+    longitude: number;
+    latitude: number;
+    location: UserData["location"];
+  }) => {
+    if (!userData || !mountedRef.current) return;
+    if (data.sector !== sectorRef.current) {
+      if (!reAnchorToSector(data.sector, data.longitude, data.latitude)) {
+        sectorRef.current = data.sector;
+        originRef.current = undefined;
+        cameraTargetPositionRef.current = null;
+      }
+    } else {
+      originRef.current = gridRef.current?.getHex({
+        col: data.longitude,
+        row: data.latitude,
+      });
+    }
+    animatedPositionRef.current = { x: data.longitude, y: data.latitude };
+    void updateUsersList({ ...userData, ...data } as UserData, true, true);
+    if (originRef.current) {
+      cameraTargetPositionRef.current = {
+        x: originRef.current.center.x - centerOffsetRef.current.x,
+        y: originRef.current.center.y - centerOffsetRef.current.y,
+      };
+    }
+  };
+
+  const refreshMovementPosition = async () => {
+    pendingCrossRef.current = null;
+    pendingWorldTargetRef.current = null;
+    setTarget(null);
+    await utils.profile.getUser.invalidate();
+    if (!mountedRef.current) return;
+    const freshUser = utils.profile.getUser.getData()?.userData;
+    if (freshUser) {
+      snapMovementPosition(freshUser);
+      setPosition({ x: freshUser.longitude, y: freshUser.latitude });
+      setSorrounding(usersRef.current.filter((u) => u?.userId) || []);
+    }
+  };
+
+  /** Commit the server result after an optimistic client walk. */
   const reconcileCrossing = async (res: Awaited<ReturnType<typeof moveStepAsync>>) => {
     if (res.success && res.data) {
       const d = res.data;
-      // If the server landed somewhere other than where we optimistically
-      // walked, snap the marker to the authoritative position
-      const drifted =
-        d.sector !== sectorRef.current ||
-        d.longitude !== animatedPositionRef.current?.x ||
-        d.latitude !== animatedPositionRef.current?.y;
-      if (drifted && userData) {
-        if (d.sector !== sectorRef.current) {
-          reAnchorToSector(d.sector, d.longitude, d.latitude);
-        } else {
-          originRef.current =
-            gridRef.current?.getHex({ col: d.longitude, row: d.latitude }) ??
-            originRef.current;
-          animatedPositionRef.current = { x: d.longitude, y: d.latitude };
-        }
-        void updateUsersList(
-          {
-            ...userData,
-            sector: d.sector,
-            longitude: d.longitude,
-            latitude: d.latitude,
-            location: d.location,
-          } as UserData,
-          true,
-          true,
-        );
-        if (originRef.current) {
-          cameraTargetPositionRef.current = {
-            x: originRef.current.center.x - centerOffsetRef.current.x,
-            y: originRef.current.center.y - centerOffsetRef.current.y,
-          };
-        }
-      }
+      snapMovementPosition(d);
       // The journey is complete; clear the target so the movement effect
       // does not re-issue a stale edge move against the new sector's grid
       setTarget(null);
@@ -1349,9 +1372,8 @@ const Sector: React.FC<SectorProps> = (props) => {
       runQuestTriggers(d, true);
     } else {
       // Attacked (success without data) or rejected: re-sync from the server
-      setTarget(null);
       showMutationToast(res);
-      await utils.profile.getUser.invalidate();
+      await refreshMovementPosition();
     }
   };
 
@@ -1616,35 +1638,70 @@ const Sector: React.FC<SectorProps> = (props) => {
   };
 
   const { mutate: move, isPending: isMoving } = api.travel.moveInSector.useMutation({
-    onSuccess: async (res) => {
-      document.body.style.cursor = "default";
-      // Stop moving if failed
-      if (res.success === false) {
-        showMutationToast(res);
-        pendingCrossRef.current = null;
-        setTarget(null);
-      }
-      // If success without data, then we got attacked
-      if (res.success && !res.data) {
-        pendingCrossRef.current = null;
-        setTarget(null);
-        showMutationToast(res);
-        await utils.profile.getUser.invalidate();
-      }
-      // If success with data, then we moved
+    onMutate: (input) => {
+      movePendingRef.current = true;
+      document.body.style.cursor = "wait";
+      const targetHex = gridRef.current?.getHex({
+        col: input.longitude,
+        row: input.latitude,
+      });
+      const path =
+        input.sector === sectorRef.current && originRef.current && targetHex
+          ? pathFinderRef.current?.getShortestPath(originRef.current, targetHex)
+          : undefined;
+      // Returning the promise inside the context lets the request start now.
+      // Awaiting it here would put the animation in front of the network call.
+      const walk = path
+        ? animateWalk(path, userRef.current?.location ?? "")
+        : Promise.resolve();
+      void walk.catch(() => undefined);
+      return { walk };
+    },
+    onSuccess: async (res, input, context) => {
+      const walk = context?.walk ?? Promise.resolve();
       const data = res.data;
-      // Border crossings re-anchor the world on the new sector; the scene
-      // rebuilds from prefetched neighbor data with the camera on the user
-      if (userData && res.success && data && data.sector !== sectorRef.current) {
-        await applyCrossing(data);
+      if (!res.success || !data) {
+        await walk;
+        if (mountedRef.current) await reconcileCrossing(res);
         return;
       }
-      if (userData && res.success && data) {
-        await runJourneySegment(data);
+      if (data.sector !== input.sector) {
+        await walk;
+        if (mountedRef.current) await applyCrossing(data);
+        return;
       }
+      if (data.longitude !== input.longitude || data.latitude !== input.latitude) {
+        await walk;
+        if (mountedRef.current) {
+          pendingCrossRef.current = null;
+          pendingWorldTargetRef.current = null;
+          await reconcileCrossing(res);
+        }
+        return;
+      }
+      await runJourneySegment(data, walk);
     },
-    onError: () => {
-      document.body.style.cursor = "default";
+    onError: async (_error, _input, context) => {
+      await context?.walk.catch(() => undefined);
+      if (!mountedRef.current) return;
+      showMutationToast({
+        success: false,
+        message: "Could not confirm your move. Please try again.",
+      });
+      await refreshMovementPosition();
+    },
+    // React Query stays pending until animation, reconciliation and any
+    // crossing finish, preserving the ANBU auto-attack and movement gates.
+    onSettled: async () => {
+      walkAnimatingRef.current = false;
+      movePendingRef.current = false;
+      if (mountedRef.current) {
+        document.body.style.cursor = "default";
+      } else {
+        // Navigation can outlive a committed move. Refresh rather than apply an
+        // older location over a later action in this account's profile cache.
+        await utils.profile.getUser.invalidate();
+      }
     },
   });
 
@@ -1691,13 +1748,10 @@ const Sector: React.FC<SectorProps> = (props) => {
     const edge = findNearestWalkableEdgeTile(currentMap, primary, rawEdge);
     if (!edge) return;
     pendingWorldTargetRef.current = worldTarget;
-    if (origin.col === edge.x && origin.row === edge.y) {
-      pendingCrossRef.current = null;
-      moveAcrossBorder(primary, { x: origin.col, y: origin.row });
-    } else {
-      pendingCrossRef.current = primary;
-      setTarget(edge);
-    }
+    // Even an already-reached edge goes through the movement effect, so a
+    // click during an optimistic walk cannot issue an overlapping crossing.
+    pendingCrossRef.current = primary;
+    setTarget(edge);
   };
 
   const { mutate: rob, isPending: isRobbing } = api.travel.robPlayer.useMutation({
@@ -1770,11 +1824,17 @@ const Sector: React.FC<SectorProps> = (props) => {
    * Starts interaction with an overworld NPC on the player's tile.
    * Records the placement version so subsequent dialog requests target the same NPC instance.
    */
-  const interactWithNpc = (npc: SectorUser) => {
+  const interactWithNpc = (npc: SectorUser): boolean => {
     // Read through refs: the scene's click handler closes over this callback for the lifetime of the
     // build, so state values would go stale. Skip while a dialog is open so its pending-interaction
     // ref isn't overwritten before the player finishes (or closes) that dialog.
-    if (isInteractingRef.current || !npc.npcPlacementId || npcDialogRef.current) return;
+    if (
+      movePendingRef.current ||
+      isInteractingRef.current ||
+      !npc.npcPlacementId ||
+      npcDialogRef.current
+    )
+      return false;
     pendingNpcInteractRef.current = {
       placementId: npc.npcPlacementId,
       positionVersion: npc.npcPositionVersion ?? 0,
@@ -1783,6 +1843,7 @@ const Sector: React.FC<SectorProps> = (props) => {
       placementId: npc.npcPlacementId,
       positionVersion: npc.npcPositionVersion ?? 0,
     });
+    return true;
   };
 
   /**
@@ -1822,7 +1883,10 @@ const Sector: React.FC<SectorProps> = (props) => {
   // Listening to webcket events
   // Dispose the live scene when the component unmounts
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
+      mountedRef.current = false;
+      document.body.style.cursor = "default";
       windowUpdateTokenRef.current++;
       activeSceneTeardownRef.current?.();
       activeSceneTeardownRef.current = null;
@@ -1974,6 +2038,8 @@ const Sector: React.FC<SectorProps> = (props) => {
       userData?.status === "AWAKE" &&
       originRef.current &&
       !isMoving &&
+      !movePendingRef.current &&
+      !walkAnimatingRef.current &&
       !isAttacking &&
       sector === userData?.village?.sector
     ) {
@@ -2062,7 +2128,7 @@ const Sector: React.FC<SectorProps> = (props) => {
         }
       }
     }
-  }, [sorrounding]);
+  }, [sorrounding, isMoving]);
 
   // Clear heal target if user moves away or target moves away
   useEffect(() => {
@@ -2081,7 +2147,7 @@ const Sector: React.FC<SectorProps> = (props) => {
   useEffect(() => {
     // A journey animation is authoritative while it runs: its own pipeline
     // issues every needed move, so the effect must not double-request
-    if (walkAnimatingRef.current) return;
+    if (walkAnimatingRef.current || movePendingRef.current || isMoving) return;
     // The move payload falls back to IMG_AVATAR_DEFAULT, so a missing custom
     // avatar must not block movement (default-avatar users could not move).
     if (target && originRef.current && pathFinderRef.current && userData) {
@@ -2094,8 +2160,14 @@ const Sector: React.FC<SectorProps> = (props) => {
       const targetHex = gridRef?.current?.getHex({ col: target.x, row: target.y });
       // Guards
       if (!targetHex) return;
-      if (target.x === originRef.current.col && target.y === originRef.current.row)
+      if (target.x === originRef.current.col && target.y === originRef.current.row) {
+        const cross = pendingCrossRef.current;
+        if (cross) {
+          pendingCrossRef.current = null;
+          moveAcrossBorder(cross, { x: target.x, y: target.y });
+        }
         return;
+      }
       // Clear heal target if moving away
       if (healTargetUser) {
         setHealTargetUser(null);
@@ -2156,7 +2228,19 @@ const Sector: React.FC<SectorProps> = (props) => {
   // Update information whenever we fetch new user data
   useEffect(() => {
     if (userData) {
-      void updateUsersList(userData);
+      // Profile refreshes may contain the last committed tile while the
+      // marker is walking; leave its speculative position to reconciliation.
+      const animated = animatedPositionRef.current;
+      void updateUsersList(
+        movePendingRef.current && animated
+          ? {
+              ...userData,
+              sector: sectorRef.current,
+              longitude: animated.x,
+              latitude: animated.y,
+            }
+          : userData,
+      );
       userRef.current = userData;
 
       // Check if user is on a structure
@@ -2204,6 +2288,7 @@ const Sector: React.FC<SectorProps> = (props) => {
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     const journeyActive = () =>
+      movePendingRef.current ||
       walkAnimatingRef.current ||
       pendingCrossRef.current !== null ||
       pendingWorldTargetRef.current !== null;
@@ -2570,7 +2655,8 @@ const Sector: React.FC<SectorProps> = (props) => {
                 if (
                   target.longitude === originRef.current?.col &&
                   target.latitude === originRef.current?.row &&
-                  !isAttackingRef.current
+                  !isAttackingRef.current &&
+                  !movePendingRef.current
                 ) {
                   document.body.style.cursor = "wait";
                   setTargetUser(target);
@@ -2593,7 +2679,8 @@ const Sector: React.FC<SectorProps> = (props) => {
               if (target) {
                 if (
                   target.longitude === originRef.current?.col &&
-                  target.latitude === originRef.current?.row
+                  target.latitude === originRef.current?.row &&
+                  !movePendingRef.current
                 ) {
                   setHealTargetUser(target);
                 } else {
@@ -3173,7 +3260,7 @@ const Sector: React.FC<SectorProps> = (props) => {
           setStoredBracket={setStoredBracket}
           attackUser={(userId) => {
             const target = sorrounding.find((u) => u.userId === userId);
-            if (target && !isAttacking) {
+            if (target && !isAttacking && !movePendingRef.current) {
               attack({
                 userId: target.userId,
                 longitude: target.longitude,
@@ -3185,7 +3272,7 @@ const Sector: React.FC<SectorProps> = (props) => {
           }}
           robUser={(userId) => {
             const target = sorrounding.find((u) => u.userId === userId);
-            if (target && !isRobbing) {
+            if (target && !isRobbing && !movePendingRef.current) {
               rob({
                 userId: target.userId,
                 longitude: target.longitude,
@@ -3271,11 +3358,10 @@ const Sector: React.FC<SectorProps> = (props) => {
                 variant={
                   arrivalNpc.npcInteractionType === "HOSTILE" ? "destructive" : "info"
                 }
-                disabled={isInteracting}
+                disabled={isInteracting || isMoving}
                 className="flex-1"
                 onClick={() => {
-                  interactWithNpc(arrivalNpc);
-                  setArrivalNpc(null);
+                  if (interactWithNpc(arrivalNpc)) setArrivalNpc(null);
                 }}
               >
                 {arrivalCta?.action}
