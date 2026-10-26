@@ -379,7 +379,6 @@ export const createBattlefieldPreview = (
       // An empty draw hides everything, which also drops this field from combat's mesh caches.
       sync();
       cleanUp(scene, renderer);
-      renderer.forceContextLoss();
       renderer.domElement.remove();
     },
   };
