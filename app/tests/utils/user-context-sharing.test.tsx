@@ -8,8 +8,9 @@ import {
 import { act, cleanup, render } from "@testing-library/react";
 import * as trpc from "@trpc/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import { type ContextType, useContext } from "react";
+import { type ContextType, type ReactNode, useContext } from "react";
 import * as client from "@/app/_trpc/client";
+import Countdown from "@/layout/Countdown";
 import * as pusher from "@/layout/PusherHandler";
 import { UserContext, UserContextProvider } from "@/utils/UserContext";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
@@ -54,10 +55,11 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   for (const queryClient of clients.splice(0)) queryClient.clear();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-const mount = (initial = snapshot()) => {
+const mount = (initial = snapshot(), children: ReactNode = null) => {
   let response = initial;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -79,7 +81,7 @@ const mount = (initial = snapshot()) => {
   const seen: ContextType<typeof UserContext>[] = [];
   const Consumer = () => {
     seen.push(useContext(UserContext));
-    return null;
+    return children;
   };
   render(
     <QueryClientProvider client={queryClient}>
@@ -109,19 +111,49 @@ const mount = (initial = snapshot()) => {
 };
 
 describe("profile context structural sharing", () => {
-  it("does not fan out unchanged refetches with equal Dates and subsecond clock jitter", async () => {
-    const test = mount();
+  it.each([100, 800, -800, 0])("does not fan out unchanged refetches after a first %i ms calibration", async (offset) => {
+    const test = mount(snapshot(BASE - offset));
     const before = test.current();
     const renders = test.seen.length;
-    for (const latency of [125, 250, 50]) {
+    for (const jitter of [25, 150, -50]) {
       now += 300_000;
-      await test.refresh(snapshot(now - latency));
+      await test.refresh(snapshot(now - offset - jitter));
       expect(test.current()).toBe(before);
       expect<unknown>(test.read().userData).toBe(before.data);
       expect<unknown>(test.read().achievementProgress).toBe(before.achievementProgress);
     }
     expect(test.seen.length - renders).toBe(0);
-    expect(test.current().timeDiff).toBe(0);
+    expect(test.current().timeDiff).toBe(offset);
+  });
+
+  it.each([800, -800])("calibrates an initial %i ms offset before a server countdown completes", (offset) => {
+    vi.useFakeTimers();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const finishesAt = BASE + 3000 - offset;
+    // Eligibility uses the server's clock, as quests.getPetTask does on refetch.
+    const onFinish = vi.fn(() => finishesAt <= now - offset);
+    const ServerCountdown = () => {
+      const { timeDiff } = useContext(UserContext);
+      return <Countdown targetDate={new Date(finishesAt)} timeDiff={timeDiff} onFinish={onFinish} />;
+    };
+    mount(snapshot(BASE - offset), <ServerCountdown />);
+
+    act(() => {
+      now += 2500;
+      vi.advanceTimersByTime(2500);
+    });
+    expect(onFinish).not.toHaveBeenCalled();
+    act(() => {
+      now += 500;
+      vi.advanceTimersByTime(500);
+    });
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    expect(onFinish).toHaveReturnedWith(true);
+    act(() => {
+      now += 5000;
+      vi.advanceTimersByTime(5000);
+    });
+    expect(onFinish).toHaveBeenCalledTimes(1);
   });
 
   it("keeps server timestamps immutable across repeated responses and clock corrections", async () => {

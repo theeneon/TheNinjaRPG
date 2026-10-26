@@ -119,7 +119,8 @@ export function UserContextProvider(props: {
   initialIsSignedIn: boolean;
 }) {
   // Difference between client time and server time
-  const [timeDiff, setTimeDiff] = useState<number>(0);
+  const [measuredTimeDiff, setMeasuredTimeDiff] = useState<number>();
+  const timeDiff = measuredTimeDiff ?? 0;
 
   // Get logged in user
   const { isSignedIn, isLoaded, user } = useUser();
@@ -207,10 +208,12 @@ export function UserContextProvider(props: {
   useEffect(() => {
     if (data?.serverTime) {
       const discrepancy = Date.now() - data.serverTime;
-      // Ignore subsecond transfer/render jitter so timers keep their current schedule.
+      // Calibrate the first response, then ignore subsecond transfer/render jitter.
       // Cached timestamps stay in server time; consumers apply timeDiff when needed.
-      setTimeDiff((current) =>
-        Math.abs(current - discrepancy) < 1000 ? current : discrepancy,
+      setMeasuredTimeDiff((current) =>
+        current !== undefined && Math.abs(current - discrepancy) < 1000
+          ? current
+          : discrepancy,
       );
     }
   }, [data?.serverTime]);
