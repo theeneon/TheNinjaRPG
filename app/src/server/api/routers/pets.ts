@@ -42,6 +42,7 @@ import {
 import { generatePetAppearance } from "@/libs/pets/appearance";
 import { getDailyPetOptions, isAvailablePetAppearance } from "@/libs/pets/catalogue";
 import { createPetFromSpecies } from "@/libs/pets/creation";
+import { getPetGenderUpdateError } from "@/libs/pets/gender";
 import {
   getChargedGenerationAttempts,
   getMaxPetRank,
@@ -484,6 +485,7 @@ export const petsRouter = createTRPCRouter({
         user,
         jutsus,
         name: input.name,
+        gender: input.gender,
         appearance: input,
       });
       const petId = created.id;
@@ -631,6 +633,8 @@ export const petsRouter = createTRPCRouter({
         return errorResponse("Companion battles are not available yet.");
       if (input.battleEnabled && pet.rank > getMaxPetRank(user.rank))
         return errorResponse("Your rank does not support this companion rank.");
+      const genderBlock = getPetGenderUpdateError(pet, input.gender);
+      if (genderBlock) return errorResponse(genderBlock);
       const { petId: _petId, ...patch } = input;
       const changed = await updateOwnedPet(ctx.drizzle, user, pet, patch);
       return changed

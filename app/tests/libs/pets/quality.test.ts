@@ -39,6 +39,20 @@ describe("pet visual quality", () => {
     expect(JSON.parse(content[0].text)).toMatchObject({ rank: candidate.rank, previousRank: previousRank ?? null, evolutionRequired: required, images: hasPrevious ? ["PREVIOUS", "CANDIDATE"] : ["CANDIDATE"] });
   });
 
+  it("passes the requested sex to review only when the companion has one", async () => {
+    const model = vi.spyOn(ai, "generateText").mockResolvedValue({ output: accepted } as never);
+    await classifyPetAppearanceImage({ ...(await input()), sex: "MALE" }, new AbortController().signal);
+    await classifyPetAppearanceImage(await input(), new AbortController().signal);
+    const context = (call: number) => {
+      const content = model.mock.calls[call]![0].messages?.[0]?.content;
+      if (!Array.isArray(content) || content[0]?.type !== "text") throw new Error("Expected review context");
+      return JSON.parse(content[0].text);
+    };
+    expect(context(0)).toMatchObject({ sex: "MALE" });
+    expect(context(1)).not.toHaveProperty("sex");
+    expect(String(model.mock.calls[0]![0].instructions)).toContain("a maneless lioness");
+  });
+
   it("judges evolutions by impressiveness and rejects non-native limbs, clutter, framing and shrinking", async () => {
     const model = vi.spyOn(ai, "generateText").mockResolvedValue({ output: accepted } as never);
     await classifyPetAppearanceImage(await input(), new AbortController().signal);

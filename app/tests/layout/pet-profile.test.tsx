@@ -17,6 +17,7 @@ import * as ItemWithEffects from "@/layout/ItemWithEffects";
 import * as Link from "@/layout/Link";
 import { PetProfile } from "@/layout/PetProfile";
 import * as PetTasks from "@/layout/PetTasks";
+import * as petGender from "@/libs/pets/gender";
 import * as StatsDistributionForm from "@/layout/StatsDistributionForm";
 import { getPetAbilityCapacity } from "@/libs/pets/abilities";
 import { getDailyPetOptions, PET_PALETTES } from "@/libs/pets/catalogue";
@@ -791,6 +792,25 @@ it("associates a friendly blank-name error with the field and preserves backend 
   fireEvent.change(name, { target: { value: "Sora" } });
   fireEvent.click(view.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(data.pet?.name).toBe("Sora"));
+});
+
+it("offers a free gender setting before the cutoff and shows it read-only afterwards", async () => {
+  const view = mount();
+  await view.findByRole("tab", { name: "Settings" });
+  selectTab(view, "Settings");
+  const gender = view.getByRole("combobox", { name: "Gender" });
+  expect(gender.textContent).toContain("Not set");
+  expect((view.getByRole("button", { name: "Save gender" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(view.getByText(/Changeable until 26 Nov, without using an image attempt\. Regenerate to redraw with it\./)).toBeDefined();
+  cleanup();
+  vi.spyOn(petGender, "isPetGenderEditable").mockReturnValue(false);
+  data = { ...data, pet: { ...data.pet!, gender: "FEMALE" } };
+  const later = mount();
+  await later.findByRole("tab", { name: "Settings" });
+  selectTab(later, "Settings");
+  expect(later.queryByRole("combobox", { name: "Gender" })).toBeNull();
+  expect(later.queryByRole("button", { name: "Save gender" })).toBeNull();
+  expect(later.getByText("Female")).toBeDefined();
 });
 
 it("keeps the selected loadout and save action before compact searchable choices and enforces shared slots", async () => {

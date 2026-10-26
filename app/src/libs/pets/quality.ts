@@ -2,13 +2,13 @@
 import { openai } from "@ai-sdk/openai";
 import { generateText, Output, type UserContent } from "ai";
 import sharp from "sharp";
-import { OPENAI_REVIEW_MODEL } from "@/drizzle/constants";
+import { OPENAI_REVIEW_MODEL, type PetGender } from "@/drizzle/constants";
 import { petAppearanceQualitySchema } from "@/validators/pets";
 
 const PET_QUALITY_INSTRUCTIONS = `You inspect animal sprites for a fantasy ninja game. Judge the visible CANDIDATE image against these objective requirements. The neutral gray checkerboard is an inspection background showing transparency; ignore it in every check. The animal is stylized pixel art; fantasy colours, species-appropriate tufts, crests, accessories and contained chakra are allowed.
 singleAnimal: exactly one animal with exactly one head and one connected body. Two heads on one body still FAIL. Reject extra animals or detached duplicate body parts.
 anatomyCorrect: no obvious malformed or duplicated animal anatomy. Allow natural pose overlap and species-appropriate limb counts; do not infer missing hidden limbs. FAIL a limb type or body part the requested species does not naturally have, such as wings on a wolf or panda, extra legs, horns on a hornless animal, or a long tail on a naturally short-tailed animal such as a bear or panda. FAIL a four-legged animal standing upright on its hind legs in a human-like pose. FAIL a cluttered mass of spikes, quills or stacked fur, feather or leaf layers that hides the body shape and limbs (unless the species naturally has quills), and multiple tails merged into the body or into one indistinct mass.
-speciesMatches: recognizable as the requested species or its close stylized animal family. Judge the animal family, not its colours, markings, exact proportions or pose. Intended maturity, larger stature, mane/ruff/crest, luminous markings and aura at higher ranks are allowed. Early ranks are intentionally simpler: a multi-tailed species such as a kitsune may show only one or a few tails, and antlers, horns, crests or plumes may be small; that still matches. Reject a different animal family or humanoid replacement.
+speciesMatches: recognizable as the requested species or its close stylized animal family. Judge the animal family, not its colours, markings, exact proportions or pose. Intended maturity, larger stature, mane/ruff/crest, luminous markings and aura at higher ranks are allowed. Early ranks are intentionally simpler: a multi-tailed species such as a kitsune may show only one or a few tails, and antlers, horns, crests or plumes may be small; that still matches. Reject a different animal family or humanoid replacement. When a sex is given, sex-specific features are expected and still match: a MALE lion's mane, a stag's antlers or a peacock's tail fan, and a FEMALE without them (a maneless lioness, an antlerless doe). Do not fail a check only because of the requested sex's normal features.
 completeBody: the visible head, feet, limbs and tail are inside the image with a clear empty margin; reject obvious cropping by the image boundary and an animal that fills the canvas edge to edge or touches the border. Natural overlap between limbs is allowed. A tiny aura touching the edge does not mean cropped anatomy.
 noGroundOrScene: no distinct ground patch, floor, pedestal, cast/contact shadow, scenery, text, frame or opaque background fragment. Normal dark pixel outlines, dark anatomy or markings, tiny antialiasing edges and tight colored aura are allowed. Inspect interior gaps as well as the outer edge: reject observable broad flat or rectangular opaque residue that obscures the inspection checkerboard between the head, neck, tails, legs or body, or extends beyond the animal as a matte halo, border or strip. A visible horizontal surface beneath the feet FAILS.
 identityPreserved: true when no PREVIOUS image is supplied. Otherwise keep the same individual: animal family, facial character, primary colour placement and distinctive identity markings/accessories. Allow substantial intended evolution, stronger natural anatomy, remodeled species-native crest, ruff, wings, fins, shell or other features, a multi-tailed species gaining tails, and antlers, horns, crests, manes or plumes growing as it ranks up; do not require an identical silhouette, tail count, proportions or pose.
@@ -29,6 +29,8 @@ export const classifyPetAppearanceImage = async (
     species: string;
     identity: string;
     rank: number;
+    /** Requested sex, when the companion has one; absent keeps the original review input. */
+    sex?: PetGender;
   },
   signal: AbortSignal,
 ) => {
@@ -44,6 +46,7 @@ export const classifyPetAppearanceImage = async (
         species: input.species,
         identity: input.identity,
         rank: input.rank,
+        ...(input.sex ? { sex: input.sex } : {}),
         previousRank: input.previousRank ?? null,
         evolutionRequired,
         images: input.previousImage ? ["PREVIOUS", "CANDIDATE"] : ["CANDIDATE"],

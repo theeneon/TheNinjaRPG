@@ -23,7 +23,7 @@ type BattlePet = Parameters<typeof addPetsToBattle>[0]["pets"][number];
 const petFixture = (patch: Partial<BattlePet> = {}): BattlePet => ({
   id: "pet-1", userId: "owner", name: "Nami", rank: 1, experience: 1000,
   storedExperience: 0, lastFedAt: null, species: petSpeciesFixture(), jutsuIds: [], skillIds: [],
-  speciesId: "pet-species-0", paletteIndex: 0, characteristicIndex: 0, auraIndex: 0,
+  speciesId: "pet-species-0", paletteIndex: 0, characteristicIndex: 0, auraIndex: 0, gender: null,
   offence: 50, defence: 40, strength: 30, intelligence: 20, willpower: 10, speed: 25,
   avatar: "https://example.com/pet.png", avatarFacing: "left",
   battleEnabled: true, spawnPosition: "BEHIND", aiRules: [], includeDefaultRules: true,

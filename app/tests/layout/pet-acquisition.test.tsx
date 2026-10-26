@@ -99,6 +99,7 @@ it("keeps a successful adoption intact while its claimed species leaves the dail
       fireEvent.click(view.getByRole("button", { name: "Continue" }));
     }
     fireEvent.change(view.getByLabelText("Companion name"), { target: { value: "Miso" } });
+    fireEvent.click(view.getByRole("radio", { name: "Male" }));
     fireEvent.click(view.getByRole("button", { name: "Meet my first companion" }));
     const profile = await view.findByRole("link", { name: "Open pet profile" });
     expect(profile.getAttribute("href")).toBe("/profile?tab=pet&petId=new-companion");
@@ -111,7 +112,7 @@ it("keeps a successful adoption intact while its claimed species leaves the dail
     expect(view.queryByRole("alert")?.textContent ?? null).toBeNull();
     expect(acquire).toHaveBeenCalledTimes(1);
     expect(acquire).toHaveBeenCalledWith({
-      name: "Miso", currency: "REPUTATION", dayKey,
+      name: "Miso", gender: "MALE", currency: "REPUTATION", dayKey,
       speciesId: options.species[0]!.id, paletteIndex: options.palettes[0]!.index,
       characteristicIndex: options.characteristics[0]!.index, auraIndex: options.auras[0]!.index,
     });
@@ -174,6 +175,7 @@ for (const collectionUnavailable of [false, true]) {
         fireEvent.click(view.getByRole("button", { name: "Continue" }));
       }
       fireEvent.change(view.getByLabelText("Companion name"), { target: { value: "Miso" } });
+      fireEvent.click(view.getByRole("radio", { name: "Male" }));
       if (collectionUnavailable) fireEvent.click(view.getByRole("radio", { name: "50 Seichi Silver" }));
       const confirm = view.getByRole("button", { name: `Confirm Form a new bond for ${price}?` }) as HTMLButtonElement;
       expect(confirm.disabled).toBe(false);
@@ -233,10 +235,13 @@ for (const federalStatus of ["NONE", "GOLD"] as const) {
         fireEvent.click(view.getAllByRole("radio")[0]!);
         fireEvent.click(view.getByRole("button", { name: "Continue" }));
       }
-      expect(view.queryAllByRole("radio")).toHaveLength(0);
+      // Only the required gender choice remains on the naming step.
+      expect(view.getAllByRole("radio")).toHaveLength(2);
       const meet = view.getByRole("button", { name: "Meet my first companion" }) as HTMLButtonElement;
       expect(meet.disabled).toBe(true);
       fireEvent.change(view.getByLabelText("Companion name"), { target: { value: "Miso" } });
+      expect(meet.disabled).toBe(true);
+      fireEvent.click(view.getByRole("radio", { name: "Female" }));
       expect(meet.disabled).toBe(false);
       for (const entries of Object.values(dailyOptions)) {
         expect(view.getByText(new RegExp(entries[0]!.name))).toBeDefined();
@@ -266,6 +271,7 @@ it("preserves the current draft when a claimed species is removed from the offer
       fireEvent.click(view.getByRole("button", { name: "Continue" }));
     }
     fireEvent.change(view.getByLabelText("Companion name"), { target: { value: "Miso" } });
+    fireEvent.click(view.getByRole("radio", { name: "Male" }));
     await updateData({ options: { ...options, species: options.species.slice(1) } });
     await waitFor(() => expect(view.getByLabelText("Selected traits").textContent).toBe([
       options.palettes[0]!.name, options.characteristics[0]!.name, options.auras[0]!.name,
@@ -485,6 +491,7 @@ it("checks only the selected adoption currency and preserves the companion draft
       fireEvent.click(view.getByRole("button", { name: "Continue" }));
     }
     fireEvent.change(view.getByLabelText("Companion name"), { target: { value: "Miso" } });
+    fireEvent.click(view.getByRole("radio", { name: "Male" }));
     let confirm = view.getByRole("button", { name: "Confirm Form a new bond for 30 reputation?" }) as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
     fireEvent.click(confirm);

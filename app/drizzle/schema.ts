@@ -2975,6 +2975,8 @@ export const userPet = mysqlTable(
     paletteIndex: tinyint("paletteIndex", { unsigned: true }).notNull(),
     characteristicIndex: tinyint("characteristicIndex", { unsigned: true }).notNull(),
     auraIndex: tinyint("auraIndex", { unsigned: true }).notNull(),
+    // NULL for companions adopted before gender existed; their art keeps the unsexed prompt.
+    gender: mysqlEnum("gender", consts.PetGenders),
     rank: tinyint("rank", { unsigned: true }).default(1).notNull(),
     experience: double("experience").default(0).notNull(),
     storedExperience: double("storedExperience").default(0).notNull(),

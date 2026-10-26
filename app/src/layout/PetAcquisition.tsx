@@ -8,7 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { PET_OPTION_COUNTS } from "@/drizzle/constants";
+import {
+  PET_GENDER_LABELS,
+  PET_OPTION_COUNTS,
+  type PetGender,
+  PetGenders,
+} from "@/drizzle/constants";
 import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";
 import Countdown from "@/layout/Countdown";
@@ -31,6 +36,7 @@ export function PetAcquisition() {
   const { data: userData } = useRequiredUserData();
   const utils = api.useUtils();
   const [name, setName] = useState("");
+  const [gender, setGender] = useState<PetGender | null>(null);
   const [currency, setCurrency] =
     useState<RouterInputs["pets"]["acquirePet"]["currency"]>("REPUTATION");
   const [selection, setSelection] = useState<PetSelection>(emptySelection);
@@ -156,6 +162,7 @@ export function PetAcquisition() {
       (entry) =>
         !attempt.previousIds.has(entry.id) &&
         entry.name === attempt.input.name &&
+        entry.gender === attempt.input.gender &&
         entry.speciesId === attempt.input.speciesId &&
         entry.paletteIndex === attempt.input.paletteIndex &&
         entry.characteristicIndex === attempt.input.characteristicIndex &&
@@ -180,6 +187,7 @@ export function PetAcquisition() {
     }
     const parsed = acquirePetSchema.safeParse({
       name,
+      gender,
       ...selection,
       dayKey: data.dayKey,
       currency,
@@ -258,7 +266,8 @@ export function PetAcquisition() {
     ),
   );
   const activeTrait = traitStages[stage];
-  const hasSelection = selectedTraits.every(Boolean) && name.trim().length > 0;
+  const hasSelection =
+    selectedTraits.every(Boolean) && name.trim().length > 0 && gender !== null;
   const canMeetPet = data.canAcquire && canAfford && hasSelection && !isBusy;
   const isReplacement = data.replacementCost > 0;
   const isCollectionFull = data.pets.length >= data.slots;
@@ -446,6 +455,7 @@ export function PetAcquisition() {
                 onClick={() => {
                   setAcquiredPetId(null);
                   setName("");
+                  setGender(null);
                   setSelection(emptySelection);
                   setStage(0);
                 }}
@@ -521,6 +531,33 @@ export function PetAcquisition() {
                       onChange={(event) => setName(event.target.value)}
                       className="max-w-md"
                     />
+                    <fieldset className="pt-2" disabled={isBusy}>
+                      <legend className="mb-2 font-medium text-sm">Gender</legend>
+                      <RadioGroup
+                        aria-label="Companion gender"
+                        value={gender ?? ""}
+                        className="flex flex-wrap gap-x-5 gap-y-2"
+                        onValueChange={(value) => {
+                          const next = PetGenders.find((entry) => entry === value);
+                          if (next) setGender(next);
+                        }}
+                      >
+                        {PetGenders.map((entry) => (
+                          <div key={entry} className="flex items-center gap-2">
+                            <RadioGroupItem
+                              id={`new-pet-gender-${entry.toLowerCase()}`}
+                              value={entry}
+                            />
+                            <Label htmlFor={`new-pet-gender-${entry.toLowerCase()}`}>
+                              {PET_GENDER_LABELS[entry]}
+                            </Label>
+                          </div>
+                        ))}
+                      </RadioGroup>
+                      <p className="mt-2 text-muted-foreground text-sm">
+                        Its artwork follows this choice, e.g. a male lion grows a mane.
+                      </p>
+                    </fieldset>
                     {isReplacement && (
                       <div className="pt-2">
                         <RadioGroup
@@ -615,6 +652,7 @@ export function PetAcquisition() {
                       </p>
                       <p>
                         New companion: <strong>{name.trim()}</strong> ·{" "}
+                        {gender ? `${PET_GENDER_LABELS[gender]} · ` : ""}
                         {selectedTraits
                           .map((trait) => trait?.name)
                           .filter(Boolean)

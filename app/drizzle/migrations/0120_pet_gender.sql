@@ -1,0 +1,1 @@
+ALTER TABLE `UserPet` ADD `gender` enum('MALE','FEMALE');

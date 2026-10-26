@@ -4,6 +4,7 @@ import {
   AI_PROFILE_MAX_RULES,
   AvatarFacings,
   PET_MAX_ABILITY_SLOTS,
+  PetGenders,
   PetPaymentCurrencies,
   PetSpawnPositions,
 } from "@/drizzle/constants";
@@ -47,6 +48,9 @@ export const petNameSchema = z
 /** Catalogue bounds are structural; the router also verifies the UTC day and its offered choices. */
 export const acquirePetSchema = petPaymentSchema.extend({
   name: petNameSchema,
+  gender: z.enum(PetGenders, {
+    message: "Choose whether your companion is male or female.",
+  }),
   dayKey: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   speciesId: z.string().min(1).max(191),
   paletteIndex: z
@@ -85,6 +89,8 @@ export const updatePetSchema = z
     name: petNameSchema.optional(),
     battleEnabled: z.boolean().optional(),
     spawnPosition: z.enum(PetSpawnPositions).optional(),
+    // Temporary: the router rejects this after PET_GENDER_EDIT_UNTIL.
+    gender: z.enum(PetGenders).optional(),
   })
   .refine((input) => Object.keys(input).length > 1, "Choose a setting to update.");
 
