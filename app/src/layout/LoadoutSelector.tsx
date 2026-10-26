@@ -73,7 +73,7 @@ const LoadoutSelector = <T extends LoadoutData>(
 
   // Early returns AFTER all hooks
   if (!userData) return <Loader />;
-  if (isFetching) return <Loader />;
+  if (!data && isFetching) return <Loader />;
 
   if (maxLoadouts <= 1) return null;
 
