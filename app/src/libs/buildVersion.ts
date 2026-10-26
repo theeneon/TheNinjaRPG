@@ -12,6 +12,10 @@
  * fell behind within the hour, so moving between pages kept hard-refreshing mid-session
  * (players lost fights while switching loadouts). Vercel Skew Protection keeps
  * navigations on the tab's own deployment, so only a crash needs the reload.
+ *
+ * The one other exception is a tRPC call to a procedure the current deploy no longer has
+ * ("No procedure found on path ..."). That feature cannot work again in the old bundle,
+ * so the tab reloads once onto the current bundle (see `reloadIfProcedureRemoved`).
  */
 
 /** Commit the running code was built from; `next.config.mjs` inlines it. */
@@ -50,7 +54,47 @@ export const claimBuildReload = (storage: Storage, serverBuild: string) => {
   }
 };
 
+/** Message prefix tRPC uses when the server has no procedure for the requested path. */
+export const MISSING_PROCEDURE_MESSAGE_PREFIX = "No procedure found on path";
+
+/** Whether a tRPC error says the server has no procedure for the requested path. */
+export const isMissingProcedureError = (error: unknown) => {
+  if (!(error instanceof Error)) return false;
+  const code = (error as { data?: { code?: unknown } | null }).data?.code;
+  return (
+    code === "NOT_FOUND" && error.message.startsWith(MISSING_PROCEDURE_MESSAGE_PREFIX)
+  );
+};
+
+/**
+ * Decide whether a tRPC error should reload the tab: only when the server provably lacks
+ * the procedure the bundle asked for, the serving build is newer than the bundle, and no
+ * reload was attempted for that build in this tab yet (claimed as a side effect). A
+ * procedure that is also missing on the newest build therefore reloads at most once.
+ */
+export const shouldReloadForMissingProcedure = (opts: {
+  error: unknown;
+  clientBuild: string;
+  serverBuild: string | null | undefined;
+  storage: Storage;
+}) =>
+  isMissingProcedureError(opts.error) &&
+  isOutdatedBuild(opts.clientBuild, opts.serverBuild) &&
+  claimBuildReload(opts.storage, opts.serverBuild);
+
 let newerServerBuild: string | undefined;
+let reloadPending = false;
+
+/** True once this tab has started reloading onto a newer build. */
+export const isReloadPending = () => reloadPending;
+
+const getSessionStorage = () => {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return undefined;
+  }
+};
 
 /** Called with the build header of every `/api/trpc` response; absent headers are ignored. */
 export const noteServerBuild = (serverBuild: string | null) => {
@@ -61,13 +105,32 @@ export const noteServerBuild = (serverBuild: string | null) => {
 /** Reload onto the current bundle when the server is ahead; returns whether it reloads. */
 export const reloadIfOutdated = () => {
   if (typeof window === "undefined" || !newerServerBuild) return false;
-  let storage: Storage;
-  try {
-    storage = window.sessionStorage;
-  } catch {
+  const storage = getSessionStorage();
+  if (!storage || !claimBuildReload(storage, newerServerBuild)) return false;
+  reloadPending = true;
+  window.location.reload();
+  return true;
+};
+
+/**
+ * Reload once when a tRPC call failed because the newer server build no longer has the
+ * procedure; returns whether it reloads.
+ */
+export const reloadIfProcedureRemoved = (error: unknown) => {
+  if (typeof window === "undefined" || reloadPending) return reloadPending;
+  const storage = getSessionStorage();
+  if (
+    !storage ||
+    !shouldReloadForMissingProcedure({
+      error,
+      clientBuild: BUILD_ID,
+      serverBuild: newerServerBuild,
+      storage,
+    })
+  ) {
     return false;
   }
-  if (!claimBuildReload(storage, newerServerBuild)) return false;
+  reloadPending = true;
   window.location.reload();
   return true;
 };

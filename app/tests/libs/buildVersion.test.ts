@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import {
   BUILD_RELOAD_STORAGE_KEY,
   claimBuildReload,
+  isMissingProcedureError,
   isOutdatedBuild,
+  shouldReloadForMissingProcedure,
 } from "@/libs/buildVersion";
 
 const memoryStorage = (initial: Record<string, string> = {}) => {
@@ -46,5 +48,97 @@ describe("claimBuildReload", () => {
       setItem: () => undefined,
     } as unknown as Storage;
     expect(claimBuildReload(storage, "bbb")).toBe(false);
+  });
+});
+
+const trpcError = (message: string, code?: string) =>
+  Object.assign(new Error(message), code ? { data: { code } } : {});
+
+const missingProcedure = () =>
+  trpcError('No procedure found on path "jutsu.getUserJutsuOwnership"', "NOT_FOUND");
+
+describe("isMissingProcedureError", () => {
+  it("matches tRPC's NOT_FOUND error for an unknown path", () => {
+    expect(isMissingProcedureError(missingProcedure())).toBe(true);
+  });
+
+  it("ignores other NOT_FOUND errors, other codes and non-errors", () => {
+    expect(isMissingProcedureError(trpcError("User not found", "NOT_FOUND"))).toBe(false);
+    expect(
+      isMissingProcedureError(trpcError('No procedure found on path "a.b"', "BAD_REQUEST")),
+    ).toBe(false);
+    expect(isMissingProcedureError(trpcError('No procedure found on path "a.b"'))).toBe(
+      false,
+    );
+    expect(isMissingProcedureError({ message: "No procedure found on path" })).toBe(false);
+    expect(isMissingProcedureError(null)).toBe(false);
+  });
+});
+
+describe("shouldReloadForMissingProcedure", () => {
+  it("reloads once per newer server build when a procedure was removed", () => {
+    const storage = memoryStorage();
+    const decide = (serverBuild: string) =>
+      shouldReloadForMissingProcedure({
+        error: missingProcedure(),
+        clientBuild: "aaa",
+        serverBuild,
+        storage,
+      });
+    expect(decide("bbb")).toBe(true);
+    // Still missing after the reload (or genuinely missing on the newest build): no loop.
+    expect(decide("bbb")).toBe(false);
+    // A later deploy gets its own attempt.
+    expect(decide("ccc")).toBe(true);
+  });
+
+  it("does not reload when the tab already runs the server's build", () => {
+    const storage = memoryStorage();
+    expect(
+      shouldReloadForMissingProcedure({
+        error: missingProcedure(),
+        clientBuild: "aaa",
+        serverBuild: "aaa",
+        storage,
+      }),
+    ).toBe(false);
+    expect(storage.getItem(BUILD_RELOAD_STORAGE_KEY)).toBeNull();
+  });
+
+  it("does not reload without a known server build", () => {
+    for (const serverBuild of [null, undefined, "unknown"]) {
+      expect(
+        shouldReloadForMissingProcedure({
+          error: missingProcedure(),
+          clientBuild: "aaa",
+          serverBuild,
+          storage: memoryStorage(),
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("does not reload for other errors, even on an outdated tab", () => {
+    const storage = memoryStorage();
+    expect(
+      shouldReloadForMissingProcedure({
+        error: trpcError("Something broke", "INTERNAL_SERVER_ERROR"),
+        clientBuild: "aaa",
+        serverBuild: "bbb",
+        storage,
+      }),
+    ).toBe(false);
+    expect(storage.getItem(BUILD_RELOAD_STORAGE_KEY)).toBeNull();
+  });
+
+  it("does not reload when a crash reload for that build already happened", () => {
+    expect(
+      shouldReloadForMissingProcedure({
+        error: missingProcedure(),
+        clientBuild: "aaa",
+        serverBuild: "bbb",
+        storage: memoryStorage({ [BUILD_RELOAD_STORAGE_KEY]: "bbb" }),
+      }),
+    ).toBe(false);
   });
 });
