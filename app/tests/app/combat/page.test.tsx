@@ -14,10 +14,12 @@ import { makeCompleteBattle, makeUser } from "../../libs/combat/helpers/battleSc
 import { dungeonBattleState } from "../../setup/dungeon";
 
 // Keep the real page and query lifecycles, substituting only its WebGL scene.
+const loadingEvents: string[] = [];
 const scene = vi.spyOn(dynamic, "default").mockReturnValue(
-  (({ battleState }: { battleState: BattleState }) => (
-    <p>{battleState.result ? "Finished battle result" : `Active battle ${battleState.battle?.id}`}</p>
-  )) as never,
+  (({ battleState }: { battleState: BattleState }) => {
+    loadingEvents.push(`scene:${battleState.battle?.id}`);
+    return <p>{battleState.result ? "Finished battle result" : `Active battle ${battleState.battle?.id}`}</p>;
+  }) as never,
 );
 const { default: CombatPage } = await import("@/app/[shell]/combat/page");
 scene.mockRestore();
@@ -29,6 +31,7 @@ const clients: QueryClient[] = [];
 afterEach(() => {
   cleanup();
   clients.splice(0).forEach((queryClient) => queryClient.clear());
+  loadingEvents.length = 0;
   vi.restoreAllMocks();
 });
 
@@ -39,7 +42,14 @@ const mount = (battleId: string | null, read: (id: string) => Promise<Response>)
   let profile = { userId: "player", status: battleId ? "BATTLE" : "AWAKE", battleId, userQuests: [] };
   const invalidate = vi.fn(async () => undefined);
   const push = vi.fn();
-  const utils = { profile: { getUser: { invalidate } }, combat: { getBattle: { invalidate: vi.fn() } } };
+  const prefetchAssets = vi.fn(async ({ ids }: { ids: string[] }) => {
+    loadingEvents.push(`assets:${ids.join(",")}`);
+  });
+  const utils = {
+    profile: { getUser: { invalidate } },
+    combat: { getBattle: { invalidate: vi.fn() } },
+    misc: { getAllGameAssetNames: { prefetch: prefetchAssets } },
+  };
   vi.spyOn(navigation, "useRouter").mockReturnValue({ push } as never);
   vi.spyOn(userContext, "useRequiredUserData").mockImplementation(() => ({ data: profile }) as never);
   vi.spyOn(preferences, "useCombatPreferences").mockReturnValue({
@@ -57,11 +67,42 @@ const mount = (battleId: string | null, read: (id: string) => Promise<Response>)
   });
   const tree = () => <QueryClientProvider client={queryClient}><CombatPage /></QueryClientProvider>;
   const view = render(tree());
-  return { view, invalidate, push, queryClient, changeBattle: (id: string | null) => {
+  return { view, invalidate, push, queryClient, prefetchAssets, changeBattle: (id: string | null) => {
     profile = { ...profile, battleId: id, status: id ? "BATTLE" : "AWAKE" };
     view.rerender(tree());
   } };
 };
+
+it("starts asset loading before mounting each new battle scene, preserving the query input order", async () => {
+  const resolvers = new Map<string, (value: Response) => void>();
+  const { view, changeBattle, prefetchAssets } = mount("a", (id) => new Promise((resolve) => {
+    resolvers.set(id, resolve);
+  }));
+  expect(prefetchAssets).not.toHaveBeenCalled();
+
+  for (const id of ["a", "b"]) {
+    if (id === "b") changeBattle(id);
+    const battle = makeCompleteBattle({
+      id,
+      usersState: [makeUser({ userId: "player" })],
+    });
+    const response = {
+      battle: {
+        ...battle,
+        extraState: { ...battle.extraState, textureAssets: [`texture-${id}`, "shared"], sfxAssets: ["shared", `sfx-${id}`] },
+      },
+      result: null,
+    } as unknown as Response;
+    await act(async () => resolvers.get(id)!(response));
+    await waitFor(() => expect(view.getByText(`Active battle ${id}`)).toBeDefined());
+    expect(prefetchAssets).toHaveBeenLastCalledWith({
+      ids: [`texture-${id}`, "shared", "shared", `sfx-${id}`],
+    });
+    const request = loadingEvents.indexOf(`assets:texture-${id},shared,shared,sfx-${id}`);
+    expect(request).toBeGreaterThanOrEqual(0);
+    expect(request).toBeLessThan(loadingEvents.indexOf(`scene:${id}`));
+  }
+});
 
 it("recovers a settled battle missing behind a cached character ID", async () => {
   const { view, invalidate, push } = mount("settled", async () => empty);

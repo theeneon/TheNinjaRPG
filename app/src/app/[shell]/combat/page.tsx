@@ -36,7 +36,11 @@ import {
   userBattleAtom,
 } from "@/utils/UserContext";
 
-const Combat = dynamic(() => import("@/layout/Combat"), { ssr: false });
+const loadCombat = () => import("@/layout/Combat");
+const Combat = dynamic(loadCombat, {
+  ssr: false,
+  loading: () => <Loader explanation="Loading Battlefield" />,
+});
 
 export default function CombatPage() {
   // State
@@ -47,6 +51,11 @@ export default function CombatPage() {
   const [lastViewedVersion, setLastViewedVersion] = useState<number>(0);
   const [activeTab, setActiveTab] = useState<string>("actions");
   const [autoCombatError, setAutoCombatError] = useState<string>();
+
+  // Download and evaluate the scene while the battle query is in flight.
+  useEffect(() => {
+    void loadCombat().catch(() => undefined);
+  }, []);
 
   // Data from the DB
   const setBattleAtom = useSetAtom(userBattleAtom);
@@ -150,6 +159,13 @@ export default function CombatPage() {
   // Redirect to profile if not in battle
   useEffect(() => {
     if (data?.battle) {
+      // Share Combat's exact query key so the request starts before its mount.
+      void utils.misc.getAllGameAssetNames.prefetch({
+        ids: [
+          ...(data.battle.extraState.textureAssets ?? []),
+          ...(data.battle.extraState.sfxAssets ?? []),
+        ],
+      });
       const res = results && battle?.id === data.battle.id ? results : data?.result;
       setBattleAtom(data.battle);
       setBattleState({ battle: data?.battle, result: res, isPending: false });

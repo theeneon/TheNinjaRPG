@@ -32,6 +32,7 @@ import Image from "@/layout/Image";
 import ItemLoadoutSelector from "@/layout/ItemLoadoutSelector";
 import JutsuLoadoutSelector from "@/layout/JutsuLoadoutSelector";
 import Link from "@/layout/Link";
+import Loader from "@/layout/Loader";
 import { LogbookEntry } from "@/layout/Logbook";
 import { VisualizeEffects, VisualizeGroundEffects } from "@/layout/MenuBoxProfile";
 import Modal from "@/layout/Modal";
@@ -112,7 +113,6 @@ const Combat: React.FC<CombatProps> = (props) => {
   const utils = api.useUtils();
 
   // State
-  const [isInLobby, setIsInLobby] = useState<boolean>(true);
   const [isReturningFromTutorial, setIsReturningFromTutorial] = useState(false);
   const tutorialReturnLockRef = useRef(false);
   const [logbookModalOpen, setLogbookModalOpen] = useState<boolean>(false);
@@ -201,6 +201,11 @@ const Combat: React.FC<CombatProps> = (props) => {
     updateUser,
     prepareUserUpdate,
   } = useRequiredUserData();
+  const [isInLobby, setIsInLobby] = useState(
+    () =>
+      !!battleState.battle &&
+      battleState.battle.createdAt.getTime() > Date.now() - timeDiff,
+  );
   const { updateLogs, startAction, settleAction } = useCombatUpdates(battleState);
   const [statDistribution] = useLocalStorage<StatSchemaType | undefined>(
     "statDistribution",
@@ -321,11 +326,16 @@ const Combat: React.FC<CombatProps> = (props) => {
   const allAssets = [...textureAssets, ...sfxAssets];
 
   // Query data
-  const { data: gameAssets, isPlaceholderData: hasPreviousGameAssets } =
-    api.misc.getAllGameAssetNames.useQuery(
-      { ids: allAssets },
-      { enabled: !!battleRef.current, placeholderData: (previous) => previous },
-    );
+  const {
+    data: gameAssets,
+    isPlaceholderData: hasPreviousGameAssets,
+    isError: hasGameAssetsError,
+    isFetching: isFetchingGameAssets,
+    refetch: refetchGameAssets,
+  } = api.misc.getAllGameAssetNames.useQuery(
+    { ids: allAssets },
+    { enabled: !!battleRef.current, placeholderData: (previous) => previous },
+  );
   const hasGameAssets = gameAssets !== undefined;
   const gameAssetsRef = useRef({
     assets: gameAssets ?? [],
@@ -1609,6 +1619,22 @@ const Combat: React.FC<CombatProps> = (props) => {
   return (
     <>
       <div id="tutorial-combat-field" ref={mountRef} hidden={!!result}></div>
+
+      {!result &&
+        !hasGameAssets &&
+        (hasGameAssetsError ? (
+          <div className="p-3 text-center" role="alert">
+            <p>Unable to load battlefield assets.</p>
+            <Button
+              onClick={() => void refetchGameAssets()}
+              disabled={isFetchingGameAssets}
+            >
+              {isFetchingGameAssets ? "Retrying..." : "Retry"}
+            </Button>
+          </div>
+        ) : (
+          <Loader explanation="Loading Battlefield" />
+        ))}
 
       {!result && !isInLobby && !webglError && battleState.battle && (
         <CombatResourceBars
