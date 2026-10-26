@@ -59,6 +59,7 @@ import { calcActiveUserRegen, calcMaxEnergy, getEffectiveLevel } from "@/libs/pr
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { boostPvpGain, getPvpBoost } from "@/libs/pvpExperience";
 import { getUserQuests } from "@/libs/quest";
+import { ISOLATED_PYRAMID_MESSAGE } from "@/libs/questRun";
 import { hasEnergyQueue } from "@/libs/queue";
 import {
   findNearestWalkableCoordinate,
@@ -96,6 +97,7 @@ import { isTransientDatabaseError } from "@/server/dbRetry";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
+import { fetchIsolatedPyramid } from "@/server/utils/pyramidIsolation";
 import {
   buildSectorWindowLayout,
   fetchPublishedSectorMap,
@@ -882,7 +884,7 @@ export const travelRouter = createTRPCRouter({
       // Larger maps can keep a predicted crossing local. Failed admission
       // prefetches are retried below only when the move actually crosses.
       const prefetchedCampSector = sectorsToPrefetch[1];
-      const [maps, originalUser, warCampEntry] = await Promise.all([
+      const [maps, originalUser, warCampEntry, isolated] = await Promise.all([
         fetchPublishedSectorMaps(ctx.drizzle, sectorsToPrefetch).catch(() => null),
         ctx.drizzle.query.userData.findFirst({
           where: eq(userData.userId, userId),
@@ -893,7 +895,9 @@ export const travelRouter = createTRPCRouter({
           : fetchWarCampEntry(ctx.drizzle, userId, prefetchedCampSector).catch(
               () => undefined,
             ),
+        fetchIsolatedPyramid(ctx.drizzle, userId),
       ]);
+      if (isolated) return errorResponse(ISOLATED_PYRAMID_MESSAGE);
       if (!originalUser) return errorResponse("User not found");
       let moveUser = originalUser;
       if (hasEnergyQueue(moveUser)) {

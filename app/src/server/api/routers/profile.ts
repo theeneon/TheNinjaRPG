@@ -3354,7 +3354,7 @@ export const fetchUpdatedUser = async (
         result.requiresUserRefresh = true;
         result.requiresProgressionRefresh = true;
       }
-      return result;
+      return { isPyramidIsolated: false, ...result };
     }
   }
   throw serverError("CONFLICT", "User state changed concurrently; please try again");
@@ -3373,6 +3373,8 @@ const fetchUpdatedUserOnce = async (
     allowQuestPartySyncFallback?: boolean;
     /** Server actions can omit display-only alerts while retaining all readiness settlement. */
     includeNotifications?: boolean;
+    /** Reject outside actions before queue settlement, regeneration or quest consequences. */
+    rejectIsolatedPyramid?: boolean;
   },
   settlement: {
     startedQueuedJobs: number;
@@ -3482,6 +3484,25 @@ const fetchUpdatedUserOnce = async (
     includeNotifications ? fetchActiveRaids(client, now) : [],
     fetchQuestBootstrap(client, userId),
   ]);
+  if (props.rejectIsolatedPyramid && getIsolatedPyramid(fetchedUser)) {
+    return {
+      user: undefined,
+      isPyramidIsolated: true,
+      settings,
+      publishedAchievementIds: achievements
+        .filter((entry) => !questHasOverworldObjectives(entry))
+        .map((entry) => entry.id),
+      progressionQuestCandidates: [],
+      questBootstrap,
+      requiresProgressionRefresh: false,
+      toastMessages: [],
+      hasUnvotedPolls,
+      trackerResults: null,
+      requiresUserRefresh: false,
+      startedQueuedJobs: 0,
+      craftingItemsChanged: settlement.craftingItemsChanged,
+    };
+  }
   let user:
     | (NonNullable<typeof fetchedUser> & { regenerationWithoutTimedBuffs?: number })
     | undefined = fetchedUser;

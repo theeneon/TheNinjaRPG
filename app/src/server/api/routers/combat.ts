@@ -257,6 +257,7 @@ import { fetchUserSkills } from "@/server/api/routers/skillTree";
 import {
   baseServerResponse,
   createTRPCRouter,
+  deferredRatelimitMiddleware,
   errorResponse,
   protectedProcedure,
   ratelimitMiddleware,
@@ -713,7 +714,7 @@ export const combatRouter = createTRPCRouter({
 
   performAction: protectedProcedure
     .meta({ mcp: { description: "Perform action in battle" } })
-    .use(ratelimitMiddleware)
+    .use(deferredRatelimitMiddleware)
     .input(performActionSchema)
     .mutation(async ({ ctx, input }) => {
       Sentry.profiler.startProfiler();
@@ -723,12 +724,17 @@ export const combatRouter = createTRPCRouter({
       const suid = ctx.userId;
       const db = ctx.drizzle;
       const actionRounds: number[] = [];
+      let isFirstAttempt = true;
 
       // OUTER LOOP: Attempt to perform action untill success || error thrown
       // The primary purpose here is that if the battle version was already updated, we retry the user's action
       while (true) {
         // Fetch battle from database
-        const battle = await fetchBattle(db, input.battleId);
+        const [battle] = await Promise.all([
+          fetchBattle(db, input.battleId),
+          isFirstAttempt ? ctx.waitForRateLimit() : undefined,
+        ]);
+        isFirstAttempt = false;
         if (!battle) return { updateClient: true };
 
         advanceEncounterWave(battle, !!dungeonBattleOutcome(battle));

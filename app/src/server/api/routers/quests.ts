@@ -134,6 +134,7 @@ import {
   getIsolatedPyramid,
   getQuestEntryRequirements,
   hasQuestContentChanged,
+  ISOLATED_PYRAMID_MESSAGE,
   isBetweenPyramidBattles,
 } from "@/libs/questRun";
 import { hasEnergyQueue } from "@/libs/queue";
@@ -1886,6 +1887,7 @@ export const questsRouter = createTRPCRouter({
       z.object({
         success: z.boolean(),
         itemsChanged: z.boolean(),
+        message: z.string().optional(),
         notifications: z.array(z.string()),
         questData: z.array(QuestTracker).optional(),
         questIdsUpdated: z.array(z.string()).optional(),
@@ -1902,15 +1904,17 @@ export const questsRouter = createTRPCRouter({
         client: ctx.drizzle,
         userId: ctx.userId,
         hideInformation: false,
+        rejectIsolatedPyramid: true,
       });
       let inventoryRecovered = false;
       const [
-        { user, trackerResults, craftingItemsChanged },
+        { user, trackerResults, craftingItemsChanged, isPyramidIsolated },
         useritems,
         boundPlacementStatus,
       ] = await Promise.all([
         userPromise,
         fetchUserItems(ctx.drizzle, ctx.userId, {
+          canRecoverStaleMergeClaims: async () => Boolean((await userPromise).user),
           onStaleMergeClaimRecovery: () => {
             inventoryRecovered = true;
           },
@@ -1922,6 +1926,13 @@ export const questsRouter = createTRPCRouter({
         ),
       ]);
       // Guard
+      if (isPyramidIsolated) {
+        return {
+          ...errorResponse(ISOLATED_PYRAMID_MESSAGE),
+          itemsChanged: false,
+          notifications: [],
+        };
+      }
       if (!user) {
         return { success: false, itemsChanged: false, notifications: [] };
       }
