@@ -7,6 +7,7 @@ import * as schema from "@/drizzle/schema";
 import { quest, questHistory, userData } from "@/drizzle/schema";
 import { userQuestHistoryRelation } from "@/server/utils/achievementObjectives";
 import { canPlayHiddenQuests } from "@/utils/permissions";
+import { ObjectiveReward } from "@/validators/rewards";
 import { insertQuestHistory, insertQuests, insertUsers } from "../../setup/factories";
 import { describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
 
@@ -30,7 +31,7 @@ describeWithDatabase("user quest definition visibility", () => {
       { id: "achievement", questType: "achievement", hidden: false },
       { id: "isolated", questType: "story", hidden: true },
       { id: "pyramid", questType: "battlepyramid", hidden: true },
-      { id: "expired", questType: "event", endsAt: "2000-01-01T00:00:00.000Z" },
+      { id: "expired", questType: "event", endsAt: "2000-01-01 00:00:00" },
     ]);
     await insertQuestHistory(UserRoles.flatMap(userId => [
       { userId, questId: "visible", questType: "story" as const },
@@ -70,7 +71,7 @@ describeWithDatabase("user quest definition visibility", () => {
   it("avoids transferring a large hidden definition while retaining the same visible definitions", async () => {
     const client = await getTestDatabase();
     await client.update(quest).set({ content: {
-      objectives: [], reward: {}, sceneBackground: "x".repeat(100_000), sceneCharacters: [],
+      objectives: [], reward: ObjectiveReward.parse({}), sceneBackground: "x".repeat(100_000), sceneCharacters: [],
     } }).where(eq(quest.id, "hidden"));
     const before = await readDatabase.query.userData.findFirst({
       columns: { userId: true },

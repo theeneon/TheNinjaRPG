@@ -16,11 +16,14 @@ const database = drizzle(new Client({
 
 describe("user quest history SQL", () => {
   it.each(["findFirst", "findMany"] as const)("correlates %s visibility to the outer player's role", (method) => {
-    const query = database.query.userData[method]({
+    const config = {
       columns: { userId: true },
       where: eq(userData.userId, "player"),
       with: { userQuests: userQuestHistoryRelation },
-    }).toSQL();
+    } as const;
+    const query = (method === "findFirst"
+      ? database.query.userData.findFirst(config)
+      : database.query.userData.findMany(config)).toSQL();
     expect(query.sql).toContain("visible_quest.id = `userData_userQuests`.`questId`");
     expect(query.sql).toContain("`userData`.`role` in (");
     expect(query.sql).not.toContain("`userData_userQuests`.`role`");
