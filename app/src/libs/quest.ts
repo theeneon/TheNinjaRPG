@@ -201,7 +201,7 @@ export const isMockQuestHistoryRow = (row: { id: string; questId: string }): boo
 
 /**
  * Strip in-memory-only achievement trackers before persisting `UserData.questData`, except
- * completed collection goals and event counters whose progress must survive until reward claim.
+ * instantiated locations, completed collection goals and event counters that must survive reloads.
  * Mock rows from `mockAchievementHistoryEntries` use `id === questId`; real `QuestHistory.id` is a nanoid.
  * @param preserveUnloadedTrackers Keep omitted progress in sparse reads; loaded orphan rows still allow cleanup.
  */
@@ -233,6 +233,13 @@ export const filterQuestTrackersForDbPersist = (
     const achievement = inMemoryOnlyAchievements.get(tracker.id);
     return (
       !achievement ||
+      // Keep rolled targets and their reachability checks so hydration converges.
+      tracker.goals.some(
+        (goal) =>
+          goal.sector !== undefined ||
+          goal.longitude !== undefined ||
+          goal.latitude !== undefined,
+      ) ||
       achievement.content?.objectives.some(
         (objective) =>
           ((objective.task === "bloodline_collection" ||
