@@ -28,7 +28,6 @@ import type { NavBarDropdownLink } from "@/libs/menus";
 import { getTerritoryWarBoostUntil } from "@/libs/territoryWar";
 import { showMutationToast } from "@/libs/toast";
 import { parseHtml } from "@/utils/parse";
-import { secondsFromDate } from "@/utils/time";
 import {
   prepareUserUpdate as captureUserUpdate,
   type UserPatch,
@@ -120,7 +119,8 @@ export function UserContextProvider(props: {
   initialIsSignedIn: boolean;
 }) {
   // Difference between client time and server time
-  const [timeDiff, setTimeDiff] = useState<number>(0);
+  const [measuredTimeDiff, setMeasuredTimeDiff] = useState<number>();
+  const timeDiff = measuredTimeDiff ?? 0;
 
   // Get logged in user
   const { isSignedIn, isLoaded, user } = useUser();
@@ -208,18 +208,13 @@ export function UserContextProvider(props: {
   useEffect(() => {
     if (data?.serverTime) {
       const discrepancy = Date.now() - data.serverTime;
-      if (data.userData) {
-        // Adjust updatedAt to client-time, effectively making client-time
-        // seem the same as server-time, although server-time is still used
-        // for all calculations
-        data.userData.updatedAt = secondsFromDate(
-          -discrepancy / 1000,
-          data.userData.updatedAt,
-        );
-      }
-      // Save the time-discrepancy between client and server for reference
-      // e.g. in the battle system
-      setTimeDiff(discrepancy);
+      // Calibrate the first response, then ignore subsecond transfer/render jitter.
+      // Cached timestamps stay in server time; consumers apply timeDiff when needed.
+      setMeasuredTimeDiff((current) =>
+        current !== undefined && Math.abs(current - discrepancy) < 1000
+          ? current
+          : discrepancy,
+      );
     }
   }, [data?.serverTime]);
 

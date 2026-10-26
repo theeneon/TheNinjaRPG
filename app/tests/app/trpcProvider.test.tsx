@@ -4,7 +4,7 @@ import type { Clerk } from "@clerk/shared/types";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { type TRPCClient, TRPCClientError } from "@trpc/client";
-import { createTRPCReact } from "@trpc/react-query";
+import { createTRPCReact, getQueryKey } from "@trpc/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { toast as sonnerToast } from "sonner";
 import superjson from "superjson";
@@ -14,6 +14,7 @@ import TrpcClientProvider from "@/app/_trpc/Provider";
 import * as toast from "@/libs/toast";
 import { SESSION_CHANGED_MESSAGE, SESSION_EXPIRED_MESSAGE } from "@/libs/trpcSession";
 import { QUERY_METRICS_HEADER } from "@/libs/queryTelemetry";
+import { shareUserCache } from "@/utils/userCacheSharing";
 import { actualShowMutationToast } from "../setup/preload";
 
 const testApi = createTRPCReact<AppRouter>();
@@ -43,6 +44,7 @@ const mountProvider = (
   Object.assign(vi.spyOn(clientModule, "api" as never), {
     Provider: testApi.Provider,
     createClient: testApi.createClient,
+    profile: testApi.profile,
   });
   let trpc!: TRPCClient<AppRouter>;
   const Probe = () => {
@@ -90,6 +92,28 @@ afterEach(() => {
   queryClient?.clear();
   sonnerToast.dismiss();
   vi.restoreAllMocks();
+});
+
+it("preserves profile sharing for imperative reads without changing other query defaults", async () => {
+  mountProvider(session("a"));
+  const key = getQueryKey(testApi.profile.getUser, undefined, "query");
+  expect(queryClient.getQueryDefaults(key).structuralSharing).toBe(shareUserCache);
+  expect(
+    queryClient.getQueryDefaults(
+      getQueryKey(testApi.profile.getDashboard, undefined, "query"),
+    ).structuralSharing,
+  ).toBeUndefined();
+  const initial = {
+    userData: { updatedAt: new Date(1000) },
+    achievementProgress: [{ startedAt: new Date(1000) }],
+  };
+  queryClient.setQueryData(key, initial);
+  await queryClient.fetchQuery({
+    queryKey: key,
+    staleTime: 0,
+    queryFn: async () => structuredClone(initial),
+  });
+  expect(queryClient.getQueryData(key)).toBe(initial);
 });
 
 it("leaves a same-session mutation successful", async () => {
