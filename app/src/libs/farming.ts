@@ -327,7 +327,7 @@ export const mapPlotToState = (
     growthStage: isActive ? getPlotGrowthStage(plantedAt, finishAt, now) : 0,
     growTimeSeconds:
       plantedAt && finishAt
-        ? (finishAt.getTime() - plantedAt.getTime()) / 1000
+        ? Math.ceil((finishAt.getTime() - plantedAt.getTime()) / 1000)
         : (plot.seedItem?.farmGrowTimeSeconds ?? 0),
     yieldQuantity: 1,
     plantExperience: plot.seedItem ? getFarmPlantExperience(plot.seedItem) : 0,

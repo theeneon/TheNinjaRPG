@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import { userData } from "@/drizzle/schema";
 import { insertUsers } from "../../setup/factories";
 import {
@@ -11,9 +13,16 @@ import {
 } from "../../setup/testDatabase";
 
 const migration = await readFile(
-  new URL("../../../drizzle/migrations/0115_reconcile_skill_points.sql", import.meta.url),
+  new URL("../../../drizzle/migrations/0121_reconcile_skill_points.sql", import.meta.url),
   "utf8",
 );
+
+it("loads skill-point reconciliation through the migration journal", () => {
+  const migrations = readMigrationFiles({
+    migrationsFolder: fileURLToPath(new URL("../../../drizzle/migrations", import.meta.url)),
+  });
+  expect(migrations.filter(({ sql }) => sql.join("\n").includes(migration))).toHaveLength(1);
+});
 
 describeWithDatabase("skill-point reconciliation migration", () => {
   beforeEach(async () => resetTables(userData));
