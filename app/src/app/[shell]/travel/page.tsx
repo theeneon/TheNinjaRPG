@@ -1570,6 +1570,10 @@ const StealthControls: React.FC<{
   const sensoryCooldown = useLiveCountdown(stealthStatus?.sensoryCooldownRemaining);
   const stealthCooldown = useLiveCountdown(stealthStatus?.stealthCooldownRemaining);
   const stealthDuration = useLiveCountdown(stealthStatus?.stealthDurationRemaining);
+  // The live duration expires even when the compiler reuses the status snapshot.
+  const isCurrentlyStealthed = Boolean(
+    stealthStatus?.stealthActive && stealthDuration > 0,
+  );
 
   const { mutate: activateStealth, isPending: isActivatingStealth } =
     api.stealth.activateStealth.useMutation({
@@ -1639,7 +1643,7 @@ const StealthControls: React.FC<{
                 ? "Activating"
                 : isDeactivatingStealth
                   ? "Deactivating"
-                  : stealthStatus?.isCurrentlyStealthed
+                  : isCurrentlyStealthed
                     ? "Deactivate stealth"
                     : "Activate stealth"
             }
@@ -1655,7 +1659,7 @@ const StealthControls: React.FC<{
               ) {
                 return;
               }
-              if (stealthStatus?.isCurrentlyStealthed) {
+              if (isCurrentlyStealthed) {
                 deactivationInFlightRef.current = true;
                 deactivateStealth();
               } else if (stealthCooldown <= 0) {
@@ -1671,7 +1675,7 @@ const StealthControls: React.FC<{
               />
             ) : (
               <Ghost
-                className={`mr-2 h-7 w-7 ${stealthStatus?.isCurrentlyStealthed ? "text-purple-500" : stealthCooldown > 0 ? "cursor-not-allowed text-gray-400" : "hover:text-purple-500"}`}
+                className={`mr-2 h-7 w-7 ${isCurrentlyStealthed ? "text-purple-500" : stealthCooldown > 0 ? "cursor-not-allowed text-gray-400" : "hover:text-purple-500"}`}
               />
             )}
           </TooltipTrigger>
@@ -1680,7 +1684,7 @@ const StealthControls: React.FC<{
               ? "Activating"
               : isDeactivatingStealth
                 ? "Deactivating"
-                : stealthStatus?.isCurrentlyStealthed
+                : isCurrentlyStealthed
                   ? `Stealth Active (${Math.ceil(stealthDuration)}s remaining)`
                   : stealthCooldown > 0
                     ? `Stealth Cooldown (${Math.ceil(stealthCooldown)}s)`
