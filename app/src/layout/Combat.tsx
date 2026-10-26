@@ -287,6 +287,13 @@ const Combat: React.FC<CombatProps> = (props) => {
   const battleMapsRef = useRef(battleMaps);
   const setHoveredEffectRef = useRef(setHoveredEffect);
   const lastHoverKeyRef = useRef<string | null>(null);
+  // Touch input has no hover: a quick tap is an action, so details only open on
+  // long-press and close on release. Inserting the box during a tap made iOS
+  // treat the tap as a hover and drop its click, and nothing ever closed it.
+  const isTouchInputRef = useRef(false);
+  const touchDetailsOpenRef = useRef(false);
+  const touchDetailsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressClickUntilRef = useRef(0);
 
   // Update refs when memos change
   useEffect(() => {
@@ -812,9 +819,35 @@ const Combat: React.FC<CombatProps> = (props) => {
       mouse.y = 9999999;
     }
   };
+  const clearTouchDetailsTimer = () => {
+    if (touchDetailsTimerRef.current) clearTimeout(touchDetailsTimerRef.current);
+    touchDetailsTimerRef.current = null;
+  };
+  // Real mouse/pen pointers restore hover-driven details.
+  const onDocumentPointerMove = (event: PointerEvent) => {
+    if (event.pointerType !== "touch") isTouchInputRef.current = false;
+  };
+  // Releasing a long-press closes the details and swallows its trailing click.
+  const onDocumentTouchEnd = () => {
+    clearTouchDetailsTimer();
+    if (touchDetailsOpenRef.current && lastHoverKeyRef.current) {
+      suppressClickUntilRef.current = Date.now() + 600;
+    }
+    touchDetailsOpenRef.current = false;
+    lastHoverKeyRef.current = null;
+    setHoveredEffectRef.current(null);
+  };
   // Update mouse position on touch for mobile devices
   // This ensures tile highlighting works correctly before tap/click
   const onDocumentTouchStart = (event: TouchEvent) => {
+    isTouchInputRef.current = true;
+    touchDetailsOpenRef.current = false;
+    clearTouchDetailsTimer();
+    if (event.touches.length === 1) {
+      touchDetailsTimerRef.current = setTimeout(() => {
+        touchDetailsOpenRef.current = true;
+      }, 400);
+    }
     if (mountRef.current && event.touches.length > 0) {
       const touch = event.touches[0];
       if (touch) {
@@ -1018,6 +1051,11 @@ const Combat: React.FC<CombatProps> = (props) => {
       sceneRef.addEventListener("mousemove", onDocumentMouseMove, false);
       sceneRef.addEventListener("mouseleave", onDocumentMouseLeave, false);
       sceneRef.addEventListener("touchstart", onDocumentTouchStart, { passive: true });
+      sceneRef.addEventListener("touchend", onDocumentTouchEnd, { passive: true });
+      sceneRef.addEventListener("touchcancel", onDocumentTouchEnd, { passive: true });
+      sceneRef.addEventListener("pointermove", onDocumentPointerMove, {
+        passive: true,
+      });
 
       // Get background color based on battle background/biome
       const { color } = getBackgroundColor(battleRef.current.background);
@@ -1126,6 +1164,7 @@ const Combat: React.FC<CombatProps> = (props) => {
       // On mobile, we validate tiles on-the-fly since canClick may be stale
       // (touch events don't always update mouse position before click fires)
       const onClick = (e: MouseEvent) => {
+        if (Date.now() < suppressClickUntilRef.current) return;
         setRaycasterFromMouse(raycaster, sceneRef, e, camera);
         const intersects = raycaster.intersectObjects(scene.children);
         intersects
@@ -1349,7 +1388,12 @@ const Combat: React.FC<CombatProps> = (props) => {
             battleMaps: battleMapsRef.current,
             mouseX: mouseScreenRef.current.x,
             mouseY: mouseScreenRef.current.y,
-            onHoverChange: (hover) => {
+            onHoverChange: (rawHover) => {
+              // Touch shows details only while a long-press is held
+              const hover =
+                isTouchInputRef.current && !touchDetailsOpenRef.current
+                  ? null
+                  : rawHover;
               // Only update state if hover target actually changed
               const newKey = hover
                 ? hover.userId
@@ -1428,6 +1472,7 @@ const Combat: React.FC<CombatProps> = (props) => {
       return () => {
         // Mark component as unmounted FIRST to prevent stale render callbacks
         isMountedRef.current = false;
+        clearTouchDetailsTimer();
 
         // Cancel animation frame before cleanup
         if (animationId !== null) performanceMonitor.cancelFrame(animationId);
@@ -1447,6 +1492,9 @@ const Combat: React.FC<CombatProps> = (props) => {
           sceneRef.removeEventListener("mousemove", onDocumentMouseMove);
           sceneRef.removeEventListener("mouseleave", onDocumentMouseLeave);
           sceneRef.removeEventListener("touchstart", onDocumentTouchStart);
+          sceneRef.removeEventListener("touchend", onDocumentTouchEnd);
+          sceneRef.removeEventListener("touchcancel", onDocumentTouchEnd);
+          sceneRef.removeEventListener("pointermove", onDocumentPointerMove);
           controls.removeEventListener("change", onZoomChange);
           rendererElement.removeEventListener("click", onClick, true);
           renderer.domElement.removeEventListener(
