@@ -1885,6 +1885,7 @@ export const questsRouter = createTRPCRouter({
     .output(
       z.object({
         success: z.boolean(),
+        itemsChanged: z.boolean(),
         notifications: z.array(z.string()),
         questData: z.array(QuestTracker).optional(),
         questIdsUpdated: z.array(z.string()).optional(),
@@ -1902,19 +1903,27 @@ export const questsRouter = createTRPCRouter({
         userId: ctx.userId,
         hideInformation: false,
       });
-      const [{ user, trackerResults }, useritems, boundPlacementStatus] =
-        await Promise.all([
-          userPromise,
-          fetchUserItems(ctx.drizzle, ctx.userId),
-          userPromise.then(({ user }) =>
-            user
-              ? fetchBoundPlacementStatus(ctx.drizzle, user)
-              : new Map<string, boolean>(),
-          ),
-        ]);
+      let inventoryRecovered = false;
+      const [
+        { user, trackerResults, craftingItemsChanged },
+        useritems,
+        boundPlacementStatus,
+      ] = await Promise.all([
+        userPromise,
+        fetchUserItems(ctx.drizzle, ctx.userId, {
+          onStaleMergeClaimRecovery: () => {
+            inventoryRecovered = true;
+          },
+        }),
+        userPromise.then(({ user }) =>
+          user
+            ? fetchBoundPlacementStatus(ctx.drizzle, user)
+            : new Map<string, boolean>(),
+        ),
+      ]);
       // Guard
       if (!user) {
-        return { success: false, notifications: [] };
+        return { success: false, itemsChanged: false, notifications: [] };
       }
 
       // Get updated quest information
@@ -1952,13 +1961,10 @@ export const questsRouter = createTRPCRouter({
       user.questData = filterQuestTrackersForDbPersist(trackers, user);
 
       // Handle consequences
-      const { notifications: finalNotification } = await handleQuestConsequences(
-        ctx.drizzle,
-        user,
-        consequences,
-        notifications,
-        { rollObjectiveAttackers: true },
-      );
+      const { notifications: finalNotification, battleAttempted } =
+        await handleQuestConsequences(ctx.drizzle, user, consequences, notifications, {
+          rollObjectiveAttackers: true,
+        });
 
       user.questData = fullTrackers;
       const responseUser = getPublicQuestUser(user);
@@ -1966,6 +1972,22 @@ export const questsRouter = createTRPCRouter({
       // Return information
       return {
         success: true,
+        // The profile refresh can settle crafts or item consequences before the location pass.
+        // Conservatively refresh even if a concurrent snapshot claim skipped a write.
+        itemsChanged:
+          // Inventory reads can restore abandoned merge claims.
+          inventoryRecovered ||
+          craftingItemsChanged ||
+          // Rolled objective ambushes are local to handleQuestConsequences.
+          battleAttempted ||
+          [...trackerResults.consequences, ...consequences].some(
+            (consequence) =>
+              ((consequence.type === "add_item" ||
+                consequence.type === "remove_item") &&
+                consequence.ids.length > 0) ||
+              // Battle setup can settle newly due crafts as well as pay quest entry costs.
+              consequence.type === "combat",
+          ),
         notifications: finalNotification,
         questData: responseUser.questData ?? [],
         questIdsUpdated,
@@ -5001,10 +5023,10 @@ export const handleQuestConsequences = async (
         opponent,
       });
 
-      return { notifications, claimed: true };
+      return { notifications, claimed: true, battleAttempted: !!opponent };
     }
   }
-  return { notifications, claimed: !shouldClaimUserState };
+  return { notifications, claimed: !shouldClaimUserState, battleAttempted: false };
 };
 
 /**

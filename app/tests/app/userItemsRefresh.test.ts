@@ -194,6 +194,33 @@ describe("inventory pages", () => {
 });
 
 describe("item-granting flows", () => {
+  it.each([false, true])("location checks refresh observed inventory only when itemsChanged is %s", async (itemsChanged) => {
+    const callbacks = read("layout/Sector.tsx").match(/api\.quests\.checkLocationQuest\.useMutation\((\{[\s\S]*?\n  \})\);/)?.[1];
+    if (!callbacks) throw new Error("Location quest callbacks were not found");
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime, retry: false } } });
+    const reads = [vi.fn(async () => ["Kunai"]), vi.fn(async () => ["Kunai variant"])];
+    const observers = reads.map((queryFn, index) => new QueryObserver(client, { queryKey: ["inventory", index], queryFn }));
+    const unsubscribe = observers.map((observer) => observer.subscribe(() => {}));
+    const updateUser = vi.fn(async () => undefined);
+    const options = new Function("utils", "updateUser", `return (${callbacks});`)(
+      { item: {
+        getUserItems: { invalidate: () => client.invalidateQueries({ queryKey: ["inventory", 0] }) },
+        getUserItemsWithVariants: { invalidate: () => client.invalidateQueries({ queryKey: ["inventory", 1] }) },
+      } },
+      updateUser,
+    ) as { onSuccess: (result: unknown) => Promise<void> };
+    try {
+      await waitFor(() => observers.forEach((observer) => expect(observer.getCurrentResult().data).toBeDefined()));
+      const updateAt = new Date();
+      await options.onSuccess({ success: true, itemsChanged, notifications: [], questData: [], updateAt });
+      reads.forEach((read) => expect(read).toHaveBeenCalledTimes(itemsChanged ? 2 : 1));
+      expect(updateUser).toHaveBeenCalledWith({ questData: [], updatedAt: updateAt });
+    } finally {
+      unsubscribe.forEach((stop) => stop());
+      client.clear();
+    }
+  });
+
   const userItemCaches = ["getUserItems", "getUserItemsWithVariants"];
   const flows = [
     { file: "layout/Logbook.tsx", flow: "quests.checkRewards" },
