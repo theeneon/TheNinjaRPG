@@ -78,7 +78,7 @@ describeWithDatabase("travel.getSectorData player visibility", () => {
     ].sort());
     expect(self.anbuSquad).toEqual(SQUAD);
     // The caller's relation is correlated into its existing read, not fetched separately.
-    expect(statements).toHaveLength(9);
+    expect(statements).toHaveLength(7);
   });
 
   it.each(["banned", "idle", "banned-and-idle"])(

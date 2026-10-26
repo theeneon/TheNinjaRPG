@@ -364,9 +364,10 @@ export const travelRouter = createTRPCRouter({
     .meta({
       mcp: { description: "Get users and data within current sector" },
     })
-    .input(z.object({ sector: sectorIdSchema })) // Note: this is not actively used, but is there for reloading the sector data
-    .query(async ({ ctx }) => {
-      const [user, userQuests, completedQuests] = await Promise.all([
+    .input(z.object({ sector: sectorIdSchema }))
+    .query(async ({ input, ctx }) => {
+      // The client's sector usually matches; overlap its reads with the authoritative user lookup.
+      const [user, sectorWindowData, fetchedWarData, liveBattles] = await Promise.all([
         ctx.drizzle.query.userData.findFirst({
           where: eq(userData.userId, ctx.userId),
           with: {
@@ -375,21 +376,42 @@ export const travelRouter = createTRPCRouter({
             },
           },
         }),
-        ctx.drizzle.query.questHistory.findMany({
-          where: and(
-            eq(questHistory.userId, ctx.userId),
-            eq(questHistory.completed, 0),
-            isNull(questHistory.endAt),
-          ),
-          with: { quest: true },
+        fetchSectorWindowData(ctx.drizzle, ctx.userId, input.sector),
+        ctx.drizzle.query.war.findMany({
+          where: eq(war.status, "ACTIVE"),
+          with: {
+            attackerVillage: {
+              columns: {
+                name: true,
+                id: true,
+                villageGraphic: true,
+                sector: true,
+                kageId: true,
+              },
+            },
+            defenderVillage: {
+              columns: {
+                name: true,
+                id: true,
+                villageGraphic: true,
+                sector: true,
+                kageId: true,
+              },
+            },
+            warMercenaries: { where: activeWarMercenaryWhere() },
+            warAllies: {
+              where: activeWarAllyWhere(),
+              columns: { villageId: true, supportVillageId: true },
+            },
+          },
         }),
-        ctx.drizzle.query.questHistory.findMany({
-          columns: { id: true, questId: true, completed: true },
-          where: and(
-            eq(questHistory.userId, ctx.userId),
-            or(gte(questHistory.completed, 1), gt(questHistory.previousCompletes, 0)),
-          ),
-        }),
+        // All recently-advanced battles. The Battle table only holds a handful of rows
+        // (the cleaner drops them after a day), so this indexed range scan is cheaper than
+        // a second sequential round-trip filtered by the sector's battle ids.
+        ctx.drizzle
+          .select({ id: battle.id })
+          .from(battle)
+          .where(gte(battle.updatedAt, secondsFromNow(-SECTOR_BATTLE_STALE_SECONDS))),
       ]);
 
       if (!user) {
@@ -404,143 +426,11 @@ export const travelRouter = createTRPCRouter({
       if (!["AWAKE", "TRAVEL", "QUEUED"].includes(user.status)) {
         return { users: [], village: null, sectorData: null, warData: null };
       }
-      const [users, villageData, sectorData, fetchedWarData, placements, liveBattles] =
-        await Promise.all([
-          ctx.drizzle.query.userData.findMany({
-            columns: {
-              userId: true,
-              username: true,
-              longitude: true,
-              latitude: true,
-              location: true,
-              curHealth: true,
-              maxHealth: true,
-              sector: true,
-              status: true,
-              avatar: true,
-              avatarLight: true,
-              level: true,
-              experience: true,
-              rank: true,
-              isOutlaw: true,
-              isBanned: true,
-              immunityUntil: true,
-              robImmunityUntil: true,
-              updatedAt: true,
-              villageId: true,
-              battleId: true,
-              anbuId: true,
-              stealthActive: true,
-              stealthActivatedAt: true,
-              stealth: true,
-            },
-            where: and(
-              eq(userData.sector, user.sector),
-              eq(userData.isAi, false),
-              inArray(userData.status, ["AWAKE", "BATTLE"]),
-              eq(userData.isBanned, false),
-              gte(userData.updatedAt, secondsFromNow(-36000)),
-              ne(userData.userId, ctx.userId),
-            ),
-            with: {
-              anbuSquad: {
-                columns: {
-                  id: true,
-                  name: true,
-                  image: true,
-                  villageId: true,
-                },
-              },
-            },
-          }),
-          ctx.drizzle.query.village.findFirst({
-            where: and(
-              eq(village.sector, user.sector),
-              inArray(village.type, [
-                "VILLAGE",
-                "OUTLAW",
-                "STRONGHOLD",
-                "HIDEOUT",
-                "SAFEZONE",
-              ]),
-            ),
-            with: { structures: true },
-          }),
-          fetchSector(ctx.drizzle, user.sector),
-          ctx.drizzle.query.war.findMany({
-            where: eq(war.status, "ACTIVE"),
-            with: {
-              attackerVillage: {
-                columns: {
-                  name: true,
-                  id: true,
-                  villageGraphic: true,
-                  sector: true,
-                  kageId: true,
-                },
-              },
-              defenderVillage: {
-                columns: {
-                  name: true,
-                  id: true,
-                  villageGraphic: true,
-                  sector: true,
-                  kageId: true,
-                },
-              },
-              warMercenaries: { where: activeWarMercenaryWhere() },
-              warAllies: {
-                where: activeWarAllyWhere(),
-                columns: { villageId: true, supportVillageId: true },
-              },
-            },
-          }),
-          ctx.drizzle.query.overworldAiPlacement.findMany({
-            where: and(
-              inArray(
-                overworldAiPlacement.sector,
-                buildSectorWindowLayout(user.sector).map((entry) => entry.sector),
-              ),
-              eq(overworldAiPlacement.isActive, true),
-            ),
-            // Stable order so the arrival-prompt `find`-first NPC can't flip between polls when two
-            // placements share a tile (which would ping-pong the modal open on every sector refresh).
-            orderBy: asc(overworldAiPlacement.id),
-            columns: {
-              id: true,
-              aiTemplateUserId: true,
-              interactionType: true,
-              sectorType: true,
-              locationType: true,
-              sector: true,
-              longitude: true,
-              latitude: true,
-              positionVersion: true,
-            },
-            with: {
-              aiTemplate: {
-                columns: {
-                  userId: true,
-                  username: true,
-                  avatar: true,
-                  avatarLight: true,
-                  curHealth: true,
-                  maxHealth: true,
-                  level: true,
-                  rank: true,
-                  isAi: true,
-                },
-              },
-            },
-          }),
-          // All recently-advanced battles. The Battle table only holds a handful of rows
-          // (the cleaner drops them after a day), so this indexed range scan is cheaper than
-          // a second sequential round-trip filtered by the sector's battle ids.
-          ctx.drizzle
-            .select({ id: battle.id })
-            .from(battle)
-            .where(gte(battle.updatedAt, secondsFromNow(-SECTOR_BATTLE_STALE_SECONDS))),
-        ]);
+      // Crossings can leave a stale query key. Never return another sector's data.
+      const [users, villageData, sectorData, placements] =
+        user.sector === input.sector
+          ? sectorWindowData
+          : await fetchSectorWindowData(ctx.drizzle, ctx.userId, user.sector);
 
       // Keep the caller's ban/activity exceptions outside the indexed sector range query.
       // Project only the public sector fields from the already-loaded caller snapshot.
@@ -625,6 +515,29 @@ export const travelRouter = createTRPCRouter({
         .filter((p) => p.sector === user.sector && p.aiTemplate?.isAi)
         .map((p) => placementToSectorUser(p, p.aiTemplate!));
 
+      // Quest history can only affect placements backed by an AI template.
+      const [userQuests, completedQuests] = placements.some((p) => p.aiTemplate?.isAi)
+        ? await Promise.all([
+            ctx.drizzle.query.questHistory.findMany({
+              where: and(
+                eq(questHistory.userId, ctx.userId),
+                eq(questHistory.completed, 0),
+                isNull(questHistory.endAt),
+              ),
+              with: { quest: true },
+            }),
+            ctx.drizzle.query.questHistory.findMany({
+              columns: { id: true, questId: true, completed: true },
+              where: and(
+                eq(questHistory.userId, ctx.userId),
+                or(
+                  gte(questHistory.completed, 1),
+                  gt(questHistory.previousCompletes, 0),
+                ),
+              ),
+            }),
+          ])
+        : [[], []];
       const activeQuests = getUserQuests({ ...user, userQuests, completedQuests });
       const boundPlacementIds = new Set(
         activeQuests.flatMap((entry) =>
@@ -1375,6 +1288,110 @@ export const completeExpiredGlobalTravel = async (client: DrizzleClient) => {
     ),
   ]);
 };
+
+/** Read the sector window without depending on the viewer's profile. */
+const fetchSectorWindowData = (client: DrizzleClient, userId: string, sector: number) =>
+  Promise.all([
+    client.query.userData.findMany({
+      columns: {
+        userId: true,
+        username: true,
+        longitude: true,
+        latitude: true,
+        location: true,
+        curHealth: true,
+        maxHealth: true,
+        sector: true,
+        status: true,
+        avatar: true,
+        avatarLight: true,
+        level: true,
+        experience: true,
+        rank: true,
+        isOutlaw: true,
+        isBanned: true,
+        immunityUntil: true,
+        robImmunityUntil: true,
+        updatedAt: true,
+        villageId: true,
+        battleId: true,
+        anbuId: true,
+        stealthActive: true,
+        stealthActivatedAt: true,
+        stealth: true,
+      },
+      where: and(
+        eq(userData.sector, sector),
+        eq(userData.isAi, false),
+        inArray(userData.status, ["AWAKE", "BATTLE"]),
+        eq(userData.isBanned, false),
+        gte(userData.updatedAt, secondsFromNow(-36000)),
+        ne(userData.userId, userId),
+      ),
+      with: {
+        anbuSquad: {
+          columns: {
+            id: true,
+            name: true,
+            image: true,
+            villageId: true,
+          },
+        },
+      },
+    }),
+    client.query.village.findFirst({
+      where: and(
+        eq(village.sector, sector),
+        inArray(village.type, [
+          "VILLAGE",
+          "OUTLAW",
+          "STRONGHOLD",
+          "HIDEOUT",
+          "SAFEZONE",
+        ]),
+      ),
+      with: { structures: true },
+    }),
+    fetchSector(client, sector),
+    client.query.overworldAiPlacement.findMany({
+      where: and(
+        inArray(
+          overworldAiPlacement.sector,
+          buildSectorWindowLayout(sector).map((entry) => entry.sector),
+        ),
+        eq(overworldAiPlacement.isActive, true),
+      ),
+      // Stable order so the arrival-prompt `find`-first NPC can't flip between polls when two
+      // placements share a tile (which would ping-pong the modal open on every sector refresh).
+      orderBy: asc(overworldAiPlacement.id),
+      columns: {
+        id: true,
+        aiTemplateUserId: true,
+        interactionType: true,
+        sectorType: true,
+        locationType: true,
+        sector: true,
+        longitude: true,
+        latitude: true,
+        positionVersion: true,
+      },
+      with: {
+        aiTemplate: {
+          columns: {
+            userId: true,
+            username: true,
+            avatar: true,
+            avatarLight: true,
+            curHealth: true,
+            maxHealth: true,
+            level: true,
+            rank: true,
+            isAi: true,
+          },
+        },
+      },
+    }),
+  ]);
 
 type RouterOutput = inferRouterOutputs<typeof travelRouter>;
 export type SectorVillage = RouterOutput["getSectorData"]["village"];
