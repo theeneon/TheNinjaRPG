@@ -221,8 +221,9 @@ interface MobileNotificationsPopoverProps {
 export const MobileNotificationsPopover: React.FC<MobileNotificationsPopoverProps> = ({
   notifications,
   variant,
-  count = notifications?.length ?? 0,
+  count: providedCount,
 }) => {
+  const count = providedCount ?? notifications?.length ?? 0;
   const isPixel = variant === "pixel";
   const hasNotifications = count > 0;
 

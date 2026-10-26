@@ -24,13 +24,9 @@ const Countdown: React.FC<CountdownProps> = (props) => {
   const prevTargetDateTimeRef = useRef(targetDateTime);
   // Store onFinish in a ref to avoid it being a dependency (inline functions change every render)
   const onFinishRef = useRef(onFinish);
-  onFinishRef.current = onFinish;
-
-  // Reset finish flag when target changes
-  if (prevTargetDateTimeRef.current !== targetDateTime) {
-    prevTargetDateTimeRef.current = targetDateTime;
-    hasCalledOnFinishRef.current = false;
-  }
+  useEffect(() => {
+    onFinishRef.current = onFinish;
+  }, [onFinish]);
 
   // "Done" is decided on the raw millisecond remainder. getDaysHoursMinutesSeconds floors
   // each part, so summing them reads 0 while up to 999 ms still remain, which made onFinish
@@ -47,6 +43,11 @@ const Countdown: React.FC<CountdownProps> = (props) => {
   const [countString, setCountString] = useState<string>(calcCountString);
 
   useEffect(() => {
+    // Clock recalibration keeps the same countdown; only a new deadline can finish again.
+    if (prevTargetDateTimeRef.current !== targetDateTime) {
+      prevTargetDateTimeRef.current = targetDateTime;
+      hasCalledOnFinishRef.current = false;
+    }
     const updateCountdown = () => {
       const msLeft = targetTime - Date.now();
 
@@ -78,7 +79,7 @@ const Countdown: React.FC<CountdownProps> = (props) => {
       }, 500);
       return () => clearInterval(interval);
     }
-  }, [targetTime]);
+  }, [targetTime, targetDateTime]);
 
   if (countString === "Done" && onEndShow) {
     return onEndShow;

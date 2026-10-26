@@ -1,0 +1,76 @@
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { StrictMode } from "react";
+import Countdown from "@/layout/Countdown";
+import { ensureDom } from "../setup-dom.mjs";
+
+const BASE = Date.UTC(2026, 9, 26, 12);
+let now = BASE;
+
+const advance = (milliseconds: number) => {
+  now += milliseconds;
+  act(() => vi.advanceTimersByTime(milliseconds));
+};
+
+beforeEach(() => {
+  ensureDom();
+  now = BASE;
+  vi.useFakeTimers();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+describe("Countdown completion", () => {
+  it("waits for the actual deadline and calls the latest callback once", () => {
+    const previous = vi.fn();
+    const latest = vi.fn();
+    const targetDate = new Date(BASE + 999);
+    const view = render(<Countdown targetDate={targetDate} onFinish={previous} />);
+    advance(500);
+    expect(previous).not.toHaveBeenCalled();
+    view.rerender(<Countdown targetDate={targetDate} onFinish={latest} onEndShow="Ready" />);
+    advance(500);
+    expect(view.getByText("Ready")).toBeTruthy();
+    expect(previous).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+    advance(2_000);
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not finish the same deadline twice after clock recalibration or Strict Mode effects", () => {
+    const onFinish = vi.fn();
+    const targetDate = new Date(BASE - 1_000);
+    const view = render(<StrictMode><Countdown targetDate={targetDate} onFinish={onFinish} /></StrictMode>);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    view.rerender(<StrictMode><Countdown targetDate={targetDate} timeDiff={2_000} onFinish={onFinish} /></StrictMode>);
+    advance(1_000);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognizes a new raw deadline even if its adjusted time is unchanged", () => {
+    const onFinish = vi.fn();
+    const view = render(<Countdown targetDate={new Date(BASE - 1_000)} onFinish={onFinish} />);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    view.rerender(<Countdown targetDate={new Date(BASE - 2_000)} timeDiff={1_000} onFinish={onFinish} />);
+    expect(onFinish).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a replacement countdown and clears its interval on unmount", () => {
+    const onFinish = vi.fn();
+    const view = render(<Countdown targetDate={new Date(BASE - 1_000)} onFinish={onFinish} />);
+    view.rerender(<Countdown targetDate={new Date(BASE + 2_000)} onFinish={onFinish} />);
+    expect(view.queryByText("Done")).toBeNull();
+    advance(1_000);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+    const clear = vi.spyOn(globalThis, "clearInterval");
+    view.unmount();
+    expect(clear).toHaveBeenCalled();
+    advance(3_000);
+    expect(onFinish).toHaveBeenCalledTimes(1);
+  });
+});

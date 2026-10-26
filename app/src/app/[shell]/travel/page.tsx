@@ -1601,7 +1601,7 @@ const StealthControls: React.FC<{
     });
 
   const { mutate: scanSensory, isPending: isScanningSensory } =
-    api.stealth.useSensory.useMutation({
+    activateSensory.useMutation({
       onSuccess: (data) => {
         showMutationToast(data);
         if (data.success && data.data) {
@@ -1894,3 +1894,6 @@ const RevealedPlayerCard = ({
     </div>
   );
 };
+
+// Alias the procedure so its action name is not interpreted as a React hook.
+const activateSensory = api.stealth.useSensory;
