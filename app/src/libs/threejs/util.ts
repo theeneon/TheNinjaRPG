@@ -612,7 +612,8 @@ export const disposeAnimatedGroup = (root: Object3D, spriteMixer: SpriteMixer) =
 };
 
 /**
- * Cleanup three.js scene and renderer, removing all objects, materials and geometries
+ * Dispose a scene and permanently release its renderer's WebGL context.
+ * Callers must remove context-loss handlers first to preserve shared caches.
  */
 export const cleanUp = (scene: Scene, renderer: WebGLRenderer) => {
   scene.traverse((object) => {
@@ -622,6 +623,7 @@ export const cleanUp = (scene: Scene, renderer: WebGLRenderer) => {
     }
   });
   renderer.dispose();
+  renderer.forceContextLoss();
 };
 
 /**
