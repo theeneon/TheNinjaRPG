@@ -142,7 +142,7 @@ export default function MyJutsu() {
   // User Jutsus & items
   const { data: userJutsus, isFetching: l1 } = api.jutsu.getUserJutsus.useQuery(
     { ...getFilter(state), includeEquipped: true },
-    { enabled: !!userData },
+    { enabled: !!userData, placeholderData: (previousData) => previousData },
   );
   const { data: userItems, isFetching: l2 } = api.item.getUserItems.useQuery(
     undefined,
@@ -345,7 +345,6 @@ export default function MyJutsu() {
           await Promise.all([
             utils.jutsu.getUserJutsus.invalidate(),
             utils.jutsu.getEvolutions.invalidate(),
-            utils.jutsu.getUserJutsuOwnership.invalidate(),
             utils.jutsu.getLoadouts.invalidate(),
             utils.profile.getUser.invalidate(),
           ]);

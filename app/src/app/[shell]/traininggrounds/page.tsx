@@ -1157,20 +1157,9 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
     items: userItems ?? [],
   });
 
-  // User Jutsus
+  // Ownership and active training must remain available outside the picker filters.
   const { data: userJutsus, isPending: isRefetchingUserJutsu } =
-    api.jutsu.getUserJutsus.useQuery(getFilter(state), {
-      enabled: !!userData,
-    });
-  // Lightweight unfiltered ownership set — used to check evolution ownership
-  // regardless of active search filters. Only includes jutsuId + ancestorIds
-  // so we don't transfer the full userJutsu rows over the wire.
-  const { data: userJutsuOwnership } = api.jutsu.getUserJutsuOwnership.useQuery(
-    undefined,
-    {
-      enabled: !!userData,
-    },
-  );
+    api.jutsu.getUserJutsus.useQuery({}, { enabled: !!userData });
   const userJutsuCounts = userJutsus?.map((userJutsu) => {
     return {
       id: userJutsu.jutsuId,
@@ -1301,7 +1290,7 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
 
   // Collect all ancestor jutsu IDs that the user has evolved past
   const evolvedAncestorIds = new Set<string>();
-  for (const uj of userJutsuOwnership ?? []) {
+  for (const uj of userJutsus ?? []) {
     for (const id of uj.ancestorIds) evolvedAncestorIds.add(id);
   }
 
@@ -1314,7 +1303,7 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
           return (
             // Training/leveling is item-free, so ignore the bloodline item requirement here
             canUseJutsu(j, userData, true, masteries, true) &&
-            (userJutsuOwnership?.some((uj) => uj.jutsuId === j.id) ?? false)
+            (userJutsus?.some((uj) => uj.jutsuId === j.id) ?? false)
           );
         return canTrainJutsu(j, userData, masteries);
       })
