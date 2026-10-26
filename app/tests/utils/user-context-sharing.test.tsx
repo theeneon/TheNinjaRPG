@@ -13,6 +13,7 @@ import * as client from "@/app/_trpc/client";
 import * as pusher from "@/layout/PusherHandler";
 import { UserContext, UserContextProvider } from "@/utils/UserContext";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
+import { shareUserCache } from "@/utils/userCacheSharing";
 
 const BASE = Date.UTC(2026, 9, 26, 12);
 const key: ReturnType<typeof trpc.getQueryKey> = [
@@ -61,6 +62,7 @@ const mount = (initial = snapshot()) => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity } },
   });
+  queryClient.setQueryDefaults(key, { structuralSharing: shareUserCache });
   clients.push(queryClient);
   queryClient.setQueryData(key, initial);
   const utils = {};
@@ -138,6 +140,19 @@ describe("profile context structural sharing", () => {
     await test.refresh(snapshot(now + 2000));
     expect(test.current().timeDiff).toBe(-2000);
     expect(test.read().userData.updatedAt.getTime()).toBe(BASE - 60_000);
+  });
+
+  it("keeps sharing when an imperative fetch replaces the mounted observer's options", async () => {
+    const test = mount();
+    const before = test.current();
+    await test.settle(() =>
+      test.queryClient.fetchQuery({
+        queryKey: key,
+        staleTime: 0,
+        queryFn: async () => snapshot(BASE - 50),
+      }),
+    );
+    expect(test.current()).toBe(before);
   });
 
   it("propagates changed nested Dates, achievements and expired notifications independently", async () => {

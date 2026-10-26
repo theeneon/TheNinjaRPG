@@ -15,6 +15,7 @@ import {
   splitLink,
   TRPCClientError,
 } from "@trpc/client";
+import { getQueryKey } from "@trpc/react-query";
 import { useEffect, useState } from "react";
 import superjson from "superjson";
 import { ToastAction } from "@/components/ui/toast";
@@ -35,6 +36,7 @@ import {
   trpcSessionLink,
 } from "@/libs/trpcSession";
 import { isRetryableTrpcError } from "@/utils/error";
+import { shareUserCache } from "@/utils/userCacheSharing";
 import {
   api,
   SIGN_IN_REQUIRED_MUTATION_MESSAGE,
@@ -95,6 +97,10 @@ const TrpcClientProvider = (props: {
           onMutateCheck(mutationPath);
         },
       }),
+    });
+    // Imperative profile reads must retain sharing when they replace observer options.
+    queryClient.setQueryDefaults(getQueryKey(api.profile.getUser, undefined, "query"), {
+      structuralSharing: shareUserCache,
     });
     return { queryClient, queryMetricsTracker: createQueryMetricsTracker(queryClient) };
   });

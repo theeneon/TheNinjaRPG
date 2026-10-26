@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { shareUserCache } from "@/utils/userCache";
+import { shareUserCache } from "@/utils/userCacheSharing";
 
 describe("profile cache structural sharing", () => {
   it("reuses equal Dates throughout arrays and records without mutating either snapshot", () => {

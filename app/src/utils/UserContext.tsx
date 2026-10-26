@@ -30,7 +30,6 @@ import { showMutationToast } from "@/libs/toast";
 import { parseHtml } from "@/utils/parse";
 import {
   prepareUserUpdate as captureUserUpdate,
-  shareUserCache,
   type UserPatch,
   type UserUpdateOptions,
   updateUserCache,
@@ -141,7 +140,6 @@ export function UserContextProvider(props: {
     enabled: !!userId && isSignedIn && isLoaded,
     retry: false,
     refetchInterval: 300000,
-    structuralSharing: shareUserCache,
   });
 
   // Profile reads collect completed sessions and start their queued successors.
