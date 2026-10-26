@@ -107,7 +107,9 @@ import {
 import { activeWarAllyWhere } from "@/server/utils/warAlly";
 import {
   activeWarMercenaryWhere,
+  canEnterWarCamp,
   canEnterWarCampSector,
+  fetchWarCampEntry,
 } from "@/server/utils/warMercenary";
 import { findRelationship } from "@/utils/alliance";
 import { groupBy } from "@/utils/grouping";
@@ -623,11 +625,12 @@ export const travelRouter = createTRPCRouter({
       if (!targetTile) {
         return { success: false, message: "Target sector does not exist" };
       }
-      // Fetch the user and destination in parallel. Global travel can begin
+      // Fetch the user, destination and camp admission in parallel. Global travel can begin
       // from any local tile; the target map only determines a safe landing.
-      let [user, targetSectorMap] = await Promise.all([
+      let [user, targetSectorMap, warCampEntry] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchPublishedSectorMap(ctx.drizzle, input.sector).catch(() => null),
+        fetchWarCampEntry(ctx.drizzle, ctx.userId, input.sector),
       ]);
       if (!targetSectorMap) {
         return errorResponse("The destination sector has no published map yet");
@@ -647,7 +650,7 @@ export const travelRouter = createTRPCRouter({
       if (user.status !== "AWAKE") {
         return { success: false, message: `Status is: ${user.status.toLowerCase()}` };
       }
-      if (!(await canEnterWarCampSector(ctx.drizzle, user, input.sector)))
+      if (!canEnterWarCamp(warCampEntry, user, input.sector))
         return errorResponse(
           "This sector is reserved for participants in an active war camp.",
         );
@@ -872,15 +875,20 @@ export const travelRouter = createTRPCRouter({
       // When the destination looks like a default-sized border crossing, load
       // that neighbour in the same query so the walk does not wait on a
       // second sequential published-map read.
-      const [maps, originalUser] = await Promise.all([
-        fetchPublishedSectorMaps(
-          ctx.drizzle,
-          publishedMapsToPrefetchForMove(sector, { x: longitude, y: latitude }),
-        ).catch(() => null),
+      const sectorsToPrefetch = publishedMapsToPrefetchForMove(sector, {
+        x: longitude,
+        y: latitude,
+      });
+      const prefetchedCampSector = sectorsToPrefetch[1];
+      const [maps, originalUser, warCampEntry] = await Promise.all([
+        fetchPublishedSectorMaps(ctx.drizzle, sectorsToPrefetch).catch(() => null),
         ctx.drizzle.query.userData.findFirst({
           where: eq(userData.userId, userId),
           with: { anbuSquad: true },
         }),
+        prefetchedCampSector === undefined
+          ? undefined
+          : fetchWarCampEntry(ctx.drizzle, userId, prefetchedCampSector),
       ]);
       if (!originalUser) return errorResponse("User not found");
       let moveUser = originalUser;
@@ -928,7 +936,13 @@ export const travelRouter = createTRPCRouter({
         if (targetSector < 0) {
           return errorResponse("The polar wastes block your path");
         }
-        if (!(await canEnterWarCampSector(ctx.drizzle, moveUser, targetSector)))
+        // Authored map dimensions can change the crossing direction. Only reuse
+        // admission data for the actual destination; otherwise fetch it now.
+        const canEnter =
+          targetSector === prefetchedCampSector && warCampEntry
+            ? canEnterWarCamp(warCampEntry, moveUser, targetSector)
+            : await canEnterWarCampSector(ctx.drizzle, moveUser, targetSector);
+        if (!canEnter)
           return errorResponse(
             "This sector is reserved for participants in an active war camp.",
           );

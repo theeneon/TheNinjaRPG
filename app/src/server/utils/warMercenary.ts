@@ -91,13 +91,12 @@ export const acceptWarMercenary = async (
   }
 };
 
-/** Open camp sectors admit both war sides; existing occupants remain free to leave. */
-export const canEnterWarCampSector = async (
+/** Camp admission reads depend only on identity and destination, so they can be prefetched. */
+export const fetchWarCampEntry = async (
   client: DrizzleClient,
-  user: { userId: string; villageId: string | null; sector: number },
+  userId: string,
   destination: number,
 ) => {
-  if (destination === user.sector) return true;
   const [wars, mercenaryWarId] = await Promise.all([
     client.query.war.findMany({
       where: inArray(
@@ -118,9 +117,33 @@ export const canEnterWarCampSector = async (
         warMercenaries: { where: activeWarMercenaryWhere() },
       },
     }),
-    fetchMercenaryWarId(client, user.userId),
+    fetchMercenaryWarId(client, userId),
   ]);
-  return wars
+  return { wars, mercenaryWarId };
+};
+
+/** Open camp sectors admit both war sides; existing occupants remain free to leave. */
+export const canEnterWarCamp = (
+  entry: Awaited<ReturnType<typeof fetchWarCampEntry>>,
+  user: { userId: string; villageId: string | null; sector: number },
+  destination: number,
+) => {
+  if (destination === user.sector) return true;
+  return entry.wars
     .filter((w) => isObjectiveWarActive(w))
-    .every((w) => !!getWarSide(w, user.villageId, user.userId, mercenaryWarId));
+    .every((w) => !!getWarSide(w, user.villageId, user.userId, entry.mercenaryWarId));
+};
+
+/** Resolve admission when the destination could not be predicted before loading its map. */
+export const canEnterWarCampSector = async (
+  client: DrizzleClient,
+  user: { userId: string; villageId: string | null; sector: number },
+  destination: number,
+) => {
+  if (destination === user.sector) return true;
+  return canEnterWarCamp(
+    await fetchWarCampEntry(client, user.userId, destination),
+    user,
+    destination,
+  );
 };
