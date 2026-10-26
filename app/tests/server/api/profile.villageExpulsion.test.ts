@@ -31,6 +31,8 @@ const profileClient = (snapshots: ReturnType<typeof profileSnapshot>[], failClea
       war: { findMany: () => Promise.resolve([]) },
       mpvpBattleQueue: { findMany: () => Promise.resolve([]) },
       quest: { findMany: () => Promise.resolve([]) },
+      bloodline: { findMany: () => Promise.resolve([]) },
+      bloodlineRolls: { findMany: () => Promise.resolve([]) },
       village: { findFirst: () => Promise.resolve({ id: "syndicate", type: "OUTLAW" }) },
       anbuSquad: { findFirst: () => Promise.resolve({ id: "squad-1", name: "Squad", memberCount: 2 }) },
     },
