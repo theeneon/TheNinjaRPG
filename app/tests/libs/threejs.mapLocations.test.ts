@@ -61,4 +61,17 @@ describe("quest structure rendering", () => {
     syncMapLocationSprites(group, grid, [], [asset], textureForPath);
     expect(tree.visible).toBe(true);
   });
+  it("skips draft locations without coordinates instead of crashing the preview", () => {
+    const group = new Group();
+    const strictGrid = {
+      getHex: ({ col, row }: { col: number; row: number }) => {
+        if (!Number.isFinite(col) || !Number.isFinite(row)) throw new TypeError("Can't determine three cube coordinates");
+        return { x: col * 20, y: row * 20, width: 20, height: 20 };
+      },
+    } as never;
+    const draft = { ...location, id: "draft", longitude: undefined, latitude: Number.NaN } as unknown as MapLocation;
+    syncMapLocationSprites(group, strictGrid, [draft, location], [asset], textureForPath);
+    expect(group.children).toHaveLength(2);
+    expect(group.children.every((child) => child.userData.locationId === "tower")).toBe(true);
+  });
 });

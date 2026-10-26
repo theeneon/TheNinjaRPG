@@ -23,8 +23,13 @@ export const syncMapLocationSprites = (
   ]);
   if (group.userData.mapLocationSignature === signature) return;
   group.userData.mapLocationSignature = signature;
+  // Editor drafts can briefly lack coordinates; honeycomb throws on non-numeric hex input.
+  const placed = locations.filter(
+    (location) =>
+      Number.isFinite(location.longitude) && Number.isFinite(location.latitude),
+  );
   const occupiedTiles = new Set(
-    locations.map((location) => `${location.longitude},${location.latitude}`),
+    placed.map((location) => `${location.longitude},${location.latitude}`),
   );
   for (const child of group.children) {
     if (child.userData.type !== "decoration") continue;
@@ -43,7 +48,7 @@ export const syncMapLocationSprites = (
       // Materials belong to these sprites; cached textures are shared with other sectors and previews.
       (child as Sprite).material.dispose();
     });
-  for (const entries of groupMapLocations(locations)) {
+  for (const entries of groupMapLocations(placed)) {
     const location = entries[0];
     if (!location) continue;
     const hex = grid.getHex({ col: location.longitude, row: location.latitude });
