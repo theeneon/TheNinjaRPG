@@ -9,14 +9,7 @@ import { useRouter } from "next/navigation";
 import type React from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import {
-  Group,
-  type Material,
-  type MeshBasicMaterial,
-  OrthographicCamera,
-  type Sprite,
-  Vector2,
-} from "three";
+import { Group, type Material, OrthographicCamera, type Sprite, Vector2 } from "three";
 import type { RouterOutputs } from "@/app/_trpc/client";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
@@ -95,11 +88,15 @@ import {
   sortSectorAssetsByGroundContact,
   type WindowNav,
 } from "@/libs/threejs/sector";
+import {
+  type SectorRenderEntry,
+  sectorRenderCache,
+  sectorRenderKey,
+} from "@/libs/threejs/sectorRenderCache";
 import { updateWaveAnimation, updateWindAnimation } from "@/libs/threejs/shaders";
 import type { GlobalTile, SectorPoint, SectorUser } from "@/libs/threejs/types";
 import {
   cleanUp,
-  disposeGroupPreservingShared,
   isObjectChainVisible,
   isRendererContextValid,
   pickSpriteAvatar,
@@ -140,32 +137,6 @@ export interface SectorWindowData {
   mapTerrains: RouterOutputs["mapTerrain"]["getAll"];
   sectors: SectorWindowEntry[];
 }
-
-/** Everything rendered for one sector of the 3x3 window */
-interface SectorRenderEntry {
-  wrapper: Group;
-  grid: Grid<TerrainHex>;
-  interaction: Group;
-  assets: Group;
-  animatedMaterials: MeshBasicMaterial[];
-  /** Identity of the rendered content; a mismatch re-renders the sector */
-  renderKey: string;
-}
-
-/** Content identity of a window entry: map version plus dynamic structures */
-const renderKeyOf = (entry: SectorWindowEntry, additions: VillageStructure[] = []) => {
-  const structuresKey = [...entry.structures, ...additions]
-    .map(
-      (s) => `${s.id}:${s.level}:${s.hasPage}:${s.image}:${s.longitude}:${s.latitude}`,
-    )
-    .join(",");
-  return [
-    entry.map.metadata.importedAt,
-    entry.map.metadata.sourceHash ?? "",
-    entry.villageType ?? "",
-    structuresKey,
-  ].join("|");
-};
 
 interface SectorProps {
   sector: number;
@@ -404,6 +375,14 @@ const Sector: React.FC<SectorProps> = (props) => {
   mergedTerrainsRef.current = mergedTerrains;
   const mergedDecorationsRef = useRef(mergedDecorations);
   mergedDecorationsRef.current = mergedDecorations;
+  // Library data is stable across unchanged polls; include its contents so
+  // asset/terrain edits cannot reuse geometry built with an older library.
+  const libraryVersion = useMemo(
+    () => JSON.stringify([sectorWindow.mapAssets, sectorWindow.mapTerrains]),
+    [sectorWindow.mapAssets, sectorWindow.mapTerrains],
+  );
+  const libraryVersionRef = useRef(libraryVersion);
+  libraryVersionRef.current = libraryVersion;
   const mouse = new Vector2();
   // False while the pointer is off the map, so the render loop clears the
   // hover path instead of leaving it frozen at the last tile
@@ -481,6 +460,16 @@ const Sector: React.FC<SectorProps> = (props) => {
         })),
     [sectorDungeons, sector, sectorWindow.mapAssets],
   );
+  const dungeonStructuresRef = useRef(dungeonStructures);
+  dungeonStructuresRef.current = dungeonStructures;
+  const renderKeyOf = (entry: SectorWindowEntry) =>
+    sectorRenderKey(entry, {
+      width: worldRegistryRef.current.buildWidth,
+      lightLayout,
+      userId: userRef.current?.userId,
+      libraryVersion: libraryVersionRef.current,
+      additions: entry.sector === sectorRef.current ? dungeonStructuresRef.current : [],
+    });
   const firstDungeon = dungeonStructures[0];
   // Add dynamic entrances and the shrine without mutating cached village structures.
   const structures = useMemo(() => {
@@ -1366,89 +1355,95 @@ const Sector: React.FC<SectorProps> = (props) => {
     }
   };
 
-  /** Draw one sector of the window and register it in the rendered world */
+  /** Attach reusable static content or draw a sector that is not cached. */
   const buildSectorIntoWorld = (
     entry: SectorWindowEntry,
     position: { x: number; y: number } | null,
   ) => {
     const registry = worldRegistryRef.current;
     if (!registry.worldRoot) return null;
-    // Static structures belong to each window entry; only the current sector has authenticated entrances.
-    const entryStructures = [
-      ...entry.structures,
-      ...(entry.sector === sector ? dungeonStructures : []),
-    ];
-    if (!entryStructures.find((st) => st.route === "/shrine")) {
-      entryStructures.push(createShrineStructure(entry.map, entry.globalTileType));
+    const renderKey = renderKeyOf(entry);
+    let render = sectorRenderCache.take(renderKey, entry.sector);
+    if (!render) {
+      // Only the current sector has authenticated dungeon entrances.
+      const entryStructures = [
+        ...entry.structures,
+        ...(entry.sector === sectorRef.current ? dungeonStructuresRef.current : []),
+      ];
+      if (!entryStructures.find((st) => st.route === "/shrine")) {
+        entryStructures.push(createShrineStructure(entry.map, entry.globalTileType));
+      }
+      const groups = drawSector(
+        registry.buildWidth,
+        alea(entry.sector + 1),
+        entry.globalTileType,
+        lightLayout,
+        entryStructures,
+        entry.map,
+        mergedDecorationsRef.current,
+        mergedTerrainsRef.current,
+        entry.villageType,
+      );
+      drawVillage(
+        groups.group_assets,
+        entryStructures,
+        groups.honeycombGrid,
+        entry.map,
+        entry.villageType,
+        groups.villageWallPlan,
+      );
+      groups.group_interaction.children.forEach((mesh) => {
+        mesh.userData.sector = entry.sector;
+      });
+      const wrapper = new Group();
+      wrapper.add(
+        groups.group_dirt,
+        groups.group_tiles,
+        groups.group_edges,
+        groups.group_interaction,
+        groups.group_assets,
+      );
+      render = {
+        wrapper,
+        grid: groups.honeycombGrid,
+        interaction: groups.group_interaction,
+        assets: groups.group_assets,
+        animatedMaterials: groups.animatedMaterials,
+        renderKey,
+      };
     }
-    const groups = drawSector(
-      registry.buildWidth,
-      alea(entry.sector + 1),
-      entry.globalTileType,
-      lightLayout,
-      entryStructures,
-      entry.map,
-      // Built-ins overlaid with the creator asset + terrain libraries that
-      // ride on the window query, merged once per window (see mergedTerrainsRef)
-      mergedDecorationsRef.current,
-      mergedTerrainsRef.current,
-      entry.villageType,
-    );
-    drawVillage(
-      groups.group_assets,
-      entryStructures,
-      groups.honeycombGrid,
-      entry.map,
-      entry.villageType,
-      groups.villageWallPlan,
-    );
+    // Quest entrances are always projected from the live account, including
+    // when the terrain and village scenery came from an earlier mount.
     syncMapLocationSprites(
-      groups.group_assets,
-      groups.honeycombGrid,
+      render.assets,
+      render.grid,
       questLocationsRef.current.filter((l) => l.sector === entry.sector),
       locationAssetsRef.current,
     );
-    sortSectorAssetsByGroundContact(groups.group_assets);
-    groups.group_interaction.children.forEach((mesh) => {
-      mesh.userData.sector = entry.sector;
-    });
-    // Whole-sector pixel spans, sampled from the sector's own grid
-    const h00 = groups.honeycombGrid.getHex({ col: 0, row: 0 });
-    const h10 = groups.honeycombGrid.getHex({ col: 1, row: 0 });
-    const h01 = groups.honeycombGrid.getHex({ col: 0, row: 1 });
+    sortSectorAssetsByGroundContact(render.assets);
+    // Whole-sector pixel spans, sampled from the sector's own grid.
+    const h00 = render.grid.getHex({ col: 0, row: 0 });
+    const h10 = render.grid.getHex({ col: 1, row: 0 });
+    const h01 = render.grid.getHex({ col: 0, row: 1 });
     if (h00 && h10 && h01) {
       registry.spanX = entry.map.width * (h10.x - h00.x);
       registry.spanY = entry.map.height * (h01.y - h00.y);
     }
-    const wrapper = new Group();
     const target = position ?? {
       x: entry.dx * registry.spanX,
       y: entry.dy * registry.spanY,
     };
-    wrapper.position.set(target.x, target.y, 0);
-    wrapper.add(groups.group_dirt);
-    wrapper.add(groups.group_tiles);
-    wrapper.add(groups.group_edges);
-    wrapper.add(groups.group_interaction);
-    wrapper.add(groups.group_assets);
-    registry.worldRoot.add(wrapper);
-    registry.wrappers.set(entry.sector, wrapper);
-    registry.grids.set(entry.sector, groups.honeycombGrid);
-    registry.entries.set(entry.sector, {
-      wrapper,
-      grid: groups.honeycombGrid,
-      interaction: groups.group_interaction,
-      assets: groups.group_assets,
-      animatedMaterials: groups.animatedMaterials,
-      renderKey: renderKeyOf(entry, entry.sector === sector ? dungeonStructures : []),
-    });
-    return groups;
+    render.wrapper.position.set(target.x, target.y, 0);
+    registry.worldRoot.add(render.wrapper);
+    registry.wrappers.set(entry.sector, render.wrapper);
+    registry.grids.set(entry.sector, render.grid);
+    registry.entries.set(entry.sector, render);
+    return render;
   };
 
   /**
-   * Dispose one sector's rendered content. Geometries and per-sector
-   * materials are freed; materials tagged shared (biome palettes, cached
-   * sprite materials) stay alive for the other sectors.
+   * Return static content to the bounded idle cache. Its GPU resources are
+   * freed while the live player and quest layers stay with this scene.
    */
   const disposeSectorRender = (sectorId: number) => {
     const registry = worldRegistryRef.current;
@@ -1463,7 +1458,7 @@ const Sector: React.FC<SectorProps> = (props) => {
       registry.worldRoot?.add(registry.groupQuest);
     }
     registry.worldRoot?.remove(render.wrapper);
-    disposeGroupPreservingShared(render.wrapper);
+    sectorRenderCache.release(render);
     registry.entries.delete(sectorId);
     registry.wrappers.delete(sectorId);
     registry.grids.delete(sectorId);
@@ -1577,12 +1572,7 @@ const Sector: React.FC<SectorProps> = (props) => {
     let droppedCurrent = false;
     for (const [sectorId, render] of [...registry.entries]) {
       const entry = wanted.get(sectorId);
-      if (
-        entry &&
-        renderKeyOf(entry, entry.sector === sector ? dungeonStructures : []) ===
-          render.renderKey
-      )
-        continue;
+      if (entry && renderKeyOf(entry) === render.renderKey) continue;
       disposeSectorRender(sectorId);
       if (sectorId === sectorRef.current) droppedCurrent = true;
     }
@@ -2901,6 +2891,11 @@ const Sector: React.FC<SectorProps> = (props) => {
         safeRemoveRendererElement(renderer, sceneRef);
 
         profiler.reset();
+        // Detach static wrappers before disposing the scene; live users and
+        // quest layers remain in worldRoot and are disposed with the renderer.
+        for (const sectorId of [...registry.entries.keys()]) {
+          disposeSectorRender(sectorId);
+        }
         cleanUp(scene, renderer);
 
         // Note: Do NOT call clearTextureCaches() here as it clears module-wide caches
