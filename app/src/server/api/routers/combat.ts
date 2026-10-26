@@ -1612,13 +1612,12 @@ export const combatRouter = createTRPCRouter({
       // Maximum number of retry attempts
       const MAX_RETRIES = 3;
       let attempts = 0;
+      let userBattle = await fetchBattle(ctx.drizzle, input.battleId);
 
       // Retry loop
       while (attempts < MAX_RETRIES) {
         attempts++;
 
-        // Fetch
-        const userBattle = await fetchBattle(ctx.drizzle, input.battleId);
         const user = userBattle?.usersState.find((u) => u.userId === ctx.userId);
 
         // Guard
@@ -1683,6 +1682,8 @@ export const combatRouter = createTRPCRouter({
             // If the version hasn't changed or battle no longer exists, don't retry
             return { success: false, message: "Battle state could not be updated" };
           }
+          // Retry against the conflict snapshot, rechecking all lobby guards.
+          userBattle = currentBattle;
         }
       }
       return errorResponse("Failed to update battle state after multiple attempts");

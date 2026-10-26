@@ -64,6 +64,9 @@ describeWithDatabase("shrine minute scheduler war camps", () => {
     spies.push(vi.spyOn(headers, "cookies").mockResolvedValue({} as never));
     spies.push(
       vi
+        .spyOn(gamesettings, "getGameSetting")
+        .mockImplementation(actualGameSettings.getGameSetting),
+      vi
         .spyOn(gamesettings, "lockWithMinuteTimer")
         .mockImplementation(actualGameSettings.lockWithMinuteTimer),
       vi
