@@ -4064,7 +4064,7 @@ export const STORE_ORDER_RESERVATION_MINUTES = 30;
  * Discord account linking (see docs/DiscordLinking.md). A Discord account must be at least
  * this old, measured from its snowflake id, before it can be linked.
  */
-export const DISCORD_MIN_ACCOUNT_AGE_DAYS = 30;
+export const DISCORD_MIN_ACCOUNT_AGE_DAYS = 7;
 /** Characters one Discord account may be linked to (game rules: two accounts per person). */
 export const DISCORD_MAX_CHARACTERS_PER_ACCOUNT = 2;
 /**
