@@ -130,7 +130,7 @@ describeWithDatabase("event tournament persistence", () => {
     for (const userId of ["first", "second"]) await staff.manageEvent({ tournamentId, action: "INVITE", userId });
     expect(Pusher.prototype.trigger).toHaveBeenCalledWith("first", "event", { type: "eventTournament" });
     expect((await first.getEventNotices())[0]?.message).toBe("You have a tournament invitation");
-    vi.mocked(Pusher.prototype.trigger).mockClear();
+    vi.spyOn(Pusher.prototype, "trigger").mockClear();
     await first.participateEvent({ tournamentId, action: "JOIN" });
     expect(Pusher.prototype.trigger).toHaveBeenCalledWith("first", "event", { type: "eventTournament" });
     expect(await first.getEventNotices()).toEqual([]);
