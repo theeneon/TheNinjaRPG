@@ -137,6 +137,12 @@ export function PetProfile() {
   const ownerEarnedExperience = userData?.earnedExperience;
   const ownerPetExperience = userData?.petExperience;
   const ownerUpdatedAt = userData?.updatedAt?.getTime();
+  const previousOwnerProgress = useRef([
+    ownerUpdatedAt,
+    ownerExperience,
+    ownerEarnedExperience,
+    ownerPetExperience,
+  ]);
 
   useEffect(() => {
     setSelectedPetId(requestedPetId);
@@ -148,13 +154,18 @@ export function PetProfile() {
 
   // Training and quest rewards update the player view; the pet bank is fetched separately.
   useEffect(() => {
-    if (
-      ownerUpdatedAt !== undefined ||
-      ownerExperience !== undefined ||
-      ownerEarnedExperience !== undefined ||
-      ownerPetExperience !== undefined
-    )
-      void utils.pets.getPet.invalidate();
+    const ownerProgress = [
+      ownerUpdatedAt,
+      ownerExperience,
+      ownerEarnedExperience,
+      ownerPetExperience,
+    ];
+    const hasChanged = ownerProgress.some(
+      (value, index) => value !== previousOwnerProgress.current[index],
+    );
+    previousOwnerProgress.current = ownerProgress;
+    // Mounts already refetch; comparing values also keeps effect replays idempotent.
+    if (hasChanged) void utils.pets.getPet.invalidate();
   }, [
     ownerUpdatedAt,
     ownerExperience,
