@@ -478,9 +478,9 @@ export type ExtraState = {
   relations: Record<string, VillageAlliance>; // relationId -> VillageAlliance
   clans: Record<string, Clan>; // clanId -> Clan
   // User-specific static data (keyed by controllerId)
-  userQuests: Record<string, UserQuest[]>; // controllerId -> array of user quests
+  userQuests: Record<string, UserQuest[]>; // controllerId -> combat-relevant quest definitions
   completedQuests: Record<string, CombatQueryCompletedQuest[]>; // controllerId -> array of completed quest refs
-  questData: Record<string, QuestTrackerType[]>; // controllerId -> array of quest trackers
+  questData: Record<string, QuestTrackerType[]>; // controllerId -> all trackers, including omitted quests
   bounties: Record<string, CombatQueryBounty[]>; // controllerId -> array of bounties on this user
   bountySignups: Record<string, CombatQueryBountySignup[]>; // controllerId -> array of bounty signups
   // Battle settings

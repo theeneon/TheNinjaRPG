@@ -49,6 +49,7 @@ import {
 import { stillInBattle } from "@/libs/combat/actions";
 import { settleObjectiveWarCombat } from "@/libs/combat/objectiveWar";
 import { areBattleAllies } from "@/libs/combat/participants";
+import type { CombatQuestTrackerTask } from "@/libs/combat/quests";
 import type {
   ActionEffect,
   BattleWar,
@@ -1557,7 +1558,7 @@ export const updateUser = async (
     const isWarBattleParticipant = curBattle.usersState.some(isOpposingWarFoe);
 
     // Accumulate all tracker tasks into a single array for one getNewTrackers call
-    const trackerTasks: Parameters<typeof getNewTrackers>[1] = [];
+    const trackerTasks: CombatQuestTrackerTask[] = [];
 
     // Update quest tracker with battle result. pvp_kills is emitted on every COMBAT win; the
     // War-torn/Territory War (pvp quests) and active-war gating is applied per quest in getNewTrackers.
@@ -1655,9 +1656,11 @@ export const updateUser = async (
       },
     );
     updatedQuestIds.push(...questIdsUpdated);
+    // The battle omits unrelated achievement definitions, but owns their preloaded progress.
     const updatedQuestData = filterQuestTrackersForDbPersist(
       trackers,
       hydratedUser as NonNullable<UserWithRelations>,
+      true,
     );
     // Add notifications to combatResult
     result.notifications.push(...notifications);
@@ -2111,7 +2114,7 @@ export const updateUser = async (
     ) {
       const publicUser = getPublicQuestUser({
         ...hydratedUser,
-        questData: trackers,
+        questData: updatedQuestData,
       } as NonNullable<UserWithRelations>);
       const { masterySources: _privateSources, ...cacheBaseline } = baseline;
       const settledItems = combatCacheItems(baseline, user.items);

@@ -143,6 +143,7 @@ import {
   emptyPreBattleGearModifiers,
 } from "@/libs/combat/process";
 import { addQuestStartingEffects } from "@/libs/combat/questEffects";
+import { filterCombatQuests } from "@/libs/combat/quests";
 import {
   mergeLoadoutParticipants,
   summonActionBlockedReason,
@@ -1512,6 +1513,9 @@ export const combatRouter = createTRPCRouter({
         villages: data.villages,
         defaultProfile: data.defaultProfile,
         battleType: userBattle.battleType,
+        questIds: userBattle.extraState.questBattleSource
+          ? [userBattle.extraState.questBattleSource.questId]
+          : [],
         width: userBattle.width,
         height: userBattle.height,
         hide: false,
@@ -3228,6 +3232,11 @@ export const initiateBattle = async (
     leftSideUserIds: userIds,
     leftSideUserCount,
     isSummon: false,
+    questIds: [
+      info.questBattleSource?.questId,
+      info.questAttempt?.questId,
+      questEncounter?.quest.id,
+    ].filter((id): id is string => !!id),
     summonTemplateCache,
     petPreload: {
       pets,
@@ -4430,6 +4439,8 @@ export const processUsersForBattle = async (
     /** Ordered team boundary, allowing the same AI template on opposing teams. */
     leftSideUserCount?: number;
     isSummon: boolean;
+    /** Owning attempts must remain available even when authored as achievements. */
+    questIds?: string[];
     /** Raw rows shared only within one preparation; every transformation receives a clone. */
     summonTemplateCache?: Map<string, Promise<CombatQueryUser[]>>;
     width: number;
@@ -5355,7 +5366,12 @@ export const processUsersForBattle = async (
 
     // Add userQuests (static - don't change during battle)
     if (user.userQuests && user.userQuests.length > 0) {
-      extraState.userQuests[user.controllerId] = user.userQuests;
+      extraState.userQuests[user.controllerId] = filterCombatQuests(user.userQuests, [
+        ...(info.questIds ?? []),
+        ...(user.questData ?? [])
+          .filter((tracker) => tracker.party)
+          .map((tracker) => tracker.id),
+      ]);
     }
 
     // Add completedQuests (static - don't change during battle)

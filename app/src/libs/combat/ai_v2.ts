@@ -59,14 +59,49 @@ export const performAIaction = (
   const nextActionEffects: ActionEffect[] = [];
   const aiDescriptions: string[] = [];
   let nextBattle = battle;
-  // Action catalogs are read-only during turns; insertion realizes copies of their tags.
-  // Keep everything else isolated, including summon bloodlines and private wave/run state.
-  const returnBattle = structuredClone({
+  // Catalogs and settlement snapshots are read-only during turns. Bloodlines, summon
+  // templates and private wave/run state still need independent mutable copies.
+  const {
+    jutsus,
+    items,
+    userQuests,
+    completedQuests,
+    questData,
+    settings,
+    villages,
+    relations,
+    wars,
+    anbuSquads,
+    clans,
+    bounties,
+    bountySignups,
+    jutsuReskins,
+    ...mutableExtraState
+  } = nextBattle.extraState;
+  const clonedBattle = structuredClone({
     ...nextBattle,
-    extraState: { ...nextBattle.extraState, jutsus: {}, items: {} },
+    extraState: mutableExtraState,
   });
-  returnBattle.extraState.jutsus = nextBattle.extraState.jutsus;
-  returnBattle.extraState.items = nextBattle.extraState.items;
+  const returnBattle: CompleteBattle = {
+    ...clonedBattle,
+    extraState: {
+      ...clonedBattle.extraState,
+      jutsus,
+      items,
+      userQuests,
+      completedQuests,
+      questData,
+      settings,
+      villages,
+      relations,
+      wars,
+      anbuSquads,
+      clans,
+      bounties,
+      bountySignups,
+      jutsuReskins,
+    },
+  };
 
   // Find users whose turns are AI-driven: actual AIs, plus humans who handed
   // their turns to their own AI profile (auto combat)

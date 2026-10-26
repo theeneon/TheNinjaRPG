@@ -5,8 +5,9 @@ import { updateUser } from "@/libs/combat/database";
 import { captureCombatCacheSnapshot } from "@/libs/combat/userCache";
 import { calcBattleResult } from "@/libs/combat/util";
 import type { PusherClient } from "@/libs/pusher";
+import { QuestTracker } from "@/validators/objectives";
 import { insertItems, insertUserItems, insertUsers } from "../../setup/factories";
-import { describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 import { makeBattleUser, makeCompleteBattle } from "./helpers/battleScenario";
 
 describeWithDatabase("combat profile cache inventory confirmation", () => {
@@ -36,5 +37,27 @@ describeWithDatabase("combat profile cache inventory confirmation", () => {
     if (tombstone) expect(result.profileUpdate).toBeUndefined();
     else expect(result.profileUpdate?.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: "cache-stack", quantity })]));
     expect((await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))?.battleId).toBeNull();
+  });
+
+  it("preserves omitted quest progress in storage and the settlement profile patch without reads", async () => {
+    const database = await getTestDatabase();
+    const omitted = QuestTracker.parse({ id: "unloaded-achievement", goals: [{ id: "earned", value: 7, done: true }] });
+    await database.update(userData).set({ questData: [omitted] }).where(eq(userData.userId, "cache-player"));
+    const original = await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player"), with: { items: { with: { item: true } } } });
+    if (!original) throw new Error("Missing combat profile");
+    const state = makeCompleteBattle({ id: "cache-fight", battleType: "ARENA", rewardScaling: 1, usersState: [
+      makeBattleUser("cache-player", { direction: "left", rank: "NONE", isAi: false, isSummon: false, curHealth: 100, sector: 1, items: [] }),
+      makeBattleUser("cache-ai", { direction: "right", isAi: true, curHealth: 0, sector: 1, leftBattle: true }),
+    ], extraState: {
+      profileCacheSnapshots: { "cache-player": captureCombatCacheSnapshot(original) },
+      energyCapacity: { "cache-player": 100 }, energyRegeneration: { "cache-player": 0 },
+      questData: { "cache-player": original.questData ?? [] }, userQuests: { "cache-player": [] },
+    } });
+    const result = calcBattleResult(state, "cache-player", [])!;
+    result.villagePrestige = 0; result.villageTokens = 0; result.anbuPoints = 0; result.clanPoints = 0;
+    const { statements } = await recordQueries(() => updateUser(database, { trigger: async () => {} } as unknown as PusherClient, state, result, "cache-player"));
+    expect(statements.some((statement) => /^select\b/i.test(statement))).toBe(false);
+    expect((await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))?.questData).toEqual([omitted]);
+    expect(result.profileUpdate?.userPatch.questData).toEqual([omitted]);
   });
 });

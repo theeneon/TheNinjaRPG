@@ -34,6 +34,9 @@ describe("AI action catalog isolation", () => {
       );
       expect(result.nextBattle.extraState.jutsus).toBe(battle.extraState.jutsus);
       expect(result.nextBattle.extraState.items).toBe(battle.extraState.items);
+      for (const key of sharedSnapshotKeys) {
+        expect(result.nextBattle.extraState[key]).toBe(battle.extraState[key]);
+      }
       expect(result.nextBattle.usersState).not.toBe(battle.usersState);
       expect(result.nextBattle.usersEffects).not.toBe(battle.usersEffects);
       expect(result.nextBattle.groundEffects).not.toBe(battle.groundEffects);
@@ -149,6 +152,7 @@ const scenario = (action: ZodAllAiAction): CompleteBattle => {
       jutsuReskins: {}, sageModes: {}, villages: {}, anbuSquads: {}, clans: {},
       keystoneItems: {}, wars: {}, relations: {}, userQuests: {}, completedQuests: {},
       questData: {}, bounties: {}, bountySignups: {},
+      settings: [],
       revealedActions: { jutsuIds: [], itemIds: [] },
       aiProfiles: { profile: { id: "profile", userId: "actor", includeDefaultRules: false, rules: [{ conditions: [], action }] } },
     },
@@ -161,7 +165,13 @@ const run = (battle: CompleteBattle) =>
 const freezeCatalogs = (battle: CompleteBattle) => {
   deepFreeze(battle.extraState.jutsus);
   deepFreeze(battle.extraState.items);
+  for (const key of sharedSnapshotKeys) deepFreeze(battle.extraState[key]);
 };
+
+const sharedSnapshotKeys = [
+  "userQuests", "completedQuests", "questData", "settings", "villages", "relations",
+  "wars", "anbuSquads", "clans", "bounties", "bountySignups", "jutsuReskins",
+] as const;
 
 const deepFreeze = (value: unknown) => {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return;
