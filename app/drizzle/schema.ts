@@ -2407,7 +2407,10 @@ export const actionLog = mysqlTable(
   },
   (table) => {
     return {
-      userId: index("ActionLog_userId_idx").on(table.userId),
+      userIdTableNameIdx: index("ActionLog_userId_tableName_idx").on(
+        table.userId,
+        table.tableName,
+      ),
       relatedIdIdx: index("ActionLog_relatedId_idx").on(table.relatedId),
       tableNameIdx: index("ActionLog_tableName_idx").on(table.tableName),
       createdAtIdx: index("ActionLog_createdAt_idx").on(table.createdAt),
@@ -2871,6 +2874,10 @@ export const userData = mysqlTable(
   (table) => {
     return {
       isAiIdx: index("UserData_isAi_idx").on(table.isAi),
+      isAiUpdatedAtIdx: index("UserData_isAi_updatedAt_idx").on(
+        table.isAi,
+        table.updatedAt,
+      ),
       // Composite index for the frequently-used public users leaderboard query
       // Covers: WHERE isAi = ? ORDER BY rankedLp DESC, experience DESC LIMIT ?
       isAiRankedLpExperienceIdx: index("UserData_isAi_rankedLp_experience_idx").on(
@@ -2912,6 +2919,7 @@ export const userData = mysqlTable(
         table.stealthActive,
       ),
       senseiIdx: index("UserData_senseiId_idx").on(table.senseiId),
+      recruiterIdIdx: index("UserData_recruiterId_idx").on(table.recruiterId),
       latitudeIdx: index("UserData_latitude_idx").on(table.latitude),
       longitudeIdx: index("UserData_longitude_idx").on(table.longitude),
       createdAtIdx: index("UserData_createdAt_idx").on(table.createdAt),

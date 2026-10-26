@@ -827,6 +827,13 @@
       "when": 1793011112340,
       "tag": "0118_blue_exiles",
       "breakpoints": false
+    },
+    {
+      "idx": 119,
+      "version": "5",
+      "when": 1793015264453,
+      "tag": "0119_pale_ma_gnuci",
+      "breakpoints": false
     }
   ]
 }
