@@ -3,6 +3,7 @@ import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
 import { atom, useAtom } from "jotai";
+import * as navigation from "next/navigation";
 import { StrictMode, useState } from "react";
 import { ActiveSessionBoundary } from "@/layout/ActiveSessionBoundary";
 
@@ -17,6 +18,7 @@ const Probe = () => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 it("preserves hydration state, then resets the query client and atoms on account switches and sign-out", () => {
+  vi.spyOn(navigation, "useRouter").mockReturnValue({ push: vi.fn(), replace: vi.fn() } as never);
   let auth = { isLoaded: false, session: undefined as { id: string } | null | undefined };
   vi.spyOn(clerk, "useSession").mockImplementation(() => auth as ReturnType<typeof clerk.useSession>);
   const view = render(<StrictMode><ActiveSessionBoundary><Probe /></ActiveSessionBoundary></StrictMode>);

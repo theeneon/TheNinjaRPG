@@ -2,7 +2,6 @@ import alea from "alea";
 import type { Grid } from "honeycomb-grid";
 import { useSetAtom } from "jotai";
 import { Check, HelpCircle, Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import type React from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Clock, Group, OrthographicCamera, Vector2 } from "three";
@@ -21,6 +20,7 @@ import {
   useCombatUpdates,
 } from "@/hooks/combat";
 import { useLocalStorage } from "@/hooks/localstorage";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import { usePerformanceMonitor } from "@/hooks/performance-monitor";
 import { TUTORIAL_STEPS, useTutorialStep } from "@/hooks/tutorial";
 import { usePageActive } from "@/hooks/usePageActive";

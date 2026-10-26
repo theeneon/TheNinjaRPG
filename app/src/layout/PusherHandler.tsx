@@ -1,12 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import Pusher from "pusher-js";
 import { useEffect, useState } from "react";
 import type { UserWithRelations } from "@/api/routers/profile";
 import { api } from "@/app/_trpc/client";
 import { ToastAction } from "@/components/ui/toast";
 import { env } from "@/env/client.mjs";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import Link from "@/layout/Link";
 import { showMutationToast } from "@/libs/toast";
 import { pushToCombat, usePublicPathname } from "@/utils/routing";

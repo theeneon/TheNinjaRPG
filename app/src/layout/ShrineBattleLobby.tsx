@@ -2,7 +2,6 @@
 
 import type { inferRouterOutputs } from "@trpc/server";
 import { CirclePlay, DoorOpen, Loader2, Shield, Swords, Users } from "lucide-react";
-import { useRouter } from "next/navigation";
 import type React from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
@@ -13,6 +12,7 @@ import {
   SHRINE_BATTLE_MIN_ATTACKERS,
 } from "@/drizzle/constants";
 import type { UserRank } from "@/drizzle/schema";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import AvatarImage from "@/layout/Avatar";
 import Countdown from "@/layout/Countdown";
 import Loader from "@/layout/Loader";

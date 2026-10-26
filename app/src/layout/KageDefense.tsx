@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
@@ -21,6 +20,7 @@ import {
   KAGE_DEFENSE_WINDOW_HOURS,
   KAGE_PRESTIGE_COST,
 } from "@/drizzle/constants";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import ContentBox from "@/layout/ContentBox";
 import Countdown from "@/layout/Countdown";
 import Link from "@/layout/Link";

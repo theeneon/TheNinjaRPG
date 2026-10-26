@@ -1,5 +1,6 @@
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, type useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { useNavigationRouter } from "@/hooks/navigation";
 import { publicPathForShellPath } from "@/libs/shell";
 import type { UserWithRelations } from "../server/api/routers/profile";
 
@@ -37,7 +38,7 @@ export const pushToCombat = (
 };
 
 export const useAwake = (userData: UserWithRelations) => {
-  const router = useRouter();
+  const router = useNavigationRouter();
   const pathname = usePublicPathname();
   const userStatus = userData?.status;
   useEffect(() => {

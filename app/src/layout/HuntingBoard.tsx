@@ -1,11 +1,11 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { HUNTING_RANKS } from "@/drizzle/constants";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import { HuntingRewards } from "@/layout/CombatRewards";
 import ContentBox from "@/layout/ContentBox";
 import Link from "@/layout/Link";

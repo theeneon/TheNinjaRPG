@@ -3,6 +3,7 @@
 import { useSession } from "@clerk/nextjs";
 import { Provider as AtomProvider } from "jotai";
 import { useState } from "react";
+import { NavigationProvider } from "@/layout/NavigationProvider";
 import { activeSessionKey } from "@/libs/activeSession";
 
 /**
@@ -29,5 +30,9 @@ export const ActiveSessionBoundary: React.FC<{ children: React.ReactNode }> = ({
     const next = activeSessionKey({ sessionId, firstSessionId: first });
     if (next !== key) setKey(next);
   }
-  return <AtomProvider key={key}>{children}</AtomProvider>;
+  return (
+    <AtomProvider key={key}>
+      <NavigationProvider>{children}</NavigationProvider>
+    </AtomProvider>
+  );
 };

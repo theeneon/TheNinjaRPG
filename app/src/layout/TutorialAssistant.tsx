@@ -2,7 +2,6 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { ArrowRight, Loader2, Settings2, Sparkles, X } from "lucide-react";
-import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
@@ -23,6 +22,7 @@ import {
 } from "@/drizzle/constants";
 import type { UserQuest } from "@/drizzle/schema";
 import { useLocalStorage } from "@/hooks/localstorage";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import type { TutorialStepConfig } from "@/hooks/tutorial";
 import {
   TUTORIAL_HOSPITALIZED_STEP,

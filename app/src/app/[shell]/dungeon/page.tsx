@@ -11,7 +11,6 @@ import {
   Swords,
   Users,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
@@ -25,6 +24,7 @@ import {
   DUNGEON_PARTY_SIZE,
   DUNGEON_RUN_SECONDS,
 } from "@/drizzle/constants";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import ContentBox from "@/layout/ContentBox";
 import Countdown from "@/layout/Countdown";
 import Link from "@/layout/Link";
