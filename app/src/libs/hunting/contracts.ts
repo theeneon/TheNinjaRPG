@@ -44,6 +44,7 @@ export const huntingSessionStage = (
 /**
  * Build the persisted result from preloaded rules, preserving allowance on non-victories.
  * Roll once before settlement so deadlock retries keep the same drops and cooldown.
+ * Snapshotted yield increases only successful drops; older battles default to no bonus.
  */
 export const huntingVictoryReceipt = (
   meta: HuntingBattleState,
@@ -71,7 +72,7 @@ export const huntingVictoryReceipt = (
           .map((r) => ({
             itemId: r.itemId,
             name: meta.materialNames[r.itemId] ?? r.itemId,
-            quantity: r.quantity,
+            quantity: r.quantity + (meta.huntingBonusQuantity ?? 0),
             bonus: r.chance < 100,
           }))
       : [],

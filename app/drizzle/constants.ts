@@ -2167,7 +2167,7 @@ export const WAR_MAX_DURATION_DAYS = 14; // Maximum war duration before auto-res
 
 // Skill point leveling constants
 export const SKILL_POINT_MIN_LEVEL = 31; // Minimum level to start gaining skill points from leveling
-export const MAX_SKILL_POINTS_FROM_LEVELING = 20; // Maximum skill points that can be gained from leveling
+export const MAX_SKILL_POINTS_FROM_LEVELING = 30; // Maximum skill points that can be gained from leveling
 export const SKILL_POINT_MAX_LEVEL =
   SKILL_POINT_MIN_LEVEL + MAX_SKILL_POINTS_FROM_LEVELING - 1; // Maximum level to gain skill points from leveling
 
@@ -3426,7 +3426,7 @@ export const BOUNTY_MAX_HUNTERS = 3;
 export const BOUNTY_MIN_AMOUNT = 1000000;
 
 // Skill system constants
-export const MAX_SKILL_POINTS = 100; // Total max skillpoints (20 from leveling + 80 from quests)
+export const MAX_SKILL_POINTS = 100; // Total skill-point cap across leveling and quest rewards
 
 // Support System Settings
 export const SupportTicketCategories = [
@@ -4115,3 +4115,9 @@ export const TERRITORY_WAR_TEAM_SIZE = 3;
 export const TERRITORY_WAR_TOKEN_REWARD = 300_000;
 export const TERRITORY_WAR_BOOST_PERCENT = 15;
 export const TERRITORY_WAR_BOOST_HOURS = 1;
+/** Per-effect and total percentage cap after eligible passive sources stack additively. */
+export const MAX_ACTIVITY_REDUCTION_PERCENT = 60;
+/** Per-effect and total extra units per successful hunting material, without changing drop chances. */
+export const MAX_HUNTING_BONUS_QUANTITY = 20;
+/** Per-effect and total extra units per successful gathering material. */
+export const MAX_GATHERING_BONUS_QUANTITY = 20;

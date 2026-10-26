@@ -39,6 +39,22 @@ describeWithDatabase("confirmed progression cache responses against MySQL", () =
     expect(result.userPatch).not.toHaveProperty("pvpActivity");
   });
 
+  it.each([
+    { level: 29, points: 0, expected: 0 },
+    { level: 30, points: 0, expected: 1 },
+    { level: 49, points: 19, expected: 20 },
+    { level: 50, points: 20, expected: 21 },
+    { level: 58, points: 28, expected: 29 },
+    { level: 59, points: 29, expected: 30 },
+    { level: 60, points: 30, expected: 30 },
+  ])("awards skill points through level 60 when advancing from $level", async ({ level, points, expected }) => {
+    await seed({ level, skillPoints: points, experience: calcLevelRequirements(80) });
+    const result = await (await callerFor(profileRouter, USER_ID)).levelUp();
+    expect(result.success).toBe(true);
+    expect(result.userPatch).toMatchObject({ level: level + 1, skillPoints: expected });
+    expect((await read()).skillPoints).toBe(expected);
+  });
+
   it("clears sensei at the final student level without a second profile fetch", async () => {
     await seed({ level: SENSEI_MAX_STUDENT_LEVEL, senseiId: "sensei-id" });
     const database = await getTestDatabase();

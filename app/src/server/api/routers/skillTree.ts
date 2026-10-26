@@ -1108,8 +1108,9 @@ export const fetchUserSkills = async (client: DrizzleClient, userId: string) => 
 };
 
 /**
- * The sources of a user's out-of-battle mastery tags, for effectiveMasteries: the equipped
- * bloodline, activated skills and equipped items.
+ * Preload the bloodline, activated skills and equipped gear for mastery and activity bonuses.
+ * Keep hidden equipped items: inventory visibility does not determine passive eligibility.
+ * Availability fields let the shared eligibility helpers filter these sources in memory.
  * @param client - The database client
  * @param userId - The user ID
  */
@@ -1129,7 +1130,16 @@ export const fetchMasterySources = async (
         with: { skill: { columns: { target: true, effects: true } } },
       },
       items: {
-        columns: { id: true, equipped: true, durability: true, level: true },
+        columns: {
+          id: true,
+          equipped: true,
+          durability: true,
+          level: true,
+          quantity: true,
+          storedAtHome: true,
+          isInAuction: true,
+          craftingFinishedAt: true,
+        },
         where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
         with: {
           item: {

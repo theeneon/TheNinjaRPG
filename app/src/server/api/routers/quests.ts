@@ -2168,6 +2168,8 @@ export const updateRewards = async (info: {
   // to advance the herbs_gathered tracker. Explicit opt-in — the herbs branch below no longer
   // sniffs `"userQuests" in user`, so a future caller cannot silently start incrementing it.
   questUser?: NonNullable<UserWithRelations>;
+  /** Captured by the completed collection; ordinary rewards without a snapshot use base yield. */
+  gatheringBonusQuantity?: number;
   // Extra userData columns folded into the single UPDATE below, so a caller that must also patch
   // this user's row on the reward-claim path (e.g. release an NPC-mission slot) does it in the
   // same round-trip instead of a trailing sequential write. Values may be raw scalars or `sql`
@@ -2381,6 +2383,7 @@ export const updateRewards = async (info: {
     user.gatheringExperience,
     gatheringItems || [],
     rewards.reward_gathering_items_ids,
+    info.gatheringBonusQuantity ?? 0,
   );
 
   // Expand reward items based on quantities, respecting stack sizes
@@ -2407,7 +2410,7 @@ export const updateRewards = async (info: {
     }
   }
 
-  // Total items to insert (hunter and gathering items are always quantity 1)
+  // Material drops are expanded per unit, preserving inventory stack limits.
   const itemsToInsert = [
     ...expandedRewardItems,
     ...(droppedHunterItems || []).map((i) => ({ id: i.id, name: i.name, quantity: 1 })),
@@ -4190,6 +4193,23 @@ export const commitQuestObjectiveRewards = async (info: {
     !(resolved && userQuest?.quest.questType === "achievement") &&
     !(resolved && info.existingHistory === null);
 
+  const collectionObjectiveIds = new Set(
+    userQuest?.quest.questType === "gathering"
+      ? userQuest.quest.content.objectives
+          .filter((objective) => objective.task === "collect_item")
+          .map((objective) => objective.id)
+      : [],
+  );
+  const collectionBonuses =
+    trackers
+      .find((tracker) => tracker.id === userQuest?.questId)
+      ?.goals.filter((goal) => goal.done && collectionObjectiveIds.has(goal.id))
+      .map((goal) => goal.gatheringBonusQuantity ?? 0) ?? [];
+  // Read before completion removes the tracker. A payout spanning multiple
+  // collections uses their lowest captured yield so every required collection earns it.
+  const gatheringBonusQuantity = collectionBonuses.length
+    ? Math.min(...collectionBonuses)
+    : 0;
   user.questData = filterQuestTrackersForDbPersist(trackers, user);
   // Attached members retain terminal contributions and personal collected flags so a later
   // team sync can recover a failed publication. New assignments already clear old trackers.
@@ -4495,6 +4515,7 @@ export const commitQuestObjectiveRewards = async (info: {
     // Opt in to the herbs_gathered tracker: this is the gathering-claim path and `user`
     // here is the fully-hydrated row (with quest relations).
     questUser: user,
+    gatheringBonusQuantity,
     postClaimUserDataPatch: mergedUserDataPatch,
     dropTrackerForQuestId:
       resolved && !shouldRetainPartyTracker ? userQuest?.questId : undefined,

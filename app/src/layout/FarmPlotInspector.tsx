@@ -13,6 +13,7 @@ import {
   getFarmPrimaryAction,
   getNextWateringAt,
 } from "@/libs/farming";
+import { formatSecondsToTimeDisplay } from "@/utils/time";
 import { useRequiredUserData } from "@/utils/UserContext";
 import type { FarmPlotState, FarmStateResponse } from "@/validators/farming";
 
@@ -30,6 +31,7 @@ type FarmPlotInspectorProps = {
 };
 
 const formatDuration = (seconds: number) => {
+  if (seconds < 60) return formatSecondsToTimeDisplay(seconds);
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.ceil((seconds % 3600) / 60);
   if (hours > 0) return `${hours}h ${minutes > 0 ? `${minutes}m` : ""}`.trim();

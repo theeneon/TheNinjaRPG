@@ -12,6 +12,7 @@ import {
   updateRewards,
 } from "../../../src/server/api/routers/quests";
 import { PostProcessedRewardSchema } from "@/validators/rewards";
+import { IncreaseGatheringYield } from "@/validators/combat";
 import { insertQuestHistory, insertQuests, insertUsers } from "../../setup/factories";
 import {
   describeWithDatabase,
@@ -155,6 +156,7 @@ const makeClient = (
  */
 const makeGatheringClient = () => {
   const sets: Record<string, unknown>[] = [];
+  const inserted: { itemId?: string; quantity?: number }[] = [];
   const update = vi.fn((table?: unknown) => table === village ? ({ set: () => ({ where: vi.fn().mockResolvedValue({ rowsAffected: 0 }) }) }) : ({
     set: (value: Record<string, unknown>) => {
       sets.push(value);
@@ -169,9 +171,10 @@ const makeGatheringClient = () => {
     })),
   }));
   const insert = vi.fn(() => ({
-    values: vi.fn(() => ({
-      onDuplicateKeyUpdate: vi.fn().mockResolvedValue(undefined),
-    })),
+    values: vi.fn((rows: { itemId?: string; quantity?: number }[]) => {
+      inserted.push(...rows);
+      return { onDuplicateKeyUpdate: vi.fn().mockResolvedValue(undefined) };
+    }),
   }));
   return {
     client: {
@@ -184,10 +187,74 @@ const makeGatheringClient = () => {
       query: { questHistory: { findFirst: vi.fn().mockResolvedValue(null) } },
     } as never,
     sets,
+    inserted,
   };
 };
 
 describe("commitQuestObjectiveRewards compatibility", () => {
+  it("grants gathering bonus units through the shared reward payout", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { user } = makeUser();
+    const { client } = makeGatheringClient();
+    const gatherer = {
+      ...user,
+      occupation: "GATHERING",
+      bloodline: { effects: [IncreaseGatheringYield.parse({ power: 2 })] },
+    };
+    const result = await updateRewards({
+      client,
+      user: gatherer as never,
+      questUser: gatherer as never,
+      gatheringBonusQuantity: 2,
+      reason: "Gathering reward",
+      rewards: PostProcessedRewardSchema.parse({ reward_gathering_items: true }),
+    });
+    expect(result.droppedGatheringItems).toHaveLength(3);
+    expect(result.items).toEqual(Array(3).fill({ id: "herb-1", name: "Herb", quantity: 1 }));
+  });
+  it.each([
+    { captured: 2, current: 0, expected: 3 },
+    { captured: 2, current: 7, expected: 3 },
+    { captured: 0, current: 2, expected: 1 },
+    { captured: undefined, current: 2, expected: 1 },
+  ])("pays captured gathering yield $captured with claim-time bonus $current", async ({ captured, current, expected }) => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { user, missionHistory } = makeUser();
+    const { client, inserted } = makeGatheringClient();
+    const gatheringHistory = {
+      ...missionHistory,
+      quest: {
+        ...missionHistory.quest,
+        questType: "gathering",
+        content: {
+          ...missionHistory.quest.content,
+          objectives: [{ id: "collect", task: "collect_item" }],
+        },
+      },
+    };
+    const result = await commitQuestObjectiveRewards({
+      client,
+      userId: user.userId,
+      user: {
+        ...user,
+        occupation: "GATHERING",
+        bloodline: { effects: [IncreaseGatheringYield.parse({ power: current })] },
+        userQuests: [gatheringHistory, ...user.userQuests.slice(1)],
+      } as never,
+      userQuest: gatheringHistory as never,
+      trackers: [{
+        id: missionHistory.questId,
+        goals: [{ id: "collect", done: true, collected: true, gatheringBonusQuantity: captured }],
+      }] as never,
+      rewards: PostProcessedRewardSchema.parse({ reward_gathering_items: true }),
+      resolved: true,
+      notifications: [],
+      consequences: [],
+      existingHistory: missionHistory,
+    });
+    expect(result.outcome).toBe("claimed");
+    expect(inserted.filter((row) => row.itemId === "herb-1")).toHaveLength(expected);
+  });
   it.each([true, false])("commits a milestone level and all six stats only if the snapshot claim wins (%s)", async (wins) => {
     const fixture = makeUser();
     const history = { ...fixture.missionHistory, quest: { ...fixture.missionHistory.quest, questType: "starter", content: {

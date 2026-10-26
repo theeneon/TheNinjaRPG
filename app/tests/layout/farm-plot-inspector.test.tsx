@@ -1,7 +1,11 @@
 import { ensureDom } from "../setup-dom.mjs";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { FarmMarket } from "@/layout/FarmMarket";
 import { FarmPlotInspector } from "@/layout/FarmPlotInspector";
+import { getActivityBonuses } from "@/libs/activityBonuses";
+import { getFarmGrowTimeSeconds } from "@/libs/farming";
+import { DecreaseFarmingTime } from "@/validators/combat";
 import type { FarmPlotState, FarmStateResponse } from "@/validators/farming";
 
 vi.mock("@/utils/UserContext", () => ({
@@ -77,6 +81,71 @@ describe("FarmPlotInspector", () => {
   beforeEach(() => {
     ensureDom();
     vi.clearAllMocks();
+  });
+
+  it.each([
+    { base: 2, power: 60, seconds: 1, display: "1s" },
+    { base: 59, power: 0, seconds: 59, display: "59s" },
+    { base: 60, power: 0, seconds: 60, display: "1m" },
+    { base: 61, power: 0, seconds: 61, display: "2m" },
+    { base: 3660, power: 0, seconds: 3660, display: "1h 1m" },
+  ])("shows $seconds seconds accurately in both seed estimates", (fixture) => {
+    const { farmingReductionPercent } = getActivityBonuses({
+      level: 1,
+      bloodlineId: "farming-bloodline",
+      ninjutsuMastery: 0,
+      genjutsuMastery: 0,
+      taijutsuMastery: 0,
+      bukijutsuMastery: 0,
+      bloodlineMastery: 0,
+      sageMastery: 0,
+      bloodline: { effects: [DecreaseFarmingTime.parse({ power: fixture.power })] },
+    });
+    const growTimeSeconds = getFarmGrowTimeSeconds(
+      fixture.base,
+      { staffAccount: false, federalStatus: "NONE" },
+      farmingReductionPercent,
+    );
+    expect(growTimeSeconds).toBe(fixture.seconds);
+    const seed = { ...farmState.availableSeeds[0]!, growTimeSeconds };
+    const state = {
+      ...farmState,
+      farmCurrency: 100,
+      availableSeeds: [seed],
+      shopEntries: [{
+        type: "SEED" as const,
+        label: seed.name,
+        cost: 10,
+        minLevel: seed.minLevel,
+        itemId: seed.itemId,
+        canAfford: true,
+        canPurchase: true,
+        growTimeSeconds,
+        yieldQuantity: seed.yieldQuantity,
+        yieldName: seed.yieldName,
+      }],
+    };
+    const inspector = render(
+      <FarmPlotInspector
+        plot={plot()}
+        farmState={state}
+        now={new Date()}
+        pending={false}
+        {...handlers}
+      />,
+    );
+    const inspectorEstimate = inspector.getByText(/→ 1 Tomato/).textContent;
+    inspector.unmount();
+    const market = render(
+      <FarmMarket farmState={state} pendingKeys={new Set()} onBuy={async () => true} />,
+    );
+    expect({
+      inspector: inspectorEstimate,
+      market: market.getByText(/→ 1 Tomato/).textContent,
+    }).toEqual({
+      inspector: `${fixture.display} → 1 Tomato`,
+      market: `${fixture.display} → 1 Tomato · +0 XP`,
+    });
   });
 
   it("renders the mobile dock and plants only from the explicit primary action", () => {

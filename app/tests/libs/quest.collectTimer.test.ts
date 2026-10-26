@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { getNewTrackers } from "@/libs/quest";
+import { getCollectDeadline } from "@/utils/time";
+import { DecreaseGatheringTime, IncreaseGatheringYield } from "@/validators/combat";
+import { QuestTracker } from "@/validators/objectives";
 
-// Timed collect_item objectives are gated server-side on the elapsed time since the
-// tracker's `timestamp`, measured with Date.now(); the clock is a spy so each case can
-// place the request exactly relative to the deadline. (The timestamp itself is written
-// with `new Date()`, which the spy does not cover.)
+// Timed collect_item objectives compare Date.now() with the saved deadline, falling
+// back to timestamp plus configured duration for older trackers. The spy controls
+// both collection starts and exact completion boundaries.
 const START = Date.UTC(2026, 8, 16, 12, 0, 0);
 let nowMs = START;
 
@@ -82,6 +84,12 @@ describe("getNewTrackers — timed collect_item", () => {
     expect(result.notifications.some((n) => n.includes("started collecting"))).toBe(true);
   });
 
+  it("formats the collection duration in the start notification", () => {
+    expect(evaluate(makeCollectUser(60)).result.notifications).toContain(
+      "You started collecting. This will take 60m.",
+    );
+  });
+
   it("rejects a request that arrives just before the deadline", () => {
     const startedAt = new Date(START).toISOString();
     nowMs = START + 30_000 - 1;
@@ -105,5 +113,130 @@ describe("getNewTrackers — timed collect_item", () => {
     const { goal, granted } = evaluate(makeCollectUser(0.301, startedAt));
     expect(goal?.done).toBe(true);
     expect(granted).toBe(true);
+  });
+});
+
+const withGatheringBonus = (power = 10, collectTimeMinutes = 1) => {
+  const player = makeCollectUser(collectTimeMinutes);
+  player.userQuests[0]!.quest.questType = "gathering";
+  player.bloodline = {
+    effects: [DecreaseGatheringTime.parse({ power })],
+  } as NonNullable<typeof player.bloodline>;
+  return player;
+};
+
+describe("gathering collection snapshots", () => {
+  it("persists yield at collection start through bonus changes and completion", () => {
+    const player = withGatheringBonus();
+    player.bloodline!.effects.push(IncreaseGatheringYield.parse({ power: 2 }));
+    const started = evaluate(player);
+    player.questData = started.result.trackers.map((tracker) => QuestTracker.parse(tracker));
+    expect(player.questData[0]!.goals[0]!.gatheringBonusQuantity).toBe(2);
+    player.bloodline!.effects = [IncreaseGatheringYield.parse({ power: 7 })];
+    nowMs = START + 1000;
+    expect(evaluate(player).goal?.gatheringBonusQuantity).toBe(2);
+    nowMs = START + 54_000;
+    const completed = evaluate(player);
+    expect(completed.granted).toBe(true);
+    expect(completed.goal?.gatheringBonusQuantity).toBe(2);
+  });
+  it("clears captured yield on departure and captures the new bonus on return", () => {
+    const player = withGatheringBonus();
+    player.bloodline!.effects.push(IncreaseGatheringYield.parse({ power: 2 }));
+    player.questData = evaluate(player).result.trackers;
+    player.longitude = 2;
+    const left = evaluate(player);
+    expect(left.goal?.gatheringBonusQuantity).toBeUndefined();
+    player.questData = left.result.trackers;
+    player.longitude = 1;
+    player.bloodline!.effects = [IncreaseGatheringYield.parse({ power: 7 })];
+    expect(evaluate(player).goal?.gatheringBonusQuantity).toBe(7);
+  });
+  it("does not add a claim-time bonus to legacy timers", () => {
+    const player = withGatheringBonus();
+    player.bloodline!.effects.push(IncreaseGatheringYield.parse({ power: 2 }));
+    player.questData![0]!.goals[0]!.timestamp = new Date(START).toISOString();
+    nowMs = START + 60_000;
+    const completed = evaluate(player);
+    expect(completed.granted).toBe(true);
+    expect(completed.goal?.gatheringBonusQuantity).toBeUndefined();
+  });
+  it("captures yield for untimed gathering collections", () => {
+    const player = withGatheringBonus();
+    const objective = player.userQuests[0]!.quest.content.objectives[0]!;
+    if ("collect_time_minutes" in objective) objective.collect_time_minutes = 0;
+    player.bloodline!.effects.push(IncreaseGatheringYield.parse({ power: 2 }));
+    expect(evaluate(player)).toMatchObject({
+      granted: true,
+      goal: { gatheringBonusQuantity: 2 },
+    });
+  });
+  it("saves the reduced deadline and checks its exact completion boundary", () => {
+    const player = withGatheringBonus();
+    const first = evaluate(player);
+    expect(first.goal?.collectDeadline).toBe(new Date(START + 54_000).toISOString());
+    player.questData = first.result.trackers;
+    nowMs = START + 53_999;
+    expect(evaluate(player).granted).toBe(false);
+    nowMs += 1;
+    expect(evaluate(player).granted).toBe(true);
+    expect(getCollectDeadline(first.goal!, 1)).toEqual(new Date(START + 54_000));
+  });
+  it("does not recalculate a running timer after passive bonuses change", () => {
+    const player = withGatheringBonus();
+    const first = evaluate(player);
+    player.questData = first.result.trackers;
+    player.bloodline!.effects = [DecreaseGatheringTime.parse({ power: 59 })];
+    nowMs = START + 1000;
+    expect(evaluate(player).granted).toBe(false);
+    expect(evaluate(player).goal?.collectDeadline).toBe(first.goal?.collectDeadline);
+    nowMs = START + 54_000;
+    expect(evaluate(player).granted).toBe(true);
+  });
+  it("leaves old timers at their original duration", () => {
+    const player = withGatheringBonus(59);
+    player.questData![0]!.goals[0]!.timestamp = new Date(START).toISOString();
+    nowMs = START + 59_999;
+    expect(evaluate(player).granted).toBe(false);
+    expect(evaluate(player).goal?.collectDeadline).toBeUndefined();
+    nowMs += 1;
+    expect(evaluate(player).granted).toBe(true);
+  });
+  it("clears both fields on departure and captures a new bonus on return", () => {
+    const player = withGatheringBonus();
+    player.questData = evaluate(player).result.trackers;
+    player.longitude = 2;
+    const left = evaluate(player);
+    expect(left.goal?.timestamp).toBeUndefined();
+    expect(left.goal?.collectDeadline).toBeUndefined();
+    player.questData = left.result.trackers;
+    player.longitude = 1;
+    player.bloodline!.effects = [DecreaseGatheringTime.parse({ power: 20 })];
+    nowMs = START + 2000;
+    expect(evaluate(player).goal?.collectDeadline).toBe(
+      new Date(START + 50_000).toISOString(),
+    );
+  });
+  it("keeps unrelated quests and untimed objectives unchanged", () => {
+    const player = withGatheringBonus();
+    player.userQuests[0]!.quest.questType = "mission";
+    expect(evaluate(player).goal?.collectDeadline).toBe(
+      new Date(START + 60_000).toISOString(),
+    );
+    const untimed = makeCollectUser(0);
+    expect(evaluate(untimed).granted).toBe(true);
+    expect(evaluate(untimed).goal?.collectDeadline).toBeUndefined();
+  });
+  it("caps stacked gathering reductions before saving the deadline", () => {
+    const player = withGatheringBonus(60);
+    player.bloodline!.effects.push(DecreaseGatheringTime.parse({ power: 60 }));
+    expect(evaluate(player).goal?.collectDeadline).toBe(
+      new Date(START + 24_000).toISOString(),
+    );
+  });
+  it("keeps the one-second minimum for short collections", () => {
+    expect(evaluate(withGatheringBonus(60, 0.01)).goal?.collectDeadline).toBe(
+      new Date(START + 1000).toISOString(),
+    );
   });
 });

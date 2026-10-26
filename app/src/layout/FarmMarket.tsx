@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FarmQuantityStepper } from "@/layout/FarmQuantityStepper";
 import { FarmTransactionSummary } from "@/layout/FarmTransactionSummary";
 import Image from "@/layout/Image";
+import { formatSecondsToTimeDisplay } from "@/utils/time";
 import type { FarmShopEntryState, FarmStateResponse } from "@/validators/farming";
 
 type FarmMarketProps = {
@@ -18,6 +19,7 @@ type FarmMarketProps = {
 
 const duration = (seconds?: number) => {
   if (!seconds) return null;
+  if (seconds < 60) return formatSecondsToTimeDisplay(seconds);
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.ceil((seconds % 3600) / 60);
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`;

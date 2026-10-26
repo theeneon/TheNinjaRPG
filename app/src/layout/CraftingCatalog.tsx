@@ -15,19 +15,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  CONSUMABLE_CRAFTING_TIMES_MINS,
-  CRAFTING_TIMES_MINS,
-  ItemRarities,
-} from "@/drizzle/constants";
+import { ItemRarities } from "@/drizzle/constants";
 import type { Item, UserItemWithRelations } from "@/drizzle/schema";
+import { useActivityBonusRefresh } from "@/hooks/useActivityBonusRefresh";
 import { ActionSelector } from "@/layout/CombatActions";
 import ContentImage from "@/layout/ContentImage";
 import ItemWithEffects from "@/layout/ItemWithEffects";
 import Modal from "@/layout/Modal";
+import { getActivityBonuses } from "@/libs/activityBonuses";
 import {
   formatCraftingRank,
   getCraftingRank,
+  getCraftingSeconds,
   getMissingCraftingRank,
   getTotalItemQuantity,
 } from "@/libs/crafting";
@@ -98,6 +97,12 @@ export const CraftingCatalog: React.FC<CraftingCatalogProps> = ({
 }) => {
   // Utils
   const utils = api.useUtils();
+  useActivityBonusRefresh(userData, () => {
+    void utils.profile.getUser.invalidate();
+  });
+  const craftingReductionPercent = userData
+    ? getActivityBonuses(userData).craftingReductionPercent
+    : 0;
   const { timeDiff = 0 } = useUserData();
   const territoryWarBoost = userData
     ? getTerritoryWarBoost(userData, new Date(Date.now() - timeDiff))
@@ -215,24 +220,29 @@ export const CraftingCatalog: React.FC<CraftingCatalogProps> = ({
     ? `Requires ${formatCraftingRank(missingCraftingRank)} rank`
     : null;
 
-  // The numeric bonus dependency refreshes duration when expiry changes notifications
-  // while the profile object itself is structurally shared.
+  // Deadline renders can change the numeric bonus without changing the profile object.
   const craftingTimeDisplay = useMemo(() => {
     if (!selectedItem || !userData) return "";
-    const craftingTime =
-      selectedItem.itemType === "CONSUMABLE"
-        ? CONSUMABLE_CRAFTING_TIMES_MINS[userCraftingRank]
-        : CRAFTING_TIMES_MINS[userCraftingRank][selectedItem.rarity];
-
     const sectors = countBoostingShrines(userData.village?.sectors);
     const shrineBoost = getShrineBoost(sectors, "Crafting", userData.village);
-    const shrineBoostFactor = shrineBoost ? 1 - shrineBoost : 1;
-
-    const totalSeconds = Math.round(
-      craftingTime * 60 * shrineBoostFactor * craftQuantity * (1 - territoryWarBoost),
+    const totalSeconds = getCraftingSeconds(
+      selectedItem,
+      userCraftingRank,
+      craftQuantity,
+      shrineBoost,
+      userData.clan?.craftingTimeBoost,
+      craftingReductionPercent,
+      territoryWarBoost,
     );
     return formatSecondsToTimeDisplay(totalSeconds);
-  }, [selectedItem, userData, userCraftingRank, craftQuantity, territoryWarBoost]);
+  }, [
+    selectedItem,
+    userData,
+    userCraftingRank,
+    craftQuantity,
+    craftingReductionPercent,
+    territoryWarBoost,
+  ]);
 
   // Check if user can craft the selected item
   const canCraft = useMemo(() => {

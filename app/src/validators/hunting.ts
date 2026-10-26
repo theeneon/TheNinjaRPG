@@ -97,6 +97,8 @@ export type HuntingReceipt = {
 };
 /** Accepted contract terms are preloaded at each start, including all battle settlement data. */
 export type HuntingBattleState = {
+  /** Absent in older battle snapshots; those award configured quantities. */
+  huntingBonusQuantity?: number;
   userId: string;
   sessionId: string;
   sessionVersion: number;

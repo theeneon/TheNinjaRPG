@@ -5,6 +5,7 @@ import { userData } from "@/drizzle/schema";
 import { MAX_STORED_POOL, maxPoolsMultiplier } from "@/libs/profile";
 import {
   AllTags,
+  rejectActivityBonuses,
   SuperRefineEffects,
   SuperRefinePassiveEffects,
 } from "@/validators/combat";
@@ -63,7 +64,8 @@ export const insertAiSchema = createInsertSchema(userData)
       effects: z
         .array(AllTags)
         .superRefine(SuperRefineEffects)
-        .superRefine(SuperRefinePassiveEffects),
+        .superRefine(SuperRefinePassiveEffects)
+        .superRefine(rejectActivityBonuses),
     }).shape,
   )
   .superRefine((data, ctx) => {

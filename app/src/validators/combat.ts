@@ -18,8 +18,12 @@ import {
   ItemTypes,
   JutsuTypes,
   LetterRanks,
+  MAX_ACTIVITY_REDUCTION_PERCENT,
   MAX_COOKING_OUTPUT,
+  MAX_EXTRA_JUTSU_SLOTS,
+  MAX_GATHERING_BONUS_QUANTITY,
   MAX_GENS_CAP,
+  MAX_HUNTING_BONUS_QUANTITY,
   MAX_ITEM_CRAFTING_REQUIREMENT_QUANTITY,
   MAX_ITEM_STACK_SIZE,
   MAX_MASTERY_CAP,
@@ -143,6 +147,106 @@ const BaseAttributes = {
 const PowerAttributes = {
   power: z.coerce.number().min(0).prefault(1),
   powerPerLevel: z.coerce.number().min(0).max(1).prefault(0),
+};
+
+/** Activity passives use self-only amounts, without combat duration or level scaling. */
+const ActivityBonusAttributes = {
+  ...BaseAttributes,
+  power: z.coerce.number().min(0).max(MAX_ACTIVITY_REDUCTION_PERCENT).prefault(1),
+  powerPerLevel: z.literal(0).prefault(0),
+  calculation: z.literal("percentage").prefault("percentage"),
+  target: z.literal("SELF").prefault("SELF"),
+  friendlyFire: z.literal("FRIENDLY").optional(),
+  rounds: BaseAttributes.rounds.refine(
+    (value): boolean => value === undefined,
+    "Activity bonuses have no combat duration",
+  ),
+  timeTracker: BaseAttributes.timeTracker.refine(
+    (value): boolean => value === undefined,
+    "Activity bonuses have no combat timer",
+  ),
+};
+
+export const DecreaseGatheringTime = z.object({
+  ...ActivityBonusAttributes,
+  type: z.literal("decreasegatheringtime").prefault("decreasegatheringtime"),
+  description: msg(
+    `Reduce each gathering quest collection duration by power percent, with a one-second minimum. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when collection begins.`,
+  ),
+});
+export const DecreaseFarmingTime = z.object({
+  ...ActivityBonusAttributes,
+  type: z.literal("decreasefarmingtime").prefault("decreasefarmingtime"),
+  description: msg(
+    `Reduce each planted crop duration by power percent, with a one-second minimum. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when planting.`,
+  ),
+});
+export const DecreaseCraftingTime = z.object({
+  ...ActivityBonusAttributes,
+  type: z.literal("decreasecraftingtime").prefault("decreasecraftingtime"),
+  description: msg(
+    `Reduce duration by power percent (minimum one second) once per non-meal crafting job, excluding imbuing. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when submitted.`,
+  ),
+});
+export const DecreaseCookingTime = z.object({
+  ...ActivityBonusAttributes,
+  type: z.literal("decreasecookingtime").prefault("decreasecookingtime"),
+  description: msg(
+    `Reduce duration by power percent (minimum one second) once per complete meal cooking job. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when submitted.`,
+  ),
+});
+export const IncreaseHuntingYield = z.object({
+  ...ActivityBonusAttributes,
+  calculation: z.literal("static").prefault("static"),
+  power: z.coerce.number().int().min(0).max(MAX_HUNTING_BONUS_QUANTITY).prefault(1),
+  type: z.literal("increasehuntingyield").prefault("increasehuntingyield"),
+  description: msg(
+    `Add units to each successfully dropped hunting material. Eligible bloodline, activated skill and usable worn gear bonuses stack up to +${MAX_HUNTING_BONUS_QUANTITY}; captured when battle begins. Drop chances are unchanged.`,
+  ),
+});
+
+export const IncreaseGatheringYield = z.object({
+  ...ActivityBonusAttributes,
+  calculation: z.literal("static").prefault("static"),
+  power: z.coerce.number().int().min(0).max(MAX_GATHERING_BONUS_QUANTITY).prefault(1),
+  type: z.literal("increasegatheringyield").prefault("increasegatheringyield"),
+  description: msg(
+    `Add units to each successfully dropped gathering material. Eligible bloodline, activated skill and usable worn gear bonuses stack up to +${MAX_GATHERING_BONUS_QUANTITY}; captured when collection begins. Drop chances are unchanged.`,
+  ),
+});
+
+/** Out-of-combat passives supported by the shared activity-source aggregator. */
+export const activityBonusTypes = [
+  "decreasegatheringtime",
+  "decreasefarmingtime",
+  "decreasecraftingtime",
+  "decreasecookingtime",
+  "increasehuntingyield",
+  "increasegatheringyield",
+] as const;
+/** Keep power units identical in the content editor and player-facing effect details. */
+export const activityBonusPowerLabel = (tag: { type: string }) =>
+  tag.type === "increasehuntingyield" || tag.type === "increasegatheringyield"
+    ? "Additional quantity per dropped material"
+    : "Reduction (%)";
+/** Identify activity-only tags for authoring restrictions and removal from combat snapshots. */
+export const isActivityBonus = (tag: { type: string }) =>
+  (activityBonusTypes as readonly string[]).includes(tag.type);
+
+/** Only bloodlines, activated skills, worn gear and its imbuements support these bonuses. */
+export const rejectActivityBonuses = (
+  effects: { type: string }[],
+  ctx: z.RefinementCtx,
+) => {
+  effects.forEach((effect, index) => {
+    if (isActivityBonus(effect))
+      ctx.addIssue({
+        code: "custom",
+        path: [index, "type"],
+        message:
+          "Activity bonuses require a bloodline, activated skill, worn gear or imbuement.",
+      });
+  });
 };
 
 const PoolAttributes = {
@@ -1034,6 +1138,24 @@ export const IncreaseReskinSlots = z.object({
   type: z.literal("noncombatincreasereskins").prefault("noncombatincreasereskins"),
 });
 
+/** Permanent consumable grants share the purchase cap and never execute as combat effects. */
+export const IncreaseJutsuSlots = z.object({
+  ...BaseAttributes,
+  type: z.literal("increasejutsuslots").prefault("increasejutsuslots"),
+  description: msg(
+    `Permanently add extra jutsu slots on consumption. Shares the ${MAX_EXTRA_JUTSU_SLOTS}-slot limit with purchased slots; the item is not consumed if the grant would exceed it.`,
+  ),
+  power: z.coerce.number().int().min(1).max(MAX_EXTRA_JUTSU_SLOTS).prefault(1),
+  powerPerLevel: z.literal(0).prefault(0),
+  calculation: z.literal("static").prefault("static"),
+  target: z.literal("SELF").prefault("SELF"),
+  friendlyFire: z.literal("FRIENDLY").optional(),
+  rounds: BaseAttributes.rounds.refine(
+    (value): boolean => value === undefined,
+    "Jutsu slot grants have no combat duration",
+  ),
+});
+
 /**
  * InjectJutsusTag: Grants access to selected jutsus flagged as injectableInBattle
  * - editors must restrict selection to jutsus where injectableInBattle=true
@@ -1091,9 +1213,13 @@ export const AllTags = z.union([
   DamageTag.prefault({}),
   DebuffPreventTag.prefault({}),
   DecreaseAggroTag.prefault({}),
+  DecreaseCookingTime.prefault({}),
   DecreaseCooldownTag.prefault({}),
+  DecreaseCraftingTime.prefault({}),
   DecreaseDamageGivenTag.prefault({}),
   DecreaseDamageTakenTag.prefault({}),
+  DecreaseFarmingTime.prefault({}),
+  DecreaseGatheringTime.prefault({}),
   DecreaseHealGivenTag.prefault({}),
   DecreasePotencyTag.prefault({}),
   DecreasePoolCostTag.prefault({}),
@@ -1114,7 +1240,10 @@ export const AllTags = z.union([
   IncreaseCooldownTag.prefault({}),
   IncreaseDamageGivenTag.prefault({}),
   IncreaseDamageTakenTag.prefault({}),
+  IncreaseGatheringYield.prefault({}),
   IncreaseHealGivenTag.prefault({}),
+  IncreaseHuntingYield.prefault({}),
+  IncreaseJutsuSlots.prefault({}),
   IncreasePotencyTag.prefault({}),
   IncreaseMarriageSlots.prefault({}),
   IncreaseReskinSlots.prefault({}),
@@ -1256,6 +1385,7 @@ export type EffectType = (typeof effectFilters)[number];
  * @returns
  */
 export const isPositiveUserEffect = (tag: ZodAllTags) => {
+  if (isActivityBonus(tag)) return true;
   if (
     [
       "absorb",
@@ -1558,6 +1688,28 @@ const SuperRefineItem = (data: ItemValidatorType, ctx: z.RefinementCtx) => {
   if (petRewardCount > 0 && !data.preventBattleUsage)
     addIssue(ctx, "Companion rewards must prevent battle usage.");
   const hasUnlockItemVariant = data.effects.find((e) => e.type === "unlockitemvariant");
+  const jutsuSlotGrants = data.effects.filter((e) => e.type === "increasejutsuslots");
+  if (jutsuSlotGrants.length > 0) {
+    if (
+      data.itemType !== "CONSUMABLE" ||
+      !data.destroyOnUse ||
+      !data.preventBattleUsage ||
+      data.target !== "SELF" ||
+      data.method !== "SINGLE"
+    )
+      addIssue(
+        ctx,
+        "Jutsu slot grants require a consumable destroyed on use, targeting self with single method and battle usage prevented.",
+      );
+    if (
+      jutsuSlotGrants.reduce((total, effect) => total + effect.power, 0) >
+      MAX_EXTRA_JUTSU_SLOTS
+    )
+      addIssue(
+        ctx,
+        `An item may grant at most ${MAX_EXTRA_JUTSU_SLOTS} extra jutsu slots.`,
+      );
+  }
   // One consumption receipt owns one quest start, restricted to noncombat use on self.
   const questGrants = data.effects.filter((effect) => effect.type === "noncombatquest");
   if (questGrants.some((effect) => !effect.questId.trim()))
@@ -1581,6 +1733,9 @@ const SuperRefineItem = (data: ItemValidatorType, ctx: z.RefinementCtx) => {
     SuperRefinePassiveEffects(data.effects, ctx);
     if (data.method === "COORDINATES")
       addIssue(ctx, "Coordinate methods require a combat action item.");
+  }
+  if (!["ARMOR", "ACCESSORY", "KEYSTONE", "CRYSTAL"].includes(data.itemType)) {
+    rejectActivityBonuses(data.effects, ctx);
   }
 
   // Cost validation - exactly one cost type must be set
@@ -1685,6 +1840,9 @@ const SuperRefineJutsu = (
   data: z.infer<typeof JutsuValidatorRawSchema>,
   ctx: z.RefinementCtx,
 ) => {
+  rejectActivityBonuses(data.effects, ctx);
+  if (data.effects.some((e) => e.type === "increasejutsuslots"))
+    addIssue(ctx, "Jutsu slot grants are only supported on non-combat consumables.");
   const hasBloodlineRoll = data.effects.find((e) => e.type === "rollbloodline");
   const hasSageModeRoll = data.effects.find((e) => e.type === "rollsagemode");
   const hasRemoveBloodline = data.effects.find((e) => e.type === "removebloodline");
@@ -1777,6 +1935,13 @@ export const SuperRefinePassiveEffects = (
   ctx: z.RefinementCtx,
 ) => {
   effects.forEach((effect, index) => {
+    if (effect.type === "increasejutsuslots") {
+      ctx.addIssue({
+        code: "custom",
+        path: [index, "type"],
+        message: "Jutsu slot grants are only supported on non-combat consumables.",
+      });
+    }
     if (effect.target === "COORDINATES") {
       ctx.addIssue({
         code: "custom",
@@ -1936,6 +2101,9 @@ export const SageModeValidator = z
       .superRefine(SuperRefinePassiveEffects),
   })
   .superRefine((data, ctx) => {
+    rejectActivityBonuses(data.effects, ctx);
+    rejectActivityBonuses(data.afterEffects, ctx);
+    rejectActivityBonuses(data.level2Effects, ctx);
     if (data.level2Effects.length > 0 && data.requiredSageMastery <= 0) {
       ctx.addIssue({
         code: "custom",
@@ -1970,6 +2138,8 @@ export const SkillTreeValidator = z
       .superRefine(SuperRefinePassiveEffects),
   })
   .superRefine((tier, ctx) => {
+    // Purchased Bloodright effects enter userSkills only during combat, after activity snapshots.
+    if (tier.pathType === "BLOODRIGHT") rejectActivityBonuses(tier.effects, ctx);
     if (tier.pathType === "BLOODRIGHT" && !tier.bloodlineId)
       ctx.addIssue({
         code: "custom",

@@ -46,6 +46,7 @@ import type {
   UserItem,
   UserQuest,
 } from "@/drizzle/schema";
+import { getActivityBonuses } from "@/libs/activityBonuses";
 import type { BloodlineCollectionProgress } from "@/libs/bloodline";
 import { eliteJoninMilestoneBlockMessage } from "@/libs/eliteJonin";
 import { getFarmingLevel } from "@/libs/farming";
@@ -94,7 +95,13 @@ import { isInArray } from "@/utils/array";
 import { getUnique } from "@/utils/grouping";
 import { canChangeContent, canPlayHiddenQuests } from "@/utils/permissions";
 import { capitalizeFirstLetter } from "@/utils/string";
-import { periodStart, secondsPassed } from "@/utils/time";
+import {
+  formatSecondsToTimeDisplay,
+  getCollectDeadline,
+  periodStart,
+  reduceActivitySeconds,
+  secondsPassed,
+} from "@/utils/time";
 import {
   canAccessStructure,
   countBoostingShrines,
@@ -1704,23 +1711,48 @@ export const getNewTrackers = (
                     objective.collect_time_minutes
                   ) {
                     if ("timestamp" in status && status.timestamp) {
-                      // Unfloored so the guard is exactly `elapsed >= deadline`, the same
-                      // moment the client Countdown fires onFinish and calls checkRewards.
-                      const minutesPassed =
-                        secondsPassed(new Date(status.timestamp), undefined, false) /
-                        60;
-                      if (minutesPassed < objective.collect_time_minutes) {
+                      if (
+                        Date.now() <
+                        getCollectDeadline(
+                          status,
+                          objective.collect_time_minutes,
+                        )!.getTime()
+                      ) {
                         doCollect = false;
                       }
                     } else {
-                      notifications.push(
-                        `You started collecting. This will take ${objective.collect_time_minutes} minutes.`,
+                      // Snapshot once so later passive changes cannot alter a running collection.
+                      const bonuses =
+                        quest.questType === "gathering"
+                          ? getActivityBonuses(user)
+                          : undefined;
+                      const seconds = reduceActivitySeconds(
+                        objective.collect_time_minutes * 60,
+                        bonuses?.gatheringReductionPercent ?? 0,
                       );
-                      status.timestamp = new Date().toISOString();
+                      const startedAt = Date.now();
+                      status.timestamp = new Date(startedAt).toISOString();
+                      status.collectDeadline = new Date(
+                        startedAt + seconds * 1000,
+                      ).toISOString();
+                      status.gatheringBonusQuantity = bonuses?.gatheringBonusQuantity;
+                      notifications.push(
+                        `You started collecting. This will take ${formatSecondsToTimeDisplay(seconds)}.`,
+                      );
                       doCollect = false;
                     }
                   }
                   if (doCollect) {
+                    // An untimed collection starts and completes in this same evaluation.
+                    if (
+                      quest.questType === "gathering" &&
+                      !(
+                        "collect_time_minutes" in objective &&
+                        objective.collect_time_minutes
+                      )
+                    )
+                      status.gatheringBonusQuantity =
+                        getActivityBonuses(user).gatheringBonusQuantity;
                     consequences.push({
                       type: "add_item",
                       ids: objective.collectItemIds,
@@ -1775,6 +1807,8 @@ export const getNewTrackers = (
                 !status.done
               ) {
                 status.timestamp = undefined;
+                status.collectDeadline = undefined;
+                status.gatheringBonusQuantity = undefined;
                 notifications.push(
                   `${GATHERING_CANCEL_PREFIX} for ${quest.name}: you left the collection area.`,
                 );

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { WORLD_CYCLE_SECONDS } from "@/drizzle/constants";
 import {
+  applyFertilizerReduction,
+  applyWaterReduction,
   canDropFarmSeed,
   canWaterPlot,
   getExtractorCropCapacity,
@@ -21,13 +23,37 @@ import {
   getTotalFarmPlots,
   isFarmMarketSeed,
   isPlotReady,
+  mapPlotToState,
   qualifiesForFarmActivityReward,
   summarizeFarmPlots,
 } from "@/libs/farming";
 import { calcLevelRequirements } from "@/libs/profile";
-import type { FarmPlotState } from "@/validators/farming";
+import { farmMutationResponseSchema, type FarmPlotState } from "@/validators/farming";
 
 describe("farming", () => {
+  it.each(["water", "fertilizer"] as const)(
+    "returns a valid plot when %s clamps growth to a fractional second",
+    (reduction) => {
+      const now = new Date(1500);
+      const finishAt = new Date(60_100);
+      const plot = mapPlotToState({
+        id: "plot", userId: "farmer", slotIndex: 0, seedItemId: "seed",
+        plantedAt: new Date(100), lastWateredAt: null,
+        createdAt: new Date(100), updatedAt: now,
+        fertilizerApplied: reduction === "fertilizer",
+        finishAt: reduction === "water"
+          ? applyWaterReduction(finishAt, now)
+          : applyFertilizerReduction(finishAt, 60, now),
+      }, now);
+      expect(plot.finishAt).toEqual(now);
+      expect(plot.isReady).toBe(true);
+      expect(farmMutationResponseSchema.safeParse({
+        success: true, message: "Reduced", updatedPlot: plot,
+      }).success).toBe(true);
+      expect(plot.growTimeSeconds).toBe(2);
+    },
+  );
+
   it("calculates farming level from experience", () => {
     for (const level of Array.from({ length: 100 }, (_, index) => index + 1)) {
       const threshold = level === 1 ? 0 : calcLevelRequirements(level - 1);

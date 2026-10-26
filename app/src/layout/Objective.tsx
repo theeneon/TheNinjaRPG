@@ -21,7 +21,7 @@ import { getIsolatedPyramid, isBetweenPyramidBattles } from "@/libs/questRun";
 import { collapseRewards } from "@/libs/rewards";
 import { showMutationToast } from "@/libs/toast";
 import { parseHtml } from "@/utils/parse";
-import { secondsFromDate } from "@/utils/time";
+import { getCollectDeadline } from "@/utils/time";
 import { useRequiredUserData } from "@/utils/UserContext";
 import type { AllObjectivesType, QuestTrackerType } from "@/validators/objectives";
 import { getObjectiveSchema } from "@/validators/objectives";
@@ -79,10 +79,7 @@ export const Objective: React.FC<ObjectiveProps> = (props) => {
     collectTimeMinutes > 0 && status?.timestamp ? (
       <Countdown
         timeDiff={timeDiff}
-        targetDate={secondsFromDate(
-          collectTimeMinutes * 60,
-          new Date(status.timestamp),
-        )}
+        targetDate={getCollectDeadline(status, collectTimeMinutes)!}
         onFinish={async () => {
           checkRewards();
         }}
