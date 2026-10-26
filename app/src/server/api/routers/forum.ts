@@ -11,7 +11,7 @@ import {
 } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
 import { fetchBoard, getInfiniteThreads, readNews } from "@/libs/forum";
-import { moderateContent } from "@/libs/moderator";
+import { deferModeration } from "@/libs/moderation/defer";
 import {
   callDiscordNews,
   callFacebookNews,
@@ -105,13 +105,7 @@ export const forumRouter = createTRPCRouter({
       // Mutate
       const sanitized = moderated.sanitized;
       const postId = nanoid();
-      const [, , , boardUpdateResult] = await Promise.all([
-        moderateContent(ctx.drizzle, {
-          content: sanitized,
-          userId: ctx.userId,
-          relationType: "forumPost",
-          relationId: postId,
-        }),
+      const [, , boardUpdateResult] = await Promise.all([
         ctx.drizzle.insert(forumThread).values({
           id: threadId,
           title: input.title,
@@ -119,13 +113,23 @@ export const forumRouter = createTRPCRouter({
           boardId: input.board_id,
           userId: effectiveUserId,
         }),
-        ctx.drizzle.insert(forumPost).values({
-          id: postId,
-          content: sanitized,
-          threadId: threadId,
-          userId: effectiveUserId,
-          authorId: ctx.userId,
-        }),
+        ctx.drizzle
+          .insert(forumPost)
+          .values({
+            id: postId,
+            content: sanitized,
+            threadId: threadId,
+            userId: effectiveUserId,
+            authorId: ctx.userId,
+          })
+          .then(() =>
+            deferModeration(ctx.drizzle, {
+              content: sanitized,
+              userId: ctx.userId,
+              relationType: "forumPost",
+              relationId: postId,
+            }),
+          ),
         ctx.drizzle
           .update(forumBoard)
           .set({ nThreads: sql`nThreads + 1`, updatedAt: new Date() })

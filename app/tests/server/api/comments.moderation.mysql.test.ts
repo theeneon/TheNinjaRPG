@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
+import * as Sentry from "@sentry/nextjs";
 import { eq } from "drizzle-orm";
+import * as next from "next/server";
 import OpenAI from "openai";
 import { FORUM_MIN_LEVEL } from "@/drizzle/constants";
 import { forumPost, forumThread, moderationScan, userData } from "@/drizzle/schema";
@@ -21,8 +23,14 @@ const providerError = (status: number) =>
     headers: { "retry-after-ms": "1" },
   });
 
+const deferred: Array<() => unknown> = [];
+
 describeWithDatabase("comment and image moderation provider recovery", () => {
   beforeEach(async () => {
+    deferred.length = 0;
+    vi.spyOn(next, "after").mockImplementation((callback) => {
+      deferred.push(callback as () => unknown);
+    });
     // Keep rate limiting active while isolating all HTTP from real services.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
       if (typeof init?.body !== "string" || !init.body.includes("trpc-ratelimit")) {
@@ -56,6 +64,9 @@ describeWithDatabase("comment and image moderation provider recovery", () => {
     const result = await callerForDatabase(commentsRouter, "poster", db)
       .createForumComment({ object_id: "thread", comment: "A normal game conversation", quoteIds: null, senderId: null });
     expect(result.success).toBe(true);
+    expect(provider).not.toHaveBeenCalled();
+    expect(deferred).toHaveLength(1);
+    await deferred[0]!();
     expect(provider).toHaveBeenCalledTimes(2);
     const posts = await db.query.forumPost.findMany();
     expect(posts).toHaveLength(1);
@@ -68,6 +79,22 @@ describeWithDatabase("comment and image moderation provider recovery", () => {
     expect(scans[0]?.flagged).toBe(false);
     expect(scans[0]?.completedAt).toBeInstanceOf(Date);
     expect(scans[0]?.errorStage).toBeNull();
+  });
+
+  it("keeps a saved post successful when background moderation fails", async () => {
+    vi.spyOn(OpenAI.prototype, "fetchWithTimeout")
+      .mockImplementation(async () => providerError(400));
+    const capture = vi.spyOn(Sentry, "captureException").mockReturnValue("event");
+    const db = await getTestDatabase();
+    const result = await callerForDatabase(commentsRouter, "poster", db)
+      .createForumComment({ object_id: "thread", comment: "A normal game conversation", quoteIds: null, senderId: null });
+    expect(result.success).toBe(true);
+    await deferred[0]!();
+    expect(await db.query.forumPost.findMany()).toHaveLength(1);
+    const scan = await db.query.moderationScan.findFirst();
+    expect(scan?.outcome).toBe("ERROR");
+    expect(scan?.errorStage).toBe("gate");
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 
   it.each([{ status: 503, attempts: 3 }, { status: 400, attempts: 1 }])(

@@ -130,7 +130,8 @@ import {
 } from "@/libs/mastery";
 import { allocateMasteryGains } from "@/libs/masteryProgression";
 import type { NavBarDropdownLink } from "@/libs/menus";
-import { moderateContent, validateUserUpdateReason } from "@/libs/moderator";
+import { deferModeration } from "@/libs/moderation/defer";
+import { validateUserUpdateReason } from "@/libs/moderator";
 import { isQuestComplete } from "@/libs/objectives";
 import { isNewOnlineRecord } from "@/libs/onlineRecord";
 import { petExperienceGainSql } from "@/libs/pets/experience";
@@ -3128,24 +3129,22 @@ export const updateNindo = async (
     where: eq(userNindo.userId, userId),
   });
   const sanitized = sanitize(content);
-  await Promise.all([
-    moderateContent(client, {
-      content: sanitized,
-      userId: userId,
-      relationType: type,
-      relationId: userId,
-    }),
-    nindo
-      ? client
-          .update(userNindo)
-          .set({ content: sanitized })
-          .where(eq(userNindo.userId, userId))
-      : client.insert(userNindo).values({
-          id: nanoid(),
-          userId: userId,
-          content: sanitized,
-        }),
-  ]);
+  await (nindo
+    ? client
+        .update(userNindo)
+        .set({ content: sanitized })
+        .where(eq(userNindo.userId, userId))
+    : client.insert(userNindo).values({
+        id: nanoid(),
+        userId: userId,
+        content: sanitized,
+      }));
+  deferModeration(client, {
+    content: sanitized,
+    userId: userId,
+    relationType: type,
+    relationId: userId,
+  });
   return { success: true, message: "Content updated" };
 };
 
