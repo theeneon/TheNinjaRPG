@@ -224,7 +224,11 @@ import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 import { buildDerivedUserRegenUpdate } from "@/server/utils/profileRegen";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
-import { hydrateQuestCollections } from "@/server/utils/questCollections";
+import {
+  fetchBloodlineCollectionCatalogue,
+  fetchBloodlineCollectionRolls,
+  hydrateQuestCollections,
+} from "@/server/utils/questCollections";
 import { fetchQuestDiscoverySummaryCandidates } from "@/server/utils/questDiscovery";
 import {
   applyQuestParty,
@@ -3470,6 +3474,8 @@ const fetchUpdatedUserOnce = async (
     activeShrineBattles,
     activeRaids,
     questBootstrap,
+    bloodlineCollectionCatalogue,
+    bloodlineCollectionRolls,
   ] = await Promise.all([
     fetchAchievementCatalogue(client),
     fetchAllGameSettings(client),
@@ -3482,6 +3488,9 @@ const fetchUpdatedUserOnce = async (
       : [],
     includeNotifications ? fetchActiveRaids(client, now) : [],
     fetchQuestBootstrap(client, userId),
+    // Collection ownership is independent of profile settlement and needed by active achievements.
+    fetchBloodlineCollectionCatalogue(client),
+    fetchBloodlineCollectionRolls(client, userId),
   ]);
   const publishedAchievementIds = achievements
     .filter((entry) => !questHasOverworldObjectives(entry))
@@ -4148,7 +4157,10 @@ const fetchUpdatedUserOnce = async (
   if (user) {
     // Completed mastery training can unlock Energy capacity bonuses on worn gear.
     user.maxEnergy = calcMaxEnergy(user);
-    const trackerUser = await hydrateQuestCollections(client, user);
+    const trackerUser = await hydrateQuestCollections(client, user, false, {
+      catalogue: bloodlineCollectionCatalogue,
+      rolls: bloodlineCollectionRolls,
+    });
     // Get the latest quest trackers
     const trackerResults = getNewTrackers(
       trackerUser,

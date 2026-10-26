@@ -158,13 +158,18 @@ describeWithDatabase("raid reward display from confirmed grants", () => {
       const rereads = [
         database.query.item,
         database.query.jutsu,
-        database.query.bloodline,
         database.query.badge,
       ].map((table) =>
         vi
           .spyOn(table, "findMany")
           .mockRejectedValue(new Error("Content names were already loaded by payout")),
       );
+      const catalogueReads = vi.spyOn(database.query.bloodline, "findMany");
+      // Profile hydration loads collection metadata without rereading reward names.
+      const catalogueQuery = {
+        columns: { id: true, rank: true, hidden: true },
+        where: eq(bloodline.hidden, false),
+      };
       const api = await callerFor(raidsRouter, "raid-reward-user");
       const result = await api.claimDamageReward({
         questId: "reward-raid",
@@ -180,6 +185,7 @@ describeWithDatabase("raid reward display from confirmed grants", () => {
         },
       });
       for (const reread of rereads) expect(reread).not.toHaveBeenCalled();
+      expect(catalogueReads.mock.calls).toEqual([[catalogueQuery]]);
       const inventory = await database.query.userItem.findMany({
         where: eq(userItem.userId, "raid-reward-user"),
       });
@@ -204,6 +210,8 @@ describeWithDatabase("raid reward display from confirmed grants", () => {
           })
         ).reduce((sum, row) => sum + row.quantity, 0),
       ).toBe(3);
+      for (const reread of rereads) expect(reread).not.toHaveBeenCalled();
+      expect(catalogueReads.mock.calls).toEqual([[catalogueQuery], [catalogueQuery]]);
     },
   );
 });
