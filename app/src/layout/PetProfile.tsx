@@ -1,5 +1,7 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
+import { getQueryKey } from "@trpc/react-query";
 import { PawPrint, Sparkles } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -87,6 +89,7 @@ export function PetProfile() {
   const searchParams = useSearchParams();
   const requestedPetId = searchParams.get("petId") ?? undefined;
   const utils = api.useUtils();
+  const queryClient = useQueryClient();
   const [selectedPetId, setSelectedPetId] = useState(requestedPetId);
   const [selectedMealId, setSelectedMealId] = useState("");
   const [isSlotDialogOpen, setIsSlotDialogOpen] = useState(false);
@@ -112,20 +115,23 @@ export function PetProfile() {
   const pendingGenerations = useRef(new Set<string>());
   // Close the gap before React paints pending state, including multi-step evolution.
   const inFlight = useRef(false);
-  const { data, isPending, error, refetch } = api.pets.getPet.useQuery(
-    selectedPetId ? { petId: selectedPetId } : undefined,
-    {
-      enabled: !!userData,
-      staleTime: 0,
-      refetchOnMount: "always",
-      refetchInterval: (query) =>
-        generatingPetIds.length > 0 ||
-        isEvolving ||
-        query.state.data?.pets.some((entry) => entry.generationStatus === "GENERATING")
-          ? 3000
-          : false,
-    },
+  const petInput = selectedPetId ? { petId: selectedPetId } : undefined;
+  // A mount can inherit a request begun before the owner's latest rewards.
+  const shouldRefreshOnMount = useRef(
+    queryClient.getQueryState(getQueryKey(api.pets.getPet, petInput, "query"))
+      ?.fetchStatus === "fetching",
   );
+  const { data, isPending, error, refetch } = api.pets.getPet.useQuery(petInput, {
+    enabled: !!userData,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: (query) =>
+      generatingPetIds.length > 0 ||
+      isEvolving ||
+      query.state.data?.pets.some((entry) => entry.generationStatus === "GENERATING")
+        ? 3000
+        : false,
+  });
   const pet = data?.pet;
   const isGenerating = !!pet && generatingPetIds.includes(pet.id);
   const aiProfile = useMemo(
@@ -164,8 +170,10 @@ export function PetProfile() {
       (value, index) => value !== previousOwnerProgress.current[index],
     );
     previousOwnerProgress.current = ownerProgress;
-    // Mounts already refetch; comparing values also keeps effect replays idempotent.
-    if (hasChanged) void utils.pets.getPet.invalidate();
+    // Settled-cache mounts already refetch; replace inherited requests only once.
+    const shouldRefresh = hasChanged || shouldRefreshOnMount.current;
+    shouldRefreshOnMount.current = false;
+    if (shouldRefresh) void utils.pets.getPet.invalidate();
   }, [
     ownerUpdatedAt,
     ownerExperience,

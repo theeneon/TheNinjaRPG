@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, setDefaultTimeout, vi } from "bun:te
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TRPCClientError } from "@trpc/client";
-import { createTRPCReact } from "@trpc/react-query";
+import { createTRPCReact, getQueryKey } from "@trpc/react-query";
 import { observable } from "@trpc/server/observable";
 import * as navigation from "next/navigation";
 import type { AppRouter } from "@/api/root";
@@ -192,6 +192,31 @@ it.each([false, true])("refreshes cached companions once on remount with StrictM
   const returned = mount(strictMode);
   await returned.findByRole("tab", { name: "Training" });
   await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  expect(getPet).toHaveBeenCalledTimes(1);
+});
+
+it.each([
+  [false, null], [true, null], [false, "companion"], [true, "companion"],
+] as const)("replaces an inherited companion refetch after unmounted rewards with StrictMode %s and pet %s", async (strictMode, petId) => {
+  requestedPetId = petId;
+  const initial = mount();
+  await initial.findByRole("tab", { name: "Training" });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  const staleData = data;
+  let finishPrevious: (value: PetView) => void = () => undefined;
+  getPet.mockImplementationOnce(() => new Promise<PetView>((resolve) => { finishPrevious = resolve; }));
+  const previousFetch = queryClient.refetchQueries({ queryKey: getQueryKey(testApi.pets.getPet, petId ? { petId } : undefined, "query"), exact: true });
+  await waitFor(() => expect(getPet).toHaveBeenCalledTimes(2));
+  initial.unmount();
+  getPet.mockClear();
+  owner = { ...owner, experience: owner.experience + 100, petExperience: owner.petExperience + 150 };
+  data = { ...data, unusedExperience: 250 };
+
+  const returned = mount(strictMode);
+  selectTab(returned, "Training");
+  await act(async () => { finishPrevious(staleData); await previousFetch; });
+  await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+  expect(returned.getByText(/\d+ training points available/).textContent).toBe("250 training points available");
   expect(getPet).toHaveBeenCalledTimes(1);
 });
 
