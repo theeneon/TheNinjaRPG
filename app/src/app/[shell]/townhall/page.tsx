@@ -379,7 +379,6 @@ const ElderHall: React.FC<{
                     alt={elder.username}
                     userId={elder.userId}
                     hover_effect={true}
-                    priority={true}
                     size={100}
                   />
                   <div>

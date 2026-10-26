@@ -458,7 +458,6 @@ function PollContent({
                 userId={option.targetUser.userId}
                 alt={option.targetUser.username}
                 size={100}
-                priority
               />
             </div>
             <span>{option.targetUser.username}</span>

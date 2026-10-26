@@ -1,10 +1,8 @@
 "use client";
 
 import type React from "react";
-import { useEffect, useState } from "react";
-import { useLocalStorage } from "@/hooks/localstorage";
+import { useLightLayout } from "@/hooks/light-layout";
 import Image from "@/layout/Image";
-import { LIGHT_LAYOUT_STORAGE_KEY } from "@/libs/layoutPreference";
 import { cn } from "@/libs/shadui";
 
 /**
@@ -25,16 +23,12 @@ export const avatarRenditionWidth = (size: number, lightLayout: boolean) =>
 
 /**
  * Reads the user's light layout preference and returns the avatar rendition
- * width. Until mounted it reports the full rendition so the server render and
- * the first client render agree; the preference lives in localStorage.
+ * width. Server-rendered avatars hydrate with the full rendition; client-only
+ * mounts read the saved preference immediately to avoid fetching both sizes.
  */
 export const useAvatarRenditionWidth = (size: number) => {
-  const [lightLayout] = useLocalStorage<boolean>(LIGHT_LAYOUT_STORAGE_KEY, false);
-  const [isMounted, setIsMounted] = useState(false);
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
-  return avatarRenditionWidth(size, isMounted && lightLayout);
+  const lightLayout = useLightLayout();
+  return avatarRenditionWidth(size, lightLayout);
 };
 
 interface AvatarImageProps {
@@ -42,6 +36,7 @@ interface AvatarImageProps {
   userId?: string;
   alt?: string;
   size: number;
+  /** Reserve preloading for a prominent portrait, rather than repeated list rows. */
   priority?: boolean;
   hover_effect?: boolean;
   refetchUserData?: boolean;

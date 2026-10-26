@@ -36,6 +36,8 @@ interface BuildingProps {
   textPosition: "bottom" | "right";
   showUpgrade?: boolean;
   showNumbers?: boolean;
+  /** Load the first visible row immediately; other tiles load as they approach the viewport. */
+  eager?: boolean;
 }
 
 const Building: React.FC<BuildingProps> = (props) => {
@@ -124,7 +126,7 @@ const Building: React.FC<BuildingProps> = (props) => {
             alt={structure.name}
             width={200}
             height={200}
-            priority={true}
+            loading={props.eager ? "eager" : "lazy"}
             id={`tutorial${structure.route.replace("/", "-")}`}
           />
         </Link>

@@ -1,6 +1,6 @@
 import { ensureDom } from "../setup-dom.mjs";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { useLocalStorage } from "@/hooks/localstorage";
 
 const customEventDescriptor = Object.getOwnPropertyDescriptor(globalThis, "CustomEvent");
@@ -125,6 +125,21 @@ describe("useLocalStorage URL anchors", () => {
     expect(first.result.current[0]).toBe("Sparring");
     expect(second.result.current[0]).toBe("Sparring");
     expect(window.localStorage.getItem("arenaTab")).toBe('"Sparring"');
+  });
+
+  it("does not rewrite an unchanged stored value on mount or synchronization", () => {
+    window.localStorage.setItem("arenaTab", JSON.stringify("Training"));
+    const write = spyOn(Object.getPrototypeOf(window.localStorage), "setItem");
+    try {
+      const first = renderHook(() => useLocalStorage("arenaTab", "Arena"));
+      const second = renderHook(() => useLocalStorage("arenaTab", "Arena"));
+      expect(write).not.toHaveBeenCalled();
+      act(() => first.result.current[1]("Sparring"));
+      expect(second.result.current[0]).toBe("Sparring");
+      expect(write).toHaveBeenCalledTimes(1);
+    } finally {
+      write.mockRestore();
+    }
   });
 
   it("leaves fragments untouched when anchor handling is disabled", () => {

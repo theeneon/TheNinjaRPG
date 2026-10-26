@@ -366,7 +366,6 @@ const UserSlot: React.FC<UserSlotProps> = ({ user }) => {
             alt={user.username}
             size={35}
             hover_effect={true}
-            priority
           />
         </div>
       </PopoverTrigger>

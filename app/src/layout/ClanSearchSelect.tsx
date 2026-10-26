@@ -56,7 +56,7 @@ const ClanSearchSelect: React.FC<ClanSearchSelectProps> = (props) => {
       className="mr-2 inline-flex items-center rounded-lg border border-amber-900 bg-gray-100 px-2 font-medium text-gray-800 text-sm"
     >
       <div className="m-1 w-8">
-        <AvatarImage href={clan.image} alt={clan.name} size={100} priority />
+        <AvatarImage href={clan.image} alt={clan.name} size={100} />
       </div>
       {clan.name}
       <X
@@ -119,7 +119,7 @@ const ClanSearchSelect: React.FC<ClanSearchSelectProps> = (props) => {
                 }}
               >
                 <div className="basis-1/12">
-                  <AvatarImage href={clan.image} alt={clan.name} size={100} priority />
+                  <AvatarImage href={clan.image} alt={clan.name} size={100} />
                 </div>
                 <div className="ml-2">
                   <p>{clan.name}</p>

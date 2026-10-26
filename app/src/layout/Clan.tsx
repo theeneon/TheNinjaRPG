@@ -151,13 +151,7 @@ export const ClansOverview: React.FC = () => {
     memberCount: clan.members.length,
     clanInfo: (
       <div className="w-20 text-center">
-        <AvatarImage
-          href={clan.image}
-          alt={clan.name}
-          size={100}
-          hover_effect={true}
-          priority
-        />
+        <AvatarImage href={clan.image} alt={clan.name} size={100} hover_effect={true} />
         {clan.name}
       </div>
     ),
@@ -170,7 +164,6 @@ export const ClansOverview: React.FC = () => {
               alt={clan.name}
               size={100}
               hover_effect={true}
-              priority
             />
             {clan.leader.username}
           </div>
@@ -642,7 +635,6 @@ export const ClanBattles: React.FC<ClanBattlesProps> = (props) => {
             alt={clan.name}
             size={100}
             hover_effect={!hasWinner}
-            priority
           />
           {clan.name}
         </div>
@@ -671,7 +663,6 @@ export const ClanBattles: React.FC<ClanBattlesProps> = (props) => {
                       alt={q.user.username}
                       size={50}
                       hover_effect={!hasWinner}
-                      priority
                     />
                   </PopoverTrigger>
                   <PopoverContent
@@ -1741,7 +1732,6 @@ export const ClanInfo: React.FC<ClanInfoProps> = (props) => {
                         alt={clanId}
                         size={100}
                         hover_effect={true}
-                        priority
                       />
                       <fieldset disabled={isEditingClan}>
                         <UploadButton

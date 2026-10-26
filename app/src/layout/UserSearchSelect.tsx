@@ -68,7 +68,6 @@ const UserSearchSelect: React.FC<UserSearchSelectProps> = (props) => {
           userId={user.userId}
           alt={user.username}
           size={100}
-          priority
         />
       </div>
       <p className="whitespace-nowrap">{user.username}</p>
@@ -139,7 +138,6 @@ const UserSearchSelect: React.FC<UserSearchSelectProps> = (props) => {
                   userId={user.userId}
                   alt={user.username}
                   size={100}
-                  priority
                 />
               </div>
               <div className="ml-2 text-black">
