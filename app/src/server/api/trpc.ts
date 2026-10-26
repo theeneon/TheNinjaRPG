@@ -14,13 +14,13 @@ import type { TRPC_ERROR_CODE_KEY } from "@trpc/server/rpc";
 import { middlewareMarker } from "@trpc/server/unstable-core-do-not-import";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { ReadonlyHeaders } from "next/dist/server/web/spec-extension/adapters/headers";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import type { NextRequest } from "next/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
-import { questHistory, userData } from "@/drizzle/schema";
+import { userData } from "@/drizzle/schema";
 import { LEMU_EXPERIMENT, normalizeLemuVariant } from "@/libs/lemuExperiment";
 import type { McpMeta } from "@/libs/mcp";
 import {
@@ -48,6 +48,7 @@ import {
  */
 import { drizzleDB } from "@/server/db";
 import { enforceBotId } from "@/server/utils/botid";
+import { fetchIsolatedPyramid } from "@/server/utils/pyramidIsolation";
 import { hasSensitiveTrpcInput } from "@/server/utils/trpcInput";
 import { measureTrpcCall } from "@/server/utils/trpcMetrics";
 import { getClientIp } from "@/utils/network";
@@ -172,62 +173,86 @@ export const sentryMiddleware = t.middleware((opts) =>
   ),
 );
 
+/** Enforce the shared limiter and penalty before running a handler. */
+export const ratelimitMiddleware = t.middleware(
+  async ({ ctx: context, path, next }) => {
+    await enforceRateLimit(context, path);
+    return next();
+  },
+);
+
+/** Only handlers that await this gate with their first read may defer rate limiting. */
+export const deferredRatelimitMiddleware = t.middleware(async ({ ctx, path, next }) => {
+  // Observe rejection immediately: input validation or the initial read may fail before
+  // the handler awaits the gate. Keep the original limiter/penalty error in that case too.
+  const rateLimit = enforceRateLimit(ctx, path);
+  void rateLimit.catch(() => {});
+  try {
+    return await next({ ctx: { waitForRateLimit: () => rateLimit } });
+  } finally {
+    await rateLimit;
+  }
+});
+
 /**
  * Sliding-window rate limit keyed per procedure path + identity (userId, or IP
  * for anonymous callers); violations by logged-in users incur a 1% money/bank
  * penalty. If the Redis limiter is unreachable, development fails open (local
  * shim may not be running) while production fails closed.
  */
-export const ratelimitMiddleware = t.middleware(
-  async ({ ctx: context, path, next }) => {
-    if (!context.userId && !context.userIp) {
-      throw new TRPCError({
-        message: `No user ID or IP found for rate limit middleware`,
-        code: "UNAUTHORIZED",
-      });
-    }
-    const identifier = `${path}-${context.userId ?? context.userIp}`;
-    let success = true;
-    try {
-      success = (await ratelimit.limit(identifier)).success;
-    } catch (error) {
-      // In development the limiter's Redis is a local shim that may simply not
-      // be running (e.g. Docker is down); failing open beats bricking every
-      // rate-limited endpoint. Production keeps failing closed.
-      if (process.env.NODE_ENV !== "development") throw error;
-      console.warn(
-        `Rate limiter unreachable in dev, allowing ${path}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    if (!success) {
-      // Authentication retries must never debit an existing character (and a newly
-      // authenticated identity may not have created a character yet).
-      if (context.userId && !path.startsWith("nativeAuth.")) {
-        const result = await context.drizzle
-          .update(userData)
-          .set({
-            movedTooFastCount: sql`${userData.movedTooFastCount} + 1`,
-            money: sql`GREATEST(${userData.money} * 0.99, 0)`,
-            bank: sql`GREATEST(${userData.bank} * 0.99, 0)`,
-          })
-          .where(eq(userData.userId, context.userId));
-        if (result.rowsAffected === 0) {
-          throw new TRPCError({
-            message: `User not found for rate limit penalty`,
-            code: "NOT_FOUND",
-          });
-        }
+const enforceRateLimit = async (
+  context: Pick<
+    Awaited<ReturnType<typeof createAppTRPCContext>>,
+    "userId" | "userIp" | "drizzle"
+  >,
+  path: string,
+) => {
+  if (!context.userId && !context.userIp) {
+    throw new TRPCError({
+      message: `No user ID or IP found for rate limit middleware`,
+      code: "UNAUTHORIZED",
+    });
+  }
+  const identifier = `${path}-${context.userId ?? context.userIp}`;
+  let success = true;
+  try {
+    success = (await ratelimit.limit(identifier)).success;
+  } catch (error) {
+    // In development the limiter's Redis is a local shim that may simply not
+    // be running (e.g. Docker is down); failing open beats bricking every
+    // rate-limited endpoint. Production keeps failing closed.
+    if (process.env.NODE_ENV !== "development") throw error;
+    console.warn(
+      `Rate limiter unreachable in dev, allowing ${path}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (!success) {
+    // Authentication retries must never debit an existing character (and a newly
+    // authenticated identity may not have created a character yet).
+    if (context.userId && !path.startsWith("nativeAuth.")) {
+      const result = await context.drizzle
+        .update(userData)
+        .set({
+          movedTooFastCount: sql`${userData.movedTooFastCount} + 1`,
+          money: sql`GREATEST(${userData.money} * 0.99, 0)`,
+          bank: sql`GREATEST(${userData.bank} * 0.99, 0)`,
+        })
+        .where(eq(userData.userId, context.userId));
+      if (result.rowsAffected === 0) {
+        throw new TRPCError({
+          message: `User not found for rate limit penalty`,
+          code: "NOT_FOUND",
+        });
       }
-      throw serverError(
-        "TOO_MANY_REQUESTS",
-        path.startsWith("nativeAuth.")
-          ? "Too many sign-in attempts. Please wait a minute and try again."
-          : `You are acting too fast. Incident logged for review on path ${path}. 1% money reduced.`,
-      );
     }
-    return next();
-  },
-);
+    throw serverError(
+      "TOO_MANY_REQUESTS",
+      path.startsWith("nativeAuth.")
+        ? "Too many sign-in attempts. Please wait a minute and try again."
+        : `You are acting too fast. Incident logged for review on path ${path}. 1% money reduced.`,
+    );
+  }
+};
 
 /**
  * Vercel BotID on mutations served by /api/trpc; a no-op for queries and for
@@ -295,15 +320,7 @@ const enforceUserIsAuthed = t.middleware(async ({ ctx: context, path, next }) =>
 /** Enforce persisted isolation even when hidden content or stale client state omits its tracker. */
 const enforcePyramidIsolation = t.middleware(async ({ ctx, path, type, next }) => {
   if (type === "mutation" && ctx.userId && isPyramidRestrictedProcedure(path)) {
-    const isolated = await ctx.drizzle.query.questHistory.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(questHistory.userId, ctx.userId),
-        eq(questHistory.isolated, true),
-        isNull(questHistory.endAt),
-        eq(questHistory.completed, 0),
-      ),
-    });
+    const isolated = await fetchIsolatedPyramid(ctx.drizzle, ctx.userId);
     if (isolated) {
       // Some activities allow ordinary BATTLE players. Restrict isolated runs to their
       // own progression and combat controls; the existing response contract permits recovery.

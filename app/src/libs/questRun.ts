@@ -47,9 +47,17 @@ export const formatQuestEntryCost = (
 ) =>
   requirements.map((required) => `${required.quantity}× ${required.name}`).join(", ");
 
-/** Read-only message delivery, run controls, preferences and authorized staff rescue remain usable. */
+/** These handlers check isolation with their opening reads, before any side effects. */
+export const SELF_GUARDED_PYRAMID_PROCEDURES = [
+  "travel.moveInSector",
+  "quests.checkLocationQuest",
+  "home.toggleSleep",
+] as const;
+
+/** Self-guarded handlers enforce isolation; message delivery and run controls remain usable. */
 export const isPyramidRestrictedProcedure = (path: string) =>
   ![
+    ...SELF_GUARDED_PYRAMID_PROCEDURES,
     "quests.checkRewards",
     "quests.retryBattle",
     "quests.abandon",

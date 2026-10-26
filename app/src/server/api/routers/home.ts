@@ -41,6 +41,7 @@ import {
   getInventoryBucketFullMessage,
 } from "@/libs/item";
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
+import { ISOLATED_PYRAMID_MESSAGE } from "@/libs/questRun";
 import { calcIsInVillage, getBiomeFromTileType } from "@/libs/travel";
 import { fetchUserItems } from "@/routers/item";
 import { fetchUpdatedUser } from "@/routers/profile";
@@ -291,12 +292,14 @@ export const homeRouter = createTRPCRouter({
     .output(homeSleepResponseSchema)
     .mutation(async ({ ctx }) => {
       // Query
-      const { user } = await fetchUpdatedUser({
+      const { user, isPyramidIsolated } = await fetchUpdatedUser({
         client: ctx.drizzle,
         userId: ctx.userId,
         forceRegen: true,
+        rejectIsolatedPyramid: true,
       });
       // Guard
+      if (isPyramidIsolated) return errorResponse(ISOLATED_PYRAMID_MESSAGE);
       if (!user) return errorResponse("User not found");
       // Derived
       const inVillage = calcIsInVillage({ x: user.longitude, y: user.latitude });

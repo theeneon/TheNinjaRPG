@@ -4135,11 +4135,15 @@ const withStaleMergeClaimRecovery = async <
   client: DrizzleClient,
   userId: string,
   fetchRows: () => Promise<T[]>,
+  canRecover?: () => Promise<boolean>,
   onStaleMergeClaimRecovery?: () => void,
 ): Promise<T[]> => {
   let rows = await fetchRows();
   const staleBefore = new Date(Date.now() - MERGE_STACK_CLAIM_TIMEOUT_MS);
-  if (rows.some((row) => row.quantity <= 0 && row.updatedAt <= staleBefore)) {
+  if (
+    rows.some((row) => row.quantity <= 0 && row.updatedAt <= staleBefore) &&
+    (!canRecover || (await canRecover()))
+  ) {
     await restoreStaleUserItemMergeClaims({ client, userId, staleBefore });
     rows = await fetchRows();
     onStaleMergeClaimRecovery?.();
@@ -4150,7 +4154,12 @@ const withStaleMergeClaimRecovery = async <
 export const fetchUserItems = async (
   client: DrizzleClient,
   userId: string,
-  options?: { includeHidden?: boolean; onStaleMergeClaimRecovery?: () => void },
+  options?: {
+    includeHidden?: boolean;
+    /** Parallel authorization reads must finish before an inventory read repairs stale claims. */
+    canRecoverStaleMergeClaims?: () => Promise<boolean>;
+    onStaleMergeClaimRecovery?: () => void;
+  },
 ) => {
   const useritems = await withStaleMergeClaimRecovery(
     client,
@@ -4163,6 +4172,7 @@ export const fetchUserItems = async (
           imbuements: { with: { item: true } },
         },
       }),
+    options?.canRecoverStaleMergeClaims,
     options?.onStaleMergeClaimRecovery,
   );
   return useritems.filter(
