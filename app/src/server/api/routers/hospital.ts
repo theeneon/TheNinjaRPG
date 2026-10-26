@@ -39,6 +39,7 @@ import {
   getUserRegenerationGain,
   userRegenerationGainSql,
 } from "@/server/utils/regeneration";
+import { flushSafe } from "@/server/utils/sentry";
 import { findRelationship } from "@/utils/alliance";
 import { secondsFromDate, secondsFromNow } from "@/utils/time";
 import { getStrucBoost } from "@/utils/village";
@@ -305,6 +306,7 @@ export const hospitalRouter = createTRPCRouter({
             Sentry.captureException(error, {
               tags: { source: "hospital.userHeal.studentShare" },
             });
+            await flushSafe();
           }
         });
       }

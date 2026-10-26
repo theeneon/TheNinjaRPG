@@ -48,6 +48,7 @@ import {
   elementalSnapshotConditions,
   masteryGainUpdates,
 } from "@/server/utils/masteryProgression";
+import { flushSafe } from "@/server/utils/sentry";
 import { editTrainingQueue } from "@/server/utils/userQueue";
 import { isInArray } from "@/utils/array";
 import { getQueueTotalCapacity, getQueueWaitingSlots } from "@/utils/paypal";
@@ -274,6 +275,7 @@ export const trainRouter = createTRPCRouter({
           Sentry.captureException(error, {
             tags: { source: "train.startTraining.trainingLog" },
           });
+          await flushSafe();
         }
       });
       return {
@@ -482,6 +484,7 @@ export const trainRouter = createTRPCRouter({
             Sentry.captureException(error, {
               tags: { source: "train.stopMasteryTraining.trainingLog" },
             });
+            await flushSafe();
           }
         });
       }

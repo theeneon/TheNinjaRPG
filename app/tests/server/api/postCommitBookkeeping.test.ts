@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as Sentry from "@sentry/nextjs";
+import * as SentryNode from "@sentry/node";
 import * as nextServer from "next/server";
 import { MEDNIN_EXP_CAP, MEDNIN_REQUIRED_EXP } from "@/drizzle/constants";
 import * as training from "@/libs/train";
@@ -72,6 +73,7 @@ beforeEach(() => {
     deferred.push(callback as () => unknown);
   });
   vi.spyOn(Sentry, "captureException").mockReturnValue("test-event");
+  vi.spyOn(SentryNode, "flush").mockResolvedValue(true);
   vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
   vi.spyOn(training, "trainingBoost").mockReturnValue(1);
   vi.spyOn(training, "getTrainingMultiplierBoost").mockReturnValue(1);
@@ -113,6 +115,7 @@ describe.each(trainingCases)("$name history", ({ name, invoke }) => {
     expect(db.values.mock.calls[0]?.[0]).toMatchObject({ userId: "bookkeeping-user" });
     const entry = db.values.mock.calls[0]?.[0] as unknown as { trainingFinishedAt: Date };
     expect(entry.trainingFinishedAt.getTime()).toBeLessThanOrEqual(respondedAt);
+    expect(SentryNode.flush).not.toHaveBeenCalled();
   });
 
   it("schedules no history when the gain claim loses", async () => {
@@ -123,15 +126,41 @@ describe.each(trainingCases)("$name history", ({ name, invoke }) => {
     expect(db.insert).not.toHaveBeenCalled();
   });
 
-  it("reports a deferred history failure without rejecting committed training", async () => {
+  it("keeps deferred history failure reporting alive until flushing completes", async () => {
     const db = database();
     const failure = new Error("history unavailable");
     db.values.mockRejectedValue(failure);
     expect((await invoke(db)).success).toBe(true);
-    await deferred[0]?.();
+    expect(SentryNode.flush).not.toHaveBeenCalled();
+    let release!: (result: boolean) => void;
+    vi.spyOn(SentryNode, "flush").mockReturnValue(
+      new Promise<boolean>((resolve) => { release = resolve; }),
+    );
+    let settled = false;
+    const callback = Promise.resolve(deferred[0]?.()).finally(() => { settled = true; });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
     expect(Sentry.captureException).toHaveBeenCalledWith(failure, {
       tags: { source: `train.${name}.trainingLog` },
     });
+    expect(SentryNode.flush).toHaveBeenCalledWith(5000);
+    expect(settled).toBe(false);
+    release(true);
+    await callback;
+    expect(settled).toBe(true);
+  });
+
+  it("contains a flush failure after committed training", async () => {
+    const db = database();
+    db.values.mockRejectedValue(new Error("history unavailable"));
+    const failure = new Error("telemetry unavailable");
+    vi.spyOn(SentryNode, "flush").mockRejectedValue(failure);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await invoke(db)).success).toBe(true);
+    await deferred[0]?.();
+    expect(SentryNode.flush).toHaveBeenCalledWith(5000);
+    expect(console.error).toHaveBeenCalledWith(
+      "[flushSafe] An exception was thrown while running Sentry.flush()", failure,
+    );
   });
 });
 
@@ -148,6 +177,7 @@ describe("healing student shares", () => {
     await deferred[0]?.();
     expect(db.update).toHaveBeenCalledTimes(2);
     expect(db.set.mock.calls[1]?.[0]).toHaveProperty("medicalExperience");
+    expect(SentryNode.flush).not.toHaveBeenCalled();
   });
 
   it("schedules no share after a rejected heal", async () => {
@@ -168,14 +198,40 @@ describe("healing student shares", () => {
     expect(db.update).toHaveBeenCalledTimes(1);
   });
 
-  it("reports a deferred share failure without rejecting the committed heal", async () => {
+  it("keeps deferred share failure reporting alive until flushing completes", async () => {
     const db = database();
     const failure = new Error("share unavailable");
     db.where.mockResolvedValueOnce({ rowsAffected: 1 }).mockRejectedValueOnce(failure);
     expect((await heal(db)).success).toBe(true);
-    await deferred[0]?.();
+    expect(SentryNode.flush).not.toHaveBeenCalled();
+    let release!: (result: boolean) => void;
+    vi.spyOn(SentryNode, "flush").mockReturnValue(
+      new Promise<boolean>((resolve) => { release = resolve; }),
+    );
+    let settled = false;
+    const callback = Promise.resolve(deferred[0]?.()).finally(() => { settled = true; });
+    await new Promise<void>((resolve) => { setImmediate(resolve); });
     expect(Sentry.captureException).toHaveBeenCalledWith(failure, {
       tags: { source: "hospital.userHeal.studentShare" },
     });
+    expect(SentryNode.flush).toHaveBeenCalledWith(5000);
+    expect(settled).toBe(false);
+    release(true);
+    await callback;
+    expect(settled).toBe(true);
+  });
+
+  it("contains a flush failure after the committed heal", async () => {
+    const db = database();
+    db.where.mockResolvedValueOnce({ rowsAffected: 1 }).mockRejectedValueOnce(new Error("share unavailable"));
+    const failure = new Error("telemetry unavailable");
+    vi.spyOn(SentryNode, "flush").mockRejectedValue(failure);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await heal(db)).success).toBe(true);
+    await deferred[0]?.();
+    expect(SentryNode.flush).toHaveBeenCalledWith(5000);
+    expect(console.error).toHaveBeenCalledWith(
+      "[flushSafe] An exception was thrown while running Sentry.flush()", failure,
+    );
   });
 });
