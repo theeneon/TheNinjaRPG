@@ -1,4 +1,5 @@
 import type { ExecutedQuery } from "@planetscale/database";
+import * as Sentry from "@sentry/nextjs";
 import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { after } from "next/server";
@@ -38,6 +39,7 @@ import {
   getUserRegenerationGain,
   userRegenerationGainSql,
 } from "@/server/utils/regeneration";
+import { flushSafe } from "@/server/utils/sentry";
 import { findRelationship } from "@/utils/alliance";
 import { secondsFromDate, secondsFromNow } from "@/utils/time";
 import { getStrucBoost } from "@/utils/village";
@@ -286,17 +288,27 @@ export const hospitalRouter = createTRPCRouter({
       // Student shares follow successful delivery, so a rejected heal grants no experience.
       const shareExp = Math.floor((expGain * SENSEI_GENIN_MED_EXP_SHARE_PERC) / 100);
       if (shareExp > 0) {
-        await ctx.drizzle
-          .update(userData)
-          .set({
-            medicalExperience: sql`LEAST(${userData.medicalExperience} + ${shareExp}, ${MEDNIN_EXP_CAP})`,
-          })
-          .where(
-            and(
-              eq(userData.senseiId, u.userId),
-              lte(userData.level, SENSEI_MAX_STUDENT_LEVEL),
-            ),
-          );
+        // The heal has committed; student progress need not delay the healer's response.
+        after(async () => {
+          try {
+            await ctx.drizzle
+              .update(userData)
+              .set({
+                medicalExperience: sql`LEAST(${userData.medicalExperience} + ${shareExp}, ${MEDNIN_EXP_CAP})`,
+              })
+              .where(
+                and(
+                  eq(userData.senseiId, u.userId),
+                  lte(userData.level, SENSEI_MAX_STUDENT_LEVEL),
+                ),
+              );
+          } catch (error) {
+            Sentry.captureException(error, {
+              tags: { source: "hospital.userHeal.studentShare" },
+            });
+            await flushSafe();
+          }
+        });
       }
       if (!isSelfHeal) {
         void pusher.trigger(t.userId, "event", {

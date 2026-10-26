@@ -11,15 +11,28 @@
  * back with `resetServerModuleStubs`, so nothing leaks to the suites that never asked.
  */
 import { vi } from "bun:test";
+import * as actualNextServer from "next/server";
 import * as actualDb from "@/server/db";
 import * as actualProfile from "@/routers/profile";
 import * as actualSparring from "@/routers/sparring";
 import * as actualCron from "@/server/utils/cron";
 import { peekTestDatabase, withEmptyIsolationHistory } from "./testDatabase";
+import { afterTasks } from "./after";
 
 type AnyFn = (...args: never[]) => unknown;
 
 const stubs = new Map<string, AnyFn>();
+const actualAfter = actualNextServer.after;
+
+// Next owns after() in HTTP requests. Direct test callers provide an isolated task queue.
+vi.mock("next/server", () => ({
+  ...actualNextServer,
+  after: (task: Parameters<typeof actualNextServer.after>[0]) => {
+    const tasks = afterTasks.getStore();
+    if (!tasks) return actualAfter(task);
+    tasks.push(() => (typeof task === "function" ? task() : task));
+  },
+}));
 
 /** Wraps every exported function so a stub can be swapped in per suite; data exports pass through. */
 const delegating = <T extends object>(actual: T) =>
