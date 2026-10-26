@@ -19,6 +19,8 @@ import {
   userRaidBuff,
   village,
   villageStructure,
+  war,
+  warCamp,
 } from "@/drizzle/schema";
 import { getServerPusher } from "@/libs/pusher";
 import { getEnergyQueue } from "@/libs/queue";
@@ -26,6 +28,7 @@ import { initiateBattle } from "@/server/api/routers/combat";
 import { fetchUpdatedUser } from "@/server/api/routers/profile";
 import { trainRouter } from "@/server/api/routers/train";
 import { IncreaseRegenerationTag } from "@/validators/combat";
+import { defaultWarRules } from "@/validators/war";
 import { completeExpiredGlobalTravel, travelRouter } from "@/server/api/routers/travel";
 import {
   invalidatePublishedMapCache,
@@ -132,14 +135,14 @@ const prepare = async (queue = entries) => {
       })),
     );
 };
-const walk = async (sector: number, curLongitude: number, longitude: number) =>
+const walk = async (sector: number, curLongitude: number, longitude: number, villageId = "home") =>
   (await callerFor(travelRouter, USER)).moveInSector({
     sector,
     curLongitude,
     curLatitude: 10,
     longitude,
     latitude: 10,
-    villageId: "home",
+    villageId,
     level: 1,
     username: USER,
     avatar: "https://example.com/avatar.png",
@@ -168,6 +171,8 @@ describeWithDatabase("Energy queue state transitions", () => {
       sectorMap,
       userVote,
       userData,
+      warCamp,
+      war,
       village,
       villageStructure,
     );
@@ -421,6 +426,86 @@ describeWithDatabase("Energy queue state transitions", () => {
     expect(after.curEnergy).toBe(before.curEnergy);
     expect(after.regenAt).toEqual(before.regenAt);
     expect(after.updatedAt).toEqual(before.updatedAt);
+  });
+  it.each([HOME, AWAY])("defers queued Energy settlement while walking within sector %s", async (sector) => {
+    await prepare();
+    await patch({ sector, regenAt: new Date(Date.now() - 195_000) });
+    const before = (await read())!;
+    expect((await walk(sector, 25, 24)).success).toBe(true);
+    const after = (await read())!;
+    expect(after.longitude).toBe(24);
+    expect(after.curEnergy).toBe(before.curEnergy);
+    expect(after.offence).toBe(before.offence);
+    expect(after.defence).toBe(before.defence);
+    expect(after.regenAt).toEqual(before.regenAt);
+    expect(after.updatedAt).toEqual(before.updatedAt);
+    expect(await readEnergyQueue(USER)).toEqual(entries);
+  });
+  it("settles deferred home-sector ticks before walking away", async () => {
+    await prepare();
+    await patch({ longitude: 24, regenAt: new Date(Date.now() - 65_000) });
+    expect((await walk(HOME, 24, 25)).success).toBe(true);
+    expect((await walk(HOME, 25, 26)).success).toBe(true);
+    const user = (await read())!;
+    expect(user.sector).toBe(AWAY);
+    expect(user.offence).toBe(18.5);
+    expect(user.defence).toBe(10);
+    expect(await readEnergyQueue(USER)).toEqual<Array<(typeof entries)[number] | undefined>>([entries[1]]);
+  });
+  it("rechecks war-camp access after settlement changes village membership", async () => {
+    await prepare();
+    const db = await getTestDatabase();
+    await db.insert(village).values({ id: "outlaws", name: "Outlaws", sector: 100, kageId: "outlaw-kage", type: "OUTLAW" });
+    await db.insert(war).values({
+      id: "home-war", attackerVillageId: "home", defenderVillageId: "enemy",
+      type: "VILLAGE_WAR", status: "ACTIVE", rules: { ...defaultWarRules, enabled: true },
+      combatStartedAt: new Date(Date.now() - 3600_000),
+    });
+    await db.insert(warCamp).values({
+      id: "away-camp", warId: "home-war", sector: AWAY, guardianId: "guardian",
+      startsAt: new Date(Date.now() - 3600_000), endsAt: new Date(Date.now() + 3600_000),
+    });
+    await patch({ villagePrestige: -1 });
+    // A client-supplied new village must not reuse admission granted to the old one.
+    const result = await walk(HOME, 25, 26, "outlaws");
+    expect(result).toMatchObject({
+      success: false,
+      message: "This sector is reserved for participants in an active war camp.",
+    });
+    expect(await read()).toMatchObject({ villageId: "outlaws", sector: HOME, longitude: 25 });
+  });
+  it("rejects a stale queued within-sector move without settling training", async () => {
+    await prepare();
+    await patch({ regenAt: new Date(Date.now() - 195_000) });
+    const before = (await read())!;
+    const changedAt = new Date(before.updatedAt.getTime() + 1);
+    const racingDb = beforeStatements(await getTestDatabase(), userData, [
+      () => patch({ updatedAt: changedAt, curEnergy: 1 }),
+    ]);
+    const result = await travelRouter
+      .createCaller({ drizzle: racingDb, userId: USER } as never)
+      .moveInSector({
+        sector: HOME,
+        curLongitude: 25,
+        curLatitude: 10,
+        longitude: 24,
+        latitude: 10,
+        villageId: "home",
+        level: 1,
+        username: USER,
+        avatar: "https://example.com/avatar.png",
+        avatarLight: "https://example.com/avatar.png",
+      });
+    expect(result.success).toBe(false);
+    expect(await read()).toMatchObject({
+      longitude: 25,
+      regenAt: before.regenAt,
+      updatedAt: changedAt,
+      curEnergy: 1,
+      offence: before.offence,
+      defence: before.defence,
+    });
+    expect(await readEnergyQueue(USER)).toEqual(entries);
   });
   it("finishes travel repeatedly without a queue or another snapshot write", async () => {
     await prepare([]);
