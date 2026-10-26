@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useLocalStorage } from "@/hooks/localstorage";
+import { useSectorVillage } from "@/hooks/useSectorVillage";
 import BanInfo from "@/layout/BanInfo";
 import Conversation, { ConversationSkeleton } from "@/layout/Conversation";
 import NavTabs from "@/layout/NavTabs";
@@ -32,15 +33,7 @@ export default function Tavern() {
   const { data: villages } = api.village.getAll.useQuery(undefined, {
     enabled: !!userData,
   });
-  // isLoading rather than isPending: a disabled query stays pending indefinitely, which
-  // would hold the loader below in place for anyone whose sector is missing.
-  const { data: sectorVillage, isLoading: isLoadingSector } =
-    api.travel.getVillageInSector.useQuery(
-      { sector: userData?.sector ?? -1, isOutlaw: userData?.isOutlaw ?? false },
-      // A loaded user without a sector would otherwise send the -1 placeholder, which
-      // the sector schema rejects. Sector 0 is real, so test for presence, not truth.
-      { enabled: userData?.sector != null },
-    );
+  const { sectorVillage, isLoading: isLoadingSector } = useSectorVillage(userData);
   const { data: globalTavernEnabled = true, isPending: isLoadingGlobalTavern } =
     api.misc.getGlobalTavernEnabled.useQuery();
 
