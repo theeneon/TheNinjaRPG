@@ -17,6 +17,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import type { DrizzleClient } from "@/server/db";
 import * as schema from "@/drizzle/schema";
+import { withAfterTasks } from "./after";
 
 const url = process.env.TEST_MYSQL_URL;
 const allowDestructive = process.env.TEST_MYSQL_ALLOW_DESTRUCTIVE === "1";
@@ -287,13 +288,13 @@ export const callerFor = async <Context, Caller>(
   router: { createCaller: (context: Context) => Caller },
   userId: string,
 ): Promise<Caller> =>
-  router.createCaller({ drizzle: await getTestDatabase(), userId } as Context);
+  withAfterTasks(router.createCaller({ drizzle: await getTestDatabase(), userId } as Context));
 
 export const callerForDatabase = <Context, Caller>(
   router: { createCaller: (context: Context) => Caller },
   userId: string,
   database: DrizzleClient,
-): Caller => router.createCaller({ drizzle: withEmptyIsolationHistory(database), userId } as Context);
+): Caller => withAfterTasks(router.createCaller({ drizzle: withEmptyIsolationHistory(database), userId } as Context));
 
 /** Partial test clients default to no isolated run; supplied history stubs and real clients stay intact. */
 export const withEmptyIsolationHistory = <Client extends object>(database: Client): Client => {

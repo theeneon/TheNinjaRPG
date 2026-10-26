@@ -1,4 +1,6 @@
+import * as Sentry from "@sentry/nextjs";
 import { and, eq, gt, gte, isNull, sql } from "drizzle-orm";
+import { after } from "next/server";
 import {
   BasicElementName,
   getUserCaps,
@@ -257,12 +259,22 @@ export const trainRouter = createTRPCRouter({
       });
       if (!claim.success)
         return errorResponse("Your stats or Energy changed. Please try again");
-      await ctx.drizzle.insert(trainingLog).values({
-        userId: ctx.userId,
-        amount,
-        stat: input.stat,
-        speed: user.trainingSpeed,
-        trainingFinishedAt: new Date(),
+      const trainingFinishedAt = new Date();
+      // History is independent of the committed gains; keep it off the response path.
+      after(async () => {
+        try {
+          await ctx.drizzle.insert(trainingLog).values({
+            userId: ctx.userId,
+            amount,
+            stat: input.stat,
+            speed: user.trainingSpeed,
+            trainingFinishedAt,
+          });
+        } catch (error) {
+          Sentry.captureException(error, {
+            tags: { source: "train.startTraining.trainingLog" },
+          });
+        }
       });
       return {
         success: true,
@@ -456,12 +468,21 @@ export const trainRouter = createTRPCRouter({
         return errorResponse("Training changed while stopping. Please try again");
       }
       if (gained > 0) {
-        await ctx.drizzle.insert(trainingLog).values({
-          userId: ctx.userId,
-          amount: gained,
-          stat: trained,
-          speed,
-          trainingFinishedAt: new Date(),
+        const trainingFinishedAt = new Date();
+        after(async () => {
+          try {
+            await ctx.drizzle.insert(trainingLog).values({
+              userId: ctx.userId,
+              amount: gained,
+              stat: trained,
+              speed,
+              trainingFinishedAt,
+            });
+          } catch (error) {
+            Sentry.captureException(error, {
+              tags: { source: "train.stopMasteryTraining.trainingLog" },
+            });
+          }
         });
       }
       const capNote =
