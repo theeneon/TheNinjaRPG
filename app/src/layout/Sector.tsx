@@ -133,7 +133,10 @@ type SectorWindowEntry =
  * mapTerrain.getAll.
  */
 export interface SectorWindowData {
-  mapAssets: RouterOutputs["mapAsset"]["getAll"];
+  mapAssets: Omit<
+    RouterOutputs["mapAsset"]["getAll"][number],
+    "createdAt" | "updatedAt"
+  >[];
   mapTerrains: RouterOutputs["mapTerrain"]["getAll"];
   sectors: SectorWindowEntry[];
 }

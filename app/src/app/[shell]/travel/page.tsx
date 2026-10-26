@@ -238,6 +238,8 @@ function Travel() {
   // Keep libraries across navigation; refresh artwork so content edits reach existing maps.
   const { data: mapAssets } = api.mapAsset.getAll.useQuery(undefined, {
     enabled: !!userData,
+    // Dates prevent structural sharing; the scene only needs the asset content.
+    select: (rows) => rows.map(({ createdAt, updatedAt, ...rest }) => rest),
     staleTime: MAP_LOCATION_REFRESH_MS,
     refetchInterval: MAP_LOCATION_REFRESH_MS,
     refetchIntervalInBackground: false,
