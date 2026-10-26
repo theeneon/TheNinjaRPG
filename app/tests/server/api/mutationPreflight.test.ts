@@ -5,6 +5,7 @@ import * as Sentry from "@sentry/node";
 import { SELF_GUARDED_PYRAMID_PROCEDURES, ISOLATED_PYRAMID_MESSAGE, isPyramidRestrictedProcedure } from "@/libs/questRun";
 import { combatRouter } from "@/server/api/routers/combat";
 import { homeRouter } from "@/server/api/routers/home";
+import { fetchUserItems } from "@/server/api/routers/item";
 import { fetchUpdatedUser } from "@/server/api/routers/profile";
 import { questsRouter } from "@/server/api/routers/quests";
 import { travelRouter } from "@/server/api/routers/travel";
@@ -91,10 +92,41 @@ describe("self-guarded Pyramid mutations", () => {
       ? await caller(homeRouter, db).toggleSleep()
       : await caller(questsRouter, db).checkLocationQuest();
     expect(result).toMatchObject({ success: false, message: ISOLATED_PYRAMID_MESSAGE });
+    if (router === "quests") expect(result).toMatchObject({ itemsChanged: false });
     expect(write).not.toHaveBeenCalled();
     const refreshed = await fetchUpdatedUser({ client: db as unknown as DrizzleClient, userId: "isolated", rejectIsolatedPyramid: true });
     expect(refreshed.isPyramidIsolated).toBe(true);
     expect(refreshed.user).toBeUndefined();
+    expect(refreshed.craftingItemsChanged).toBe(false);
+  });
+
+  it.each([false, true])("repairs stale inventory only after authorization (allowed: %s)", async (allowed) => {
+    const authorization = deferred<boolean>();
+    const inventoryStarted = deferred<void>();
+    const staleItem = { quantity: -1, updatedAt: new Date(0), item: { hidden: false } };
+    const read = vi.fn(async (): Promise<(typeof staleItem)[]> => {
+      inventoryStarted.resolve();
+      return [read.mock.calls.length === 1 ? staleItem : { ...staleItem, quantity: 1 }];
+    });
+    const write = vi.fn(async () => ({ rowsAffected: 1 }));
+    const recovered = vi.fn(() => { expect(read).toHaveBeenCalledTimes(2); });
+    const db = {
+      query: { userItem: { findMany: read } },
+      update: () => ({ set: () => ({ where: write }) }),
+      delete: () => ({ where: write }),
+    };
+    const result = fetchUserItems(db as unknown as DrizzleClient, "stale-owner", {
+      canRecoverStaleMergeClaims: () => authorization.promise,
+      onStaleMergeClaimRecovery: recovered,
+    });
+    await inventoryStarted.promise;
+    expect(write).not.toHaveBeenCalled();
+    expect(recovered).not.toHaveBeenCalled();
+    authorization.resolve(allowed);
+    expect(await result).toHaveLength(allowed ? 1 : 0);
+    expect(write).toHaveBeenCalledTimes(allowed ? 2 : 0);
+    expect(read).toHaveBeenCalledTimes(allowed ? 2 : 1);
+    expect(recovered).toHaveBeenCalledTimes(allowed ? 1 : 0);
   });
 });
 

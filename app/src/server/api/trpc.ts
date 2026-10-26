@@ -190,18 +190,12 @@ export const ratelimitMiddleware = t.middleware(
 export const deferredRatelimitMiddleware = t.middleware(async ({ ctx, path, next }) => {
   // Observe rejection immediately: input validation or the initial read may fail before
   // the handler awaits the gate. Keep the original limiter/penalty error in that case too.
-  const outcome = enforceRateLimit(ctx, path).then(
-    () => ({ success: true as const }),
-    (error: unknown) => ({ success: false as const, error }),
-  );
-  const waitForRateLimit = async () => {
-    const result = await outcome;
-    if (!result.success) throw result.error;
-  };
+  const rateLimit = enforceRateLimit(ctx, path);
+  void rateLimit.catch(() => {});
   try {
-    return await next({ ctx: { waitForRateLimit } });
+    return await next({ ctx: { waitForRateLimit: () => rateLimit } });
   } finally {
-    await waitForRateLimit();
+    await rateLimit;
   }
 });
 
