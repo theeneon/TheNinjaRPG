@@ -1,7 +1,6 @@
 "use client";
 
 import { Shield, Swords, Users } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +10,7 @@ import {
   WAR_SHRINE_IMAGE,
 } from "@/drizzle/constants";
 import type { War } from "@/drizzle/schema";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import ContentBox from "@/layout/ContentBox";
 import Image from "@/layout/Image";
 import Link from "@/layout/Link";

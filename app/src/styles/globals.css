@@ -1043,3 +1043,11 @@ html[data-reading-palette] .tnr-pixel-game [data-content-box-inner] {
 html[data-reading-palette] .tnr-pixel-game [data-content-box] :where(h1, h2, h3) {
   color: hsl(var(--foreground)) !important;
 }
+@keyframes navigation-progress {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}

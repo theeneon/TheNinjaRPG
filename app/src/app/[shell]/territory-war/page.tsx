@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { api } from "@/app/_trpc/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -16,6 +15,7 @@ import {
   TERRITORY_WAR_TEAM_SIZE,
   TERRITORY_WAR_TOKEN_REWARD,
 } from "@/drizzle/constants";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import { useRefreshAt } from "@/hooks/useRefreshAt";
 import ContentBox from "@/layout/ContentBox";
 import Countdown from "@/layout/Countdown";

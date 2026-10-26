@@ -1,6 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, Medal, ShieldBan, Swords, Trophy, UserRoundPlus } from "lucide-react";
-import { useRouter } from "next/navigation";
 import type React from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
@@ -16,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { IMG_AVATAR_DEFAULT, TOURNAMENT_ROUND_SECONDS } from "@/drizzle/constants";
 import type { TournamentMatch } from "@/drizzle/schema";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import AvatarImage from "@/layout/Avatar";
 import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";

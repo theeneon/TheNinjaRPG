@@ -3,7 +3,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { sendGTMEvent } from "@next/third-parties/google";
 import { Bot, Info, Loader2, Sun, Swords } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
@@ -38,6 +37,7 @@ import {
 } from "@/drizzle/constants";
 import { useAutoCombatSetting } from "@/hooks/combat";
 import { useLocalStorage } from "@/hooks/localstorage";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import { useSleepToggle } from "@/hooks/sleep";
 import { useTutorialStep } from "@/hooks/tutorial";
 import BanInfo from "@/layout/BanInfo";

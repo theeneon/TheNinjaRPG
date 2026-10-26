@@ -20,7 +20,6 @@ import {
   UserRoundCog,
   XCircle,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
@@ -87,6 +86,7 @@ import {
 } from "@/drizzle/constants";
 import type { UserNindo, UserRank } from "@/drizzle/schema";
 import { useLocalStorage } from "@/hooks/localstorage";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import ActionLogs from "@/layout/ActionLog";
 import { getFilter, useFiltering } from "@/layout/ActionLogFiltering";
 import AvatarImage from "@/layout/Avatar";

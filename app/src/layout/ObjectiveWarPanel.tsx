@@ -1,5 +1,4 @@
 "use client";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -12,6 +11,7 @@ import {
   WAR_CAMP_INTERVAL_HOURS,
   WAR_ESPIONAGE_TARGET,
 } from "@/drizzle/constants";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import { useRefreshAt } from "@/hooks/useRefreshAt";
 import Countdown from "@/layout/Countdown";
 import Link from "@/layout/Link";
