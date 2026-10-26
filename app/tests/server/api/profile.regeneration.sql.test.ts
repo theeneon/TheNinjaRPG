@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, setSystemTime, vi } from "bun:test";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import * as nextServer from "next/server";
 import { REGEN_SECONDS, VILLAGE_SYNDICATE_ID } from "@/drizzle/constants";
 import { bloodline, gameSetting, trainingLog, userData, userQueue, userRaidBuff, userVote, village, villageStructure } from "@/drizzle/schema";
@@ -10,7 +10,8 @@ import { travelRouter } from "@/server/api/routers/travel";
 import { IncreaseRegenerationTag } from "@/validators/combat";
 import { insertUsers } from "../../setup/factories";
 import { queueEnergy, readEnergyQueue } from "../../setup/queues";
-import { callerFor, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { beforeStatements } from "../../setup/statements";
+import { callerFor, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 
 const NOW = new Date("2026-10-14T12:00:00Z");
 
@@ -35,6 +36,49 @@ describeWithDatabase("profile regeneration after village expulsion", () => {
     }]);
   });
   afterEach(() => { setSystemTime(); vi.restoreAllMocks(); });
+
+  it("forces regeneration without reading or rewriting village state", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ villagePrestige: 100 }).where(eq(userData.userId, "expelled"));
+    const { result, statements } = await recordQueries(() =>
+      fetchUpdatedUser({ client: db, userId: "expelled", forceRegen: true }),
+    );
+    expect(result.user?.curHealth).toBe(115);
+    expect(statements.filter((statement) => /^select `villagePrestige`, `villageId`, `isOutlaw` from `UserData`/.test(statement))).toHaveLength(0);
+    const regenUpdates = statements.filter((statement) => statement.startsWith("update `UserData` set") && statement.includes("`regenAt` ="));
+    expect(regenUpdates).toHaveLength(1);
+    expect(regenUpdates[0]!.split(" where ")[0]).not.toMatch(/`(?:villagePrestige|villageId|isOutlaw)` =/);
+  });
+
+  it("preserves prestige earned between hydration and the regeneration claim", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ villagePrestige: 100 }).where(eq(userData.userId, "expelled"));
+    const client = beforeStatements(db, userData, [async () =>
+      db.update(userData).set({ villagePrestige: sql`${userData.villagePrestige} + 25` }).where(eq(userData.userId, "expelled")),
+    ]);
+    const result = await fetchUpdatedUser({ client, userId: "expelled", forceRegen: true });
+    expect(result.user?.curHealth).toBe(115);
+    expect(await db.query.userData.findFirst({ where: eq(userData.userId, "expelled") })).toMatchObject({ villagePrestige: 125, curHealth: 115 });
+  });
+
+  it.each([
+    { villageId: VILLAGE_SYNDICATE_ID, isOutlaw: true },
+    { villageId: null, isOutlaw: false },
+    { villageId: "home", isOutlaw: true },
+  ])("rehydrates concurrent membership changes before returning (%j)", async (membership) => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ villagePrestige: 100 }).where(eq(userData.userId, "expelled"));
+    const client = beforeStatements(db, userData, [async () =>
+      db.update(userData).set(membership).where(eq(userData.userId, "expelled")),
+    ]);
+    const result = await fetchUpdatedUser({ client, userId: "expelled", forceRegen: true });
+    expect(result.user).toMatchObject(membership);
+    expect(result.user?.village?.id ?? null).toBe(membership.villageId);
+    expect(result.requiresProgressionRefresh).toBe(true);
+    expect(result.requiresUserRefresh).toBe(true);
+    // Losing settlement discards the old village's calculated recovery as well as its relations.
+    expect(await db.query.userData.findFirst({ where: eq(userData.userId, "expelled") })).toMatchObject({ ...membership, curHealth: 0, regenAt: new Date(NOW.getTime() - 60_000) });
+  });
 
   it("settles accrued ticks at the member rate and projects future ticks at the outlaw rate", async () => {
     const db = await getTestDatabase();

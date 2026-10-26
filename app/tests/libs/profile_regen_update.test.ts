@@ -1,9 +1,8 @@
-
 import { describe, expect, it } from "bun:test";
 import { buildDerivedUserRegenUpdate } from "@/server/utils/profileRegen";
 
 describe("buildDerivedUserRegenUpdate", () => {
-  it("keeps only derived regen fields by default", () => {
+  it("keeps only derived regen fields", () => {
     const update = buildDerivedUserRegenUpdate({
       user: {
         curHealth: 100,
@@ -18,9 +17,6 @@ describe("buildDerivedUserRegenUpdate", () => {
         secondaryElement: "Water",
         status: "AWAKE",
         travelFinishAt: null,
-        villagePrestige: 300,
-        villageId: "village-1",
-        isOutlaw: false,
       },
       userIp: "127.0.0.1",
     });
@@ -41,34 +37,32 @@ describe("buildDerivedUserRegenUpdate", () => {
     expect(update).not.toHaveProperty("gatheringExperience");
     expect(update).not.toHaveProperty("extraReskinSlots");
     expect(update).not.toHaveProperty("villagePrestige");
+    expect(update).not.toHaveProperty("villageId");
+    expect(update).not.toHaveProperty("isOutlaw");
   });
 
-  it("includes village state only when explicitly requested", () => {
-    const update = buildDerivedUserRegenUpdate({
-      user: {
-        curHealth: 100,
-        curStamina: 90,
-        curChakra: 80,
-        curEnergy: 50,
-        maxEnergy: 100,
-        updatedAt: new Date("2026-05-01T10:00:00.000Z"),
-        regenAt: new Date("2026-05-01T10:00:00.000Z"),
-        questData: [],
-        primaryElement: "Fire",
-        secondaryElement: "Water",
-        status: "AWAKE",
-        travelFinishAt: null,
-        villagePrestige: 300,
-        villageId: "village-1",
-        isOutlaw: true,
-      },
-      includeVillageState: true,
-    });
-
-    expect(update).toMatchObject({
+  it("omits village state from a full user snapshot", () => {
+    const user = {
+      curHealth: 100,
+      curStamina: 90,
+      curChakra: 80,
+      curEnergy: 50,
+      maxEnergy: 100,
+      updatedAt: new Date("2026-05-01T10:00:00.000Z"),
+      regenAt: new Date("2026-05-01T10:00:00.000Z"),
+      questData: [],
+      primaryElement: "Fire" as const,
+      secondaryElement: "Water" as const,
+      status: "AWAKE" as const,
+      travelFinishAt: null,
       villagePrestige: 300,
       villageId: "village-1",
       isOutlaw: true,
-    });
+    };
+    const update = buildDerivedUserRegenUpdate({ user });
+
+    expect(update).not.toHaveProperty("villagePrestige");
+    expect(update).not.toHaveProperty("villageId");
+    expect(update).not.toHaveProperty("isOutlaw");
   });
 });

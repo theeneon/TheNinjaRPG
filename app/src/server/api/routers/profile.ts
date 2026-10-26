@@ -4113,19 +4113,15 @@ const fetchUpdatedUserOnce = async (
         requiresUserRefresh = true;
         requiresProgressionRefresh = true;
       }
-      // Update database (pools, questData, etc.; village columns only when includeVillageState)
+      // Persist derived pools and quest data without overwriting village state.
       try {
         const persisted = await persistPassiveRegenToDb({
           client,
           userId,
           user,
           userIp,
-          forceRegen: forceRegen ?? false,
           originalUpdatedAt,
           queuedTraining,
-          onVillageStateChanged: () => {
-            requiresProgressionRefresh = true;
-          },
           queuedMastery: queuedMastery
             ? { ...queuedMastery, original: masteryTrainingSession }
             : null,
@@ -4251,26 +4247,22 @@ const fetchUpdatedUserOnce = async (
   }
 };
 
-/** Writes passive regen fields to userData after refreshing any included village state. */
+/** Writes passive regen fields only while the hydrated user snapshot still matches. */
 const persistPassiveRegenToDb = async ({
   client,
   userId,
   user,
   userIp,
-  forceRegen,
   originalUpdatedAt,
   queuedTraining,
-  onVillageStateChanged,
   queuedMastery,
 }: {
   client: DrizzleClient;
   userId: string;
   user: NonNullable<UserWithRelations>;
   userIp?: string;
-  forceRegen: boolean;
   originalUpdatedAt: Date;
   queuedTraining?: ReturnType<typeof settleQueuedTraining>["energy"];
-  onVillageStateChanged?: () => void;
   queuedMastery?:
     | (NonNullable<ReturnType<typeof settleQueuedTraining>["mastery"]> & {
         original: Pick<
@@ -4289,58 +4281,29 @@ const persistPassiveRegenToDb = async ({
       })
     | null;
 }) => {
-  const includeVillageState = forceRegen || (user.villagePrestige < 0 && user.isOutlaw);
-
   // Persist history before appending: concurrent deletion either reads this IP or creates
   // a retained source in time for the append to preserve it before history is removed.
-  const historicalIpPromise =
-    userIp && user.lastIp !== userIp
-      ? client
-          .insert(historicalIp)
-          .values({
-            userId,
-            ip: userIp,
-            ipHash: hashIp(userIp),
-          })
-          .onDuplicateKeyUpdate({
-            set: { usedAt: new Date(), ipHash: hashIp(userIp) },
-          })
-          .then(() => retainSanctionIps(client, userId, [userIp]))
-      : Promise.resolve(null);
-
-  const [freshVillageRow] = await Promise.all([
-    includeVillageState
-      ? client.query.userData.findFirst({
-          where: eq(userData.userId, userId),
-          columns: {
-            villagePrestige: true,
-            villageId: true,
-            isOutlaw: true,
-          },
-        })
-      : Promise.resolve(null),
-    historicalIpPromise,
-  ]);
-
-  let userForRegenPersist = user;
-  if (includeVillageState && freshVillageRow) {
-    if (
-      freshVillageRow.villageId !== user.villageId ||
-      freshVillageRow.isOutlaw !== user.isOutlaw ||
-      freshVillageRow.villagePrestige !== user.villagePrestige
-    )
-      onVillageStateChanged?.();
-    userForRegenPersist = { ...user, ...freshVillageRow };
+  if (userIp && user.lastIp !== userIp) {
+    await client
+      .insert(historicalIp)
+      .values({
+        userId,
+        ip: userIp,
+        ipHash: hashIp(userIp),
+      })
+      .onDuplicateKeyUpdate({
+        set: { usedAt: new Date(), ipHash: hashIp(userIp) },
+      })
+      .then(() => retainSanctionIps(client, userId, [userIp]));
   }
 
   const derivedUserUpdate = buildDerivedUserRegenUpdate({
-    user: userForRegenPersist,
+    user,
     userIp,
-    includeVillageState,
   });
   derivedUserUpdate.questData = filterQuestTrackersForDbPersist(
-    userForRegenPersist.questData ?? [],
-    userForRegenPersist,
+    user.questData ?? [],
+    user,
   );
 
   if (queuedTraining) {
@@ -4367,18 +4330,18 @@ const persistPassiveRegenToDb = async ({
     client,
     userId,
     updatedAt: originalUpdatedAt,
-    // Status transitions can occur without advancing the snapshot timestamp.
+    // Status and membership transitions can occur without advancing the snapshot timestamp.
     where: [
       eq(userData.status, user.status),
+      user.villageId === null
+        ? isNull(userData.villageId)
+        : eq(userData.villageId, user.villageId),
+      eq(userData.isOutlaw, user.isOutlaw),
       ...(queuedTraining
         ? [
             eq(userData.sector, user.sector),
             eq(userData.longitude, user.longitude),
             eq(userData.latitude, user.latitude),
-            user.villageId === null
-              ? isNull(userData.villageId)
-              : eq(userData.villageId, user.villageId),
-            eq(userData.isOutlaw, user.isOutlaw),
             eq(userData.isBanned, user.isBanned),
             eq(userData.rank, user.rank),
           ]

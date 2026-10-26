@@ -3,12 +3,9 @@ import type { UserData } from "@/drizzle/schema";
 /**
  * Columns allowed when `fetchUpdatedUser` persists passive regeneration to the database.
  *
- * Economy scalars (money, bank, gathering XP, reputation, etc.) are intentionally omitted so a
- * stale in-memory snapshot cannot overwrite rewards from concurrent mutations.
- *
- * When `includeVillageState` is true — used for `forceRegen` or (with outlaws) negative prestige —
- * village-bound fields are included; `fetchUpdatedUser` re-reads those columns from the DB first
- * so a stale in-memory snapshot cannot overwrite concurrent village mutations.
+ * Economy scalars (money, bank, gathering XP, reputation, etc.) and village state are omitted so
+ * a stale in-memory snapshot cannot overwrite concurrent rewards or membership changes.
+ * Village transitions persist their own guarded updates before changing the in-memory user.
  *
  * Every column here must carry an absolute value. The caller re-issues this UPDATE when a pooled
  * PlanetScale connection drops, which a `sql` increment would turn into a double-apply.
@@ -28,15 +25,10 @@ export const buildDerivedUserRegenUpdate = (props: {
     | "secondaryElement"
     | "status"
     | "travelFinishAt"
-    | "villagePrestige"
-    | "villageId"
-    | "isOutlaw"
   >;
   userIp?: string;
-  includeVillageState?: boolean;
 }) => {
-  const { user, userIp, includeVillageState = false } = props;
-  // When true, villagePrestige / villageId / isOutlaw are written.
+  const { user, userIp } = props;
   const derivedUserUpdate: Record<string, unknown> = {
     curHealth: user.curHealth,
     curStamina: user.curStamina,
@@ -52,12 +44,6 @@ export const buildDerivedUserRegenUpdate = (props: {
     travelFinishAt: user.travelFinishAt,
     ...(userIp ? { lastIp: userIp } : {}),
   };
-
-  if (includeVillageState) {
-    derivedUserUpdate.villagePrestige = user.villagePrestige;
-    derivedUserUpdate.villageId = user.villageId;
-    derivedUserUpdate.isOutlaw = user.isOutlaw;
-  }
 
   return derivedUserUpdate;
 };
