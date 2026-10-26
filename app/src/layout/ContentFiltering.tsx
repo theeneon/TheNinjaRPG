@@ -259,13 +259,16 @@ export interface ContentFilteringState<
   setExcluded: ExcludedSettersFromSchema<E>;
 }
 
-/** Debounce delay for propagating field changes */
+/** Debounce delay for free-typing filter changes */
 const DEBOUNCE_MS = 500;
+
+const isTypingField = (field: AnyFieldConfig) =>
+  field.type === "text" || field.type === "number" || field.type === "date";
 
 /**
  * Hook: derives typed state maps (values, debounced, setters, exclusions) from a schema.
  * - Uses single state objects + per-key timers (no hooks-in-loops)
- * - Debounced values update after DEBOUNCE_MS per field
+ * - Text, number and date inputs update after DEBOUNCE_MS; discrete choices apply immediately
  */
 export const useContentFiltering = <
   F extends readonly AnyFieldConfig[],
@@ -284,13 +287,18 @@ export const useContentFiltering = <
     return obj;
   }, [schema]);
 
-  const [values, setValues] = useState<ValuesFromSchema<F>>(initialValues);
-  const [debounced, setDebounced] = useState<ValuesFromSchema<F>>(initialValues);
+  const [{ values, debounced }, setFieldState] = useState({
+    values: initialValues,
+    debounced: initialValues,
+  });
 
   // Keep values in sync if schema changes
   useEffect(() => {
-    setValues(initialValues);
-    setDebounced(initialValues);
+    setFieldState((prev) =>
+      prev.values === initialValues && prev.debounced === initialValues
+        ? prev
+        : { values: initialValues, debounced: initialValues },
+    );
   }, [initialValues]);
 
   // Debounce per field (one timer per key)
@@ -298,14 +306,18 @@ export const useContentFiltering = <
   useEffect(() => {
     const timers = timersRef.current;
     for (const field of schema.fields) {
+      if (!isTypingField(field)) continue;
       const key = field.id as keyof ValuesFromSchema<F> & string;
       const timer = timers[key];
       if (timer) clearTimeout(timer);
       timers[key] = setTimeout(() => {
-        setDebounced((prev) =>
-          prev[key] === values[key]
+        setFieldState((prev) =>
+          prev.debounced[key] === values[key]
             ? prev
-            : ({ ...prev, [key]: values[key] } as ValuesFromSchema<F>),
+            : {
+                ...prev,
+                debounced: { ...prev.debounced, [key]: values[key] },
+              },
         );
       }, DEBOUNCE_MS);
     }
@@ -324,22 +336,28 @@ export const useContentFiltering = <
       (out as Record<string, React.Dispatch<React.SetStateAction<unknown>>>)[id] = (
         updater,
       ) => {
-        setValues((prev) => {
-          const current = prev[id];
+        setFieldState((prev) => {
+          const current = prev.values[id];
           const next =
             typeof updater === "function"
               ? (updater as (p: typeof current) => typeof current)(current)
               : updater;
           return current === next
             ? prev
-            : ({ ...prev, [id]: next } as ValuesFromSchema<F>);
+            : {
+                values: { ...prev.values, [id]: next } as ValuesFromSchema<F>,
+                // Resolve functional updaters once so both maps share the same selection.
+                debounced: isTypingField(field)
+                  ? prev.debounced
+                  : ({ ...prev.debounced, [id]: next } as ValuesFromSchema<F>),
+              };
         });
       };
     }
     return out;
   }, [schema.fields]);
 
-  // Exclusions: initialize and debounce similarly
+  // Exclusions are discrete choices, so their displayed and applied values are identical.
   const initialExcluded = useMemo(() => {
     const obj = {} as ExcludedFromSchema<E>;
     if (schema.exclusions) {
@@ -351,37 +369,10 @@ export const useContentFiltering = <
   }, [schema.exclusions]);
 
   const [excluded, setExcludedState] = useState<ExcludedFromSchema<E>>(initialExcluded);
-  const [debouncedExcluded, setDebouncedExcluded] =
-    useState<ExcludedFromSchema<E>>(initialExcluded);
 
   useEffect(() => {
     setExcludedState(initialExcluded);
-    setDebouncedExcluded(initialExcluded);
   }, [initialExcluded]);
-
-  const excludedTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  useEffect(() => {
-    if (!schema.exclusions) return;
-    const timers = excludedTimersRef.current;
-    for (const cat of schema.exclusions) {
-      const key = cat.key as keyof ExcludedFromSchema<E> & string;
-      const timer = timers[key];
-      if (timer) clearTimeout(timer);
-      timers[key] = setTimeout(() => {
-        setDebouncedExcluded((prev) => {
-          const prevArr = (prev as Record<string, string[]>)[key] ?? [];
-          const nextArr = (excluded as Record<string, string[]>)[key] ?? [];
-          if (prevArr.join("||") === nextArr.join("||")) return prev;
-          return { ...(prev as object), [key]: nextArr } as ExcludedFromSchema<E>;
-        });
-      }, DEBOUNCE_MS);
-    }
-    return () => {
-      for (const key of Object.keys(timers)) {
-        clearTimeout(timers[key]);
-      }
-    };
-  }, [schema.exclusions, excluded]);
 
   const setExcluded = useMemo(() => {
     const out = {} as ExcludedSettersFromSchema<E>;
@@ -407,7 +398,14 @@ export const useContentFiltering = <
     return out;
   }, [schema.exclusions]);
 
-  return { values, debounced, setters, excluded, debouncedExcluded, setExcluded };
+  return {
+    values,
+    debounced,
+    setters,
+    excluded,
+    debouncedExcluded: excluded,
+    setExcluded,
+  };
 };
 
 /**
