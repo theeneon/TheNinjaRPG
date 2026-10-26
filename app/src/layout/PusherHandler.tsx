@@ -123,6 +123,14 @@ export const usePusherHandler = (
                 </ToastAction>
               ),
             });
+        } else if (data.type === "eventTournament") {
+          // Invitations and substitutions can make an idle tab a ready-check participant.
+          await Promise.all([
+            utils.profile.getUser.invalidate(),
+            utils.tournament.getEventNotices.invalidate(),
+            utils.tournament.getEvent.invalidate(),
+            utils.tournament.listEvents.invalidate(),
+          ]);
         } else if (data.type === "parentalControlsChanged") {
           // Drop cached chat history in every open tab when a parent changes access.
           void utils.parentalControls.get.invalidate();

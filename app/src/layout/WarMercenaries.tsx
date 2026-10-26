@@ -142,7 +142,8 @@ export const WarMercenaries = ({ warId }: { warId: string }) => {
 /** Invitations and the player's active contract remain accessible from the dashboard. */
 export const MercenaryOffers = () => {
   const offers = api.war.getMercenaryOffers.useQuery(undefined, {
-    refetchInterval: 10000,
+    // Invitations can come from another village, including while our own is at peace.
+    refetchInterval: 60000,
   });
   const { feedback, refresh, onError } = useMercenaryFeedback();
   const accept = api.war.acceptMercenary.useMutation({ onSuccess: refresh, onError });

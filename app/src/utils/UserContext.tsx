@@ -67,6 +67,7 @@ type UserContextValue = {
    */
   achievementProgress: AchievementProgress[] | undefined;
   notifications: NavBarDropdownLink[] | undefined;
+  isEventParticipant: boolean;
   userAgent: string | undefined;
   status: string;
   pusher: Pusher | undefined;
@@ -89,6 +90,7 @@ export const UserContext = createContext<UserContextValue>({
   data: undefined,
   achievementProgress: undefined,
   notifications: undefined,
+  isEventParticipant: false,
   userAgent: undefined,
   status: "unknown",
   pusher: undefined,
@@ -256,6 +258,7 @@ export function UserContextProvider(props: {
       data: data?.userData,
       achievementProgress: data?.achievementProgress,
       notifications: data?.notifications,
+      isEventParticipant: data?.isEventParticipant ?? false,
       userAgent: data?.userAgent,
       pusher: pusher,
       status: userStatus,
@@ -271,6 +274,7 @@ export function UserContextProvider(props: {
       data?.userData,
       data?.achievementProgress,
       data?.notifications,
+      data?.isEventParticipant,
       data?.userAgent,
       pusher,
       userStatus,

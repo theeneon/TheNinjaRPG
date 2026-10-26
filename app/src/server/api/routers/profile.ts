@@ -190,7 +190,7 @@ import { fetchKageReplacement } from "@/routers/kage";
 import { handleQuestConsequences, insertNextQuest } from "@/routers/quests";
 import { fetchVillage, fetchVillages } from "@/routers/village";
 import { deleteUser } from "@/server/api/routers/staff";
-import { fetchEventNotices } from "@/server/api/routers/tournamentEvents";
+import { fetchEventNoticeState } from "@/server/api/routers/tournamentEvents";
 import {
   baseServerResponse,
   cdnCachedProcedure,
@@ -826,7 +826,7 @@ export const profileRouter = createTRPCRouter({
         waterableFarmPlotsResult,
         publishedAchievements,
         questInvitations,
-        tournamentNotices,
+        tournamentNoticeState,
       ] = await Promise.all([
         fetchUpdatedUser({
           client: ctx.drizzle,
@@ -867,7 +867,7 @@ export const profileRouter = createTRPCRouter({
           where: sql`JSON_CONTAINS(${questParty.invitedUserIds}, JSON_QUOTE(${ctx.userId}))`,
           with: { quest: true },
         }),
-        fetchEventNotices(ctx.drizzle, ctx.userId),
+        fetchEventNoticeState(ctx.drizzle, ctx.userId),
       ]);
       const { user, settings, toastMessages, hasUnvotedPolls } = updatedUser;
       const readyFarmPlots = readyFarmPlotsResult[0]?.count ?? 0;
@@ -908,7 +908,7 @@ export const profileRouter = createTRPCRouter({
           alwaysShow: true,
         });
 
-      for (const notice of tournamentNotices)
+      for (const notice of tournamentNoticeState.notices)
         notifications.push({
           href: `/tournaments/${notice.tournamentId}`,
           name: `${notice.message}: ${notice.name}`,
@@ -1502,6 +1502,7 @@ export const profileRouter = createTRPCRouter({
         userData: user ? { ...user, pvpBoost: getPvpBoost(user, settings) } : user,
         achievementProgress: achievementProgress,
         notifications: notifications,
+        isEventParticipant: tournamentNoticeState.isEventParticipant,
         serverTime: Date.now(),
         userAgent: ctx.userAgent,
       };

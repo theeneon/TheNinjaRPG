@@ -117,7 +117,7 @@ const GameLayoutController: React.FC<GameLayoutControllerProps> = ({
     undefined,
     {
       enabled: !!userId && isPageActive,
-      refetchInterval: 10_000,
+      refetchInterval: 30_000,
       refetchIntervalInBackground: false,
     },
   );

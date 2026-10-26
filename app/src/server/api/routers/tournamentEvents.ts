@@ -20,6 +20,7 @@ import {
   userJutsu,
 } from "@/drizzle/schema";
 import { getExpBracket } from "@/libs/profile";
+import { getServerPusher } from "@/libs/pusher";
 import { postProcessRewards } from "@/libs/quest";
 import {
   advanceEvent,
@@ -51,7 +52,7 @@ import {
 export const eventTournamentProcedures = {
   /** Return invitations and open ready checks that still need this player's response. */
   getEventNotices: protectedProcedure.query(async ({ ctx }) => {
-    return fetchEventNotices(ctx.drizzle, ctx.userId);
+    return (await fetchEventNoticeState(ctx.drizzle, ctx.userId)).notices;
   }),
   /** List public event summaries, including unpublished drafts only for tournament staff. */
   listEvents: protectedProcedure.query(async ({ ctx }) => {
@@ -336,7 +337,12 @@ export const eventTournamentProcedures = {
           `${input.action}${input.userId ? ` ${input.userId}` : ""}${input.seatId ? ` seat ${input.seatId}` : ""}${input.scheduledAt ? ` at ${new Date(input.scheduledAt).toISOString()}` : ""}${input.action === "CANCEL" ? ` rewards=${event.payRewards}` : ""}`,
         );
       });
-      if (result.success) await syncEventTournament(ctx.drizzle, input.tournamentId);
+      if (result.success) {
+        await syncEventTournament(ctx.drizzle, input.tournamentId);
+        // Remote roster additions must wake notice polling in the incoming player's tabs.
+        if (input.userId && ["INVITE", "SUBSTITUTE"].includes(input.action))
+          await notifyEventParticipant(input.userId);
+      }
       return result;
     }),
   /** Manage registration, advisory readiness and match acceptance through the event version guard. */
@@ -426,7 +432,12 @@ export const eventTournamentProcedures = {
           if (!game.accepted.includes(user.userId)) game.accepted.push(user.userId);
         }
       });
-      if (result.success) await syncEventTournament(ctx.drizzle, input.tournamentId);
+      if (result.success) {
+        await syncEventTournament(ctx.drizzle, input.tournamentId);
+        // The action's local invalidation does not refresh this player's other tabs.
+        if (["JOIN", "WITHDRAW", "DECLINE"].includes(input.action))
+          await notifyEventParticipant(ctx.userId);
+      }
       return result;
     }),
 };
@@ -966,9 +977,10 @@ const audit = (event: EventTournamentState, userId: string, action: string) => {
 
 /**
  * Share actionable invitations and match notices between global prompts and navigation.
+ * Reuse the same rows for polling eligibility, including seats between actionable checks.
  * Restrict the capped query to this player, then discard withdrawn seats and closed checks.
  */
-export const fetchEventNotices = async (client: DrizzleClient, userId: string) => {
+export const fetchEventNoticeState = async (client: DrizzleClient, userId: string) => {
   const now = Date.now();
   const events = await client.query.tournament.findMany({
     where: and(
@@ -979,10 +991,12 @@ export const fetchEventNotices = async (client: DrizzleClient, userId: string) =
     columns: { id: true, eventData: true },
     limit: 100,
   });
-  return events.flatMap((row) => {
+  const participations = events.flatMap((row) => {
     const event = row.eventData;
     const seat = event?.participants.find((p) => p.userId === userId && !p.withdrawn);
-    if (!event || !seat) return [];
+    return event && seat ? [{ id: row.id, event, seat }] : [];
+  });
+  const notices = participations.flatMap(({ id, event, seat }) => {
     const ready = event.series.find(
       (s) =>
         !s.complete &&
@@ -995,7 +1009,7 @@ export const fetchEventNotices = async (client: DrizzleClient, userId: string) =
     if (ready)
       return [
         {
-          tournamentId: row.id,
+          tournamentId: id,
           name: event.config.name,
           message: "Your tournament match is ready",
           deadline: ready.games.at(-1)!.deadline,
@@ -1008,7 +1022,7 @@ export const fetchEventNotices = async (client: DrizzleClient, userId: string) =
     )
       return [
         {
-          tournamentId: row.id,
+          tournamentId: id,
           name: event.config.name,
           message: "You have a tournament invitation",
           deadline: event.config.registrationClosesAt,
@@ -1016,4 +1030,12 @@ export const fetchEventNotices = async (client: DrizzleClient, userId: string) =
       ];
     return [];
   });
+  return { notices, isEventParticipant: participations.length > 0 };
+};
+
+/** Best-effort cache refresh; polling remains available when websocket delivery fails. */
+const notifyEventParticipant = async (userId: string) => {
+  await Promise.allSettled([
+    getServerPusher().trigger(userId, "event", { type: "eventTournament" }),
+  ]);
 };
