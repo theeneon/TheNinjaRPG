@@ -457,9 +457,10 @@ function Travel() {
   const sectorVillage = villages?.find((v) => v.sector === userData?.sector);
 
   // Consumable items
-  const { data: userItems } = api.item.getUserItems.useQuery(undefined, {
-    enabled: !!userData,
-  });
+  const { data: userItems, isFetching: isFetchingItems } =
+    api.item.getUserItems.useQuery(undefined, {
+      enabled: !!userData,
+    });
   const [useritem, setUserItem] = useState<UserItemWithItem | undefined>(undefined);
   const [isOpen, setIsOpen] = useState<boolean>(false);
 
@@ -1431,8 +1432,9 @@ function Travel() {
         )}
       </div>
       {shownConsumables && shownConsumables.length > 0 && (
-        <div className="flex flex-col">
+        <div className="flex flex-col" inert={isFetchingItems}>
           <p className="font-bold">Consumables</p>
+          {isFetchingItems && <Loader explanation="Refreshing items" />}
           <ActionSelector
             className="grid-cols-6"
             items={shownConsumables}
@@ -1470,6 +1472,7 @@ function Travel() {
                   {nonCombatConsume(useritem.item, userData) && (
                     <Button
                       variant="info"
+                      disabled={isFetchingItems}
                       onClick={() =>
                         consume(getItemConsumeInput(userData?.userId ?? "", useritem))
                       }
