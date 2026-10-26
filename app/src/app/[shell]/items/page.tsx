@@ -388,7 +388,8 @@ export default function MyItems() {
         }
       >
         {isFetching && <Loader explanation="Refreshing items" />}
-        <div className="@container">
+        {/* Wait for the updated equipment state before accepting another toggle. */}
+        <div className="@container" inert={isFetching}>
           {/* Keep equipment near its silhouette width while the backpack gains columns. */}
           <div className="grid @min-[600px]:grid-cols-[314px_minmax(0,1fr)]">
             <div className="min-w-0 p-3">
