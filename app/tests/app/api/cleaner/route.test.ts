@@ -17,6 +17,7 @@ import {
 } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 import { acceptWarAllyOffer } from "@/server/utils/warAlly";
+import * as cleanerUtils from "@/server/utils/cleaner";
 import * as contentReviewCleanup from "@/libs/contentReview/cleanup";
 import * as gamesettings from "@/libs/gamesettings";
 import * as travel from "@/routers/travel";
@@ -68,6 +69,7 @@ const addOffer = (db: DrizzleClient, offerId = offer.offerId) => db.insert(userR
 });
 
 const expireRequests = async (db: DrizzleClient) => {
+  vi.spyOn(cleanerUtils, "deleteCleanupCandidates").mockResolvedValue(undefined);
   stubDatabase({
     execute: (query: SQL) => {
       const statement = dialect.sqlToQuery(query).sql;
@@ -172,6 +174,8 @@ afterEach(() => { process.env = { ...originalEnv }; vi.restoreAllMocks(); resetS
 describe("account deletion in the existing cleaner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(cleanerUtils, "deleteCleanupCandidates").mockResolvedValue(undefined);
+    vi.spyOn(cleanerUtils, "cleanupOrphanRows").mockResolvedValue(undefined);
     stubDatabase({
       execute: mocks.execute,
       select: queryBuilder.select.bind(queryBuilder),
@@ -204,6 +208,24 @@ describe("account deletion in the existing cleaner", () => {
     expect(mocks.process).toHaveBeenCalledTimes(1);
     expect(travel.completeExpiredGlobalTravel).toHaveBeenCalledTimes(1);
     expect(mocks.reset).not.toHaveBeenCalled();
+  });
+  it("runs orphan sweeps only after claiming daily maintenance", async () => {
+    mocks.lock.mockResolvedValueOnce({ release: mocks.reset, isNewHour: true, prevTime: new Date(0) });
+    expect((await GET(request())).status).toBe(200);
+    expect(cleanerUtils.cleanupOrphanRows).not.toHaveBeenCalled();
+    vi.spyOn(gamesettings, "lockWithDailyTimer").mockResolvedValue({ ...timerClaimFixture(), prevTime: new Date(0), isNewDay: true, response: Response.json(null), release: mocks.reset });
+    mocks.lock.mockResolvedValueOnce({ release: mocks.reset, isNewHour: true, prevTime: new Date(0) });
+    expect((await GET(request())).status).toBe(200);
+    expect(cleanerUtils.cleanupOrphanRows).toHaveBeenCalledTimes(1);
+  });
+  it("releases both timers when daily orphan cleanup fails", async () => {
+    const dailyRelease = vi.fn();
+    mocks.lock.mockResolvedValueOnce({ release: mocks.reset, isNewHour: true, prevTime: new Date(0) });
+    vi.spyOn(gamesettings, "lockWithDailyTimer").mockResolvedValue({ ...timerClaimFixture(), prevTime: new Date(0), isNewDay: true, response: Response.json(null), release: dailyRelease });
+    vi.spyOn(cleanerUtils, "cleanupOrphanRows").mockRejectedValue(new Error("Orphan cleanup failed"));
+    expect((await GET(request())).status).toBe(500);
+    expect(dailyRelease).toHaveBeenCalledTimes(1);
+    expect(mocks.reset).toHaveBeenCalledTimes(1);
   });
   it("still processes deletions when content review cleanup fails", async () => {
     mocks.lock.mockResolvedValueOnce({ release: mocks.reset, isNewHour: true, prevTime: new Date(0) });

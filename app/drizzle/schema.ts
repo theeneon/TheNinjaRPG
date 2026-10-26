@@ -4701,6 +4701,7 @@ export const dailyBankInterest = mysqlTable(
         table.date,
       ),
       userIdIdx: index("DailyBankInterest_userId_idx").on(table.userId),
+      dateIdx: index("DailyBankInterest_date_idx").on(table.date),
       updatedAtIdx: index("DailyBankInterest_updatedAt_idx").on(table.updatedAt),
       claimedUpdatedAtIdx: index("DailyBankInterest_claimed_updatedAt_idx").on(
         table.claimed,
