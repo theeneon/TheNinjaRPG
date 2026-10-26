@@ -39,6 +39,7 @@ import type {
   UserItemWithRelations,
   UserItemWithVariants,
 } from "@/drizzle/schema";
+import { useRefreshAt } from "@/hooks/useRefreshAt";
 import { ActionSelector } from "@/layout/CombatActions";
 import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";
@@ -88,7 +89,12 @@ import { displayCostType } from "@/validators/item";
 export default function MyItems() {
   // State
   const availableTabs = ["normal", "event", "materials", "cooking"];
-  const { data: userData, prepareUserUpdate, updateUser } = useRequiredUserData();
+  const {
+    data: userData,
+    prepareUserUpdate,
+    updateUser,
+    timeDiff,
+  } = useRequiredUserData();
   const [activeTab, setActiveTab] = useState<(typeof availableTabs)[number]>("normal");
   const [isBuyItemSlotOpen, setIsBuyItemSlotOpen] = useState(false);
   const buyItemSlotInFlight = useRef(false);
@@ -99,6 +105,7 @@ export default function MyItems() {
   // Data from DB
   const {
     data: userItems,
+    dataUpdatedAt,
     isPending: isLoadingItems,
     isFetching,
   } = api.item.getUserItemsWithVariants.useQuery(undefined, {
@@ -107,6 +114,20 @@ export default function MyItems() {
     // that cannot all invalidate this cache, so re-read the inventory on every visit.
     refetchOnMount: "always",
   });
+
+  // A deadline must refresh the query timestamp even when the inventory rows are unchanged.
+  // Render-time Date reads alone can be memoized by React Compiler.
+  useRefreshAt(
+    userItems?.flatMap((item) => [
+      item.craftingFinishedAt,
+      ...item.imbuements.map((imbuement) => imbuement.craftingFinishedAt),
+    ]) ?? [],
+    () => {
+      void utils.item.getUserItemsWithVariants.invalidate();
+    },
+    timeDiff,
+  );
+  const inventoryTime = new Date(dataUpdatedAt - (timeDiff ?? 0));
 
   // Mutations
   const { mutate: buyItemSlot, isPending: isBuyingItemSlot } =
@@ -145,7 +166,7 @@ export default function MyItems() {
     });
 
   const { mutate: mutateRepairAll, isPending: isRepairingAll } =
-    api.item.useRepairAll.useMutation({
+    repairAllWithKits.useMutation({
       onMutate: prepareUserUpdate,
       onSuccess: async (data, _variables, revision) => {
         showMutationToast(data);
@@ -196,11 +217,11 @@ export default function MyItems() {
 
   // Subtitle
   const availableItems = userItems
-    ?.filter((ui) => isEquippableUserItem(ui))
+    ?.filter((ui) => isEquippableUserItem(ui, inventoryTime))
     .map((ui) => ({
       ...ui,
       imbuements: ui.imbuements.filter(
-        (i) => !i.craftingFinishedAt || i.craftingFinishedAt < new Date(),
+        (i) => !i.craftingFinishedAt || i.craftingFinishedAt < inventoryTime,
       ),
     }));
   const normalItems = availableItems?.filter(
@@ -949,7 +970,7 @@ const Backpack: React.FC<BackpackProps> = (props) => {
     });
 
   const { mutate: mutateRepairItem, isPending: isUsingRepairItem } =
-    api.item.useRepairItem.useMutation({
+    repairWithKit.useMutation({
       onMutate: prepareUserUpdate,
       onSuccess: async (data, _variables, revision) => {
         showMutationToast(data);
@@ -1551,7 +1572,7 @@ const Character: React.FC<CharacterProps> = (props) => {
   });
 
   const { mutate: mutateRepairItem, isPending: isUsingRepairItem } =
-    api.item.useRepairItem.useMutation({
+    repairWithKit.useMutation({
       onMutate: prepareUserUpdate,
       onSuccess: async (data, _variables, revision) => {
         showMutationToast(data);
@@ -2019,3 +2040,9 @@ const ItemVariantModal: React.FC<ItemVariantModalProps> = ({
     </Modal>
   );
 };
+
+// Alias the procedure so its action name is not interpreted as a React hook.
+const repairAllWithKits = api.item.useRepairAll;
+
+// Alias the procedure so its action name is not interpreted as a React hook.
+const repairWithKit = api.item.useRepairItem;

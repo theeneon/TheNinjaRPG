@@ -154,6 +154,17 @@ describe("TutorialAssistant account boundary", () => {
 });
 
 describe("TutorialAssistant disable reconciliation", () => {
+  it("releases the submission lock after a transport failure so the same tutorial can be retried", async () => {
+    mocks.disable.mockRejectedValueOnce(new Error("Offline"));
+    const view = renderAssistant();
+    confirmDisable(view);
+    await waitFor(() => expect(view.getByText("We couldn't turn off the tutorial. Your progress is unchanged; please try again.")).toBeTruthy());
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole("button", { name: "Skip Tutorial" }));
+    await waitFor(() => expect(view.queryByRole("dialog")).toBeNull());
+    expect(mocks.disable).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps an idle success fetch-free and closes the confirmation", async () => {
     const read = vi.fn(async () => profile(200, "actor", false));
     observe(read);

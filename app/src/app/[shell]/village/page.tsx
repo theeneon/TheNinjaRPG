@@ -57,7 +57,10 @@ export default function VillageOverview() {
   const utils = api.useUtils();
 
   // Derived
-  const villageData = data?.villageData;
+  const villageData =
+    userData?.isOutlaw && data?.villageData
+      ? { ...data.villageData, tokens: userData.clan?.points || 0 }
+      : data?.villageData;
   const ownSector = userData?.village?.sector === sectorVillage?.sector;
   const notice = villageData?.notice?.content ?? "No notice at this point";
   const isKage = villageData?.kageId === userData?.userId;
@@ -120,10 +123,6 @@ export default function VillageOverview() {
   if (!userData) return <Loader explanation="Loading userdata" />;
   if (!villageData) return <Loader explanation="Loading userdata" />;
   if (isLeaving) return <Loader explanation="Leaving village" />;
-
-  villageData.tokens = userData.isOutlaw
-    ? userData.clan?.points || 0
-    : villageData.tokens;
 
   const canLeave = hasRequiredRank(userData.rank, VILLAGE_LEAVE_REQUIRED_RANK);
 

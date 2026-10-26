@@ -389,10 +389,12 @@ const PlayerTutorialAssistant: React.FC<TutorialAssistantProps> = ({
     userId: userData?.userId,
     tutorialStep: userData?.tutorialStep,
   });
-  tutorialIdentityRef.current = {
-    userId: userData?.userId,
-    tutorialStep: userData?.tutorialStep,
-  };
+  React.useLayoutEffect(() => {
+    tutorialIdentityRef.current = {
+      userId: userData?.userId,
+      tutorialStep: userData?.tutorialStep,
+    };
+  }, [userData?.userId, userData?.tutorialStep]);
   const [isDisablingTutorial, setIsDisablingTutorial] = useState(false);
   const [disableTutorialError, setDisableTutorialError] = useState<string>();
   const [showCancelConfirmDialog, setShowCancelConfirmDialog] = useState(false);
@@ -417,42 +419,42 @@ const PlayerTutorialAssistant: React.FC<TutorialAssistantProps> = ({
     setDisableTutorialError(undefined);
     setIsDisablingTutorial(true);
 
-    try {
-      const result = await disableTutorial({
-        tutorialOn: false,
-      });
-      const identity = tutorialIdentityRef.current;
-      const isCurrentTutorial =
-        identity.userId === request.userId &&
-        identity.tutorialStep === request.tutorialStep;
-      if (!isCurrentTutorial) return;
-      if (!result.success) {
-        setDisableTutorialError(result.message);
-        return;
-      }
+    await disableTutorial({ tutorialOn: false })
+      .then(async (result) => {
+        const identity = tutorialIdentityRef.current;
+        const isCurrentTutorial =
+          identity.userId === request.userId &&
+          identity.tutorialStep === request.tutorialStep;
+        if (!isCurrentTutorial) return;
+        if (!result.success) {
+          setDisableTutorialError(result.message);
+          return;
+        }
 
-      await updateUser((current) =>
-        current.userId === request.userId ? { tutorialOn: false } : undefined,
-      );
-      if (tutorialIdentityRef.current.userId !== request.userId) {
-        return;
-      }
-      disableTutorialRequestRef.current = undefined;
-      setShowCancelConfirmDialog(false);
-    } catch {
-      const identity = tutorialIdentityRef.current;
-      if (
-        identity.userId === request.userId &&
-        identity.tutorialStep === request.tutorialStep
-      ) {
-        setDisableTutorialError(
-          "We couldn't turn off the tutorial. Your progress is unchanged; please try again.",
+        await updateUser((current) =>
+          current.userId === request.userId ? { tutorialOn: false } : undefined,
         );
-      }
-    } finally {
-      disableTutorialLockRef.current = false;
-      setIsDisablingTutorial(false);
-    }
+        if (tutorialIdentityRef.current.userId !== request.userId) {
+          return;
+        }
+        disableTutorialRequestRef.current = undefined;
+        setShowCancelConfirmDialog(false);
+      })
+      .catch(() => {
+        const identity = tutorialIdentityRef.current;
+        if (
+          identity.userId === request.userId &&
+          identity.tutorialStep === request.tutorialStep
+        ) {
+          setDisableTutorialError(
+            "We couldn't turn off the tutorial. Your progress is unchanged; please try again.",
+          );
+        }
+      })
+      .finally(() => {
+        disableTutorialLockRef.current = false;
+        setIsDisablingTutorial(false);
+      });
   };
 
   const [highlight, setHighlight] = useState<{

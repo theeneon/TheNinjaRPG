@@ -17,32 +17,32 @@ export default function AssignExperience() {
   const submissionInFlight = useRef(false);
 
   // Mutations
-  const { mutateAsync: updateStats, isPending } =
-    api.profile.useUnusedExperiencePoints.useMutation({
-      onMutate: () => ({ userRevision: prepareUserUpdate() }),
-      onSuccess: async (result, _variables, context) => {
-        showMutationToast(result);
-        if (result.success)
-          await updateUser(result.userPatch, { revision: context?.userRevision });
-        else await utils.profile.getUser.invalidate();
-      },
-      onError: async () => {
-        await utils.profile.getUser.invalidate();
-      },
-    });
+  const { mutateAsync: updateStats, isPending } = allocateExperience.useMutation({
+    onMutate: () => ({ userRevision: prepareUserUpdate() }),
+    onSuccess: async (result, _variables, context) => {
+      showMutationToast(result);
+      if (result.success)
+        await updateUser(result.userPatch, { revision: context?.userRevision });
+      else await utils.profile.getUser.invalidate();
+    },
+    onError: async () => {
+      await utils.profile.getUser.invalidate();
+    },
+  });
 
   const submitStats = async (data: Parameters<typeof updateStats>[0]) => {
     if (submissionInFlight.current) return false;
 
     submissionInFlight.current = true;
-    try {
-      return (await updateStats(data)).success;
-    } catch {
-      // The shared tRPC error handler reports failures; retain the current draft.
-      return false;
-    } finally {
-      submissionInFlight.current = false;
-    }
+    return (
+      updateStats(data)
+        .then((result) => result.success)
+        // The shared tRPC error handler reports failures; retain the current draft.
+        .catch(() => false)
+        .finally(() => {
+          submissionInFlight.current = false;
+        })
+    );
   };
 
   // Loaders
@@ -78,3 +78,6 @@ export default function AssignExperience() {
     />
   );
 }
+
+// Alias the procedure so its action name is not interpreted as a React hook.
+const allocateExperience = api.profile.useUnusedExperiencePoints;

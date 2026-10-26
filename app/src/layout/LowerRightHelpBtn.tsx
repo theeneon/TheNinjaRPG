@@ -3,7 +3,7 @@
 import { AlertCircle } from "lucide-react";
 import dynamic from "next/dynamic";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -55,64 +55,21 @@ const LowerRightHelpBtn: React.FC<LowerRightHelpProps> = (props) => {
     });
 
   // Check if user has incomplete starter or tier quests with tutorial disabled
-  const hasIncompleteStarterOrTierQuests = useMemo(() => {
-    if (!userData?.userQuests) return false;
-    return userData.userQuests.some(
+  const hasIncompleteStarterOrTierQuests =
+    userData?.userQuests.some(
       (uq) => ["starter", "tier"].includes(uq.quest.questType) && uq.completed === 0,
-    );
-  }, [userData?.userQuests]);
+    ) ?? false;
 
   // Show notification when tutorial is off but there are incomplete quests
   const showTutorialNotification =
     userData?.tutorialOn === false && hasIncompleteStarterOrTierQuests;
 
-  // Helper function to safely validate ticket types
-  const getValidTicketType = useCallback((value: any): TicketType => {
-    try {
-      if (typeof value === "string" && TicketTypes.includes(value as TicketType)) {
-        return value as TicketType;
-      }
-    } catch (error) {
-      console.error("Error validating ticket type:", error);
-    }
-    return "ai_support";
-  }, []);
+  const safeTicketType = getValidTicketType(showActive);
+  const setShowActiveSafe = (value: string) => setShowActive(getValidTicketType(value));
 
-  // Ensure showActive is always a valid TicketType
-  const safeTicketType = useMemo(() => {
-    return getValidTicketType(showActive);
-  }, [showActive, getValidTicketType]);
-
-  // Safe setter for showActive that validates the value
-  const setShowActiveSafe = useCallback(
-    (value: any) => {
-      try {
-        // Ensure the value is a string and is in the valid ticket types
-        if (typeof value === "string" && TicketTypes.includes(value as TicketType)) {
-          setShowActive(value as TicketType);
-        } else {
-          console.warn("Invalid ticket type received:", value, typeof value);
-          setShowActive("ai_support");
-        }
-      } catch (error) {
-        console.error("Error in setShowActiveSafe:", error);
-        setShowActive("ai_support");
-      }
-    },
-    [setShowActive],
-  );
-
-  // If chosen ticket type if not of available type, set to ai_support
   useEffect(() => {
-    try {
-      if (!TicketTypes.includes(showActive)) {
-        setShowActive("ai_support");
-      }
-    } catch (error) {
-      console.error("Error in useEffect:", error);
-      setShowActive("ai_support");
-    }
-  }, [showActive, setShowActive]);
+    if (showActive !== safeTicketType) setShowActive(safeTicketType);
+  }, [showActive, safeTicketType, setShowActive]);
 
   // Ensure defaultValue is always a valid string
   const safeDefaultValue = safeTicketType;
@@ -287,3 +244,9 @@ const LowerRightHelpBtn: React.FC<LowerRightHelpProps> = (props) => {
 };
 
 export default LowerRightHelpBtn;
+
+/** Normalize persisted preferences and values received from the tab control. */
+const getValidTicketType = (value: unknown): TicketType =>
+  typeof value === "string" && TicketTypes.includes(value as TicketType)
+    ? (value as TicketType)
+    : "ai_support";

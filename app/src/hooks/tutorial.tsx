@@ -777,13 +777,13 @@ export const useTutorialStep = () => {
     : undefined;
 
   // Calculate distance to closest enemy for dynamic combat steps
-  const distanceToEnemy = useMemo(() => {
+  const distanceToEnemy = (() => {
     if (!battle || !userData?.userId) return null;
     return getDistanceToClosestEnemy(battle, userData.userId);
-  }, [battle, userData?.userId]);
+  })();
 
   // Calculate if user can afford the basic attack action
-  const canAffordAttack = useMemo(() => {
+  const canAffordAttack = (() => {
     if (!battle || !userData?.userId) return true; // Default to true if we can't determine
 
     // Get the user's current action points
@@ -799,13 +799,13 @@ export const useTutorialStep = () => {
 
     // Check if user has enough action points for the basic attack
     return user.actionPoints >= basicAttack.actionCostPerc;
-  }, [battle, userData?.userId]);
+  })();
 
   // Whether the player's AI profile is currently fighting for them
-  const isAutoCombatBattle = useMemo(() => {
+  const isAutoCombatBattle = (() => {
     if (!battle || !userData?.userId) return false;
     return !!battle.usersState.find((u) => u.userId === userData.userId)?.isAutoCombat;
-  }, [battle, userData?.userId]);
+  })();
 
   // Compute dynamic combat step if applicable
   const currentStep = useMemo(() => {

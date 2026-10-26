@@ -128,7 +128,8 @@ export const socials = [
 const MenuBoxProfile: React.FC = () => {
   // State
   const { data: userData, timeDiff } = useUserData();
-  const [, setState] = useState<number>(0);
+  const [now, setNow] = useState(Date.now);
+  const refreshTime = () => setNow(Date.now());
   const battle = useAtomValue(userBattleAtom);
   const utils = api.useUtils();
 
@@ -143,17 +144,12 @@ const MenuBoxProfile: React.FC = () => {
   const mealBuffs = timedBuffs?.buffs.filter((buff) => buff.itemId) ?? [];
 
   /** Finish time for stealth or sensory training at the training grounds */
-  const covertTrainingFinishAt = useMemo(() => {
-    if (!userData?.covertTrainingType) return null;
-    return calcCovertTrainingFinishAt(
-      userData.covertTrainingStartedAt,
-      userData.covertTrainingMinutes,
-    );
-  }, [
-    userData?.covertTrainingType,
-    userData?.covertTrainingStartedAt,
-    userData?.covertTrainingMinutes,
-  ]);
+  const covertTrainingFinishAt = userData?.covertTrainingType
+    ? calcCovertTrainingFinishAt(
+        userData.covertTrainingStartedAt,
+        userData.covertTrainingMinutes,
+      )
+    : null;
 
   const activeItemCraftingTimer = sidebarTimers?.crafting;
   const activeImbuementTimer = sidebarTimers?.imbuement;
@@ -161,23 +157,18 @@ const MenuBoxProfile: React.FC = () => {
   // Get location of user
   const { location } = useGameMenu(userData);
 
-  // Derived data - memoize to avoid creating new Date.now() on every render
-  const immunityData = useMemo(() => {
-    const now = Date.now();
-    const secsLeft =
-      (userData?.immunityUntil && (userData.immunityUntil.getTime() - now) / 1000) || 0;
-    return { createdAt: now, secsLeft };
-    // Only recalculate when immunityUntil changes
-  }, [userData?.immunityUntil]);
-
+  const immunityData = useExpiryAnchor(userData?.immunityUntil, now);
   const immunitySecsLeft = immunityData.secsLeft;
 
   // Bracket-immunity and war-participant countdown anchors (see useExpiryAnchor below): each gives a
   // memoized (createdAt, totalSeconds) pair plus a fresh secsLeft for the > 0 visibility guard.
-  const bracketImmunityAnchor = useExpiryAnchor(userData?.bracketImmunityLiftedUntil);
+  const bracketImmunityAnchor = useExpiryAnchor(
+    userData?.bracketImmunityLiftedUntil,
+    now,
+  );
   const bracketImmunitySecsLeft = bracketImmunityAnchor.secsLeft;
 
-  const warParticipantAnchor = useExpiryAnchor(userData?.warParticipantUntil);
+  const warParticipantAnchor = useExpiryAnchor(userData?.warParticipantUntil, now);
   const warParticipantSecsLeft = warParticipantAnchor.secsLeft;
 
   // Battle user state
@@ -186,6 +177,10 @@ const MenuBoxProfile: React.FC = () => {
   const hasBattlePools = !!battleUser || isBetweenPyramidBattles(userData);
   const passiveRegeneration =
     userData?.regenerationWithoutTimedBuffs ?? userData?.regeneration;
+  const poolRegenerationBuffs = regenerationBuffs({
+    raidBuffs: userData?.raidBuffs,
+    titles: userData?.titles,
+  });
 
   // Calculate effective pool values with fallbacks (effectivePools → battleUser → userData)
   const pools = useEffectivePools({
@@ -263,9 +258,7 @@ const MenuBoxProfile: React.FC = () => {
               showText={true}
               lastRegenAt={userData?.regenAt}
               regen={hasBattlePools ? 0 : passiveRegeneration}
-              timedBuffs={
-                hasBattlePools ? undefined : regenerationBuffs(userData ?? {})
-              }
+              timedBuffs={hasBattlePools ? undefined : poolRegenerationBuffs}
               status={hasBattlePools ? "AWAKE" : userData?.status}
               current={pools.curHealth}
               total={pools.maxHealth}
@@ -279,9 +272,7 @@ const MenuBoxProfile: React.FC = () => {
               showText={true}
               lastRegenAt={userData?.regenAt}
               regen={hasBattlePools ? 0 : passiveRegeneration}
-              timedBuffs={
-                hasBattlePools ? undefined : regenerationBuffs(userData ?? {})
-              }
+              timedBuffs={hasBattlePools ? undefined : poolRegenerationBuffs}
               status={hasBattlePools ? "AWAKE" : userData?.status}
               current={pools.curChakra}
               total={pools.maxChakra}
@@ -295,9 +286,7 @@ const MenuBoxProfile: React.FC = () => {
               showText={true}
               lastRegenAt={userData?.regenAt}
               regen={hasBattlePools ? 0 : passiveRegeneration}
-              timedBuffs={
-                hasBattlePools ? undefined : regenerationBuffs(userData ?? {})
-              }
+              timedBuffs={hasBattlePools ? undefined : poolRegenerationBuffs}
               status={hasBattlePools ? "AWAKE" : userData?.status}
               current={pools.curStamina}
               total={pools.maxStamina}
@@ -312,7 +301,7 @@ const MenuBoxProfile: React.FC = () => {
                     [])
                   : undefined
               }
-              timedBuffs={regenerationBuffs(userData ?? {})}
+              timedBuffs={poolRegenerationBuffs}
               color="bg-violet-500"
               showText
               lastRegenAt={userData?.regenAt}
@@ -454,7 +443,7 @@ const MenuBoxProfile: React.FC = () => {
                         timeDiff={timeDiff}
                         onEndShow="Expired"
                         onFinish={async () => {
-                          setState((state) => state + 1);
+                          refreshTime();
                           await Promise.all([
                             utils.raids.getUserRaidBuffs.invalidate(),
                             utils.profile.getUser.invalidate(),
@@ -478,9 +467,9 @@ const MenuBoxProfile: React.FC = () => {
                     <ShieldCheck className="mr-2 h-6 w-6" />
                     <Cooldown
                       createdAt={immunityData.createdAt}
-                      totalSeconds={immunitySecsLeft}
-                      initialSecondsLeft={immunitySecsLeft}
-                      setState={setState}
+                      totalSeconds={immunityData.totalSeconds}
+                      initialSecondsLeft={immunityData.totalSeconds}
+                      onFinish={refreshTime}
                     />
                   </div>
                 </TooltipTrigger>
@@ -498,7 +487,7 @@ const MenuBoxProfile: React.FC = () => {
                       createdAt={bracketImmunityAnchor.createdAt}
                       totalSeconds={bracketImmunityAnchor.totalSeconds}
                       initialSecondsLeft={bracketImmunityAnchor.totalSeconds}
-                      setState={setState}
+                      onFinish={refreshTime}
                       hideWhenDone
                     />
                   </div>
@@ -517,7 +506,7 @@ const MenuBoxProfile: React.FC = () => {
                       createdAt={warParticipantAnchor.createdAt}
                       totalSeconds={warParticipantAnchor.totalSeconds}
                       initialSecondsLeft={warParticipantAnchor.totalSeconds}
-                      setState={setState}
+                      onFinish={refreshTime}
                       hideWhenDone
                     />
                   </div>
@@ -773,16 +762,20 @@ const GameClock: React.FC = () => {
  * Anchors an expiry countdown for a `Cooldown`. Returns a memoized (createdAt, totalSeconds) pair
  * sampled from a single Date.now() reading — Cooldown derives its deadline as
  * createdAt + totalSeconds*1000, so the two must come from the same instant — plus a fresh
- * `secsLeft` recomputed every render for `> 0` visibility guards, so a row collapses the moment its
- * timer hits zero instead of waiting for fresh userData.
+ * `secsLeft` derived from the parent clock state. Cooldown advances that clock on expiry, so
+ * visibility guards remain reactive when React Compiler memoizes this hook.
  */
-const useExpiryAnchor = (until: Date | null | undefined) => {
+const useExpiryAnchor = (until: Date | null | undefined, now: number) => {
   const untilMs = until?.getTime() ?? 0;
   const anchor = useMemo(() => {
-    const now = Date.now();
-    return { createdAt: now, totalSeconds: Math.max(0, (untilMs - now) / 1000) };
+    const sampledAt = Date.now();
+    return {
+      createdAt: sampledAt,
+      totalSeconds: Math.max(0, (untilMs - sampledAt) / 1000),
+    };
   }, [untilMs]);
-  const secsLeft = Math.max(0, (untilMs - Date.now()) / 1000);
+  // A new snapshot may already have expired since the parent clock last advanced.
+  const secsLeft = Math.min(anchor.totalSeconds, Math.max(0, (untilMs - now) / 1000));
   return { ...anchor, secsLeft };
 };
 
@@ -814,7 +807,7 @@ interface CooldownProps {
   initialSecondsLeft: number;
   totalSeconds: number;
   createdAt: number;
-  setState: React.Dispatch<React.SetStateAction<number>>;
+  onFinish: () => void;
   hideWhenDone?: boolean;
 }
 
@@ -825,7 +818,7 @@ interface CooldownProps {
  * @returns The rendered `Cooldown` component.
  */
 const Cooldown: React.FC<CooldownProps> = (props) => {
-  const { createdAt, totalSeconds, initialSecondsLeft, setState, hideWhenDone } = props;
+  const { createdAt, totalSeconds, initialSecondsLeft, onFinish, hideWhenDone } = props;
   const [counter, setCounter] = useState<string>(() =>
     getTimeStr(initialSecondsLeft * 1000),
   );
@@ -852,7 +845,7 @@ const Cooldown: React.FC<CooldownProps> = (props) => {
             clearInterval(interval);
             if (initialSecondsLeft > 0 && !hasNotifiedRef.current) {
               hasNotifiedRef.current = true;
-              setState((prev) => prev + 1);
+              onFinish();
             }
             setCounter(hideWhenDone ? "" : "Done");
           }
@@ -862,12 +855,12 @@ const Cooldown: React.FC<CooldownProps> = (props) => {
         // Only notify parent once to prevent infinite loop
         if (initialSecondsLeft > 0 && !hasNotifiedRef.current) {
           hasNotifiedRef.current = true;
-          setState((prev) => prev + 1);
+          onFinish();
         }
         setCounter(hideWhenDone ? "" : "Done");
       }
     }
-  }, [totalSeconds, createdAt, initialSecondsLeft, setState, hideWhenDone]);
+  }, [totalSeconds, createdAt, initialSecondsLeft, onFinish, hideWhenDone]);
 
   return counter ? <>[{counter}]</> : null;
 };
