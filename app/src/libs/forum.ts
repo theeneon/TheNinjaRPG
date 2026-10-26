@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { asc, desc, eq } from "drizzle-orm";
 import { forumBoard, forumPost, forumThread, userData } from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
 import type { DrizzleClient } from "@/server/db";
 import { canCreateNews } from "@/utils/permissions";
 
@@ -14,27 +13,37 @@ export const getInfiniteThreads = async (props: {
   boardName?: string;
 }) => {
   const { client, boardId, boardName, cursor, limit, highlightPinned } = props;
-  const board = await fetchBoard(client, boardId, boardName);
-  if (!board) return { board: null, threads: [], nextCursor: null };
+  if (!boardId && !boardName) return { board: null, threads: [], nextCursor: null };
   const currentCursor = cursor ? cursor : 0;
   const skip = currentCursor * limit;
-  const threads = await client.query.forumThread.findMany({
-    offset: skip,
-    limit: limit,
-    where: eq(forumThread.boardId, board.id),
-    with: {
-      user: {
-        columns: { username: true },
+  const [board, threads] = await Promise.all([
+    fetchBoard(client, boardId, boardName),
+    client.query.forumThread.findMany({
+      offset: skip,
+      limit: limit,
+      where: eq(
+        forumThread.boardId,
+        boardId ||
+          client
+            .select({ id: forumBoard.id })
+            .from(forumBoard)
+            .where(eq(forumBoard.name, boardName ?? "")),
+      ),
+      with: {
+        user: {
+          columns: { username: true },
+        },
+        posts: {
+          limit: 1,
+          orderBy: asc(forumPost.createdAt),
+        },
       },
-      posts: {
-        limit: 1,
-        orderBy: asc(forumPost.createdAt),
-      },
-    },
-    orderBy: highlightPinned
-      ? [desc(forumThread.isPinned), desc(forumThread.createdAt)]
-      : desc(forumThread.createdAt),
-  });
+      orderBy: highlightPinned
+        ? [desc(forumThread.isPinned), desc(forumThread.createdAt)]
+        : desc(forumThread.createdAt),
+    }),
+  ]);
+  if (!board) return { board: null, threads: [], nextCursor: null };
   const nextCursor = threads.length < limit ? null : currentCursor + 1;
   return { board, threads, nextCursor };
 };
@@ -73,22 +82,28 @@ export const fetchForumPageData = async (
   });
 
   const userDataPromise = userId
-    ? fetchUser(client, userId).catch((error) => {
-        if (error.message?.includes("not found")) {
+    ? client.query.userData
+        .findFirst({
+          where: eq(userData.userId, userId),
+          columns: { userId: true, role: true, unreadNews: true },
+        })
+        .catch((error) => {
+          if (error.message?.includes("not found")) {
+            return null;
+          }
+          console.error("Failed to fetch user:", error);
+          Sentry.captureException(error, {
+            tags: { source: "forum-fetch-user" },
+          });
           return null;
-        }
-        console.error("Failed to fetch user:", error);
-        Sentry.captureException(error, {
-          tags: { source: "forum-fetch-user" },
-        });
-        return null;
-      })
+        })
     : Promise.resolve(null);
 
-  const [initialThreads, userData] = await Promise.all([
+  const [initialThreads, userRow] = await Promise.all([
     initialThreadsPromise,
     userDataPromise,
   ]);
-  const canPost = userData && canCreateNews(userData.role);
-  return { initialThreads, userData, canPost };
+  const pageUser = userRow ?? null;
+  const canPost = pageUser && canCreateNews(pageUser.role);
+  return { initialThreads, userData: pageUser, canPost };
 };

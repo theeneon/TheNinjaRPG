@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { DUNGEON_RUN_SECONDS } from "@/drizzle/constants";
 import {
@@ -63,21 +63,34 @@ export const dungeonRouter = createTRPCRouter({
     }),
   /** Load parties and receipts, expiring deadlines and recovering interrupted floor starts. */
   getState: protectedProcedure.query(async ({ ctx }) => {
-    const runs = await ctx.drizzle
-      .select()
-      .from(dungeonRun)
+    // A derived UNION materializes indexed candidates once; IN can become a dependent
+    // subquery that scans every historical run before probing membership.
+    const candidates = ctx.drizzle
+      .select({ id: dungeonRun.id })
+      .from(dungeonMember)
+      .innerJoin(dungeonRun, eq(dungeonRun.id, dungeonMember.runId))
       .where(
-        or(
-          and(
-            sql`EXISTS (SELECT 1 FROM ${dungeonMember} WHERE ${dungeonMember.runId} = ${dungeonRun.id} AND ${dungeonMember.userId} = ${ctx.userId})`,
-            sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.memberIds')`,
-          ),
-          and(
-            eq(dungeonRun.status, "LOBBY"),
-            sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.invitedIds')`,
-          ),
+        and(
+          eq(dungeonMember.userId, ctx.userId),
+          sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.memberIds')`,
         ),
       )
+      .union(
+        ctx.drizzle
+          .select({ id: dungeonRun.id })
+          .from(dungeonRun)
+          .where(
+            and(
+              eq(dungeonRun.status, "LOBBY"),
+              sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.invitedIds')`,
+            ),
+          ),
+      )
+      .as("visibleDungeonRuns");
+    const runs = await ctx.drizzle
+      .select(getTableColumns(dungeonRun))
+      .from(candidates)
+      .innerJoin(dungeonRun, eq(dungeonRun.id, candidates.id))
       .orderBy(
         // Keep the player's party, unclaimed rewards and invitations ahead of paid history.
         desc(
@@ -87,7 +100,9 @@ export const dungeonRouter = createTRPCRouter({
         desc(dungeonRun.createdAt),
       )
       .limit(20);
-    await Promise.all(runs.map((run) => expireDungeonRun(ctx.drizzle, run)));
+    const expiryNeedsRefresh = await Promise.all(
+      runs.map((run) => expireDungeonRun(ctx.drizzle, run)),
+    );
     const ids = [
       ...new Set(runs.flatMap((r) => [...r.state.memberIds, ...r.state.invitedIds])),
     ];
@@ -106,7 +121,7 @@ export const dungeonRouter = createTRPCRouter({
             ),
           })
         : [],
-      runs.length
+      expiryNeedsRefresh.some(Boolean)
         ? ctx.drizzle.query.dungeonRun.findMany({
             where: inArray(
               dungeonRun.id,
@@ -114,9 +129,12 @@ export const dungeonRouter = createTRPCRouter({
             ),
             orderBy: desc(dungeonRun.createdAt),
           })
-        : [],
+        : null,
     ]);
-    let currentRuns = refreshedRuns;
+    // Selection prioritizes active parties; the response keeps its chronological ordering.
+    let currentRuns =
+      refreshedRuns ??
+      [...runs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     const interrupted = currentRuns.filter(
       (r) =>
         r.status === "FIGHTING" &&

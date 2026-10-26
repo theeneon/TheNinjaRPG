@@ -1,4 +1,4 @@
-import { currentUser } from "@clerk/nextjs/server";
+import { auth } from "@clerk/nextjs/server";
 import { IMG_BUILDING_ARCHIVE } from "@/drizzle/constants";
 import { FancyForumThreads } from "@/layout/FancyForumThreads";
 import { fetchForumPageData } from "@/libs/forum";
@@ -9,12 +9,12 @@ export const dynamic = "force-dynamic";
 
 export default async function HistoryBuilding() {
   // Session information
-  const user = await currentUser();
+  const { userId } = await auth();
   // Initial data from server for speed
   const { initialThreads, canPost } = await fetchForumPageData(
     drizzleDB,
     "History",
-    user?.id ?? null,
+    userId,
   );
 
   // Show board

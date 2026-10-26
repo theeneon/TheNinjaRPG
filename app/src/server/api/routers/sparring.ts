@@ -220,12 +220,19 @@ export const fetchRequests = async (
   client: DrizzleClient,
   types: UserRequestType[],
   secondsBack?: number,
-  id?: string,
+  id?: string | string[],
   relatedId?: string,
 ) => {
   return await client.query.userRequest.findMany({
     where: and(
-      ...(id ? [or(eq(userRequest.senderId, id), eq(userRequest.receiverId, id))] : []),
+      ...(id
+        ? [
+            or(
+              inArray(userRequest.senderId, Array.isArray(id) ? id : [id]),
+              inArray(userRequest.receiverId, Array.isArray(id) ? id : [id]),
+            ),
+          ]
+        : []),
       ...(relatedId ? [eq(userRequest.relatedId, relatedId)] : []),
       ...(secondsBack ? [gt(userRequest.createdAt, secondsFromNow(-secondsBack))] : []),
       inArray(userRequest.type, types),

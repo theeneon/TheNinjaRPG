@@ -51,6 +51,7 @@ import {
   describeWithDatabase,
   getTestDatabase,
   resetTables,
+  recordQueries,
 } from "../../setup/testDatabase";
 
 describeWithDatabase("event tournament persistence", () => {
@@ -78,6 +79,40 @@ describeWithDatabase("event tournament persistence", () => {
     );
   });
   afterEach(() => vi.restoreAllMocks());
+
+
+  it("loads an idle authorized event only once and keeps draft authorization", async () => {
+    await insertUsers([{ userId: "reader" }, { userId: "staff", role: "CODER" }]);
+    const staff = await callerFor(tournamentRouter, "staff");
+    const reader = await callerFor(tournamentRouter, "reader");
+    const created = await staff.saveEvent({ config: eventConfig("Idle event") });
+    if (!("tournamentId" in created)) throw new Error(created.message);
+    const { tournamentId } = created;
+    expect(await reader.getEvent({ tournamentId })).toBeNull();
+    for (const status of ["DRAFT", "REGISTRATION"] as const) {
+      if (status === "REGISTRATION") await staff.manageEvent({ tournamentId, action: "PUBLISH" });
+      const measured = await recordQueries(() => staff.getEvent({ tournamentId }));
+      expect(measured.result?.eventData?.status).toBe(status);
+      expect(measured.statements.filter((statement) => /from .Tournament./i.test(statement))).toHaveLength(1);
+    }
+  });
+
+  it.each([false, true])("refreshes an expired event after its synchronization claim (competing: %s)", async (competing) => {
+    const db = await getTestDatabase();
+    await insertUsers([{ userId: "reader" }]);
+    const state = createEventState(eventConfig("Expired event"));
+    state.status = "REGISTRATION";
+    state.config.endsAt = Date.now() - 1000;
+    await db.insert(tournament).values({ id: "expiring", name: "Expired", image: "", description: "", type: "EVENT", rewards: ObjectiveReward.parse({}), eventData: state });
+    const client = competing ? beforeStatements(db, tournament, [async () => {
+      await db.update(tournament).set({ version: 1, eventData: { ...state, status: "CANCELLED", config: { ...state.config, name: "Concurrent cancellation" } } }).where(eq(tournament.id, "expiring"));
+    }]) : db;
+    const reader = callerForDatabase(tournamentRouter, "reader", client);
+    const measured = await recordQueries(() => reader.getEvent({ tournamentId: "expiring" }));
+    expect(measured.result?.eventData?.status).toBe("CANCELLED");
+    expect(measured.result?.eventData?.config.name).toBe(competing ? "Concurrent cancellation" : "Expired event");
+    expect(measured.statements.filter((statement) => /from .Tournament./i.test(statement))).toHaveLength(2);
+  });
 
   it("tracks invitation responses and advisory readiness separately from match acceptance", async () => {
     const database = await getTestDatabase();
@@ -613,7 +648,7 @@ describeWithDatabase("event tournament persistence", () => {
         },
       ]),
     );
-    let recovering: Promise<void> | undefined;
+    let recovering: Promise<boolean> | undefined;
     try {
       await inserting.promise;
       expect(await database.query.tournamentMatch.findMany()).toHaveLength(0);
@@ -685,7 +720,7 @@ describeWithDatabase("event tournament persistence", () => {
         ],
       ),
     );
-    let recovering: Promise<void> | undefined;
+    let recovering: Promise<boolean> | undefined;
     try {
       await inserting.promise;
       vi.spyOn(Date, "now").mockReturnValue(
@@ -971,7 +1006,7 @@ describeWithDatabase("event tournament persistence", () => {
         await release.promise;
       });
       const launching = accept(game.userIds[1]!, stalled);
-      let recovering: Promise<void> | undefined;
+      let recovering: Promise<boolean> | undefined;
       try {
         await reached.promise;
         // Let independently dispatched siblings settle before checking atomic visibility.

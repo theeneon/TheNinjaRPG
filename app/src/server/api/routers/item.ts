@@ -36,6 +36,7 @@ import {
   MAX_MARRIAGE_SLOTS,
   PET_MAX_CONSUME_PETS,
   TUTORIAL_ITEM_ID,
+  VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
 import type {
   Item,
@@ -67,6 +68,7 @@ import {
   userItemVariant,
   userPet,
   userSkill,
+  villageStructure,
 } from "@/drizzle/schema";
 import { filterRollableBloodlines } from "@/libs/bloodline";
 import { bloodrightSwapRefund } from "@/libs/bloodright";
@@ -1874,11 +1876,19 @@ export const itemRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Fetch
-      const [user, useritem] = await Promise.all([
+      const [user, useritem, structures] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUserItem(ctx.drizzle, ctx.userId, input.userItemId),
+        ctx.drizzle
+          .select()
+          .from(villageStructure)
+          .where(
+            eq(
+              villageStructure.villageId,
+              sql`COALESCE((SELECT ${userData.villageId} FROM ${userData} WHERE ${userData.userId} = ${ctx.userId}), ${VILLAGE_SYNDICATE_ID})`,
+            ),
+          ),
       ]);
-      const structures = await fetchStructures(ctx.drizzle, user.villageId);
       // Guard
       if (!useritem) return errorResponse("User item not found");
       if (useritem.userId !== user.userId) return errorResponse("Not yours to sell");

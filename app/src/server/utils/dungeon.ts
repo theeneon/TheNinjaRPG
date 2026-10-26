@@ -128,6 +128,7 @@ export const settleDungeonBattle = async (
  * End an expired run, delete its battle, restore bound members and release reservations.
  * A loaded run version claims the whole cleanup; terminal, unexpired and stale snapshots
  * are no-ops. Fetch the battle only when needed for its preloaded energy recovery values.
+ * Return whether readers must refresh, including when a competing version won the expiry CAS.
  */
 export const expireDungeonRun = async (
   client: DrizzleClient,
@@ -138,7 +139,7 @@ export const expireDungeonRun = async (
     run.expiresAt.getTime() > Date.now() ||
     ["COMPLETED", "ENDED"].includes(run.status)
   )
-    return;
+    return false;
   const settledAt = new Date();
   const snapshot = run.battleId
     ? await client.query.battle.findFirst({ where: eq(battle.id, run.battleId) })
@@ -194,6 +195,7 @@ export const expireDungeonRun = async (
         .where(eq(dungeonMember.runId, run.id));
     }),
   );
+  return true;
 };
 
 /** Recover each member's energy using combat's preloaded regeneration and capacity. */

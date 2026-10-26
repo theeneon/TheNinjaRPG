@@ -77,6 +77,44 @@ describeWithDatabase("owned furniture persistence", () => {
     return { owner: users[0]!, inventory };
   };
 
+
+  it.each([false, true])("moves storage and the user snapshot in one statement (stored: %s)", async (storedAtHome) => {
+    const db = await getTestDatabase();
+    await db.update(userItem).set({ storedAtHome }).where(eq(userItem.id, "material-row"));
+    const before = await snapshot();
+    const noTransactions = new Proxy(db, {
+      get(target, key, receiver) {
+        if (key === "transaction") return () => { throw Error("Storage must use one atomic update"); };
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const api = callerForDatabase(homeRouter, userId, noTransactions);
+    const measured = await recordQueries(() => api.toggleStoreItem({ userItemId: "material-row" }));
+    expect(measured.result.success).toBe(true);
+    expect(measured.statements.filter((statement) => /^\s*UPDATE\b.*UserData.*INNER JOIN.*UserItem/is.test(statement))).toHaveLength(1);
+    const after = await snapshot();
+    expect(after.owner.updatedAt.getTime()).toBeGreaterThan(before.owner.updatedAt.getTime());
+    expect(after.inventory.find(({ id }) => id === "material-row")?.storedAtHome).toBe(!storedAtHome);
+  });
+
+  it.each(["state", "quantity", "owner", "snapshot"] as const)("rejects a competing %s change without claiming the user snapshot", async (change) => {
+    const db = await getTestDatabase();
+    let claimedAt: Date | undefined;
+    const client = beforeStatements(db, userItem, [async () => {
+      if (change === "snapshot") {
+        await db.update(userData).set({ updatedAt: new Date(Date.now() + 60000) }).where(eq(userData.userId, userId));
+      } else {
+        await db.update(userItem).set(change === "state" ? { storedAtHome: false } : change === "quantity" ? { quantity: 0 } : { userId: "other-owner" }).where(eq(userItem.id, "material-row"));
+      }
+      claimedAt = (await snapshot()).owner.updatedAt;
+    }]);
+    const api = callerForDatabase(homeRouter, userId, client);
+    expect((await api.toggleStoreItem({ userItemId: "material-row" })).success).toBe(false);
+    if (!claimedAt) throw Error("The competing write did not run");
+    expect((await snapshot()).owner.updatedAt).toEqual(claimedAt);
+    expect((await snapshot()).inventory.find(({ id }) => id === "material-row")?.storedAtHome).toBe(change !== "state");
+  });
+
   it("ignores inventory with deleted item definitions in home reads and layout saves", async () => {
     const db = await getTestDatabase();
     await insertUserItems([{ id: "orphan-row", userId, itemId: "deleted-item", storedAtHome: true, homeX: 50, homeY: 50 }]);
