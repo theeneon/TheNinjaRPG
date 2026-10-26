@@ -7,7 +7,6 @@ import { CDN_CACHED_QUERY_PATHS } from "@/api/root";
 import TrpcClientProvider from "@/app/_trpc/Provider";
 import { ourFileRouter } from "@/app/api/uploadthing/core";
 import NativeBridge from "@/components/native/NativeBridge";
-import { BuildVersionReloader } from "@/components/pwa/BuildVersionReloader";
 import InstallPrompt from "@/components/pwa/InstallPrompt";
 import PWAManager from "@/components/pwa/PWAManager";
 import { Toaster } from "@/components/ui/toaster";
@@ -197,7 +196,6 @@ export default async function RootLayout({
                   <RewardChoiceModal />
                   <EventTournamentNotice />
                   <PWAManager />
-                  <BuildVersionReloader />
                   <NativeBridge />
                   <InstallPrompt />
                   <ExperimentSpeedInsights wallpaper={variant.wallpaper} />

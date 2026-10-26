@@ -5,8 +5,13 @@
  * while every tRPC response comes from the current deploy. When a deploy adds a value the
  * old bundle cannot represent (a new enum member looked up in a constants table, say),
  * the old bundle crashes on the new data. Each `/api/trpc` response therefore names the
- * build that served it; once that differs from the bundle's own build, the next route
- * change or render crash reloads the page onto the current bundle instead.
+ * build that served it; once that differs from the bundle's own build, a render crash
+ * reloads the page onto the current bundle instead of showing the error screen.
+ *
+ * Route changes deliberately do not reload: with many deploys a day, nearly every open tab
+ * fell behind within the hour, so moving between pages kept hard-refreshing mid-session
+ * (players lost fights while switching loadouts). Vercel Skew Protection keeps
+ * navigations on the tab's own deployment, so only a crash needs the reload.
  */
 
 /** Commit the running code was built from; `next.config.mjs` inlines it. */
