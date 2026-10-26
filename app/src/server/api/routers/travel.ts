@@ -367,7 +367,14 @@ export const travelRouter = createTRPCRouter({
     .input(z.object({ sector: sectorIdSchema })) // Note: this is not actively used, but is there for reloading the sector data
     .query(async ({ ctx }) => {
       const [user, userQuests, completedQuests] = await Promise.all([
-        fetchUser(ctx.drizzle, ctx.userId),
+        ctx.drizzle.query.userData.findFirst({
+          where: eq(userData.userId, ctx.userId),
+          with: {
+            anbuSquad: {
+              columns: { id: true, name: true, image: true, villageId: true },
+            },
+          },
+        }),
         ctx.drizzle.query.questHistory.findMany({
           where: and(
             eq(questHistory.userId, ctx.userId),
@@ -384,6 +391,13 @@ export const travelRouter = createTRPCRouter({
           ),
         }),
       ]);
+
+      if (!user) {
+        throw serverError(
+          "NOT_FOUND",
+          `User not found: ${ctx.userId}. Please complete registration.`,
+        );
+      }
 
       // Guard: Only awake/travel/queued users can scout
       // QUEUED is included so users in raid queues can still see war/sector data
@@ -424,11 +438,9 @@ export const travelRouter = createTRPCRouter({
               eq(userData.sector, user.sector),
               eq(userData.isAi, false),
               inArray(userData.status, ["AWAKE", "BATTLE"]),
-              or(eq(userData.isBanned, false), eq(userData.userId, ctx.userId)),
-              or(
-                gte(userData.updatedAt, secondsFromNow(-36000)),
-                eq(userData.userId, ctx.userId),
-              ),
+              eq(userData.isBanned, false),
+              gte(userData.updatedAt, secondsFromNow(-36000)),
+              ne(userData.userId, ctx.userId),
             ),
             with: {
               anbuSquad: {
@@ -529,6 +541,39 @@ export const travelRouter = createTRPCRouter({
             .from(battle)
             .where(gte(battle.updatedAt, secondsFromNow(-SECTOR_BATTLE_STALE_SECONDS))),
         ]);
+
+      // Keep the caller's ban/activity exceptions outside the indexed sector range query.
+      // Project only the public sector fields from the already-loaded caller snapshot.
+      if (user.status === "AWAKE" && !user.isAi) {
+        users.push({
+          userId: user.userId,
+          username: user.username,
+          longitude: user.longitude,
+          latitude: user.latitude,
+          location: user.location,
+          curHealth: user.curHealth,
+          maxHealth: user.maxHealth,
+          sector: user.sector,
+          status: user.status,
+          avatar: user.avatar,
+          avatarLight: user.avatarLight,
+          level: user.level,
+          experience: user.experience,
+          rank: user.rank,
+          isOutlaw: user.isOutlaw,
+          isBanned: user.isBanned,
+          immunityUntil: user.immunityUntil,
+          robImmunityUntil: user.robImmunityUntil,
+          updatedAt: user.updatedAt,
+          villageId: user.villageId,
+          battleId: user.battleId,
+          anbuId: user.anbuId,
+          stealthActive: user.stealthActive,
+          stealthActivatedAt: user.stealthActivatedAt,
+          stealth: user.stealth,
+          anbuSquad: user.anbuSquad,
+        });
+      }
 
       const warData = withMercenaryParticipation(fetchedWarData);
       // Only draw battle markers for fights that still exist and are being played
