@@ -82,6 +82,13 @@ export const shouldReloadForMissingProcedure = (opts: {
   isOutdatedBuild(opts.clientBuild, opts.serverBuild) &&
   claimBuildReload(opts.storage, opts.serverBuild);
 
+/** Build header of the response that produced a tRPC error, when tRPC attached it. */
+export const getErrorServerBuild = (error: unknown) => {
+  const headers = (error as { meta?: { response?: { headers?: unknown } } } | null)
+    ?.meta?.response?.headers;
+  return headers instanceof Headers ? headers.get(BUILD_ID_HEADER) : null;
+};
+
 let newerServerBuild: string | undefined;
 let reloadPending = false;
 
@@ -124,7 +131,9 @@ export const reloadIfProcedureRemoved = (error: unknown) => {
     !shouldReloadForMissingProcedure({
       error,
       clientBuild: BUILD_ID,
-      serverBuild: newerServerBuild,
+      // Prefer the failed response's own build: a concurrent same-build response can
+      // clear `newerServerBuild` before this error is handled.
+      serverBuild: getErrorServerBuild(error) ?? newerServerBuild,
       storage,
     })
   ) {

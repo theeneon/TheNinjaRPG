@@ -4,6 +4,7 @@ import {
   claimBuildReload,
   isMissingProcedureError,
   isOutdatedBuild,
+  getErrorServerBuild,
   shouldReloadForMissingProcedure,
 } from "@/libs/buildVersion";
 
@@ -140,5 +141,20 @@ describe("shouldReloadForMissingProcedure", () => {
         storage: memoryStorage({ [BUILD_RELOAD_STORAGE_KEY]: "bbb" }),
       }),
     ).toBe(false);
+  });
+});
+
+describe("getErrorServerBuild", () => {
+  it("reads the build header from the response attached to a tRPC error", () => {
+    const error = Object.assign(new Error("No procedure found on path \"x\""), {
+      meta: { response: new Response(null, { headers: { "x-tnr-build": "abc123" } }) },
+    });
+    expect(getErrorServerBuild(error)).toBe("abc123");
+  });
+
+  it("returns null when no response is attached", () => {
+    expect(getErrorServerBuild(new Error("boom"))).toBeNull();
+    expect(getErrorServerBuild(null)).toBeNull();
+    expect(getErrorServerBuild({ meta: { response: {} } })).toBeNull();
   });
 });
