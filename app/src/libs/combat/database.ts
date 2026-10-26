@@ -2136,6 +2136,9 @@ export const updateUser = async (
         battleId: curBattle.id,
         baseline: cacheBaseline,
         userDelta,
+        removedQuestIds: hydratedUser.userQuests
+          .filter((entry) => !trackers.some((tracker) => tracker.id === entry.questId))
+          .map((entry) => entry.questId),
         userPatch: {
           status: getIsolatedPyramid(hydratedUser) ? "BATTLE" : "AWAKE",
           curHealth: Math.round(result.curHealth),
