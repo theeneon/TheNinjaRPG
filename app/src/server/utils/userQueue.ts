@@ -1,16 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   JUTSU_LEVEL_CAP,
@@ -25,7 +14,6 @@ import {
   item,
   type Jutsu,
   jutsu,
-  questHistory,
   type UserData,
   type UserQueue,
   userCookingJob,
@@ -60,7 +48,10 @@ import {
 import type { UserWithRelations } from "@/routers/profile";
 import { fetchStudents } from "@/routers/sensei";
 import type { DrizzleClient } from "@/server/db";
-import { completedQuestHistoryRelation } from "@/server/utils/achievementObjectives";
+import {
+  completedQuestHistoryRelation,
+  userQuestHistoryRelation,
+} from "@/server/utils/achievementObjectives";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
@@ -1151,13 +1142,7 @@ const fetchQuestUser = async (
     with: {
       // The owned copy of the jutsu a queued level trains, in the same read.
       jutsus: { where: eq(userJutsu.jutsuId, jutsuId ?? "") },
-      userQuests: {
-        where: or(
-          and(isNull(questHistory.endAt), eq(questHistory.completed, 0)),
-          eq(questHistory.questType, "achievement"),
-        ),
-        with: { quest: true },
-      },
+      userQuests: userQuestHistoryRelation,
       completedQuests: completedQuestHistoryRelation,
       village: true,
       clan: true,

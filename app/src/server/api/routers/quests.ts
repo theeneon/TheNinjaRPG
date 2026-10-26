@@ -1575,6 +1575,9 @@ export const questsRouter = createTRPCRouter({
             eq(questHistory.questId, input.questId),
             eq(questHistory.userId, ctx.userId),
           ),
+          // Hidden attempts are omitted from profile hydration; retain rejection metadata
+          // in this already-parallel history read without loading the definition content.
+          with: { quest: { columns: { hidden: true, updatedAt: true } } },
         }),
       ]);
 
@@ -1600,9 +1603,16 @@ export const questsRouter = createTRPCRouter({
       )
         return errorResponse("The quest team leader chooses dialog branches");
 
-      const activeAttempt = [...user.userQuests, ...progressionQuestCandidates].find(
-        (entry) => entry.questId === input.questId && !entry.endAt,
-      );
+      const activeAttempt =
+        [...user.userQuests, ...progressionQuestCandidates].find(
+          (entry) => entry.questId === input.questId && !entry.endAt,
+        ) ??
+        (questHistoryPrefetch?.quest &&
+        !questHistoryPrefetch.endAt &&
+        (!questHistoryPrefetch.completed ||
+          questHistoryPrefetch.questType === "achievement")
+          ? questHistoryPrefetch
+          : undefined);
       if (
         activeAttempt &&
         (hasQuestContentChanged(activeAttempt) ||

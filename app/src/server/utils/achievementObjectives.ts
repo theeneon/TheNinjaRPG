@@ -1,6 +1,8 @@
-import { getTableName, gt, gte, or, sql } from "drizzle-orm";
+import { and, eq, getTableName, gt, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import type { AnyMySqlColumn } from "drizzle-orm/mysql-core";
+import { UserRoles } from "@/drizzle/constants";
 import { questHistory } from "@/drizzle/schema";
+import { canPlayHiddenQuests } from "@/utils/permissions";
 
 /** Receipt-derived totals; sparse readers omit counts rather than treating them as zero. */
 export type ActivityCompletions = {
@@ -18,6 +20,29 @@ export const completedQuestHistoryRelation = {
     previousCompletes: true,
   },
   where: or(gte(questHistory.completed, 1), gt(questHistory.previousCompletes, 0)),
+} as const;
+
+/** Visible definitions plus run history needed for isolation, recovery and abandonment. */
+export const userQuestHistoryRelation = {
+  where: and(
+    or(
+      and(isNull(questHistory.endAt), eq(questHistory.completed, 0)),
+      eq(questHistory.questType, "achievement"),
+    ),
+    or(
+      eq(questHistory.isolated, true),
+      eq(questHistory.questType, "battlepyramid"),
+      // RQB rewrites columns to the history alias. Keep the outer userData role
+      // qualified explicitly; findMany combat preloads can contain different roles.
+      sql`EXISTS (SELECT 1 FROM Quest visible_quest
+        WHERE visible_quest.id = ${questHistory.questId}
+        AND (visible_quest.hidden = FALSE OR ${inArray(
+          sql`${sql.identifier("userData")}.${sql.identifier("role")}`,
+          UserRoles.filter(canPlayHiddenQuests),
+        )}))`,
+    ),
+  ),
+  with: { quest: true },
 } as const;
 
 /** Indexed completion receipts folded into profile/initiation reads; combat actions never fetch them. */

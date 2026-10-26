@@ -205,6 +205,7 @@ import { scopedRead } from "@/server/requestScope";
 import {
   activityCompletionExtras,
   completedQuestHistoryRelation,
+  userQuestHistoryRelation,
 } from "@/server/utils/achievementObjectives";
 import {
   adjustSeichiSilverAtomically,
@@ -3424,13 +3425,7 @@ const fetchUpdatedUserOnce = async (
           },
         },
         userQuests: {
-          where: or(
-            and(isNull(questHistory.endAt), eq(questHistory.completed, 0)),
-            eq(questHistory.questType, "achievement"),
-          ),
-          with: {
-            quest: true,
-          },
+          ...userQuestHistoryRelation,
           orderBy: sql`FIELD(${questHistory.questType}, 'daily', 'tier') ASC`,
         },
         completedQuests: completedQuestHistoryRelation,

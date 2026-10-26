@@ -90,7 +90,6 @@ import {
   mpvpBattleQueue,
   mpvpBattleUser,
   quest,
-  questHistory,
   raidParticipation,
   rankedPvpQueue,
   sageMode,
@@ -266,6 +265,7 @@ import type { DrizzleClient } from "@/server/db";
 import {
   activityCompletionExtras,
   completedQuestHistoryRelation,
+  userQuestHistoryRelation,
 } from "@/server/utils/achievementObjectives";
 import { battleClaimRollbackStatus } from "@/server/utils/concurrency";
 import { settleCookingExperience } from "@/server/utils/cooking";
@@ -2178,13 +2178,7 @@ export const initiateBattle = async (
           with: { skill: true },
           where: (userSkills) => eq(userSkills.activated, true),
         },
-        userQuests: {
-          where: or(
-            and(isNull(questHistory.endAt), eq(questHistory.completed, 0)),
-            eq(questHistory.questType, "achievement"),
-          ),
-          with: { quest: true },
-        },
+        userQuests: userQuestHistoryRelation,
         completedQuests: completedQuestHistoryRelation,
         aiProfile: true,
         bounties: {
