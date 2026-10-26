@@ -110,7 +110,6 @@ import { activeWarAllyWhere } from "@/server/utils/warAlly";
 import {
   activeWarMercenaryWhere,
   canEnterWarCamp,
-  canEnterWarCampSector,
   fetchWarCampEntry,
 } from "@/server/utils/warMercenary";
 import { findRelationship } from "@/utils/alliance";
@@ -900,19 +899,6 @@ export const travelRouter = createTRPCRouter({
       if (isolated) return errorResponse(ISOLATED_PYRAMID_MESSAGE);
       if (!originalUser) return errorResponse("User not found");
       let moveUser = originalUser;
-      if (hasEnergyQueue(moveUser)) {
-        const updated = await fetchUpdatedUser({
-          client: ctx.drizzle,
-          userId,
-          forceRegen: true,
-        });
-        if (!updated.user) return errorResponse("User not found");
-        moveUser = {
-          ...originalUser,
-          ...updated.user,
-          anbuSquad: originalUser.anbuSquad,
-        };
-      }
       const sectorMap = maps?.get(sector);
       if (!sectorMap) return errorResponse("This sector has no published map yet");
       // If a republish blocked the tile the player is standing on, snap them to
@@ -944,19 +930,31 @@ export const travelRouter = createTRPCRouter({
         if (targetSector < 0) {
           return errorResponse("The polar wastes block your path");
         }
-        // Authored map dimensions can change the crossing direction. Only reuse
-        // admission data for the actual destination; otherwise fetch it now.
-        const canEnter =
+        // Training eligibility is sector-based; ordinary steps can defer settlement.
+        const [updated, campEntry, neighbourMap] = await Promise.all([
+          hasEnergyQueue(originalUser)
+            ? fetchUpdatedUser({ client: ctx.drizzle, userId, forceRegen: true })
+            : null,
+          // Authored dimensions can change the predicted crossing direction.
           targetSector === prefetchedCampSector && warCampEntry
-            ? canEnterWarCamp(warCampEntry, moveUser, targetSector)
-            : await canEnterWarCampSector(ctx.drizzle, moveUser, targetSector);
-        if (!canEnter)
+            ? warCampEntry
+            : fetchWarCampEntry(ctx.drizzle, userId, targetSector),
+          maps?.get(targetSector) ??
+            fetchPublishedSectorMap(ctx.drizzle, targetSector).catch(() => null),
+        ]);
+        if (updated) {
+          if (!updated.user) return errorResponse("User not found");
+          moveUser = {
+            ...originalUser,
+            ...updated.user,
+            anbuSquad: originalUser.anbuSquad,
+          };
+        }
+        // Settlement can change village membership, so use the settled user for admission.
+        if (!canEnterWarCamp(campEntry, moveUser, targetSector))
           return errorResponse(
             "This sector is reserved for participants in an active war camp.",
           );
-        const neighbourMap =
-          maps?.get(targetSector) ??
-          (await fetchPublishedSectorMap(ctx.drizzle, targetSector).catch(() => null));
         if (!neighbourMap) {
           return errorResponse("The neighbouring sector has no published map yet");
         }
