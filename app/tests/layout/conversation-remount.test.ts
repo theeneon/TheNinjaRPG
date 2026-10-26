@@ -1,14 +1,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { waitFor } from "@testing-library/react";
-import { InfiniteQueryObserver, QueryClient, type InfiniteData, type InfiniteQueryObserverOptions } from "@tanstack/react-query";
+import { InfiniteQueryObserver, QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { describe, expect, it } from "bun:test";
+import { conversationQueryOptions } from "../setup/conversationQueryOptions";
 
 type ChatPage = {
   data: string[];
   convo: { id: string } | null;
   restrictionMessage: string | null;
-  nextCursor: undefined;
+  nextCursor: number | null | undefined;
 };
 
 const sourceRoot = join(import.meta.dirname, "../../src");
@@ -17,17 +18,74 @@ const staleTimeExpression = provider.match(/\bstaleTime:\s*([^,\n]+)/)?.[1];
 if (!staleTimeExpression) throw new Error("Provider query staleTime was not found");
 const staleTime = new Function(`return (${staleTimeExpression});`)() as number;
 
-// Use the hooks' actual options so removing a lifecycle refresh fails the behavior test.
-const chatOptions = (file: string) => {
-  const source = readFileSync(join(sourceRoot, "layout", file), "utf8");
-  const expression = source.match(/api\.comments\.getConversationComments\.useInfiniteQuery\(queryKey,\s*(\{[\s\S]*?\})\)/)?.[1];
-  if (!expression) throw new Error(`Chat query options were not found in ${file}`);
-  return new Function("props", "conversationId", `return (${expression});`)(
-    { convo_id: "chat" }, "chat",
-  ) as Omit<InfiniteQueryObserverOptions<ChatPage, Error, InfiniteData<ChatPage>>, "queryKey" | "queryFn" | "initialPageParam">;
-};
-
 describe("cached conversation remounts", () => {
+  it("shares immutable conversation writes with other observers and keeps pagination and refetch working", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime, retry: false } } });
+    const queryKey = ["conversation-comments"];
+    const reads: unknown[] = [];
+    let version = "initial";
+    const options = {
+      ...conversationQueryOptions<ChatPage>("Conversation.tsx"),
+      queryKey,
+      initialPageParam: null,
+      enabled: false,
+      queryFn: async ({ pageParam }: { pageParam: unknown }): Promise<ChatPage> => {
+        reads.push(pageParam);
+        return {
+          data: [`${version} page ${pageParam ?? 0}`],
+          convo: { id: "chat" },
+          restrictionMessage: null,
+          nextCursor: pageParam === null ? 1 : null,
+        };
+      },
+    };
+    const observer = new InfiniteQueryObserver(client, options);
+    const otherObserver = new InfiniteQueryObserver(client, options);
+    const unsubscribe = observer.subscribe(() => {});
+    const unsubscribeOther = otherObserver.subscribe(() => {});
+    try {
+      await observer.refetch();
+      const beforeInsert = observer.getCurrentResult().data!;
+      client.setQueryData<InfiniteData<ChatPage>>(queryKey, (old) => old && ({
+        pageParams: old.pageParams,
+        pages: old.pages.map((page) => ({ ...page, data: ["incoming", ...page.data] })),
+      }));
+      const afterInsert = observer.getCurrentResult().data!;
+      expect(afterInsert).not.toBe(beforeInsert);
+      expect(beforeInsert.pages[0]?.data).toEqual(["initial page 0"]);
+      expect(afterInsert.pages[0]?.data).toEqual(["incoming", "initial page 0"]);
+      expect(otherObserver.getCurrentResult().data).toBe(afterInsert);
+
+      await observer.fetchNextPage();
+      const afterPagination = observer.getCurrentResult().data!;
+      expect(afterPagination.pages[0]).toBe(afterInsert.pages[0]);
+      expect(afterPagination.pages[1]?.data).toEqual(["initial page 1"]);
+      expect(afterPagination.pageParams).toEqual([null, 1]);
+      expect(observer.getCurrentResult().hasNextPage).toBe(false);
+      expect(otherObserver.getCurrentResult().data).toBe(afterPagination);
+
+      version = "refetched";
+      await observer.refetch();
+      const afterRefetch = observer.getCurrentResult().data!;
+      expect(afterRefetch.pages.map((page) => page.data)).toEqual([["refetched page 0"], ["refetched page 1"]]);
+      expect(afterPagination.pages[0]?.data).toEqual(["incoming", "initial page 0"]);
+      expect(afterRefetch.pageParams).toEqual([null, 1]);
+      expect(reads).toEqual([null, 1, null, 1]);
+      expect(otherObserver.getCurrentResult().data).toBe(afterRefetch);
+
+      // A distinct query keeps TanStack Query's default sharing behavior.
+      const otherKey = ["other-comments"];
+      client.setQueryData(otherKey, { data: ["unchanged"] });
+      const unrelated = client.getQueryData(otherKey);
+      client.setQueryData(otherKey, { data: ["unchanged"] });
+      expect(client.getQueryData(otherKey)).toBe(unrelated);
+    } finally {
+      unsubscribe();
+      unsubscribeOther();
+      client.clear();
+    }
+  });
+
   for (const file of ["Conversation.tsx", "TeamChatPanel.tsx"]) {
     it(`${file} refreshes missed parental restrictions and recovers when reopened`, async () => {
       const client = new QueryClient({ defaultOptions: { queries: { staleTime, retry: false } } });
@@ -35,7 +93,7 @@ describe("cached conversation remounts", () => {
       let restricted = false;
       let reads = 0;
       const mount = () => new InfiniteQueryObserver(client, {
-        ...chatOptions(file),
+        ...conversationQueryOptions<ChatPage>(file),
         queryKey,
         initialPageParam: null,
         queryFn: async (): Promise<ChatPage> => {

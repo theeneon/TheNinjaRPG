@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { InfiniteQueryObserver, QueryClient, type InfiniteData } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { ComponentProps, ReactNode } from "react";
 import { type Control, useController } from "react-hook-form";
@@ -10,6 +11,7 @@ import type { PostProps } from "@/layout/Post";
 import type { MutateCommentSchema } from "@/validators/comments";
 import * as Parse from "@/utils/parse";
 import { ensureDom } from "../setup-dom.mjs";
+import { conversationQueryOptions } from "../setup/conversationQueryOptions";
 import { createToastMock } from "../setup/toastMock";
 
 const edit = vi.fn();
@@ -133,7 +135,8 @@ describe("conversation emoji outside-click listener", () => {
 });
 
 type ListProps = ComponentProps<typeof ConversationComments>;
-type ReturnedComment = NonNullable<ListProps["pages"]>[number]["data"][number];
+type ChatPage = NonNullable<ListProps["pages"]>[number];
+type ReturnedComment = ChatPage["data"][number];
 const row = (id: string): ReturnedComment => ({
   ...comment, ...user, id, content: `Message ${id}`,
   villageName: null, villageHexColor: null, villageKageId: null, displayTitle: "",
@@ -168,46 +171,72 @@ describe("conversation comment row isolation", () => {
     return { renders, parses };
   };
 
-  it("renders only changed rows in a 100-message history and reparses only changed content", () => {
+  it("renders only changed cached rows in a 100-message history and reparses only changed content", () => {
     const { renders, parses } = observeRows();
     const history = Array.from({ length: 100 }, (_, i) => row(String(i)));
     const props = listProps(history);
-    const view = render(<ConversationComments {...props} />);
-    expect(renders).toHaveBeenCalledTimes(100);
-    expect(parses).toHaveBeenCalledTimes(100);
-    renders.mockClear();
-    parses.mockClear();
+    const client = new QueryClient();
+    const queryKey = ["conversation-comments"];
+    const observer = new InfiniteQueryObserver(client, {
+      ...conversationQueryOptions<ChatPage>("Conversation.tsx"),
+      queryKey,
+      initialPageParam: null,
+      enabled: false,
+      initialData: { pages: props.pages!, pageParams: [null] },
+    });
+    const cached = () => client.getQueryData<InfiniteData<ChatPage>>(queryKey)!;
+    // Follow the immutable page writer used by incoming messages and optimistic sends.
+    const update = (mapData: (data: ReturnedComment[]) => ReturnedComment[]) => {
+      client.setQueryData<InfiniteData<ChatPage>>(queryKey, (old) => old && ({
+        pageParams: old.pageParams,
+        pages: old.pages.map((page) => page.convo ? { ...page, data: mapData(page.data) } : page),
+      }));
+    };
+    const view = render(<ConversationComments {...props} pages={cached().pages} />);
+    try {
+      expect(renders).toHaveBeenCalledTimes(100);
+      expect(parses).toHaveBeenCalledTimes(100);
+      renders.mockClear();
+      parses.mockClear();
 
-    const incoming = row("new");
-    view.rerender(<ConversationComments {...props} pages={pages([incoming, ...history])} />);
-    expect(renders).toHaveBeenCalledTimes(1);
-    expect(parses).toHaveBeenCalledTimes(1);
-    expect(renders.mock.calls[0]?.[0].comment.id).toBe("new");
-    renders.mockClear();
-    parses.mockClear();
+      const incoming = row("new");
+      const beforeInsert = cached();
+      update((data) => [incoming, ...data]);
+      expect(beforeInsert.pages[0]?.data).toEqual(history);
+      view.rerender(<ConversationComments {...props} pages={cached().pages} />);
+      expect(renders).toHaveBeenCalledTimes(1);
+      expect(parses).toHaveBeenCalledTimes(1);
+      expect(renders.mock.calls[0]?.[0].comment.id).toBe("new");
+      renders.mockClear();
+      parses.mockClear();
 
-    const reacted = { ...history[0]!, reactions: { "👍": ["Reader"] } };
-    view.rerender(<ConversationComments {...props} pages={pages([incoming, reacted, ...history.slice(1)])} />);
-    expect(renders).toHaveBeenCalledTimes(1);
-    expect(renders.mock.calls[0]?.[0].comment.id).toBe("0");
-    expect(parses).not.toHaveBeenCalled();
-    renders.mockClear();
+      update((data) => data.map((comment) => comment.id === "0" ? { ...comment, reactions: { "👍": ["Reader"] } } : comment));
+      view.rerender(<ConversationComments {...props} pages={cached().pages} />);
+      expect(renders).toHaveBeenCalledTimes(1);
+      expect(renders.mock.calls[0]?.[0].comment.id).toBe("0");
+      expect(parses).not.toHaveBeenCalled();
+      renders.mockClear();
 
-    view.rerender(<ConversationComments {...props} pages={pages([incoming, reacted, ...history.slice(1)])} quoteIds={["1"]} />);
-    expect(renders).toHaveBeenCalledTimes(1);
-    expect(renders.mock.calls[0]?.[0].comment.id).toBe("1");
-    expect(renders.mock.calls[0]?.[0].quoteIds).toEqual(["1"]);
-    expect(parses).not.toHaveBeenCalled();
-    renders.mockClear();
+      view.rerender(<ConversationComments {...props} pages={cached().pages} quoteIds={["1"]} />);
+      expect(renders).toHaveBeenCalledTimes(1);
+      expect(renders.mock.calls[0]?.[0].comment.id).toBe("1");
+      expect(renders.mock.calls[0]?.[0].quoteIds).toEqual(["1"]);
+      expect(parses).not.toHaveBeenCalled();
+      renders.mockClear();
 
-    view.rerender(<ConversationComments {...props} pages={pages([incoming, { ...reacted, content: "Edited" }, ...history.slice(1)])} quoteIds={["1"]} />);
-    expect(renders).toHaveBeenCalledTimes(1);
-    expect(parses).toHaveBeenCalledTimes(1);
-    expect(view.getByText("Edited")).toBeTruthy();
-    fireEvent.click(view.getByRole("button", { name: "React 0" }));
-    expect(props.onReact).toHaveBeenCalledWith({ commentId: "0", emoji: "👍" });
-    fireEvent.click(view.getByRole("button", { name: "Quote 1" }));
-    expect(props.onToggleQuote).toHaveBeenCalledWith("1");
+      update((data) => data.map((comment) => comment.id === "0" ? { ...comment, content: "Edited" } : comment));
+      view.rerender(<ConversationComments {...props} pages={cached().pages} quoteIds={["1"]} />);
+      expect(renders).toHaveBeenCalledTimes(1);
+      expect(parses).toHaveBeenCalledTimes(1);
+      expect(view.getByText("Edited")).toBeTruthy();
+      fireEvent.click(view.getByRole("button", { name: "React 0" }));
+      expect(props.onReact).toHaveBeenCalledWith({ commentId: "0", emoji: "👍" });
+      fireEvent.click(view.getByRole("button", { name: "Quote 1" }));
+      expect(props.onToggleQuote).toHaveBeenCalledWith("1");
+    } finally {
+      observer.destroy();
+      client.clear();
+    }
   });
 
   it("keeps filters and the pagination ref outside row memoization, and updates permissions", () => {

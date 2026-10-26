@@ -134,6 +134,9 @@ const Conversation: React.FC<ConversationProps> = (props) => {
     refetch,
   } = api.comments.getConversationComments.useInfiniteQuery(queryKey, {
     enabled: props.convo_id !== undefined || props.convo_title !== undefined,
+    // Preserve the immutable writer's row identities: index-based sharing rebuilds
+    // unchanged comments when new messages are prepended.
+    structuralSharing: false,
     // Recheck permissions after missed cross-tab events, even while cached history is fresh.
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
