@@ -142,7 +142,7 @@ export default function MyJutsu() {
   // User Jutsus & items
   const { data: userJutsus, isFetching: l1 } = api.jutsu.getUserJutsus.useQuery(
     { ...getFilter(state), includeEquipped: true },
-    { enabled: !!userData },
+    { enabled: !!userData, placeholderData: (previousData) => previousData },
   );
   const { data: userItems, isFetching: l2 } = api.item.getUserItems.useQuery(
     undefined,
@@ -345,7 +345,6 @@ export default function MyJutsu() {
           await Promise.all([
             utils.jutsu.getUserJutsus.invalidate(),
             utils.jutsu.getEvolutions.invalidate(),
-            utils.jutsu.getUserJutsuOwnership.invalidate(),
             utils.jutsu.getLoadouts.invalidate(),
             utils.profile.getUser.invalidate(),
           ]);
@@ -360,7 +359,9 @@ export default function MyJutsu() {
     { enabled: !!userjutsu },
   );
 
+  const isFetching = l1 || l2;
   const isPending =
+    isFetching ||
     isToggling ||
     isForgetting ||
     isUpgrading ||
@@ -370,7 +371,6 @@ export default function MyJutsu() {
     isRemovingReskin ||
     isEvolving ||
     isReordering;
-  const isFetching = l1 || l2;
 
   // Use the profile snapshot so hidden activated skills still satisfy use gates.
   const activeSkills = userData?.userSkills;
@@ -438,12 +438,13 @@ export default function MyJutsu() {
                 title="Unequip all jutsu"
                 proceed_label={isUnequipping ? undefined : "Unequip all"}
                 isValid={!isUnequipping}
-                disabled={isUnequipping || !curEquip}
+                disabled={isPending || !curEquip}
+                confirmDisabled={isPending}
                 button={
                   <Button
                     hoverText="Unequip all jutsu"
                     aria-label="Unequip all jutsu"
-                    disabled={isUnequipping || !curEquip}
+                    disabled={isPending || !curEquip}
                   >
                     <ListX className="h-6 w-6 hover:text-orange-500" />
                   </Button>
@@ -489,7 +490,6 @@ export default function MyJutsu() {
         }
       >
         <JutsuStatQuickFilters state={state} />
-        {isFetching && <Loader explanation="Loading Jutsu" />}
 
         {/* Equipped Section - Always Visible */}
         {categorizedJutsus && (
@@ -605,6 +605,7 @@ export default function MyJutsu() {
           <Modal
             title="Edit Jutsu"
             isOpen={isOpen}
+            isLoading={isFetching}
             setIsOpen={setIsOpen}
             proceed_label={
               !isToggling
@@ -987,6 +988,7 @@ export default function MyJutsu() {
               userjutsu.activeReskin ? "Update Jutsu Reskin" : "Create Jutsu Reskin"
             }
             isOpen={isReskinOpen}
+            isLoading={isFetching}
             setIsOpen={setIsReskinOpen}
             proceed_label={userjutsu.activeReskin ? "Update Reskin" : "Create Reskin"}
             isValid={reskinForm.formState.isValid}
@@ -1005,7 +1007,7 @@ export default function MyJutsu() {
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
-                    if (reskinForm.formState.isValid) {
+                    if (!isFetching && reskinForm.formState.isValid) {
                       const data = reskinForm.getValues();
                       setReskinData(data);
                       setIsReskinOpen(false);
@@ -1182,6 +1184,7 @@ export default function MyJutsu() {
         {isConfirmOpen && reskinData && userjutsu && (
           <Modal
             isOpen={isConfirmOpen}
+            isLoading={isFetching}
             setIsOpen={setIsConfirmOpen}
             title={
               userjutsu.activeReskin
@@ -1211,6 +1214,14 @@ export default function MyJutsu() {
               </p>
             </div>
           </Modal>
+        )}
+        {/* Retained rows stay visible, but edits wait for the current inventory. */}
+        {isFetching && (
+          <div className="absolute inset-0 z-10 bg-slate-950/10 backdrop-blur-sm">
+            <div className="sticky top-24 flex justify-center py-16">
+              <Loader explanation="Loading Jutsu" />
+            </div>
+          </div>
         )}
       </ContentBox>
       {/* Free Transfer Timer */}

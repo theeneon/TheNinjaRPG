@@ -1265,34 +1265,6 @@ export const jutsuRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       return await fetchUserJutsus(ctx.drizzle, ctx.userId, input);
     }),
-  // Lightweight endpoint returning only what's needed to determine jutsu ownership
-  // and evolution ancestry. Used by UIs that need the full (unfiltered) owned set
-  // without transferring every column of every userJutsu row.
-  getUserJutsuOwnership: protectedProcedure
-    .meta({
-      mcp: {
-        description: "Get current user's jutsu ownership (ids + ancestor ids)",
-      },
-    })
-    .query(async ({ ctx }) => {
-      const parentJutsuAlias = alias(jutsu, "parentJutsu");
-      const rows = await ctx.drizzle
-        .select({
-          jutsuId: userJutsu.jutsuId,
-          parentJutsuId: jutsu.parentJutsuId,
-          grandparentJutsuId: parentJutsuAlias.parentJutsuId,
-        })
-        .from(userJutsu)
-        .innerJoin(jutsu, eq(userJutsu.jutsuId, jutsu.id))
-        .leftJoin(parentJutsuAlias, eq(jutsu.parentJutsuId, parentJutsuAlias.id))
-        .where(and(eq(userJutsu.userId, ctx.userId), ne(jutsu.jutsuType, "AI")));
-      return rows.map((row) => ({
-        jutsuId: row.jutsuId,
-        ancestorIds: [row.parentJutsuId, row.grandparentJutsuId].filter(
-          (id): id is string => !!id,
-        ),
-      }));
-    }),
   // Get jutsus of public user
   getPublicUserJutsus: protectedProcedure
     .input(z.object({ userId: z.string() }))
