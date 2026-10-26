@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { after } from "next/server";
 import { moderateContent } from "@/libs/moderator";
 import type { DrizzleClient } from "@/server/db";
+import { flushSafe } from "@/server/utils/sentry";
 
 /** Schedule only after the content write succeeds; scans must not delay posting. */
 export const deferModeration = (
@@ -18,6 +19,7 @@ export const deferModeration = (
         tags: { source: "deferredModeration", relationType: snapshot.relationType },
         extra: { relationId: snapshot.relationId },
       });
+      await flushSafe();
     }
   });
 };
