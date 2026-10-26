@@ -23,7 +23,7 @@ import {
   village,
 } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
-import { moderateContent } from "@/libs/moderator";
+import { deferModeration } from "@/libs/moderation/defer";
 import {
   conversationReadRestriction,
   privateConversationRestriction,
@@ -206,20 +206,24 @@ export const commentsRouter = createTRPCRouter({
       const sanitized = moderated.sanitized;
       const createdId = nanoid();
       await Promise.all([
-        moderateContent(ctx.drizzle, {
-          content: sanitized,
-          userId: ctx.userId,
-          relationType: "forumPost",
-          relationId: createdId,
-          contextId: thread.id,
-        }),
-        ctx.drizzle.insert(forumPost).values({
-          id: createdId,
-          userId: effectiveUserId,
-          threadId: thread.id,
-          content: sanitized,
-          authorId: ctx.userId,
-        }),
+        ctx.drizzle
+          .insert(forumPost)
+          .values({
+            id: createdId,
+            userId: effectiveUserId,
+            threadId: thread.id,
+            content: sanitized,
+            authorId: ctx.userId,
+          })
+          .then(() =>
+            deferModeration(ctx.drizzle, {
+              content: sanitized,
+              userId: ctx.userId,
+              relationType: "forumPost",
+              relationId: createdId,
+              contextId: thread.id,
+            }),
+          ),
         ctx.drizzle
           .update(forumThread)
           .set({ nPosts: sql`nPosts + 1` })
@@ -251,20 +255,18 @@ export const commentsRouter = createTRPCRouter({
       // Mutate
       const postId = input.object_id;
       const sanitized = moderated.sanitized;
-      await Promise.all([
-        moderateContent(ctx.drizzle, {
-          content: sanitized,
-          userId: ctx.userId,
-          relationType: "forumPost",
-          relationId: postId,
-          contextId: comment.threadId,
-          createdAt: comment.createdAt,
-        }),
-        ctx.drizzle
-          .update(forumPost)
-          .set({ content: sanitized })
-          .where(eq(forumPost.id, postId)),
-      ]);
+      await ctx.drizzle
+        .update(forumPost)
+        .set({ content: sanitized })
+        .where(eq(forumPost.id, postId));
+      deferModeration(ctx.drizzle, {
+        content: sanitized,
+        userId: ctx.userId,
+        relationType: "forumPost",
+        relationId: postId,
+        contextId: comment.threadId,
+        createdAt: comment.createdAt,
+      });
       return { success: true, message: "Comment edited" };
     }),
   deleteForumComment: protectedProcedure
@@ -853,13 +855,26 @@ export const commentsRouter = createTRPCRouter({
           convo,
         ),
         // Insert into DB
-        ctx.drizzle.insert(conversationComment).values({
-          id: commentId,
-          content: sanitized,
-          userId: effectiveUserId,
-          authorId: ctx.userId,
-          conversationId: convo.id,
-        }),
+        ctx.drizzle
+          .insert(conversationComment)
+          .values({
+            id: commentId,
+            content: sanitized,
+            userId: effectiveUserId,
+            authorId: ctx.userId,
+            conversationId: convo.id,
+          })
+          .then(() => {
+            if (convo.isPublic) {
+              deferModeration(ctx.drizzle, {
+                content: sanitized,
+                userId: ctx.userId,
+                relationType: "comment",
+                relationId: commentId,
+                contextId: convo.id,
+              });
+            }
+          }),
         // Update conversation
         ctx.drizzle
           .update(conversation)
@@ -874,16 +889,9 @@ export const commentsRouter = createTRPCRouter({
                 .where(inArray(userData.userId, usersIdsInConvo)),
             ]
           : []),
-        // Auto-moderation and stats
+        // Public conversation stats
         ...(convo.isPublic
           ? [
-              moderateContent(ctx.drizzle, {
-                content: sanitized,
-                userId: ctx.userId,
-                relationType: "comment",
-                relationId: commentId,
-                contextId: convo.id,
-              }),
               ctx.drizzle
                 .update(userData)
                 .set({ tavernMessages: sql`${userData.tavernMessages} + 1` })
@@ -1055,20 +1063,18 @@ export const commentsRouter = createTRPCRouter({
       // Mutate
       const commentId = input.object_id;
       const sanitized = moderated.sanitized;
-      await Promise.all([
-        moderateContent(ctx.drizzle, {
-          content: sanitized,
-          userId: ctx.userId,
-          relationType: convo.isPublic ? "comment" : "privateMessage",
-          relationId: commentId,
-          contextId: comment.conversationId ?? undefined,
-          createdAt: comment.createdAt,
-        }),
-        ctx.drizzle
-          .update(conversationComment)
-          .set({ content: sanitized })
-          .where(eq(conversationComment.id, commentId)),
-      ]);
+      await ctx.drizzle
+        .update(conversationComment)
+        .set({ content: sanitized })
+        .where(eq(conversationComment.id, commentId));
+      deferModeration(ctx.drizzle, {
+        content: sanitized,
+        userId: ctx.userId,
+        relationType: convo.isPublic ? "comment" : "privateMessage",
+        relationId: commentId,
+        contextId: comment.conversationId ?? undefined,
+        createdAt: comment.createdAt,
+      });
       return { success: true, message: "Comment edited" };
     }),
   deleteConversationComment: protectedProcedure
