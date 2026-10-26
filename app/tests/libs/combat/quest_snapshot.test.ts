@@ -35,7 +35,8 @@ describe("combat quest snapshot", () => {
     } });
     const user = hydrateUserForQuests(battle, battle.usersState[0]!);
     const publicUser = getPublicQuestUser(user as Parameters<typeof getPublicQuestUser>[0]);
-    expect(publicUser.questData[0]!.goals[0]).not.toHaveProperty("sector");
+    expect(publicUser.questData?.[0]?.goals[0]).toMatchObject({ id: "goal" });
+    expect(publicUser.questData?.[0]?.goals[0]).not.toHaveProperty("sector");
     expect(questData[0]!.goals[0]).toHaveProperty("sector", 2);
   });
 
@@ -71,5 +72,5 @@ const achievement = (id: string, task: string): UserQuest => ({
     maxLevel: null, medicalRank: null, huntingRank: null, gatheringRank: null,
     endsAt: null,
     content: { objectives: [{ id: "goal", task, value: 10, description: "", successDescription: "" }], reward: {}, sceneBackground: "", sceneCharacters: [] },
-  } as Quest,
+  } as unknown as Quest,
 } as UserQuest);
