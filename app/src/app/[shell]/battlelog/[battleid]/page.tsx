@@ -9,12 +9,17 @@ import { type CombatLayoutComponentId, useCombatPreferences } from "@/hooks/comb
 import ActionTimer from "@/layout/ActionTimer";
 import CombatHistory from "@/layout/CombatHistory";
 import ContentBox from "@/layout/ContentBox";
+import Loader from "@/layout/Loader";
 import ReportUser from "@/layout/Report";
 import { UserCombatSettings } from "@/layout/UserCombatSettings";
 import type { BattleState } from "@/libs/combat/types";
 import { useRequiredUserData } from "@/utils/UserContext";
 
-const Combat = dynamic(() => import("@/layout/Combat"), { ssr: false });
+const loadCombat = () => import("@/layout/Combat");
+const Combat = dynamic(loadCombat, {
+  ssr: false,
+  loading: () => <Loader explanation="Loading Battlefield" />,
+});
 
 export default function BattleLog(props: { params: Promise<{ battleid: string }> }) {
   const params = use(props.params);
@@ -23,6 +28,11 @@ export default function BattleLog(props: { params: Promise<{ battleid: string }>
   const config = useCombatPreferences();
   const [battleState, setBattleState] = useState<BattleState | undefined>(undefined);
   const battleId = params.battleid;
+  const utils = api.useUtils();
+
+  useEffect(() => {
+    void loadCombat().catch(() => undefined);
+  }, []);
 
   const { data: userData } = useRequiredUserData();
   const { data } = api.combat.getBattle.useQuery(
@@ -44,6 +54,12 @@ export default function BattleLog(props: { params: Promise<{ battleid: string }>
 
   useEffect(() => {
     if (data?.battle && userData) {
+      void utils.misc.getAllGameAssetNames.prefetch({
+        ids: [
+          ...(data.battle.extraState.textureAssets ?? []),
+          ...(data.battle.extraState.sfxAssets ?? []),
+        ],
+      });
       setUserId(userData.userId);
       setBattleState({
         battle: data?.battle,
