@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { api } from "@/app/_trpc/client";
@@ -11,10 +12,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import DisplayUserReport from "@/layout/UserReport";
+import Loader from "@/layout/Loader";
 import { cn } from "@/libs/shadui";
 import { showMutationToast } from "@/libs/toast";
 import { useUserData } from "@/utils/UserContext";
+
+const DisplayUserReport = dynamic(() => import("@/layout/UserReport"), {
+  loading: () => <Loader explanation="Loading report" />,
+});
 
 const AcceptWarning: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
