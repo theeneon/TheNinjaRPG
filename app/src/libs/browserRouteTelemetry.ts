@@ -1,3 +1,4 @@
+import type { Integration } from "@sentry/core";
 import { publicPathForShellPath } from "@/libs/shell";
 
 // Public pages only: unknown URLs share a label rather than exposing arbitrary path data.
@@ -222,4 +223,23 @@ export const createPublicBrowserRouteProvider = (getLocation: () => string) => (
   resolveRoute: ({ pathname }: Pick<URL, "pathname">) =>
     toPublicRouteTemplate(pathname),
   resolveCurrentRoute: () => toPublicRouteTemplate(getLocation()),
+});
+
+// The SDK's bfcache path bypasses routeProvider. Change the captured options before
+// it creates the span and copies its name into the scope used by subsequent errors.
+export const publicBfcacheRouteIntegration = (): Integration => ({
+  name: "PublicBfcacheRoute",
+  setup(client) {
+    client.on("beforeStartNavigationSpan", (options, navigation) => {
+      if (options.attributes?.["sentry.origin"] !== "auto.navigation.browser.bfcache")
+        return;
+      const template = toPublicRouteTemplate(navigation?.url ?? "/[unmatched]");
+      options.name = template;
+      options.attributes = {
+        ...options.attributes,
+        "sentry.segment.name.source": "route",
+        "url.template": template,
+      };
+    });
+  },
 });
