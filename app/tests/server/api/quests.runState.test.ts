@@ -30,6 +30,13 @@ describeWithDatabase("quest run state preservation", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it.each([0, 1])("keeps unavailable guidance for hidden achievement history with completed=%s", async (completed) => {
+    await insertQuests([{ id: "hidden-achievement", questType: "achievement", hidden: true, content }]);
+    await insertQuestHistory([{ userId: "hero", questId: "hidden-achievement", questType: "achievement", completed }]);
+    const result = await (await callerFor(questsRouter, "hero")).checkRewards({ questId: "hidden-achievement" });
+    expect(result).toMatchObject({ success: false, message: "This quest is currently unavailable." });
+  });
+
   it.each(["story", "event", "mission", "battlepyramid"] as const)("keeps hidden %s guidance appropriate after a regeneration snapshot loss", async (questType) => {
     const client = await getTestDatabase();
     const oldSnapshotAt = new Date(Date.now() - 350_000);

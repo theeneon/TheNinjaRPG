@@ -20,7 +20,11 @@ export const isBetweenPyramidBattles = (
 ) => user?.status === "BATTLE" && user.battleId === null && !!getIsolatedPyramid(user);
 
 /** Versioned runs must restart after authored edits; visibility-only edits keep the run valid. */
-export const hasQuestContentChanged = (entry: UserQuest) =>
+export const hasQuestContentChanged = (
+  entry: Pick<UserQuest, "questType" | "isolated" | "questVersion"> & {
+    quest: Pick<UserQuest["quest"], "updatedAt">;
+  },
+) =>
   (entry.questType === "battlepyramid" || entry.isolated) &&
   !!entry.questVersion &&
   new Date(entry.questVersion).getTime() !== new Date(entry.quest.updatedAt).getTime();

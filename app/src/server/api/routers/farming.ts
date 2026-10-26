@@ -15,7 +15,6 @@ import {
   farmPlot,
   type Item,
   item,
-  questHistory,
   userData,
   userItem,
 } from "@/drizzle/schema";
@@ -55,7 +54,10 @@ import { fetchUserSkills } from "@/routers/skillTree";
 import { fetchUserItems } from "@/server/api/routers/item";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { completedQuestHistoryRelation } from "@/server/utils/achievementObjectives";
+import {
+  completedQuestHistoryRelation,
+  userQuestHistoryRelation,
+} from "@/server/utils/achievementObjectives";
 import {
   claimUserSnapshot,
   refundUserItemQuantityAtomically,
@@ -2327,13 +2329,7 @@ const fetchFarmingQuestState = async (client: DrizzleClient, userId: string) => 
     where: eq(userData.userId, userId),
     columns: { userId: true, questData: true, updatedAt: true },
     with: {
-      userQuests: {
-        where: or(
-          and(isNull(questHistory.endAt), eq(questHistory.completed, 0)),
-          eq(questHistory.questType, "achievement"),
-        ),
-        with: { quest: true },
-      },
+      userQuests: userQuestHistoryRelation,
       completedQuests: completedQuestHistoryRelation,
     },
   });

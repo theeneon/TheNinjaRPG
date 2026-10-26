@@ -156,7 +156,10 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { completedQuestHistoryRelation } from "@/server/utils/achievementObjectives";
+import {
+  completedQuestHistoryRelation,
+  userQuestHistoryRelation,
+} from "@/server/utils/achievementObjectives";
 import {
   cacheReceiptId,
   commitCacheConsumption,
@@ -4073,13 +4076,7 @@ const fetchUserQuestState = async (client: DrizzleClient, userId: string) => {
     where: eq(userData.userId, userId),
     columns: { userId: true, questData: true },
     with: {
-      userQuests: {
-        where: or(
-          and(isNull(questHistory.endAt), eq(questHistory.completed, 0)),
-          eq(questHistory.questType, "achievement"),
-        ),
-        with: { quest: true },
-      },
+      userQuests: userQuestHistoryRelation,
       completedQuests: completedQuestHistoryRelation,
     },
   });
