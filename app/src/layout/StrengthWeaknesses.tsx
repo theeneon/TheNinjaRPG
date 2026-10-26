@@ -1,6 +1,6 @@
 "use client";
 
-import { Chart as ChartJS } from "chart.js/auto";
+import type { Chart } from "chart.js";
 import { CircleHelp, Eye, Leaf, Lock, Search } from "lucide-react";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
@@ -255,6 +255,7 @@ interface GraphsTabProps {
 }
 
 export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
+  const [chartFailed, setChartFailed] = useState(false);
   const masteryChartRef = useRef<HTMLCanvasElement>(null);
   const combatChartRef = useRef<HTMLCanvasElement>(null);
   const userElements = getUserElements(userData);
@@ -266,114 +267,137 @@ export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
     const masteryCtx = masteryChartRef?.current?.getContext("2d");
     const combatCtx = combatChartRef?.current?.getContext("2d");
     if (masteryCtx && combatCtx && userData) {
-      // Mastery distribution
-      const chartTextColor = getEffectiveThemeTextColor(activeLayout);
-      ChartJS.defaults.color = chartTextColor;
-      const masteryChart = new ChartJS(masteryCtx, {
-        type: "radar",
-        options: {
-          maintainAspectRatio: false,
-          aspectRatio: 1.4,
-          responsive: true,
-          elements: {
-            line: {
-              borderWidth: 3,
-            },
-          },
-          scales: {
-            r: {
-              angleLines: { color: "rgba(148, 163, 184, 0.35)", display: true },
-              grid: { color: "rgba(148, 163, 184, 0.25)" },
-              pointLabels: { color: chartTextColor, font: { size: 11 } },
-              ticks: {
-                backdropColor: "rgba(99, 255, 132, 0.0)",
-                color: chartTextColor,
-                maxTicksLimit: 4,
+      let masteryChart: Chart | undefined;
+      let combatChart: Chart | undefined;
+      let cancelled = false;
+      setChartFailed(false);
+      void (async () => {
+        try {
+          const { Chart: ChartJS } = await import("chart.js/auto");
+          // A tab, theme or user update can invalidate this draw during the import.
+          if (cancelled) return;
+          // Mastery distribution
+          const chartTextColor = getEffectiveThemeTextColor(activeLayout);
+          ChartJS.defaults.color = chartTextColor;
+          masteryChart = new ChartJS(masteryCtx, {
+            type: "radar",
+            options: {
+              maintainAspectRatio: false,
+              aspectRatio: 1.4,
+              responsive: true,
+              elements: {
+                line: {
+                  borderWidth: 3,
+                },
               },
-              min: 0,
+              scales: {
+                r: {
+                  angleLines: { color: "rgba(148, 163, 184, 0.35)", display: true },
+                  grid: { color: "rgba(148, 163, 184, 0.25)" },
+                  pointLabels: { color: chartTextColor, font: { size: 11 } },
+                  ticks: {
+                    backdropColor: "rgba(99, 255, 132, 0.0)",
+                    color: chartTextColor,
+                    maxTicksLimit: 4,
+                  },
+                  min: 0,
+                },
+              },
+              plugins: {
+                legend: {
+                  display: false,
+                },
+              },
             },
-          },
-          plugins: {
-            legend: {
-              display: false,
+            data: {
+              labels: MasteryNames.map(
+                (stat) =>
+                  stat.charAt(0).toUpperCase() + stat.slice(1).replace("Mastery", ""),
+              ),
+              datasets: [
+                {
+                  label: "Value",
+                  data: MasteryNames.map((stat) => masteries[stat]),
+                  fill: true,
+                  backgroundColor: "rgba(255, 99, 132, 0.2)",
+                  borderColor: "rgb(255, 99, 132)",
+                  pointBackgroundColor: "rgb(255, 99, 132)",
+                  pointBorderColor: "#fff",
+                  pointHoverBackgroundColor: "#fff",
+                  pointHoverBorderColor: "rgb(255, 99, 132)",
+                },
+              ],
             },
-          },
-        },
-        data: {
-          labels: MasteryNames.map(
-            (stat) =>
-              stat.charAt(0).toUpperCase() + stat.slice(1).replace("Mastery", ""),
-          ),
-          datasets: [
-            {
-              label: "Value",
-              data: MasteryNames.map((stat) => masteries[stat]),
-              fill: true,
-              backgroundColor: "rgba(255, 99, 132, 0.2)",
-              borderColor: "rgb(255, 99, 132)",
-              pointBackgroundColor: "rgb(255, 99, 132)",
-              pointBorderColor: "#fff",
-              pointHoverBackgroundColor: "#fff",
-              pointHoverBorderColor: "rgb(255, 99, 132)",
+          });
+          // Combat stat comparison
+          combatChart = new ChartJS(combatCtx, {
+            type: "bar",
+            options: {
+              maintainAspectRatio: false,
+              responsive: true,
+              indexAxis: "y",
+              scales: {
+                x: {
+                  beginAtZero: true,
+                  ticks: { color: chartTextColor, maxTicksLimit: 4 },
+                  grid: { color: "rgba(148, 163, 184, 0.16)" },
+                },
+                y: {
+                  ticks: { color: chartTextColor },
+                  grid: { display: false },
+                },
+              },
+              plugins: {
+                legend: {
+                  display: false,
+                },
+              },
             },
-          ],
-        },
-      });
-      // Combat stat comparison
-      const combatChart = new ChartJS(combatCtx, {
-        type: "bar",
-        options: {
-          maintainAspectRatio: false,
-          responsive: true,
-          indexAxis: "y",
-          scales: {
-            x: {
-              beginAtZero: true,
-              ticks: { color: chartTextColor, maxTicksLimit: 4 },
-              grid: { color: "rgba(148, 163, 184, 0.16)" },
+            data: {
+              labels: CombatStatNames.map(
+                (stat) => stat.charAt(0).toUpperCase() + stat.slice(1),
+              ),
+              datasets: [
+                {
+                  label: "Stat",
+                  data: CombatStatNames.map((stat) => userData[stat]),
+                  backgroundColor: "rgba(75, 192, 192, 0.5)",
+                  borderColor: "rgb(75, 192, 192)",
+                  borderWidth: 1,
+                  borderRadius: 4,
+                  maxBarThickness: 24,
+                },
+              ],
             },
-            y: {
-              ticks: { color: chartTextColor },
-              grid: { display: false },
-            },
-          },
-          plugins: {
-            legend: {
-              display: false,
-            },
-          },
-        },
-        data: {
-          labels: CombatStatNames.map(
-            (stat) => stat.charAt(0).toUpperCase() + stat.slice(1),
-          ),
-          datasets: [
-            {
-              label: "Stat",
-              data: CombatStatNames.map((stat) => userData[stat]),
-              backgroundColor: "rgba(75, 192, 192, 0.5)",
-              borderColor: "rgb(75, 192, 192)",
-              borderWidth: 1,
-              borderRadius: 4,
-              maxBarThickness: 24,
-            },
-          ],
-        },
-      });
-      // Remove on unmount
+          });
+        } catch (error) {
+          masteryChart?.destroy();
+          combatChart?.destroy();
+          masteryChart = undefined;
+          combatChart = undefined;
+          console.error("Could not load the stat charts", error);
+          if (!cancelled) setChartFailed(true);
+        }
+      })();
       return () => {
-        masteryChart.destroy();
-        combatChart.destroy();
+        cancelled = true;
+        masteryChart?.destroy();
+        combatChart?.destroy();
       };
     }
   }, [activeLayout, userData]);
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      {chartFailed && (
+        <p role="alert" className="text-muted-foreground text-sm sm:col-span-2">
+          Charts could not be loaded. Select Stats to view your values.
+        </p>
+      )}
       <section className="min-w-0 rounded-lg border bg-background/40 p-3">
         <h3 className="font-bold">Combat stats</h3>
         <p className="text-muted-foreground text-xs">Offence, Defence and Generals</p>
-        <div className="relative my-3 h-64">
+        <div className="relative my-3 h-64" hidden={chartFailed}>
           <canvas
             ref={combatChartRef}
             id="combatChartRef"
@@ -390,7 +414,7 @@ export const GraphsTab: React.FC<GraphsTabProps> = ({ userData }) => {
         <p className="text-muted-foreground text-xs">
           Includes equipment, bloodline and skill modifiers; does not affect damage
         </p>
-        <div className="relative my-3 h-64">
+        <div className="relative my-3 h-64" hidden={chartFailed}>
           <canvas
             ref={masteryChartRef}
             id="masteryChartRef"
