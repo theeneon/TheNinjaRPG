@@ -6,6 +6,7 @@ import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { withMcpAuth } from "mcp-handler";
 import { NextResponse } from "next/server";
+import { env } from "@/env/server.mjs";
 import { trpcToModelContextProtocolHandler } from "@/libs/mcp";
 import { appRouter } from "@/server/api/root";
 import { drizzleDB } from "@/server/db";
@@ -209,6 +210,7 @@ const verifyOpaqueToken = async (
 const verifyJwtToken = async (bearerToken: string): Promise<AuthInfo | undefined> => {
   const payload = await clerkVerifyToken(bearerToken, {
     secretKey: process.env.CLERK_SECRET_KEY,
+    jwtKey: env.CLERK_JWT_KEY,
     headerType: ["JWT", "at+jwt"],
   });
 
