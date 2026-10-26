@@ -2114,7 +2114,8 @@ export const updateUser = async (
     ) {
       const publicUser = getPublicQuestUser({
         ...hydratedUser,
-        questData: updatedQuestData,
+        // Only loaded definitions can project private targets; retain their display-only trackers.
+        questData: trackers,
       } as NonNullable<UserWithRelations>);
       const { masterySources: _privateSources, ...cacheBaseline } = baseline;
       const settledItems = combatCacheItems(baseline, user.items);

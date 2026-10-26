@@ -10,6 +10,7 @@ import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import type { ZodAllTags } from "@/validators/combat";
 import { makeBattleUser, makeCompleteBattle } from "./helpers/battleScenario";
 import { calcBattleResult, maskBattle } from "@/libs/combat/util";
+import { QuestTracker } from "@/validators/objectives";
 
 const key = [["profile", "getUser"], { type: "query" }];
 const fixture = () => {
@@ -36,6 +37,18 @@ const fixture = () => {
 };
 
 describe("confirmed combat profile reconciliation", () => {
+  it.each(["sparse", "complete"])("merges %s public tracker snapshots while replacing loaded targets and appending new trackers", (snapshot) => {
+    const { current, update } = fixture();
+    const omitted = QuestTracker.parse({ id: "omitted", goals: [{ id: "goal", value: 5 }] });
+    const loaded = QuestTracker.parse({ id: "loaded", goals: [{ id: "goal", value: 1, sector: 2 }] });
+    const settled = QuestTracker.parse({ id: "loaded", goals: [{ id: "goal", value: 2 }] });
+    const added = QuestTracker.parse({ id: "added" });
+    current.questData = [loaded, omitted];
+    update.userPatch.questData = snapshot === "complete" ? [settled, omitted, added] : [settled, added];
+    expect(combatProfilePatch(current, update)?.questData).toEqual([settled, omitted, added]);
+    expect(current.questData).toEqual([loaded, omitted]);
+  });
+
   it("retains permanent title mastery through combat completion cache reconciliation", () => {
     const { raw } = fixture();
     raw.titles = [{ userId: raw.userId, titleId: "mastery-title", createdAt: new Date(), effects: [{ type: "increasemastery", power: 25, masteryTypes: ["Ninjutsu"] }] }];

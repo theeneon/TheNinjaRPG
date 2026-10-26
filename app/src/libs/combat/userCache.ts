@@ -180,6 +180,14 @@ export const combatProfilePatch = (
   });
   return {
     ...update.userPatch,
+    // Settlement updates only loaded quests; retain the other already-public display trackers.
+    questData: [
+      ...new Map(
+        [...(current.questData ?? []), ...(update.userPatch.questData ?? [])].map(
+          (tracker) => [tracker.id, tracker],
+        ),
+      ).values(),
+    ],
     items,
     battleId: null,
     stealthActive: false,
