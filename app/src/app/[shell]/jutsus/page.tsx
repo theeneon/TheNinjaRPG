@@ -438,12 +438,13 @@ export default function MyJutsu() {
                 title="Unequip all jutsu"
                 proceed_label={isUnequipping ? undefined : "Unequip all"}
                 isValid={!isUnequipping}
-                disabled={isUnequipping || !curEquip}
+                disabled={isPending || !curEquip}
+                confirmDisabled={isPending}
                 button={
                   <Button
                     hoverText="Unequip all jutsu"
                     aria-label="Unequip all jutsu"
-                    disabled={isUnequipping || !curEquip}
+                    disabled={isPending || !curEquip}
                   >
                     <ListX className="h-6 w-6 hover:text-orange-500" />
                   </Button>
