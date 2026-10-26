@@ -1742,6 +1742,27 @@ export const buildFarmState = async (
       seed.farmYieldItem ? [[seed.farmYieldItem.id, seed.farmYieldItem] as const] : [],
     ),
   );
+  // Independent reads can observe a seed reassignment after the catalog snapshot.
+  // Confirm missing yields before treating their planted crops as orphaned.
+  const missingYieldIds = [
+    ...new Set(
+      [
+        ...plotsRaw.map((plot) => plot.seedItem?.farmYieldItemId),
+        ...userItems.map((owned) => owned.item.farmYieldItemId),
+        ...shopItems.flat().map((shopItem) => shopItem.farmYieldItemId),
+      ].filter(
+        (yieldId): yieldId is string => !!yieldId && !yieldItemsById.has(yieldId),
+      ),
+    ),
+  ];
+  if (missingYieldIds.length > 0) {
+    const missingYieldItems = await client.query.item.findMany({
+      where: inArray(item.id, missingYieldIds),
+    });
+    for (const yieldItem of missingYieldItems) {
+      yieldItemsById.set(yieldItem.id, yieldItem);
+    }
+  }
   const shopEntries = buildShopEntries(
     user,
     shopItems,
