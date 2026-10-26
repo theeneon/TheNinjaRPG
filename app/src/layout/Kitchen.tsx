@@ -361,7 +361,7 @@ export default function Kitchen({ image }: { image?: string }) {
                 )}{" "}
                 XP on completion (current bonuses).
                 {(active || waiting.length > 0) &&
-                  " Queued meals use the time and XP bonuses active when they start."}
+                  " Queued meals keep passive time reductions from submission; Territory War time and XP bonuses apply when they start."}
               </p>
             )}
             {blocked && <p className="text-muted-foreground text-sm">{blocked}</p>}
