@@ -1,6 +1,7 @@
 import { describe, expect, it, mock, spyOn } from "bun:test";
 import { drizzle } from "drizzle-orm/mysql-proxy";
 import {
+  deleteOrphanedReportEmbeddings,
   getRelatedReports,
   indexReportEmbeddings,
   supportsReportVectorSearch,
@@ -175,10 +176,6 @@ describe("moderation report search capabilities", () => {
   it("backfills summaries in one embedding batch and upserts their source and model", async () => {
     const { client, queries } = database((query, params) => {
       if (query.includes("DISTANCE")) return [];
-      if (query.startsWith("delete")) {
-        expect(query).toContain("not exists");
-        return [[{ insertId: 0, affectedRows: 1 }]];
-      }
       if (query.startsWith("select")) {
         expect(query).toContain("left join `UserReportEmbedding`");
         expect(query).toContain("`sourceText` <> `UserReport`.`aiInterpretation`");
@@ -202,5 +199,37 @@ describe("moderation report search capabilities", () => {
     expect(embed).toHaveBeenCalledWith(["Harassment", "Threats"]);
     expect(embed).toHaveBeenCalledTimes(1);
     expect(queries.filter((query) => query.startsWith("insert"))).toHaveLength(2);
+    expect(queries.some((query) => query.startsWith("delete"))).toBe(false);
+  });
+
+  it("skips orphan deletion when the plain ID scan finds nothing", async () => {
+    const { client, queries } = database(() => []);
+    await deleteOrphanedReportEmbeddings(client);
+    expect(queries).toHaveLength(2);
+    expect(queries[1]).toContain("select `reportId` from `UserReportEmbedding`");
+    expect(queries[1]).toContain("not exists");
+    expect(queries.some((query) => /delete|for update/i.test(query))).toBe(false);
+  });
+
+  it("restricts orphan deletion to scanned IDs and rechecks parent existence", async () => {
+    const { client, queries } = database((query, params) => {
+      if (query.includes("DISTANCE")) return [];
+      if (query.startsWith("select")) return [["orphan-a"], ["orphan-b"]];
+      expect(query).toContain("`UserReportEmbedding`.`reportId` in (?, ?)");
+      expect(query).toContain("not exists (select `id` from `UserReport`");
+      expect(query).toContain("`UserReport`.`id` = `UserReportEmbedding`.`reportId`");
+      expect(params).toEqual(["orphan-a", "orphan-b"]);
+      return [[{ affectedRows: 1 }]];
+    });
+    await deleteOrphanedReportEmbeddings(client);
+    expect(queries).toHaveLength(3);
+  });
+
+  it("skips orphan cleanup when vectors or their table are unavailable", async () => {
+    const { client, queries } = database(() => {
+      throw unavailableVector();
+    });
+    await deleteOrphanedReportEmbeddings(client);
+    expect(queries).toHaveLength(1);
   });
 });

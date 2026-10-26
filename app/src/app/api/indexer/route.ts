@@ -1,4 +1,4 @@
-import { and, asc, eq, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { userReport } from "@/drizzle/schema";
 import { handleEndpointError, lockWithGameTimer } from "@/libs/gamesettings";
 import { buildModerationEvidence } from "@/libs/moderation/evidence";
@@ -27,11 +27,7 @@ export async function GET(request: Request) {
         infraction: true,
         additionalContext: true,
       },
-      where: and(
-        eq(userReport.aiInterpretation, ""),
-        sql`json_length(${userReport.additionalContext}) > 0`,
-        notInArray(userReport.system, ["user_profile"]),
-      ),
+      where: eq(userReport.needsAiSummary, true),
       limit: 50,
       orderBy: asc(userReport.createdAt),
     });

@@ -19,6 +19,7 @@ import {
 } from "@/drizzle/constants";
 import { userReport, userReportComment, userReportEmbedding } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
+import { chunkArray } from "@/utils/array";
 
 const capabilityTtl = 5 * 60 * 1000;
 const vectorCapabilities = new WeakMap<
@@ -271,24 +272,41 @@ export const getRelatedReports = async (
     .limit(10);
 };
 
+/** Daily backstop for reports deleted while an embedding request was in flight. */
+export const deleteOrphanedReportEmbeddings = async (client: DrizzleClient) => {
+  if (!(await supportsReportVectorSearch(client))) return;
+  const hasNoReport = notExists(
+    client
+      .select({ id: userReport.id })
+      .from(userReport)
+      .where(eq(userReport.id, userReportEmbedding.reportId)),
+  );
+  // Scan only IDs in a plain read, then restrict the locking delete to those IDs.
+  const orphans = await client
+    .select({ reportId: userReportEmbedding.reportId })
+    .from(userReportEmbedding)
+    .where(hasNoReport);
+  if (orphans.length === 0) return;
+  for (const batch of chunkArray(orphans, 500)) {
+    await client.delete(userReportEmbedding).where(
+      and(
+        inArray(
+          userReportEmbedding.reportId,
+          batch.map(({ reportId }) => reportId),
+        ),
+        // A parent restored since the read must keep its embedding.
+        hasNoReport,
+      ),
+    );
+  }
+};
+
 /** Backfill only resolved precedents; local Community MySQL skips API calls. */
 export const indexReportEmbeddings = async (
   client: DrizzleClient,
   embed: EmbedReports = generateReportEmbeddings,
 ) => {
   if (!(await supportsReportVectorSearch(client))) return;
-  // A report can disappear while an embedding request is in flight. Sweep any
-  // resulting orphan so account cleanup does not retain a separate summary.
-  await client
-    .delete(userReportEmbedding)
-    .where(
-      notExists(
-        client
-          .select({ id: userReport.id })
-          .from(userReport)
-          .where(eq(userReport.id, userReportEmbedding.reportId)),
-      ),
-    );
   const reports = await client
     .select({ id: userReport.id, text: userReport.aiInterpretation })
     .from(userReport)

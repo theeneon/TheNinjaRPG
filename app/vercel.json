@@ -65,6 +65,10 @@
       "schedule": "*/10 * * * *"
     },
     {
+      "path": "/api/daily-report-embeddings",
+      "schedule": "0/5 0 * * *"
+    },
+    {
       "path": "/api/daily-reports",
       "schedule": "0/5 0 * * *"
     },

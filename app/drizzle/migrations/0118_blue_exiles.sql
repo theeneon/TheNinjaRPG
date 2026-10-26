@@ -1,0 +1,2 @@
+ALTER TABLE `UserReport` ADD `needsAiSummary` boolean GENERATED ALWAYS AS (`aiInterpretation` = '' AND JSON_LENGTH(`additionalContext`) > 0 AND `system` <> 'user_profile') STORED;
+CREATE INDEX `UserReport_needsAiSummary_createdAt_idx` ON `UserReport` (`needsAiSummary`,`createdAt`);
