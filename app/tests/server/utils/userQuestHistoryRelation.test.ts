@@ -24,7 +24,9 @@ describe("user quest history SQL", () => {
     const query = (method === "findFirst"
       ? database.query.userData.findFirst(config)
       : database.query.userData.findMany(config)).toSQL();
-    expect(query.sql).toContain("visible_quest.id = `userData_userQuests`.`questId`");
+    expect(query.sql).toContain("NOT EXISTS (SELECT 1 FROM Quest hidden_quest");
+    expect(query.sql).toContain("hidden_quest.id = `userData_userQuests`.`questId`");
+    expect(query.sql).toContain("hidden_quest.hidden = TRUE");
     expect(query.sql).toContain("`userData`.`role` in (");
     expect(query.sql).not.toContain("`userData_userQuests`.`role`");
     expect(query.sql).toContain("`userData_userQuests`.`isolated` = ?");

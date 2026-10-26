@@ -22,7 +22,7 @@ export const completedQuestHistoryRelation = {
   where: or(gte(questHistory.completed, 1), gt(questHistory.previousCompletes, 0)),
 } as const;
 
-/** Visible definitions plus run history needed for isolation, recovery and abandonment. */
+/** Visible definitions and history needed for tracker cleanup, isolation and recovery. */
 export const userQuestHistoryRelation = {
   where: and(
     or(
@@ -32,14 +32,16 @@ export const userQuestHistoryRelation = {
     or(
       eq(questHistory.isolated, true),
       eq(questHistory.questType, "battlepyramid"),
+      // Load orphan history so sparse updates can remove its persisted tracker.
+      sql`NOT EXISTS (SELECT 1 FROM Quest hidden_quest
+        WHERE hidden_quest.id = ${questHistory.questId}
+        AND hidden_quest.hidden = TRUE)`,
       // RQB rewrites columns to the history alias. Keep the outer userData role
       // qualified explicitly; findMany combat preloads can contain different roles.
-      sql`EXISTS (SELECT 1 FROM Quest visible_quest
-        WHERE visible_quest.id = ${questHistory.questId}
-        AND (visible_quest.hidden = FALSE OR ${inArray(
-          sql`${sql.identifier("userData")}.${sql.identifier("role")}`,
-          UserRoles.filter(canPlayHiddenQuests),
-        )}))`,
+      inArray(
+        sql`${sql.identifier("userData")}.${sql.identifier("role")}`,
+        UserRoles.filter(canPlayHiddenQuests),
+      ),
     ),
   ),
   with: { quest: true },

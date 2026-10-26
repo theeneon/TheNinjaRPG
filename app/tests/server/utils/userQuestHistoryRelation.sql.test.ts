@@ -47,18 +47,19 @@ describeWithDatabase("user quest definition visibility", () => {
     ]));
   });
 
-  it("keeps run recovery and completed achievement rows while applying each player's role", async () => {
+  it("keeps tracker cleanup, run recovery and completed achievement rows while applying each player's role", async () => {
     const client = readDatabase;
     const users = await client.query.userData.findMany({
       columns: { userId: true, role: true },
       with: { userQuests: userQuestHistoryRelation },
     });
     for (const user of users) {
-      const expected = ["visible", "achievement", "isolated", "pyramid", "deleted-isolated", "deleted-pyramid", "expired"];
+      const expected = ["visible", "achievement", "isolated", "pyramid", "deleted-isolated", "deleted-pyramid", "deleted", "expired"];
       if (canPlayHiddenQuests(user.role)) expected.push("hidden", "hidden-achievement");
       expect(user.userQuests.map(entry => entry.questId).sort()).toEqual(expected.sort());
       expect(user.userQuests.find(entry => entry.questId === "deleted-isolated")?.quest).toBeNull();
       expect(user.userQuests.find(entry => entry.questId === "deleted-pyramid")?.quest).toBeNull();
+      expect(user.userQuests.find(entry => entry.questId === "deleted")?.quest).toBeNull();
     }
     const player = await client.query.userData.findFirst({
       columns: { userId: true },
@@ -89,7 +90,7 @@ describeWithDatabase("user quest definition visibility", () => {
     expect(Buffer.byteLength(JSON.stringify(before)) - Buffer.byteLength(JSON.stringify(after))).toBeGreaterThan(100_000);
     const byQuestId = (a: { questId: string }, b: { questId: string }) => a.questId.localeCompare(b.questId);
     expect(after?.userQuests.sort(byQuestId)).toEqual(before?.userQuests.filter(entry =>
-      entry.isolated || entry.questType === "battlepyramid" || (entry.quest && !entry.quest.hidden),
+      entry.isolated || entry.questType === "battlepyramid" || !entry.quest?.hidden,
     ).sort(byQuestId));
   });
 });
