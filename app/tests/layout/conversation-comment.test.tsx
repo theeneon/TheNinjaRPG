@@ -1,11 +1,14 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { type Control, useController } from "react-hook-form";
 import { CommentOnConversation } from "@/layout/Comment";
+import * as CommentModule from "@/layout/Comment";
 import * as Confirm from "@/layout/Confirm";
+import { ConversationComments } from "@/layout/ConversationComments";
 import type { PostProps } from "@/layout/Post";
 import type { MutateCommentSchema } from "@/validators/comments";
+import * as Parse from "@/utils/parse";
 import { ensureDom } from "../setup-dom.mjs";
 import { createToastMock } from "../setup/toastMock";
 
@@ -35,6 +38,8 @@ vi.mock("@/layout/Report", () => ({ default: () => null }));
 vi.mock("@/layout/EmojiPicker", () => ({ default: () => null }));
 
 let confirmSpy: { mockRestore: () => void };
+let rowSpy: { mockRestore: () => void } | undefined;
+let parseSpy: { mockRestore: () => void } | undefined;
 beforeEach(() => {
   ensureDom();
   vi.clearAllMocks();
@@ -43,6 +48,10 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   confirmSpy.mockRestore();
+  rowSpy?.mockRestore();
+  parseSpy?.mockRestore();
+  rowSpy = undefined;
+  parseSpy = undefined;
 });
 
 const comment = {
@@ -88,5 +97,139 @@ describe("conversation comment editing permissions", () => {
     fireEvent.click(view.getByRole("button", { name: "Save message" }));
     await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
     expect(edit).toHaveBeenCalledWith({ object_id: comment.id, comment: "Edited message", quoteIds: null, senderId: null });
+  });
+});
+
+describe("conversation emoji outside-click listener", () => {
+  it("listens only while open, survives rerenders, and cleans up on close and unmount", async () => {
+    // jsdom's document proxy does not retain an instance-level Bun spy.
+    const add = vi.spyOn(window.EventTarget.prototype, "addEventListener");
+    const remove = vi.spyOn(window.EventTarget.prototype, "removeEventListener");
+    const toggleReaction = vi.fn();
+    const view = render(<CommentOnConversation comment={comment} user={user} toggleReaction={toggleReaction}>{comment.content}</CommentOnConversation>);
+    const mousedownAdds = () => add.mock.calls.filter(([event], i) => event === "mousedown" && add.mock.contexts[i] === document);
+    const mousedownRemoves = () => remove.mock.calls.filter(([event], i) => event === "mousedown" && remove.mock.contexts[i] === document);
+    try {
+      expect(mousedownAdds()).toHaveLength(0);
+      await act(async () => { fireEvent.click(view.container.querySelector(".lucide-smile-plus")!); });
+      await waitFor(() => expect(mousedownAdds()).toHaveLength(1));
+
+      view.rerender(<CommentOnConversation comment={{ ...comment, reactions: { "👍": ["Friend"] } }} user={user} toggleReaction={toggleReaction}>{comment.content}</CommentOnConversation>);
+      expect(mousedownAdds()).toHaveLength(1);
+      expect(mousedownRemoves()).toHaveLength(0);
+
+      fireEvent.mouseDown(document.body);
+      await waitFor(() => expect(mousedownRemoves()).toHaveLength(1));
+      expect(mousedownRemoves()[0]?.[1]).toBe(mousedownAdds()[0]?.[1]);
+      fireEvent.click(view.container.querySelector(".lucide-smile-plus")!);
+      await waitFor(() => expect(mousedownAdds()).toHaveLength(2));
+      view.unmount();
+      expect(mousedownRemoves()).toHaveLength(2);
+    } finally {
+      add.mockRestore();
+      remove.mockRestore();
+    }
+  });
+});
+
+type ListProps = ComponentProps<typeof ConversationComments>;
+type ReturnedComment = NonNullable<ListProps["pages"]>[number]["data"][number];
+const row = (id: string): ReturnedComment => ({
+  ...comment, ...user, id, content: `Message ${id}`,
+  villageName: null, villageHexColor: null, villageKageId: null, displayTitle: "",
+  tavernUsernameColor: "DEFAULT", tavernTitleColor: "DEFAULT", nRecruited: 0, tavernMessages: 0,
+});
+const pages = (data: ReturnedComment[]): ListProps["pages"] => [{
+  convo: {
+    id: "conversation", title: "Conversation", createdById: "friend",
+    createdAt: comment.createdAt, updatedAt: comment.createdAt,
+    isLocked: false, isPublic: true, isStaffAvailable: false, isEnabled: true,
+    readRestriction: null, sendRestriction: null, supportTicketCreatorId: null, users: [],
+  }, data, nextCursor: null, restrictionMessage: null,
+}];
+const listProps = (data: ReturnedComment[]): ListProps => ({
+  pages: pages(data), conversationId: "conversation", deletedCommentIds: new Set(),
+  quoteIds: [], username: "Reader", canInteract: true, setLastElement: vi.fn(),
+  onReact: vi.fn(), onToggleQuote: vi.fn(), onDeleted: vi.fn(),
+});
+
+describe("conversation comment row isolation", () => {
+  const observeRows = () => {
+    const renders = vi.spyOn(CommentModule, "CommentOnConversation").mockImplementation((props) => (
+      <div data-testid={props.comment.id}>
+        {props.children}
+        <button type="button" disabled={!props.toggleReaction} onClick={() => props.toggleReaction?.("👍")}>React {props.comment.id}</button>
+        <button type="button" disabled={!props.setQuoteId} onClick={() => props.setQuoteId?.(props.comment.id)}>Quote {props.comment.id}</button>
+      </div>
+    ));
+    const parses = vi.spyOn(Parse, "parseHtml").mockImplementation((content) => [<span key="parsed">{content}</span>]);
+    rowSpy = renders;
+    parseSpy = parses;
+    return { renders, parses };
+  };
+
+  it("renders only changed rows in a 100-message history and reparses only changed content", () => {
+    const { renders, parses } = observeRows();
+    const history = Array.from({ length: 100 }, (_, i) => row(String(i)));
+    const props = listProps(history);
+    const view = render(<ConversationComments {...props} />);
+    expect(renders).toHaveBeenCalledTimes(100);
+    expect(parses).toHaveBeenCalledTimes(100);
+    renders.mockClear();
+    parses.mockClear();
+
+    const incoming = row("new");
+    view.rerender(<ConversationComments {...props} pages={pages([incoming, ...history])} />);
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(parses).toHaveBeenCalledTimes(1);
+    expect(renders.mock.calls[0]?.[0].comment.id).toBe("new");
+    renders.mockClear();
+    parses.mockClear();
+
+    const reacted = { ...history[0]!, reactions: { "👍": ["Reader"] } };
+    view.rerender(<ConversationComments {...props} pages={pages([incoming, reacted, ...history.slice(1)])} />);
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(renders.mock.calls[0]?.[0].comment.id).toBe("0");
+    expect(parses).not.toHaveBeenCalled();
+    renders.mockClear();
+
+    view.rerender(<ConversationComments {...props} pages={pages([incoming, reacted, ...history.slice(1)])} quoteIds={["1"]} />);
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(renders.mock.calls[0]?.[0].comment.id).toBe("1");
+    expect(renders.mock.calls[0]?.[0].quoteIds).toEqual(["1"]);
+    expect(parses).not.toHaveBeenCalled();
+    renders.mockClear();
+
+    view.rerender(<ConversationComments {...props} pages={pages([incoming, { ...reacted, content: "Edited" }, ...history.slice(1)])} quoteIds={["1"]} />);
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(parses).toHaveBeenCalledTimes(1);
+    expect(view.getByText("Edited")).toBeTruthy();
+    fireEvent.click(view.getByRole("button", { name: "React 0" }));
+    expect(props.onReact).toHaveBeenCalledWith({ commentId: "0", emoji: "👍" });
+    fireEvent.click(view.getByRole("button", { name: "Quote 1" }));
+    expect(props.onToggleQuote).toHaveBeenCalledWith("1");
+  });
+
+  it("keeps filters and the pagination ref outside row memoization, and updates permissions", () => {
+    const { renders } = observeRows();
+    const first = row("first");
+    const last = row("last");
+    const props = listProps([first, first, { ...row("other"), conversationId: "other" }, row("deleted"), last]);
+    props.deletedCommentIds.add("deleted");
+    const view = render(<ConversationComments {...props} />);
+    expect(renders).toHaveBeenCalledTimes(2);
+    expect(view.queryByTestId("other")).toBeNull();
+    expect(view.queryByTestId("deleted")).toBeNull();
+    expect(props.setLastElement).toHaveBeenLastCalledWith(view.getByTestId("last").parentElement);
+    renders.mockClear();
+
+    const older = row("older");
+    view.rerender(<ConversationComments {...props} pages={pages([first, last, older])} />);
+    expect(renders).toHaveBeenCalledTimes(1);
+    expect(props.setLastElement).toHaveBeenLastCalledWith(view.getByTestId("older").parentElement);
+    view.rerender(<ConversationComments {...props} pages={pages([first, last, older])} canInteract={false} />);
+    expect(view.getByRole("button", { name: "React first" }).hasAttribute("disabled")).toBe(true);
+    expect(view.getByRole("button", { name: "Quote first" }).hasAttribute("disabled")).toBe(true);
+    for (const [rendered] of renders.mock.calls.slice(-3)) expect(rendered.canEdit).toBe(false);
   });
 });
