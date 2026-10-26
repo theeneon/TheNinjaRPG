@@ -1903,13 +1903,18 @@ export const questsRouter = createTRPCRouter({
         userId: ctx.userId,
         hideInformation: false,
       });
+      let inventoryRecovered = false;
       const [
         { user, trackerResults, craftingItemsChanged },
         useritems,
         boundPlacementStatus,
       ] = await Promise.all([
         userPromise,
-        fetchUserItems(ctx.drizzle, ctx.userId),
+        fetchUserItems(ctx.drizzle, ctx.userId, {
+          onStaleMergeClaimRecovery: () => {
+            inventoryRecovered = true;
+          },
+        }),
         userPromise.then(({ user }) =>
           user
             ? fetchBoundPlacementStatus(ctx.drizzle, user)
@@ -1970,6 +1975,8 @@ export const questsRouter = createTRPCRouter({
         // The profile refresh can settle crafts or item consequences before the location pass.
         // Conservatively refresh even if a concurrent snapshot claim skipped a write.
         itemsChanged:
+          // Inventory reads can restore abandoned merge claims.
+          inventoryRecovered ||
           craftingItemsChanged ||
           // Rolled objective ambushes are local to handleQuestConsequences.
           battleAttempted ||
