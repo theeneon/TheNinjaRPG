@@ -26,6 +26,7 @@ import {
 import { updateUser } from "@/libs/combat/database";
 import { calcBattleResult } from "@/libs/combat/util";
 import { getServerPusher, Pusher } from "@/libs/pusher";
+import * as pusherModule from "@/libs/pusher";
 import {
   beginEventRound,
   createEventState,
@@ -56,7 +57,9 @@ import {
 
 describeWithDatabase("event tournament persistence", () => {
   beforeEach(async () => {
+    // Bun retains other suites' Pusher factories; keep notification spies local to this suite.
     vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
+    vi.spyOn(pusherModule, "getServerPusher").mockReturnValue(new Pusher("", "", "", ""));
     // Rate limiting is external to settlement; SQL tests must not contact Redis.
     vi.spyOn(globalThis, "fetch").mockImplementation(async (url) =>
       Response.json(
