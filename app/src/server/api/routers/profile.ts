@@ -660,7 +660,7 @@ export const profileRouter = createTRPCRouter({
         description: "Get AI character names, optionally restricted to arena opponents",
       },
     })
-    .input(z.object({ arenaOnly: z.boolean().optional() }).optional())
+    .input(z.object({ arenaOnly: z.boolean().optional() }).nullish())
     .query(async ({ ctx, input }) => {
       return ctx.drizzle.query.userData.findMany({
         where: and(
