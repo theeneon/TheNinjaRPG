@@ -806,6 +806,13 @@
       "when": 1792992660222,
       "tag": "0115_quick_slayback",
       "breakpoints": false
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1793001371703,
+      "tag": "0116_active_war_defense_indexes",
+      "breakpoints": false
     }
   ]
 }

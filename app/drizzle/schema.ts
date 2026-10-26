@@ -4114,6 +4114,11 @@ export const kageDefendedChallenges = mysqlTable(
       table.status,
       table.createdAt,
     ),
+    resolvedIdx: index("KageDefendedChallenges_village_status_resolved_idx").on(
+      table.villageId,
+      table.status,
+      table.resolvedAt,
+    ),
     historyIdx: index("KageDefendedChallenges_user_started_idx").on(
       table.userId,
       table.startedAt,
@@ -5038,6 +5043,7 @@ export const war = mysqlTable(
       ),
       sectorIdx: index("War_sector_idx").on(table.sector),
       statusIdx: index("War_status_idx").on(table.status),
+      endedAtIdx: index("War_endedAt_idx").on(table.endedAt),
       settlementPendingIdx: index("War_settlementPending_idx").on(
         table.settlementPending,
       ),
