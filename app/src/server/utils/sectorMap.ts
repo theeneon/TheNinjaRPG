@@ -20,11 +20,13 @@ const globalMap = globalMapData as unknown as GlobalMapData;
 
 // A sector's published map is immutable per version (publishing inserts a new
 // row and archives the old), so cache the deserialized normalizedJson blob to
-// spare a DB round-trip + ~30-80KB transfer on every travel step / battle start.
-// A short TTL bounds cross-process staleness (serverless runs many instances);
-// same-process publishes call invalidatePublishedMapCache for instant freshness.
+// spare a DB round-trip and blob transfer on every travel step / battle start.
+// Revalidate versions after a short TTL to bound cross-process staleness without
+// downloading unchanged blobs. Same-process publishes invalidate immediately.
 const PUBLISHED_MAP_TTL_MS = 60_000;
-const publishedMapCache = new Map<number, { map: NormalizedSectorMap; at: number }>();
+const PUBLISHED_MAP_CACHE_LIMIT = 200;
+type PublishedMapCacheEntry = { map: NormalizedSectorMap; version: number; at: number };
+const publishedMapCache = new Map<number, PublishedMapCacheEntry>();
 // Bumped on every invalidation. A read captures it before its DB query and only
 // caches the row if it is still current, so a read that started before a publish
 // committed can't re-populate the cache with the now-stale map after the publish
@@ -43,14 +45,15 @@ export const invalidatePublishedMapCache = (sector?: number) => {
 };
 
 /**
- * TTL-checked cache read (PUBLISHED_MAP_TTL_MS); eagerly deletes an expired
- * entry as a side effect.
+ * Touch the entry's LRU position, retaining expired maps for version validation.
  */
-const getCachedPublishedMap = (sector: number): NormalizedSectorMap | undefined => {
+const getCachedPublishedMap = (sector: number): PublishedMapCacheEntry | undefined => {
   const entry = publishedMapCache.get(sector);
-  if (entry && Date.now() - entry.at < PUBLISHED_MAP_TTL_MS) return entry.map;
-  if (entry) publishedMapCache.delete(sector);
-  return undefined;
+  if (entry) {
+    publishedMapCache.delete(sector);
+    publishedMapCache.set(sector, entry);
+  }
+  return entry;
 };
 
 /**
@@ -61,10 +64,17 @@ const getCachedPublishedMap = (sector: number): NormalizedSectorMap | undefined 
 const setCachedPublishedMap = (
   sector: number,
   map: NormalizedSectorMap,
+  version: number,
   generation: number,
+  at: number,
 ) => {
   if (generation !== cacheGeneration) return; // an invalidation raced this read
-  publishedMapCache.set(sector, { map, at: Date.now() });
+  publishedMapCache.delete(sector);
+  publishedMapCache.set(sector, { map, version, at });
+  while (publishedMapCache.size > PUBLISHED_MAP_CACHE_LIMIT) {
+    const oldestSector = publishedMapCache.keys().next().value;
+    if (oldestSector !== undefined) publishedMapCache.delete(oldestSector);
+  }
 };
 
 export const SectorNeighborDirections = ["north", "east", "south", "west"] as const;
@@ -241,25 +251,91 @@ export const buildSectorWindowLayout = (sector: number): SectorWindowEntry[] => 
   ].filter((entry) => entry.sector >= 0);
 };
 
-/** Fetch the published maps for several sectors in a single query */
+/** Fetch missing maps and revalidate expired entries without unchanged blobs. */
 export const fetchPublishedSectorMaps = async (
   client: DrizzleClient,
   sectors: number[],
 ): Promise<Map<number, NormalizedSectorMap>> => {
   const result = new Map<number, NormalizedSectorMap>();
   const missing: number[] = [];
+  const expired = new Map<number, PublishedMapCacheEntry>();
   for (const sector of new Set(sectors)) {
     const cached = getCachedPublishedMap(sector);
-    if (cached) result.set(sector, cached);
-    else missing.push(sector);
+    if (!cached) missing.push(sector);
+    else if (Date.now() - cached.at < PUBLISHED_MAP_TTL_MS) {
+      result.set(sector, cached.map);
+    } else expired.set(sector, cached);
   }
-  if (missing.length === 0) return result;
+  if (missing.length === 0 && expired.size === 0) return result;
 
   const generation = cacheGeneration;
-  const rows = await client.query.sectorMap.findMany({
-    columns: { sector: true, version: true, normalizedJson: true },
-    where: and(inArray(sectorMap.sector, missing), eq(sectorMap.status, "PUBLISHED")),
-  });
+  // A slow probe must not extend the lifetime of its older snapshot.
+  const checkedAt = Date.now();
+  // Cold loads and version probes are independent; only a changed version needs
+  // a subsequent blob query. Selecting metadata alone also handles overlapping
+  // publishes: compare the highest PUBLISHED version, never an archived version.
+  const [loaded, versions] = await Promise.all([
+    fetchUncachedPublishedMaps(client, missing, generation),
+    expired.size > 0
+      ? client.query.sectorMap.findMany({
+          columns: { sector: true, version: true },
+          where: and(
+            inArray(sectorMap.sector, [...expired.keys()]),
+            eq(sectorMap.status, "PUBLISHED"),
+          ),
+        })
+      : Promise.resolve([]),
+  ]);
+  const latestVersions = new Map<number, number>();
+  for (const row of versions) {
+    latestVersions.set(
+      row.sector,
+      Math.max(latestVersions.get(row.sector) ?? 0, row.version),
+    );
+  }
+  const changed: number[] = [];
+  for (const [sector, entry] of expired) {
+    const version = latestVersions.get(sector);
+    if (version === entry.version) {
+      setCachedPublishedMap(sector, entry.map, entry.version, generation, checkedAt);
+      result.set(sector, entry.map);
+    } else if (version !== undefined) changed.push(sector);
+    else if (
+      generation === cacheGeneration &&
+      publishedMapCache.get(sector) === entry
+    ) {
+      publishedMapCache.delete(sector);
+    }
+  }
+  const updated = await fetchUncachedPublishedMaps(client, changed, generation);
+  for (const [sector, map] of [...loaded, ...updated]) result.set(sector, map);
+  return result;
+};
+
+/** Download blobs only for cold or changed sectors; empty sets need no query. */
+const fetchUncachedPublishedMaps = async (
+  client: DrizzleClient,
+  sectors: number[],
+  generation: number,
+): Promise<Map<number, NormalizedSectorMap>> => {
+  const result = new Map<number, NormalizedSectorMap>();
+  if (sectors.length === 0) return result;
+  const checkedAt = Date.now();
+  const columns = { sector: true, version: true, normalizedJson: true } as const;
+  const where = and(
+    inArray(sectorMap.sector, sectors),
+    eq(sectorMap.status, "PUBLISHED"),
+  );
+  const rows =
+    sectors.length === 1
+      ? [
+          await client.query.sectorMap.findFirst({
+            columns,
+            where,
+            orderBy: (table, { desc }) => [desc(table.version)],
+          }),
+        ].filter((row) => row !== undefined)
+      : await client.query.sectorMap.findMany({ columns, where });
   const bySector = new Map<number, { version: number; map: NormalizedSectorMap }>();
   rows.forEach((row) => {
     const existing = bySector.get(row.sector);
@@ -267,8 +343,8 @@ export const fetchPublishedSectorMaps = async (
       bySector.set(row.sector, { version: row.version, map: row.normalizedJson });
     }
   });
-  for (const [sector, { map }] of bySector) {
-    setCachedPublishedMap(sector, map, generation);
+  for (const [sector, { map, version }] of bySector) {
+    setCachedPublishedMap(sector, map, version, generation, checkedAt);
     result.set(sector, map);
   }
   return result;
@@ -290,21 +366,12 @@ export const fetchPublishedSectorMap = async (
     );
   }
 
-  const cached = getCachedPublishedMap(sector);
-  if (cached) return cached;
-
-  const generation = cacheGeneration;
-  const published = await client.query.sectorMap.findFirst({
-    columns: { normalizedJson: true },
-    where: and(eq(sectorMap.sector, sector), eq(sectorMap.status, "PUBLISHED")),
-    orderBy: (table, { desc }) => [desc(table.version)],
-  });
+  const published = (await fetchPublishedSectorMaps(client, [sector])).get(sector);
   if (!published) {
     throw new Error(
       `No published sector map for sector ${sector}; run scripts/publish-sector-maps.ts`,
     );
   }
 
-  setCachedPublishedMap(sector, published.normalizedJson, generation);
-  return published.normalizedJson;
+  return published;
 };
