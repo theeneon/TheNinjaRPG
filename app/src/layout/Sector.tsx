@@ -1004,7 +1004,11 @@ const Sector: React.FC<SectorProps> = (props) => {
     // onMutate already started this walk; crossing requests may overlap it
     // only after the preceding move has committed.
     await walk;
-    if (!mountedRef.current) return;
+    if (!mountedRef.current) {
+      // Finish any pre-fired crossing before onSettled refreshes the profile.
+      await crossingPromise?.catch(() => undefined);
+      return;
+    }
     setMoves((prev) => prev + 1);
     if (crossingPromise) {
       await handleCrossing(
@@ -1688,10 +1692,16 @@ const Sector: React.FC<SectorProps> = (props) => {
     },
     // React Query stays pending until animation, reconciliation and any
     // crossing finish, preserving the ANBU auto-attack and movement gates.
-    onSettled: () => {
+    onSettled: async () => {
       walkAnimatingRef.current = false;
       movePendingRef.current = false;
-      if (mountedRef.current) document.body.style.cursor = "default";
+      if (mountedRef.current) {
+        document.body.style.cursor = "default";
+      } else {
+        // Navigation can outlive a committed move. Refresh rather than apply an
+        // older location over a later action in this account's profile cache.
+        await utils.profile.getUser.invalidate();
+      }
     },
   });
 
@@ -1814,7 +1824,7 @@ const Sector: React.FC<SectorProps> = (props) => {
    * Starts interaction with an overworld NPC on the player's tile.
    * Records the placement version so subsequent dialog requests target the same NPC instance.
    */
-  const interactWithNpc = (npc: SectorUser) => {
+  const interactWithNpc = (npc: SectorUser): boolean => {
     // Read through refs: the scene's click handler closes over this callback for the lifetime of the
     // build, so state values would go stale. Skip while a dialog is open so its pending-interaction
     // ref isn't overwritten before the player finishes (or closes) that dialog.
@@ -1824,7 +1834,7 @@ const Sector: React.FC<SectorProps> = (props) => {
       !npc.npcPlacementId ||
       npcDialogRef.current
     )
-      return;
+      return false;
     pendingNpcInteractRef.current = {
       placementId: npc.npcPlacementId,
       positionVersion: npc.npcPositionVersion ?? 0,
@@ -1833,6 +1843,7 @@ const Sector: React.FC<SectorProps> = (props) => {
       placementId: npc.npcPlacementId,
       positionVersion: npc.npcPositionVersion ?? 0,
     });
+    return true;
   };
 
   /**
@@ -3347,11 +3358,10 @@ const Sector: React.FC<SectorProps> = (props) => {
                 variant={
                   arrivalNpc.npcInteractionType === "HOSTILE" ? "destructive" : "info"
                 }
-                disabled={isInteracting}
+                disabled={isInteracting || isMoving}
                 className="flex-1"
                 onClick={() => {
-                  interactWithNpc(arrivalNpc);
-                  setArrivalNpc(null);
+                  if (interactWithNpc(arrivalNpc)) setArrivalNpc(null);
                 }}
               >
                 {arrivalCta?.action}
