@@ -1,6 +1,7 @@
 import { unflaggedModeration } from "../../setup/moderation";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
+import * as next from "next/server";
 import { Moderations } from "openai/resources/moderations";
 import { conversation, conversationComment, parentalControl, user2conversation, userBlackList, userData } from "@/drizzle/schema";
 import { parentalControlsRouter } from "@/server/api/routers/parentalControls";
@@ -305,7 +306,11 @@ describeWithDatabase("parental controls", () => {
   for (const isPublic of [false, true]) {
     it(`preserves Post as AI in ${isPublic ? "public" : "support"} conversations`, async () => {
       const db = await getTestDatabase();
+      const deferred: Array<() => unknown> = [];
       if (isPublic) {
+        vi.spyOn(next, "after").mockImplementation((callback) => {
+          deferred.push(callback as () => unknown);
+        });
         vi.spyOn(Moderations.prototype, "create").mockResolvedValue(unflaggedModeration());
       }
       await insertUsers([{ userId: "staff", username: "Staff", level: 50, role: "EVENT" }, { userId: "ai", username: "AI", level: 50, isAi: true }]);
@@ -318,6 +323,10 @@ describeWithDatabase("parental controls", () => {
       const row = await db.query.conversationComment.findFirst({ where: eq(conversationComment.id, reply.commentId!) });
       expect(row?.userId).toBe("ai");
       expect(row?.authorId).toBe("staff");
+      if (isPublic) {
+        expect(deferred).toHaveLength(1);
+        await deferred[0]!();
+      }
       if (!isPublic) {
         expect((await (await callerFor(commentsRouter, "child")).getConversationComments({ convo_id: "exempt", limit: 10 })).data).toHaveLength(1);
       }
