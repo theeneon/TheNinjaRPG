@@ -6,10 +6,13 @@ import { useUserData } from "@/utils/UserContext";
 
 /** Persistent ready-check prompt also reaches participants away from the tournament page. */
 export const EventTournamentNotice = () => {
-  const { data: user } = useUserData();
+  const { data: user, isEventParticipant } = useUserData();
   const { data } = api.tournament.getEventNotices.useQuery(undefined, {
     enabled: !!user,
-    refetchInterval: 15000,
+    // Keep discovery alive for remote invitations or substitutions if a push is missed.
+    // Reserved participants still receive ready checks every 15 seconds between rounds.
+    refetchInterval: (query) =>
+      isEventParticipant || query.state.data?.length ? 15000 : 60000,
   });
   if (!data?.length) return null;
   return (

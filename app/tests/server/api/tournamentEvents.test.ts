@@ -35,7 +35,7 @@ import { combatRouter, initiateBattle } from "@/server/api/routers/combat";
 import { tournamentRouter } from "@/server/api/routers/tournament";
 import {
   fetchEvent,
-  fetchEventNotices,
+  fetchEventNoticeState,
   maintainEventTournaments,
   syncEventTournament,
 } from "@/server/api/routers/tournamentEvents";
@@ -128,8 +128,11 @@ describeWithDatabase("event tournament persistence", () => {
     const { tournamentId } = created;
     await staff.manageEvent({ tournamentId, action: "PUBLISH" });
     for (const userId of ["first", "second"]) await staff.manageEvent({ tournamentId, action: "INVITE", userId });
+    expect(Pusher.prototype.trigger).toHaveBeenCalledWith("first", "event", { type: "eventTournament" });
     expect((await first.getEventNotices())[0]?.message).toBe("You have a tournament invitation");
+    vi.mocked(Pusher.prototype.trigger).mockClear();
     await first.participateEvent({ tournamentId, action: "JOIN" });
+    expect(Pusher.prototype.trigger).toHaveBeenCalledWith("first", "event", { type: "eventTournament" });
     expect(await first.getEventNotices()).toEqual([]);
     expect((await second.getEventNotices())[0]?.message).toBe("You have a tournament invitation");
     await second.participateEvent({ tournamentId, action: "JOIN" });
@@ -150,6 +153,7 @@ describeWithDatabase("event tournament persistence", () => {
     expect((await fetchEvent(database, tournamentId))!.eventData!.series[0]!.readyUserIds).toEqual(["second"]);
     const seatId = event.participants.find((p) => p.userId === "second")!.id;
     expect((await staff.manageEvent({ tournamentId, action: "SUBSTITUTE", seatId, userId: "replacement" })).success).toBe(true);
+    expect(Pusher.prototype.trigger).toHaveBeenCalledWith("replacement", "event", { type: "eventTournament" });
     event = (await fetchEvent(database, tournamentId))!.eventData!;
     expect(event.series[0]!.readyUserIds).toEqual([]);
     expect((await staff.manageEvent({ tournamentId, action: "BEGIN" })).success).toBe(true);
@@ -193,7 +197,7 @@ describeWithDatabase("event tournament persistence", () => {
       { tournamentId: "901-ready", message: "Your tournament match is ready" },
     ];
     /** Compare actionable notices independently of their generated timestamps. */
-    const notices = async () => (await fetchEventNotices(database, "target"))
+    const notices = async () => (await fetchEventNoticeState(database, "target")).notices
       .map(({ tournamentId, message }) => ({ tournamentId, message }))
       .sort((a, b) => a.tournamentId.localeCompare(b.tournamentId));
     expect(await notices()).toEqual(expected);
@@ -204,7 +208,7 @@ describeWithDatabase("event tournament persistence", () => {
       },
     })));
     expect(await notices()).toEqual(expected);
-    expect(await fetchEventNotices(database, "unregistered")).toEqual([]);
+    expect(await fetchEventNoticeState(database, "unregistered")).toEqual({ notices: [], isEventParticipant: false });
   });
 
   for (const [battleType, isEvent] of [
