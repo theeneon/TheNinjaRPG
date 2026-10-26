@@ -71,6 +71,35 @@ describe("activity passive sources", () => {
       gatheringBonusQuantity: 0,
     });
   });
+  it("caps stacked time and yield bonuses across all eligible sources", () => {
+    const player = user();
+    const effects = [
+      DecreaseGatheringTime.parse({ power: 25 }),
+      DecreaseFarmingTime.parse({ power: 25 }),
+      DecreaseCraftingTime.parse({ power: 25 }),
+      DecreaseCookingTime.parse({ power: 25 }),
+      IncreaseHuntingYield.parse({ power: 6 }),
+      IncreaseGatheringYield.parse({ power: 6 }),
+    ];
+    player.bloodline!.effects = effects;
+    player.userSkills![0]!.skill.effects = effects;
+    player.items![0]!.item.effects = effects;
+    player.items![0]!.imbuements![0]!.item.effects = effects;
+    expect(getActivityBonuses(player)).toEqual({
+      gatheringReductionPercent: 60,
+      farmingReductionPercent: 60,
+      craftingReductionPercent: 60,
+      cookingReductionPercent: 60,
+      huntingBonusQuantity: 20,
+      gatheringBonusQuantity: 20,
+    });
+    player.items![0]!.equipped = "NONE";
+    expect(getActivityBonuses(player)).toMatchObject({
+      gatheringReductionPercent: 50,
+      huntingBonusQuantity: 12,
+      gatheringBonusQuantity: 12,
+    });
+  });
   it("reports independent totals without level scaling", () => {
     const player = user();
     player.bloodline!.effects.push(

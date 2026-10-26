@@ -38,7 +38,9 @@ describe("activity tag contracts", () => {
       });
       expect(schema.safeParse({ power: 0 }).success).toBe(true);
       expect(schema.safeParse({ power: 0.5 }).success).toBe(!isYield);
-      if (!isYield) expect(schema.safeParse({ power: 101 }).success).toBe(false);
+      const maximum = isYield ? 20 : 60;
+      expect(schema.safeParse({ power: maximum }).success).toBe(true);
+      expect(schema.safeParse({ power: maximum + 1 }).success).toBe(false);
     });
     it(`${name} rejects scaling and combat controls`, () => {
       for (const patch of [

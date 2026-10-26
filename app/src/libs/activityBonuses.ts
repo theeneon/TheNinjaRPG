@@ -1,4 +1,8 @@
-import { MAX_ACTIVITY_REDUCTION_PERCENT } from "@/drizzle/constants";
+import {
+  MAX_ACTIVITY_REDUCTION_PERCENT,
+  MAX_GATHERING_BONUS_QUANTITY,
+  MAX_HUNTING_BONUS_QUANTITY,
+} from "@/drizzle/constants";
 import {
   gearMissingMastery,
   isActiveWornGear,
@@ -11,6 +15,7 @@ import { hasRequiredSkill } from "@/libs/skillRequirements";
 /**
  * Sum percentage time reductions and flat yields from the base bloodline,
  * activated skills and usable worn gear/imbuements, using only preloaded relations.
+ * Apply the shared caps after stacking all eligible sources.
  * Jobs capture reductions at submission, including queued jobs; gathering and
  * hunting capture yields when collection or battle initiation begins.
  */
@@ -89,6 +94,21 @@ export const getActivityBonuses = (user: ActivityBonusUser) => {
         break;
     }
   }
+  for (const key of [
+    "gatheringReductionPercent",
+    "farmingReductionPercent",
+    "craftingReductionPercent",
+    "cookingReductionPercent",
+  ] as const)
+    totals[key] = Math.min(totals[key], MAX_ACTIVITY_REDUCTION_PERCENT);
+  totals.huntingBonusQuantity = Math.min(
+    totals.huntingBonusQuantity,
+    MAX_HUNTING_BONUS_QUANTITY,
+  );
+  totals.gatheringBonusQuantity = Math.min(
+    totals.gatheringBonusQuantity,
+    MAX_GATHERING_BONUS_QUANTITY,
+  );
   return totals;
 };
 

@@ -4115,9 +4115,9 @@ export const TERRITORY_WAR_TEAM_SIZE = 3;
 export const TERRITORY_WAR_TOKEN_REWARD = 300_000;
 export const TERRITORY_WAR_BOOST_PERCENT = 15;
 export const TERRITORY_WAR_BOOST_HOURS = 1;
-/** Per-effect reduction limit in percent; eligible passive sources stack additively. */
-export const MAX_ACTIVITY_REDUCTION_PERCENT = 100;
-/** Per-effect extra units for each successfully dropped material, without changing drop chances. */
-export const MAX_HUNTING_BONUS_QUANTITY = 1_000;
-/** Per-effect extra units for each successfully gathered material. */
-export const MAX_GATHERING_BONUS_QUANTITY = 1_000;
+/** Per-effect and total percentage cap after eligible passive sources stack additively. */
+export const MAX_ACTIVITY_REDUCTION_PERCENT = 60;
+/** Per-effect and total extra units per successful hunting material, without changing drop chances. */
+export const MAX_HUNTING_BONUS_QUANTITY = 20;
+/** Per-effect and total extra units per successful gathering material. */
+export const MAX_GATHERING_BONUS_QUANTITY = 20;

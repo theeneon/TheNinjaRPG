@@ -122,7 +122,7 @@ describeWithDatabase("CraftingCatalog shrine duration preview", () => {
         maxDurability: 100,
         effects: [
           DecreaseCraftingTime.parse({ power: 10 }),
-          DecreaseCookingTime.parse({ power: 100 }),
+          DecreaseCookingTime.parse({ power: 60 }),
         ],
       },
       {

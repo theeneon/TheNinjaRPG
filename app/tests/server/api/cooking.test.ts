@@ -61,7 +61,7 @@ describeWithDatabase("Cooking production and consumption", () => {
         maxDurability: 100,
         effects: [
           DecreaseCookingTime.parse({ power: 10 }),
-          DecreaseCraftingTime.parse({ power: 100 }),
+          DecreaseCraftingTime.parse({ power: 60 }),
         ],
       },
     ]);

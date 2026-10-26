@@ -84,6 +84,12 @@ describe("getNewTrackers — timed collect_item", () => {
     expect(result.notifications.some((n) => n.includes("started collecting"))).toBe(true);
   });
 
+  it("formats the collection duration in the start notification", () => {
+    expect(evaluate(makeCollectUser(60)).result.notifications).toContain(
+      "You started collecting. This will take 60m.",
+    );
+  });
+
   it("rejects a request that arrives just before the deadline", () => {
     const startedAt = new Date(START).toISOString();
     nowMs = START + 30_000 - 1;
@@ -110,8 +116,8 @@ describe("getNewTrackers — timed collect_item", () => {
   });
 });
 
-const withGatheringBonus = (power = 10) => {
-  const player = makeCollectUser(1);
+const withGatheringBonus = (power = 10, collectTimeMinutes = 1) => {
+  const player = makeCollectUser(collectTimeMinutes);
   player.userQuests[0]!.quest.questType = "gathering";
   player.bloodline = {
     effects: [DecreaseGatheringTime.parse({ power })],
@@ -221,8 +227,15 @@ describe("gathering collection snapshots", () => {
     expect(evaluate(untimed).granted).toBe(true);
     expect(evaluate(untimed).goal?.collectDeadline).toBeUndefined();
   });
-  it("clamps gathering to one second", () => {
-    expect(evaluate(withGatheringBonus(100)).goal?.collectDeadline).toBe(
+  it("caps stacked gathering reductions before saving the deadline", () => {
+    const player = withGatheringBonus(60);
+    player.bloodline!.effects.push(DecreaseGatheringTime.parse({ power: 60 }));
+    expect(evaluate(player).goal?.collectDeadline).toBe(
+      new Date(START + 24_000).toISOString(),
+    );
+  });
+  it("keeps the one-second minimum for short collections", () => {
+    expect(evaluate(withGatheringBonus(60, 0.01)).goal?.collectDeadline).toBe(
       new Date(START + 1000).toISOString(),
     );
   });

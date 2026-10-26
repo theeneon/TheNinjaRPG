@@ -84,7 +84,7 @@ describe("FarmPlotInspector", () => {
   });
 
   it.each([
-    { base: 7200, power: 100, seconds: 1, display: "1s" },
+    { base: 2, power: 60, seconds: 1, display: "1s" },
     { base: 59, power: 0, seconds: 59, display: "59s" },
     { base: 60, power: 0, seconds: 60, display: "1m" },
     { base: 61, power: 0, seconds: 61, display: "2m" },

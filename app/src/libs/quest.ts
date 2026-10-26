@@ -96,6 +96,7 @@ import { getUnique } from "@/utils/grouping";
 import { canChangeContent, canPlayHiddenQuests } from "@/utils/permissions";
 import { capitalizeFirstLetter } from "@/utils/string";
 import {
+  formatSecondsToTimeDisplay,
   getCollectDeadline,
   periodStart,
   reduceActivitySeconds,
@@ -1736,7 +1737,7 @@ export const getNewTrackers = (
                       ).toISOString();
                       status.gatheringBonusQuantity = bonuses?.gatheringBonusQuantity;
                       notifications.push(
-                        `You started collecting. This will take ${seconds} seconds.`,
+                        `You started collecting. This will take ${formatSecondsToTimeDisplay(seconds)}.`,
                       );
                       doCollect = false;
                     }

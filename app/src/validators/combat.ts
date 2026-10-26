@@ -171,28 +171,28 @@ export const DecreaseGatheringTime = z.object({
   ...ActivityBonusAttributes,
   type: z.literal("decreasegatheringtime").prefault("decreasegatheringtime"),
   description: msg(
-    "Reduce each gathering quest collection duration by power percent, with a one-second minimum. Eligible bloodline, activated skill and usable worn gear bonuses stack; captured when collection begins.",
+    `Reduce each gathering quest collection duration by power percent, with a one-second minimum. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when collection begins.`,
   ),
 });
 export const DecreaseFarmingTime = z.object({
   ...ActivityBonusAttributes,
   type: z.literal("decreasefarmingtime").prefault("decreasefarmingtime"),
   description: msg(
-    "Reduce each planted crop duration by power percent, with a one-second minimum. Eligible bloodline, activated skill and usable worn gear bonuses stack; captured when planting.",
+    `Reduce each planted crop duration by power percent, with a one-second minimum. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when planting.`,
   ),
 });
 export const DecreaseCraftingTime = z.object({
   ...ActivityBonusAttributes,
   type: z.literal("decreasecraftingtime").prefault("decreasecraftingtime"),
   description: msg(
-    "Reduce duration by power percent (minimum one second) once per non-meal crafting job, excluding imbuing. Eligible bloodline, activated skill and usable worn gear bonuses stack; captured when submitted.",
+    `Reduce duration by power percent (minimum one second) once per non-meal crafting job, excluding imbuing. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when submitted.`,
   ),
 });
 export const DecreaseCookingTime = z.object({
   ...ActivityBonusAttributes,
   type: z.literal("decreasecookingtime").prefault("decreasecookingtime"),
   description: msg(
-    "Reduce duration by power percent (minimum one second) once per complete meal cooking job. Eligible bloodline, activated skill and usable worn gear bonuses stack; captured when submitted.",
+    `Reduce duration by power percent (minimum one second) once per complete meal cooking job. Eligible bloodline, activated skill and usable worn gear bonuses stack up to ${MAX_ACTIVITY_REDUCTION_PERCENT}%; captured when submitted.`,
   ),
 });
 export const IncreaseHuntingYield = z.object({
@@ -201,7 +201,7 @@ export const IncreaseHuntingYield = z.object({
   power: z.coerce.number().int().min(0).max(MAX_HUNTING_BONUS_QUANTITY).prefault(1),
   type: z.literal("increasehuntingyield").prefault("increasehuntingyield"),
   description: msg(
-    "Add units to each successfully dropped hunting material. Eligible bloodline, activated skill and usable worn gear bonuses stack; captured when battle begins. Drop chances are unchanged.",
+    `Add units to each successfully dropped hunting material. Eligible bloodline, activated skill and usable worn gear bonuses stack up to +${MAX_HUNTING_BONUS_QUANTITY}; captured when battle begins. Drop chances are unchanged.`,
   ),
 });
 
@@ -211,7 +211,7 @@ export const IncreaseGatheringYield = z.object({
   power: z.coerce.number().int().min(0).max(MAX_GATHERING_BONUS_QUANTITY).prefault(1),
   type: z.literal("increasegatheringyield").prefault("increasegatheringyield"),
   description: msg(
-    "Add units to each successfully dropped gathering material. Eligible bloodline, activated skill and usable worn gear bonuses stack; captured when collection begins. Drop chances are unchanged.",
+    `Add units to each successfully dropped gathering material. Eligible bloodline, activated skill and usable worn gear bonuses stack up to +${MAX_GATHERING_BONUS_QUANTITY}; captured when collection begins. Drop chances are unchanged.`,
   ),
 });
 
