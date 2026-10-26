@@ -508,20 +508,14 @@ export const questsRouter = createTRPCRouter({
     )
     .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
-      // Fetch user first
-      const updatedUser = await fetchUpdatedUser({
-        client: ctx.drizzle,
-        userId: ctx.userId,
-      });
-      const { user } = updatedUser;
-      if (!user) return errorResponse("User does not exist");
-
-      // Fetch remaining data in parallel
-      const [sectorVillage, results] = await Promise.all([
+      const [updatedUser, sectorVillage, results] = await Promise.all([
+        fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
         fetchSectorVillage(ctx.drizzle, input.userSector),
         // Random missions/crimes/errands/medical/pvp all resolve the candidate pool the same
         // way (same widened LEFT JOIN + filters); the quest type is already carried by the
         // `eq(quest.questType, input.type)` predicate, so no per-type query branch is needed.
+        // Farming, bloodline and sage requirements are checked by isAvailableUserQuests
+        // after the user refresh, so this query can run alongside it.
         ctx.drizzle
           .select({
             ...getTableColumns(quest),
@@ -555,21 +549,17 @@ export const questsRouter = createTRPCRouter({
               eq(quest.questType, input.type),
               eq(quest.questRank, input.rank),
               ...questLevelFilters(input.userLevel),
-              lte(quest.requiredFarmingLevel, getFarmingLevel(user.farmingExperience)),
               or(isNull(quest.startsAt), lte(quest.startsAt, new Date().toISOString())),
               or(isNull(quest.endsAt), gte(quest.endsAt, new Date().toISOString())),
               or(
                 isNull(quest.requiredVillage),
                 eq(quest.requiredVillage, input.userVillageId ?? VILLAGE_SYNDICATE_ID),
               ),
-              or(
-                isNull(quest.requiredBloodlineId),
-                eq(quest.requiredBloodlineId, user.bloodlineId ?? ""),
-              ),
-              ...sageQuestFilters(user),
             ),
           ),
       ]);
+      const { user } = updatedUser;
+      if (!user) return errorResponse("User does not exist");
       // For certain quest types, we fallback to lower ranks if the user does not have the required rank
       const { rankInfo } = fallbackQuestsFilter(results, user, input.type);
 
