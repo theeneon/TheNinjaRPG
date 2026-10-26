@@ -1,5 +1,6 @@
 /** One initialization path keeps sanctuary and reward companions individually owned and configurable. */
 import { nanoid } from "nanoid";
+import type { PetGender } from "@/drizzle/constants";
 import type { Jutsu, PetSpecies, UserData, UserPetInsert } from "@/drizzle/schema";
 import { selectPetBattleAbilities } from "@/libs/pets/abilities";
 import { PET_AURAS, PET_CHARACTERISTICS, PET_PALETTES } from "@/libs/pets/catalogue";
@@ -12,12 +13,14 @@ export const createPetFromSpecies = ({
   user,
   jutsus,
   name,
+  gender,
   appearance,
 }: {
   species: PetSpecies;
   user: Pick<UserData, "userId" | "rank">;
   jutsus: Jutsu[];
   name?: string;
+  gender?: PetGender | null;
   appearance?: { paletteIndex: number; characteristicIndex: number; auraIndex: number };
 }): UserPetInsert => {
   const defaults = selectPetBattleAbilities({
@@ -43,6 +46,7 @@ export const createPetFromSpecies = ({
     characteristicIndex:
       appearance?.characteristicIndex ?? randomInt(0, PET_CHARACTERISTICS.length - 1),
     auraIndex: appearance?.auraIndex ?? randomInt(0, PET_AURAS.length - 1),
+    gender: gender ?? null,
     jutsuIds: defaults.jutsus.map((entry) => entry.id),
     aiRules: structuredClone(species.aiRules),
     includeDefaultRules: species.includeDefaultRules,

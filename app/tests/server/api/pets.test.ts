@@ -113,6 +113,26 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
     expect((await caller.getPet()).options.species.some(({ id }) => id === input.speciesId)).toBe(false);
   });
 
+  it("stores the adoption gender and allows free gender edits only until the cutoff", async () => {
+    setSystemTime(new Date("2026-10-26T12:00:00Z"));
+    const database = await getTestDatabase();
+    const input = await adoptionInput(database);
+    const caller = callerForDatabase(petsRouter, userId, database);
+    expect((await caller.acquirePet({ ...input, gender: "FEMALE" })).success).toBe(true);
+    const adopted = await database.query.userPet.findFirst();
+    expect(adopted?.gender).toBe("FEMALE");
+    await database.update(userPet).set({ generationStatus: "READY", avatar, artRank: 1, gender: null }).where(eq(userPet.id, adopted!.id));
+    expect((await caller.updatePet({ petId: adopted!.id, gender: "MALE" })).success).toBe(true);
+    expect(await readPet(database, adopted!.id)).toMatchObject({ gender: "MALE", generationAttempts: 0, avatar, artRank: 1, generationStatus: "READY" });
+    await database.update(userPet).set({ generationStatus: "GENERATING" }).where(eq(userPet.id, adopted!.id));
+    expect((await caller.updatePet({ petId: adopted!.id, gender: "FEMALE" })).success).toBe(false);
+    await database.update(userPet).set({ generationStatus: "READY" }).where(eq(userPet.id, adopted!.id));
+    setSystemTime(new Date("2026-11-26T00:00:00Z"));
+    expect(await caller.updatePet({ petId: adopted!.id, gender: "FEMALE" })).toMatchObject({ success: false, message: "Companion gender can no longer be changed." });
+    expect((await caller.updatePet({ petId: adopted!.id, name: "Still renamable" })).success).toBe(true);
+    expect(await readPet(database, adopted!.id)).toMatchObject({ gender: "MALE", name: "Still renamable" });
+  });
+
   it("copies eligible species defaults on sanctuary adoption without sharing mutable loadout state", async () => {
     const database = await getTestDatabase(); const input = await adoptionInput(database);
     const rules = [AiRule.parse({ conditions: [], action: { type: "end_turn" } })];
@@ -1423,7 +1443,7 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
 
 const adoptionInput = async (database: DrizzleClient) => {
   const data = await callerForDatabase(petsRouter, userId, database).getPet();
-  return { name: "Kumo", dayKey: data.dayKey, speciesId: data.options.species[0]!.id, paletteIndex: data.options.palettes[0]!.index, characteristicIndex: data.options.characteristics[0]!.index, auraIndex: data.options.auras[0]!.index };
+  return { name: "Kumo", gender: "MALE" as const, dayKey: data.dayKey, speciesId: data.options.species[0]!.id, paletteIndex: data.options.palettes[0]!.index, characteristicIndex: data.options.characteristics[0]!.index, auraIndex: data.options.auras[0]!.index };
 };
 
 const readyPet = async (database: DrizzleClient, overrides: Partial<typeof userPet.$inferInsert> = {}) => {

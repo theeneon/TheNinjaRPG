@@ -713,6 +713,16 @@ export const PET_OPTION_COUNTS: Record<FederalStatus, number> = {
 export const PetSpawnPositions = ["BEHIND", "LEFT", "RIGHT", "FRONT"] as const;
 export type PetSpawnPosition = (typeof PetSpawnPositions)[number];
 export const PetGenerationStatuses = ["PENDING", "GENERATING", "READY", "FAILED"] as const;
+/** Companion sex; drives sex-specific art (e.g. a lion's mane). Pets adopted before it existed store NULL. */
+export const PetGenders = ["MALE", "FEMALE"] as const;
+export type PetGender = (typeof PetGenders)[number];
+export const PET_GENDER_LABELS: Record<PetGender, string> = { MALE: "Male", FEMALE: "Female" };
+/**
+ * Owners may set or change a companion's gender in its settings until this instant.
+ * TODO: after this cutoff the gender edit control (PetProfile settings, updatePet gender
+ * field and isPetGenderEditable) can be removed; adoption keeps the required choice.
+ */
+export const PET_GENDER_EDIT_UNTIL = new Date("2026-11-26T00:00:00Z");
 
 /** Pet progression follows the player experience curve at each previous rank's level cap. */
 export const PET_RANKS = [

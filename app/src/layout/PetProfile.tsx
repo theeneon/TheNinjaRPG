@@ -36,10 +36,13 @@ import {
   MAP_WAKE_ISLAND_SECTOR,
   PET_BATTLE_CONFIG,
   PET_FEED_COOLDOWN_HOURS,
+  PET_GENDER_LABELS,
   PET_RANKS,
   PET_REPLACEMENT_COST,
   PET_SANCTUARY_NAME,
   PET_SEICHI_SILVER_COST,
+  type PetGender,
+  PetGenders,
   PetSpawnPositions,
 } from "@/drizzle/constants";
 import { useSectorVillage } from "@/hooks/useSectorVillage";
@@ -61,6 +64,7 @@ import {
   validatePetAbilities,
 } from "@/libs/pets/abilities";
 import { PET_AURAS, PET_CHARACTERISTICS, PET_PALETTES } from "@/libs/pets/catalogue";
+import { isPetGenderEditable, PET_GENDER_EDIT_UNTIL_LABEL } from "@/libs/pets/gender";
 import {
   canUsePet,
   getPetLevel,
@@ -102,6 +106,7 @@ export function PetProfile() {
   const [message, setMessage] = useState<string | null>(null);
   const nameForm = useForm({ defaultValues: { name: "" } });
   const petName = useWatch({ control: nameForm.control, name: "name" });
+  const [genderDraft, setGenderDraft] = useState<PetGender | null>(null);
   const [activity, setActivity] = useState("care");
   const [abilitySearch, setAbilitySearch] = useState("");
   const [abilityKind, setAbilityKind] = useState("all");
@@ -185,6 +190,9 @@ export function PetProfile() {
     nameForm.reset({ name: pet?.name ?? "" });
     setMessage(null);
   }, [pet?.id, pet?.name, nameForm]);
+  useEffect(() => {
+    setGenderDraft(pet?.gender ?? null);
+  }, [pet?.id, pet?.gender]);
 
   /** Reconcile pet and player views after a committed or uncertain mutation. */
   const invalidatePetData = async () => {
@@ -1491,6 +1499,70 @@ export function PetProfile() {
                   />
                 </form>
               </Form>
+              {/* TODO: remove the editable branch after PET_GENDER_EDIT_UNTIL (26 Nov 2026). */}
+              {isPetGenderEditable() ? (
+                <form
+                  className="space-y-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (!genderDraft || genderDraft === pet.gender) return;
+                    setMessage(null);
+                    update.mutate({ petId: pet.id, gender: genderDraft });
+                  }}
+                >
+                  <Label htmlFor="pet-gender">Gender</Label>
+                  <div className="flex gap-2">
+                    <Select
+                      value={genderDraft ?? ""}
+                      disabled={
+                        settingsDisabled || pet.generationStatus === "GENERATING"
+                      }
+                      onValueChange={(value) => {
+                        const next = PetGenders.find((entry) => entry === value);
+                        if (next) setGenderDraft(next);
+                      }}
+                    >
+                      <SelectTrigger id="pet-gender" className="w-full">
+                        <SelectValue placeholder="Not set" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PetGenders.map((entry) => (
+                          <SelectItem key={entry} value={entry}>
+                            {PET_GENDER_LABELS[entry]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="submit"
+                      variant="outline"
+                      aria-label="Save gender"
+                      disabled={
+                        settingsDisabled ||
+                        pet.generationStatus === "GENERATING" ||
+                        !genderDraft ||
+                        genderDraft === pet.gender
+                      }
+                    >
+                      Save
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground text-sm">
+                    You can change this until {PET_GENDER_EDIT_UNTIL_LABEL}. It does not
+                    use an image attempt
+                    {appearanceReady
+                      ? "; use Regenerate appearance to redraw with the new gender."
+                      : "; the next image follows it."}
+                  </p>
+                </form>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label>Gender</Label>
+                  <p className="text-sm">
+                    {pet.gender ? PET_GENDER_LABELS[pet.gender] : "Not set"}
+                  </p>
+                </div>
+              )}
               {appearanceReady && (
                 <div className="space-y-1.5">
                   <Label>Appearance</Label>

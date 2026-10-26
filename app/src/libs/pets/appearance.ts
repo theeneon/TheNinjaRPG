@@ -11,6 +11,7 @@ import {
   PET_PALETTES,
   PET_RANK_APPEARANCES,
 } from "@/libs/pets/catalogue";
+import { getPetSexClause } from "@/libs/pets/gender";
 import { getPetRank } from "@/libs/pets/progression";
 import {
   classifyPetAppearanceImage,
@@ -37,6 +38,8 @@ type AppearancePet = Pick<
   | "artRank"
   | "avatar"
 > & {
+  /** Optional so legacy callers and pets adopted before gender existed keep the unsexed prompt. */
+  gender?: UserPet["gender"];
   species: Pick<
     PetSpecies,
     "id" | "name" | "description" | "artDirection" | "rankConcepts"
@@ -70,7 +73,9 @@ export const getPetAppearancePrompt = (
   const identity = `${species.description}.${artDirection} Colour palette: ${palette.description}. Distinctive identity: ${characteristic.description}. Aura (shown only as this rank's aura stage allows): ${aura.description}.`;
   const multiTailed = isMultiTailedSpecies(species);
   const tailStage = multiTailed ? ` ${getPetTailStage(rank.rank)}` : "";
-  const maturity = `Evolution rank ${rank.rank} of 10 (${rank.name}): ${getPetRankConcept(species, rank.rank)}.${tailStage} ${getPetAuraStage(rank.rank)} Adapt every feature to this species: do not invent fur, limbs or other anatomy it does not naturally possess. Natural adult proportions override words such as young or small in the species description. Preserve its recognizable face, eye colours, primary palette and characteristic identity. Keep all limbs inside the frame.`;
+  const sexClause = getPetSexClause(pet.gender, rank.rank);
+  const sexStage = sexClause ? ` ${sexClause}` : "";
+  const maturity = `Evolution rank ${rank.rank} of 10 (${rank.name}): ${getPetRankConcept(species, rank.rank)}.${tailStage}${sexStage} ${getPetAuraStage(rank.rank)} Adapt every feature to this species: do not invent fur, limbs or other anatomy it does not naturally possess. Natural adult proportions override words such as young or small in the species description. Preserve its recognizable face, eye colours, primary palette and characteristic identity. Keep all limbs inside the frame.`;
   const edit =
     pet.artRank < pet.rank
       ? `Create a newly drawn full-body design of the next evolution, using the reference to identify the SAME individual animal rather than copying its pixels. Make this rank's named change obvious even at thumbnail size and keep the earlier rank features unless this rank refines or replaces them; you may simplify or remove clutter from the reference. Keep the animal the same size on the canvas as the reference unless this rank says it grows, never larger than 80% of the canvas, with the empty margins intact. It must look more advanced and more impressive than the reference through refinement, presence, markings, ornament or pose, never through extra bulk, fur, feather or scale layers, or filling the frame. Never draw spiky or porcupine-like masses, stacked layers, tails merged into the body or each other, ${multiTailed ? "more tails than this rank's tail stage allows" : "additional tails"}, wings, horns, extra limbs or other body parts this species does not naturally have, a smaller animal, or cartoon or chibi proportions. A near-copy, brighter outline or camera zoom is not an evolution. Preserve identity, not an identical pose or silhouette.`
@@ -255,6 +260,7 @@ const reviewVisualQuality = async (
       ].join(". "),
       rank: pet.rank,
       previousRank: pet.artRank,
+      sex: pet.gender ?? undefined,
     },
     signal,
   );
