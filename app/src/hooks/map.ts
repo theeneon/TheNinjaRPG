@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchMap } from "@/libs/threejs/globe";
+import { fetchMap } from "@/libs/threejs/mapData";
 import type { GlobalMapData } from "@/libs/threejs/types";
 
 export const useMap = () => {
