@@ -64,7 +64,11 @@ const fixture = ({ width = SECTOR_WIDTH, height = SECTOR_HEIGHT,
             sector, version: 1, normalizedJson: sector === SECTOR ? sourceMap : makeMap(),
           }));
         },
-        findFirst: async () => { reads.push("map"); return { normalizedJson: makeMap() }; },
+        findFirst: async ({ where }: { where: SQL }) => {
+          reads.push("map");
+          const sector = Number(dialect.sqlToQuery(where).params[0]);
+          return { sector, version: 1, normalizedJson: sector === SECTOR ? sourceMap : makeMap() };
+        },
       },
       war: { findMany: async () => {
         reads.push("camp wars");
