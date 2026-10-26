@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { Provider } from "jotai";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import * as nextLink from "next/link";
-import { type ComponentProps, StrictMode, Suspense, use, useState } from "react";
+import * as nextNavigation from "next/navigation";
+import { type ComponentProps, StrictMode, Suspense, use, useContext, useState } from "react";
 import {
   useNavigationRouter,
 } from "@/hooks/navigation";
@@ -24,7 +25,11 @@ const TestNextLink = ({
     onNavigate?.({ preventDefault: () => event.preventDefault() });
   }}>{children}</a>;
 };
-beforeEach(() => vi.spyOn(nextLink, "default").mockImplementation(TestNextLink as typeof nextLink.default));
+beforeEach(() => {
+  vi.spyOn(nextLink, "default").mockImplementation(TestNextLink as typeof nextLink.default);
+  // Bun retains module mocks from other suites; read each test's router context explicitly.
+  vi.spyOn(nextNavigation, "useRouter").mockImplementation(() => useContext(AppRouterContext)!);
+});
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();

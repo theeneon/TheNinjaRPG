@@ -3,13 +3,13 @@
 import { useAtom, useSetAtom } from "jotai";
 import { Bot } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AutoBattleTypes, ManualStartBattleTypes } from "@/drizzle/constants";
 import { type CombatLayoutComponentId, useCombatPreferences } from "@/hooks/combat";
+import { useNavigationRouter as useRouter } from "@/hooks/navigation";
 import { useTutorialStep } from "@/hooks/tutorial";
 import ActionTimer from "@/layout/ActionTimer";
 import { AutoCombatControl } from "@/layout/AutoCombatControl";
