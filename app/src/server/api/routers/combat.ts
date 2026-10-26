@@ -717,9 +717,6 @@ export const combatRouter = createTRPCRouter({
     .use(deferredRatelimitMiddleware)
     .input(performActionSchema)
     .mutation(async ({ ctx, input }) => {
-      Sentry.profiler.startProfiler();
-      if (debug) console.log("============ Performing action ============");
-
       // Short-form
       const suid = ctx.userId;
       const db = ctx.drizzle;
@@ -734,8 +731,13 @@ export const combatRouter = createTRPCRouter({
           fetchBattle(db, input.battleId),
           isFirstAttempt ? ctx.waitForRateLimit() : undefined,
         ]);
-        isFirstAttempt = false;
         if (!battle) return { updateClient: true };
+        if (isFirstAttempt) {
+          // A denied request must not start a profiler that the action cannot stop.
+          Sentry.profiler.startProfiler();
+          if (debug) console.log("============ Performing action ============");
+          isFirstAttempt = false;
+        }
 
         advanceEncounterWave(battle, !!dungeonBattleOutcome(battle));
         // Create the grid for the battle
