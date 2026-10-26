@@ -1929,6 +1929,8 @@ export const combatRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
+      // Event launch tokens precede their battles. Use that link for visibility so
+      // polling never reads the large extraState catalog, even on non-sparring tabs.
       const results = await ctx.drizzle.execute(
         sql`
           SELECT 
@@ -1945,7 +1947,10 @@ export const combatRouter = createTRPCRouter({
             AND (
               Battle.battleType NOT IN ('SPARRING', 'RANKED_SPARRING') OR 
               UserRequest.spectatable = true OR
-              JSON_EXTRACT(Battle.extraState, '$.tournamentGameId') IS NOT NULL
+              EXISTS (
+                SELECT 1 FROM TournamentMatch
+                WHERE TournamentMatch.battleId = Battle.id
+              )
             )
           ORDER BY Battle.createdAt DESC
           LIMIT ${input.limit} OFFSET ${input.offset}

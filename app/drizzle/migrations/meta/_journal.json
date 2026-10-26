@@ -799,6 +799,13 @@
       "when": 1792945089506,
       "tag": "0114_discord_two_characters",
       "breakpoints": false
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1792992660222,
+      "tag": "0115_quick_slayback",
+      "breakpoints": false
     }
   ]
 }
