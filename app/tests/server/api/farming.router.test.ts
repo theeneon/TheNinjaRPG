@@ -424,9 +424,9 @@ describeWithDatabase("farming router guards against a real MySQL", () => {
       cropItemRow({ id: "crop-2", name: "Planted Crop" }),
       cropItemRow({ id: "crop-3", name: "Inventory Crop" }),
       cropItemRow({ id: "crop-4", name: "Shop Crop" }),
-      seedItemRow({ id: "seed-inventory" }),
-      seedItemRow({ id: "seed-shop", inShop: false }),
-      seedItemRow({ id: "seed-missing" }),
+      seedItemRow({ id: "seed-inventory", name: "Inventory Seed" }),
+      seedItemRow({ id: "seed-shop", name: "Shop Seed", inShop: false }),
+      seedItemRow({ id: "seed-missing", name: "Missing Yield Seed" }),
     ] as never);
     await giveItem("ui-inventory", "seed-inventory", 2);
     const plantedAt = new Date(Date.now() - 30_000);
