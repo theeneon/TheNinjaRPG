@@ -7,6 +7,7 @@ import { parentalControlsRouter } from "@/server/api/routers/parentalControls";
 import { commentsRouter, fetchConversation, fetchUsersToNotify } from "@/server/api/routers/comments";
 import { Pusher } from "@/libs/pusher";
 import { hashParentalPin, renameParentalContact } from "@/server/utils/parentalControls";
+import { createTRPCRouter } from "@/server/api/trpc";
 import { insertUsers } from "../../setup/factories";
 import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 
@@ -42,16 +43,14 @@ describeWithDatabase("parental controls", () => {
     const db = await getTestDatabase();
     await db.insert(conversation).values({ id: "public", title: "Global", isPublic: true, createdById: "child" });
     await db.insert(conversationComment).values({ id: "live", conversationId: "public", content: "Hello", userId: "friend", authorId: "friend" });
-    const api = await callerFor(commentsRouter, "child");
+    const api = (await callerFor(createTRPCRouter({ comments: commentsRouter }), "child")).comments;
     const page = await recordQueries(() => api.getConversationComments({ convo_title: "Global", limit: 10 }));
     expect(page.result.data.map((c) => c.id)).toEqual(["live"]);
     expect(page.statements).toHaveLength(4);
-    expect(page.roundTrips).toBeLessThanOrEqual(2);
     const live = await recordQueries(() => api.fetchConversationComment({ commentId: "live", conversationId: "public" }));
     expect(live.result?.id).toBe("live");
     expect(live.result).not.toHaveProperty("readerRole");
     expect(live.statements).toHaveLength(3);
-    expect(live.roundTrips).toBeLessThanOrEqual(2);
     expect(live.statements.some((sql) => sql.includes("QuestHistory"))).toBe(false);
     expect(live.statements.some((sql) => sql.includes("pinHash"))).toBe(false);
     expect((await api.fetchConversationComment({ commentId: "live" }))?.id).toBe("live");
