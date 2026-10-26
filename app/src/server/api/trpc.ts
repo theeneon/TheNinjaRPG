@@ -173,12 +173,7 @@ export const sentryMiddleware = t.middleware((opts) =>
   ),
 );
 
-/**
- * Sliding-window rate limit keyed per procedure path + identity (userId, or IP
- * for anonymous callers); violations by logged-in users incur a 1% money/bank
- * penalty. If the Redis limiter is unreachable, development fails open (local
- * shim may not be running) while production fails closed.
- */
+/** Enforce the shared limiter and penalty before running a handler. */
 export const ratelimitMiddleware = t.middleware(
   async ({ ctx: context, path, next }) => {
     await enforceRateLimit(context, path);
@@ -199,6 +194,12 @@ export const deferredRatelimitMiddleware = t.middleware(async ({ ctx, path, next
   }
 });
 
+/**
+ * Sliding-window rate limit keyed per procedure path + identity (userId, or IP
+ * for anonymous callers); violations by logged-in users incur a 1% money/bank
+ * penalty. If the Redis limiter is unreachable, development fails open (local
+ * shim may not be running) while production fails closed.
+ */
 const enforceRateLimit = async (
   context: Pick<
     Awaited<ReturnType<typeof createAppTRPCContext>>,

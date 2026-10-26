@@ -14,6 +14,7 @@ import { resetServerModuleStubs } from "../../setup/serverModules";
 import { callerForDatabase } from "../../setup/testDatabase";
 
 const source = (path: string) => readFileSync(join(import.meta.dirname, "../../../src", path), "utf8");
+/** Scope architecture assertions to one protected procedure's source. */
 const procedureSource = (router: string, name: string) => {
   const file = source(`server/api/routers/${router}.ts`);
   const start = file.indexOf(`\n  ${name}: protectedProcedure`);
@@ -22,6 +23,7 @@ const procedureSource = (router: string, name: string) => {
   const end = body.search(/\n  \w+: protectedProcedure/);
   return end === -1 ? body : body.slice(0, end);
 };
+/** Control completion gates to assert concurrent ordering without sleeps. */
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -54,7 +56,7 @@ describe("self-guarded Pyramid mutations", () => {
     expect(profile.indexOf("props.rejectIsolatedPyramid && getIsolatedPyramid(fetchedUser)")).toBeLessThan(profile.indexOf("await settleDueTimedQueues("));
     const combat = procedureSource("combat", "performAction");
     expect(combat).toContain(".use(deferredRatelimitMiddleware)");
-    expect(combat).toContain("isFirstAttempt ? ctx.waitForRateLimit() : undefined");
+    expect(combat).toContain("ctx.waitForRateLimit()");
     expect(combat.indexOf("ctx.waitForRateLimit()")).toBeLessThan(combat.indexOf("advanceEncounterWave("));
     expect(procedureSource("quests", "checkLocationQuest")).toContain("canRecoverStaleMergeClaims: async () =>");
   });

@@ -721,7 +721,6 @@ export const combatRouter = createTRPCRouter({
       const suid = ctx.userId;
       const db = ctx.drizzle;
       const actionRounds: number[] = [];
-      let isFirstAttempt = true;
 
       // OUTER LOOP: Attempt to perform action untill success || error thrown
       // The primary purpose here is that if the battle version was already updated, we retry the user's action
@@ -729,15 +728,12 @@ export const combatRouter = createTRPCRouter({
         // Fetch battle from database
         const [battle] = await Promise.all([
           fetchBattle(db, input.battleId),
-          isFirstAttempt ? ctx.waitForRateLimit() : undefined,
+          ctx.waitForRateLimit(),
         ]);
         if (!battle) return { updateClient: true };
-        if (isFirstAttempt) {
-          // A denied request must not start a profiler that the action cannot stop.
-          Sentry.profiler.startProfiler();
-          if (debug) console.log("============ Performing action ============");
-          isFirstAttempt = false;
-        }
+        // A denied request must not start a profiler that the action cannot stop.
+        Sentry.profiler.startProfiler();
+        if (debug) console.log("============ Performing action ============");
 
         advanceEncounterWave(battle, !!dungeonBattleOutcome(battle));
         // Create the grid for the battle
