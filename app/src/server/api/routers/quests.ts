@@ -1885,6 +1885,7 @@ export const questsRouter = createTRPCRouter({
     .output(
       z.object({
         success: z.boolean(),
+        itemsChanged: z.boolean(),
         notifications: z.array(z.string()),
         questData: z.array(QuestTracker).optional(),
         questIdsUpdated: z.array(z.string()).optional(),
@@ -1914,7 +1915,7 @@ export const questsRouter = createTRPCRouter({
         ]);
       // Guard
       if (!user) {
-        return { success: false, notifications: [] };
+        return { success: false, itemsChanged: false, notifications: [] };
       }
 
       // Get updated quest information
@@ -1966,6 +1967,21 @@ export const questsRouter = createTRPCRouter({
       // Return information
       return {
         success: true,
+        // The profile refresh can apply item consequences before the location pass.
+        // Conservatively refresh even if a concurrent snapshot claim skipped a write.
+        itemsChanged: [...trackerResults.consequences, ...consequences].some(
+          (consequence) =>
+            ((consequence.type === "add_item" || consequence.type === "remove_item") &&
+              consequence.ids.length > 0) ||
+            // A quest fight can pay entry costs when its attempt was started by an objective.
+            (consequence.type === "combat" &&
+              user.userQuests.some(
+                (entry) =>
+                  entry.questId === consequence.questId &&
+                  !entry.entryPaid &&
+                  !!entry.quest.content.entryItems?.length,
+              )),
+        ),
         notifications: finalNotification,
         questData: responseUser.questData ?? [],
         questIdsUpdated,
