@@ -43,7 +43,7 @@ export const formatQuestEntryCost = (
 ) =>
   requirements.map((required) => `${required.quantity}× ${required.name}`).join(", ");
 
-/** Only run progression, combat controls, preferences and authorized staff rescue remain usable. */
+/** Read-only message delivery, run controls, preferences and authorized staff rescue remain usable. */
 export const isPyramidRestrictedProcedure = (path: string) =>
   ![
     "quests.checkRewards",
@@ -54,5 +54,6 @@ export const isPyramidRestrictedProcedure = (path: string) =>
     "combat.iAmHere",
     "combat.updateCombatLoadout",
     "profile.updatePreferences",
+    "comments.fetchConversationComment",
     "staff.forceAwake",
   ].includes(path);

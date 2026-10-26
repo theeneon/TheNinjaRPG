@@ -608,7 +608,10 @@ const Conversation: React.FC<ConversationProps> = (props) => {
           switch (data.message) {
             case "new":
               if (data.fromId !== ownUserId && data.commentId) {
-                fetchComment({ commentId: data.commentId });
+                fetchComment({
+                  commentId: data.commentId,
+                  conversationId: conversation.id,
+                });
               }
               break;
             case "reaction":

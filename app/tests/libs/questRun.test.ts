@@ -36,8 +36,8 @@ describe("quest run configuration", () => {
   });
   it("blocks inventory, outside healing and travel while retaining quest and battle controls", () => {
     for (const path of ["item.consume", "item.toggleEquip", "hospital.npcHeal", "village.buyFood", "combat.battleArenaHeal", "travel.startTravel"]) expect(isPyramidRestrictedProcedure(path)).toBe(true);
-    for (const path of ["bank.toBank", "village.buyFood", "quests.startRandom", "combat.startArenaBattle", "item.update"]) expect(isPyramidRestrictedProcedure(path)).toBe(true);
-    for (const path of ["quests.abandon", "quests.checkRewards", "quests.retryBattle", "combat.performAction", "combat.toggleAutoCombat", "combat.iAmHere", "combat.updateCombatLoadout", "profile.updatePreferences", "staff.forceAwake"]) expect(isPyramidRestrictedProcedure(path)).toBe(false);
+    for (const path of ["bank.toBank", "village.buyFood", "quests.startRandom", "combat.startArenaBattle", "item.update", "comments.sendTypingIndicator", "comments.createConversationComment"]) expect(isPyramidRestrictedProcedure(path)).toBe(true);
+    for (const path of ["quests.abandon", "quests.checkRewards", "quests.retryBattle", "combat.performAction", "combat.toggleAutoCombat", "combat.iAmHere", "combat.updateCombatLoadout", "profile.updatePreferences", "comments.fetchConversationComment", "staff.forceAwake"]) expect(isPyramidRestrictedProcedure(path)).toBe(false);
   });
   it("allows continuation only between battles of an open isolated run", () => {
     const run = { isolated: true, completed: 0, endAt: null } as UserQuest;
