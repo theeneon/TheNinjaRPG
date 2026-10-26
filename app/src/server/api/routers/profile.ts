@@ -653,12 +653,22 @@ export const profileRouter = createTRPCRouter({
         return { success: true, message: `Removed ${targetName} from blacklist` };
       }
     }),
-  // Get all AI names
+  // Get AI names for content editors or arena selection
   getAllAiNames: publicProcedure
-    .meta({ mcp: { description: "Get list of all AI character names" } })
-    .query(async ({ ctx }) => {
+    .meta({
+      mcp: {
+        description: "Get AI character names, optionally restricted to arena opponents",
+      },
+    })
+    .input(z.object({ arenaOnly: z.boolean().optional() }).optional())
+    .query(async ({ ctx, input }) => {
       return ctx.drizzle.query.userData.findMany({
-        where: and(eq(userData.isAi, true), ne(userData.rank, "ELDER")),
+        where: and(
+          eq(userData.isAi, true),
+          ne(userData.rank, "ELDER"),
+          input?.arenaOnly ? eq(userData.inArena, true) : undefined,
+          input?.arenaOnly ? eq(userData.isSummon, false) : undefined,
+        ),
         columns: {
           userId: true,
           username: true,

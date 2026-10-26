@@ -212,21 +212,19 @@ const ArenaChallenge: React.FC<ArenaChallengeProps> = (props) => {
   const attackInFlightRef = useRef(false);
 
   // Queries
-  const { data: aiData } = api.profile.getAllAiNames.useQuery(undefined);
+  const { data: aiData } = api.profile.getAllAiNames.useQuery({ arenaOnly: true });
 
   // Sorted by proximity to the user's level, so relevant opponents come first
   const sortedAis = useMemo(
     () =>
-      aiData
-        ?.filter((ai) => !ai.isSummon && ai.inArena)
-        .sort((a, b) => {
-          if (userData?.level) {
-            return (
-              Math.abs(a.level - userData.level) - Math.abs(b.level - userData.level)
-            );
-          }
-          return 1;
-        }),
+      aiData?.slice().sort((a, b) => {
+        if (userData?.level) {
+          return (
+            Math.abs(a.level - userData.level) - Math.abs(b.level - userData.level)
+          );
+        }
+        return 1;
+      }),
     [aiData, userData?.level],
   );
 
