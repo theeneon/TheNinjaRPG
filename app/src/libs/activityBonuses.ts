@@ -9,8 +9,10 @@ import {
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 
 /**
- * Sum percentage time reductions and flat yield bonuses from the base bloodline, activated skills and usable worn gear/imbuements.
- * Reads only preloaded relations; callers snapshot the totals when an activity or battle starts.
+ * Sum percentage time reductions and flat yields from the base bloodline,
+ * activated skills and usable worn gear/imbuements, using only preloaded relations.
+ * Jobs capture reductions at submission, including queued jobs; gathering and
+ * hunting capture yields when collection or battle initiation begins.
  */
 export const getActivityBonuses = (user: ActivityBonusUser) => {
   const totals = {
@@ -101,6 +103,7 @@ type ActivityBonusGear = Omit<MasteryGear, "item"> & {
   item: Pick<MasteryGear["item"], "itemType" | "maxDurability"> &
     Partial<MasteryGear["item"]>;
 };
+/** Preloaded passive sources; omitted relations contribute no bonuses. */
 type ActivityBonusUser = Omit<MasteryBuffUser, "items"> & {
   items?: ActivityBonusGear[];
 };

@@ -109,7 +109,7 @@ export const getSeedExtractionDurationSeconds = (cropQuantity: number) =>
 export const getTotalFarmPlots = (farmPlotsPurchased: number) =>
   Math.min(FARM_STARTING_PLOTS + farmPlotsPurchased, FARM_MAX_PLOTS);
 
-/** Round the Federal-adjusted crop duration before subtracting its snapshotted passive bonus. */
+/** Round Federal-adjusted seconds before applying the passive percentage captured at planting. */
 export const getFarmGrowTimeSeconds = (
   baseGrowTimeSeconds: number,
   user: Pick<UserData, "staffAccount" | "federalStatus">,
@@ -325,6 +325,8 @@ export const mapPlotToState = (
     nextWateringAt: canWater ? null : getNextWateringAt(plot.lastWateredAt, now),
     growthProgress: isActive ? getPlotGrowthProgress(plantedAt, finishAt, now) : 0,
     growthStage: isActive ? getPlotGrowthStage(plantedAt, finishAt, now) : 0,
+    // The saved timeline includes planting bonuses and later water/fertilizer reductions.
+    // Those reductions may finish at a fractional second; the response requires whole seconds.
     growTimeSeconds:
       plantedAt && finishAt
         ? Math.ceil((finishAt.getTime() - plantedAt.getTime()) / 1000)

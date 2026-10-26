@@ -13,7 +13,11 @@ import type { Item, UserData, UserItem } from "@/drizzle/schema";
 import { capitalizeFirstLetter } from "@/utils/string";
 import { reduceActivitySeconds } from "@/utils/time";
 
-/** Complete non-meal job duration; percentage bonuses apply once after quantity and modifiers. */
+/**
+ * Complete non-meal job duration, including quantity, rounded before the passive reduction.
+ * Shrine/Territory War boosts are fractions; clan and passive reductions are percentages.
+ * Queued submissions pass no Territory War boost; it is evaluated when the job starts.
+ */
 export const getCraftingSeconds = (
   item: Pick<Item, "itemType" | "rarity">,
   rank: CRAFTING_RANK,

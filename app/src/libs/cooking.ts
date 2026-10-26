@@ -44,6 +44,7 @@ export const getCookingRankProgress = (experience: number) => {
  * fractions: Crafting shrine bonuses increase duration; Territory War reduces it.
  * Evaluate Territory War eligibility at the job's logical start before calling.
  * Apply the percentage passive reduction once to the complete job, after rounding.
+ * Queued jobs save that passive reduction at submission and defer Territory War until start.
  */
 export const getCookingSeconds = (
   meal: Pick<Item, "cookingTimeSeconds" | "cookingOutputQuantity">,

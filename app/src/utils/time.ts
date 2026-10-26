@@ -476,6 +476,7 @@ export const reduceActivitySeconds = (existingSeconds: number, reductionPercent 
 /**
  * Share the saved collection deadline between server guards and client countdowns.
  * Older trackers without a snapshot retain their original configured duration.
+ * Return null before collection starts or when the objective is untimed.
  */
 export const getCollectDeadline = (
   progress: Pick<ObjectiveTrackerType, "timestamp" | "collectDeadline">,

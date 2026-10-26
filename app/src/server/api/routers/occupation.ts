@@ -287,6 +287,7 @@ export const occupationRouter = createTRPCRouter({
       const sectors = countBoostingShrines(user.village?.sectors);
       const shrineBoost = getShrineBoost(sectors, "Crafting", user.village);
       const territoryBoost = isQueued ? 0 : getTerritoryWarBoost(user);
+      // Save passives at submission; only Territory War is reevaluated when a queued job starts.
       const bonuses = getActivityBonuses(user);
       const craftSeconds = isMeal
         ? getCookingSeconds(

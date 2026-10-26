@@ -2669,6 +2669,7 @@ export const itemRouter = createTRPCRouter({
         // Drizzle cannot express this joined UPDATE. Empty stacks are cleaned up
         // after the claim; quantity zero cannot be consumed or used as an entry item.
         // Slot grants increment the live counter and guard capacity in this same atomic statement.
+        // A standalone slot grant needs no receipt transaction: the debit and grant share this claim.
         const claim = () =>
           client.execute(sql`
           UPDATE ${userData}
