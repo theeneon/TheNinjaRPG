@@ -801,7 +801,7 @@ it("offers a free gender setting before the cutoff and shows it read-only afterw
   const gender = view.getByRole("combobox", { name: "Gender" });
   expect(gender.textContent).toContain("Not set");
   expect((view.getByRole("button", { name: "Save gender" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(view.getByText(/You can change this until 26 Nov\. It does not use an image attempt; use Regenerate appearance/)).toBeDefined();
+  expect(view.getByText(/Changeable until 26 Nov, without using an image attempt\. Regenerate to redraw with it\./)).toBeDefined();
   cleanup();
   vi.spyOn(petGender, "isPetGenderEditable").mockReturnValue(false);
   data = { ...data, pet: { ...data.pet!, gender: "FEMALE" } };

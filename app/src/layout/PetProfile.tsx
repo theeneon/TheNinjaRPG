@@ -1446,123 +1446,125 @@ export function PetProfile() {
         <TabsContent value="settings" forceMount hidden={activity !== "settings"}>
           <ContentBox title="Companion settings" alreadyHasH1>
             <div className="grid gap-5 sm:grid-cols-2">
-              <Form {...nameForm}>
-                <form
-                  onSubmit={nameForm.handleSubmit(({ name }) => {
-                    const parsed = updatePetSchema.safeParse({ petId: pet.id, name });
-                    if (!parsed.success) {
-                      nameForm.setError(
-                        "name",
-                        {
-                          message: !name.trim()
-                            ? "Enter a companion name."
-                            : "Use 1–40 characters without control characters.",
-                        },
-                        { shouldFocus: true },
-                      );
-                      return;
-                    }
-                    nameForm.clearErrors("name");
-                    setMessage(null);
-                    update.mutate(parsed.data);
-                  })}
-                >
-                  <FormField
-                    control={nameForm.control}
-                    name="name"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Companion name</FormLabel>
-                        <div className="flex gap-2">
-                          <FormControl>
-                            <Input
-                              {...field}
-                              maxLength={40}
-                              disabled={settingsDisabled}
-                              onChange={(event) => {
-                                field.onChange(event);
-                                nameForm.clearErrors("name");
-                              }}
-                            />
-                          </FormControl>
-                          <Button
-                            type="submit"
-                            variant="outline"
-                            disabled={settingsDisabled || petName.trim() === pet.name}
-                          >
-                            Save
-                          </Button>
-                        </div>
-                        <FormMessage role="alert" />
-                      </FormItem>
-                    )}
-                  />
-                </form>
-              </Form>
-              {/* TODO: remove the editable branch after PET_GENDER_EDIT_UNTIL (26 Nov 2026). */}
-              {isPetGenderEditable() ? (
-                <form
-                  className="space-y-2"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (!genderDraft || genderDraft === pet.gender) return;
-                    setMessage(null);
-                    update.mutate({ petId: pet.id, gender: genderDraft });
-                  }}
-                >
-                  <Label htmlFor="pet-gender">Gender</Label>
-                  <div className="flex gap-2">
-                    <Select
-                      value={genderDraft ?? ""}
-                      disabled={
-                        settingsDisabled || pet.generationStatus === "GENERATING"
+              <div className="space-y-4">
+                <Form {...nameForm}>
+                  <form
+                    onSubmit={nameForm.handleSubmit(({ name }) => {
+                      const parsed = updatePetSchema.safeParse({ petId: pet.id, name });
+                      if (!parsed.success) {
+                        nameForm.setError(
+                          "name",
+                          {
+                            message: !name.trim()
+                              ? "Enter a companion name."
+                              : "Use 1–40 characters without control characters.",
+                          },
+                          { shouldFocus: true },
+                        );
+                        return;
                       }
-                      onValueChange={(value) => {
-                        const next = PetGenders.find((entry) => entry === value);
-                        if (next) setGenderDraft(next);
-                      }}
-                    >
-                      <SelectTrigger id="pet-gender" className="w-full">
-                        <SelectValue placeholder="Not set" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PetGenders.map((entry) => (
-                          <SelectItem key={entry} value={entry}>
-                            {PET_GENDER_LABELS[entry]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="submit"
-                      variant="outline"
-                      aria-label="Save gender"
-                      disabled={
-                        settingsDisabled ||
-                        pet.generationStatus === "GENERATING" ||
-                        !genderDraft ||
-                        genderDraft === pet.gender
-                      }
-                    >
-                      Save
-                    </Button>
+                      nameForm.clearErrors("name");
+                      setMessage(null);
+                      update.mutate(parsed.data);
+                    })}
+                  >
+                    <FormField
+                      control={nameForm.control}
+                      name="name"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Companion name</FormLabel>
+                          <div className="flex gap-2">
+                            <FormControl>
+                              <Input
+                                {...field}
+                                maxLength={40}
+                                disabled={settingsDisabled}
+                                onChange={(event) => {
+                                  field.onChange(event);
+                                  nameForm.clearErrors("name");
+                                }}
+                              />
+                            </FormControl>
+                            <Button
+                              type="submit"
+                              variant="outline"
+                              disabled={settingsDisabled || petName.trim() === pet.name}
+                            >
+                              Save
+                            </Button>
+                          </div>
+                          <FormMessage role="alert" />
+                        </FormItem>
+                      )}
+                    />
+                  </form>
+                </Form>
+                {/* TODO: remove the editable branch after PET_GENDER_EDIT_UNTIL (26 Nov 2026). */}
+                {isPetGenderEditable() ? (
+                  <form
+                    className="space-y-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!genderDraft || genderDraft === pet.gender) return;
+                      setMessage(null);
+                      update.mutate({ petId: pet.id, gender: genderDraft });
+                    }}
+                  >
+                    <Label htmlFor="pet-gender">Gender</Label>
+                    <div className="flex gap-2">
+                      <Select
+                        value={genderDraft ?? ""}
+                        disabled={
+                          settingsDisabled || pet.generationStatus === "GENERATING"
+                        }
+                        onValueChange={(value) => {
+                          const next = PetGenders.find((entry) => entry === value);
+                          if (next) setGenderDraft(next);
+                        }}
+                      >
+                        <SelectTrigger id="pet-gender" className="w-full">
+                          <SelectValue placeholder="Not set" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PetGenders.map((entry) => (
+                            <SelectItem key={entry} value={entry}>
+                              {PET_GENDER_LABELS[entry]}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="submit"
+                        variant="outline"
+                        aria-label="Save gender"
+                        disabled={
+                          settingsDisabled ||
+                          pet.generationStatus === "GENERATING" ||
+                          !genderDraft ||
+                          genderDraft === pet.gender
+                        }
+                      >
+                        Save
+                      </Button>
+                    </div>
+                    <p className="text-muted-foreground text-sm">
+                      Changeable until {PET_GENDER_EDIT_UNTIL_LABEL}, without using an
+                      image attempt.{" "}
+                      {appearanceReady
+                        ? "Regenerate to redraw with it."
+                        : "The next image follows it."}
+                    </p>
+                  </form>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label>Gender</Label>
+                    <p className="text-sm">
+                      {pet.gender ? PET_GENDER_LABELS[pet.gender] : "Not set"}
+                    </p>
                   </div>
-                  <p className="text-muted-foreground text-sm">
-                    You can change this until {PET_GENDER_EDIT_UNTIL_LABEL}. It does not
-                    use an image attempt
-                    {appearanceReady
-                      ? "; use Regenerate appearance to redraw with the new gender."
-                      : "; the next image follows it."}
-                  </p>
-                </form>
-              ) : (
-                <div className="space-y-1.5">
-                  <Label>Gender</Label>
-                  <p className="text-sm">
-                    {pet.gender ? PET_GENDER_LABELS[pet.gender] : "Not set"}
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
               {appearanceReady && (
                 <div className="space-y-1.5">
                   <Label>Appearance</Label>
