@@ -888,32 +888,15 @@ export const useCheckRewards = () => {
         if (!data.success && "message" in data) {
           showMutationToast({ success: data.success, message: data.message });
         }
+        // Apply claimed progress before releasing the loader or opening the reward picker.
+        await updateUser(data.userPatch, {
+          revision: context?.userRevision,
+          delta: data.userDelta,
+          achievementProgress: data.achievementProgress,
+        });
         // A finished "choose" quest (or one blocked by an earlier unpicked offer) opens the picker
         if (data.rewardChoicePending) {
           void openRewardChoice();
-        }
-        // Update state
-        await Promise.all([
-          updateUser(data.userPatch, {
-            revision: context?.userRevision,
-            delta: data.userDelta,
-            achievementProgress: data.achievementProgress,
-          }),
-          utils.profile.getDashboard.invalidate(),
-          utils.quests.getQuestHistory.invalidate(),
-          utils.quests.allianceBuilding.invalidate(),
-          utils.quests.missionHall.invalidate(),
-          utils.quests.specificQuests.invalidate(),
-          // Quest rewards can grant items
-          utils.item.getUserItems.invalidate(),
-          utils.item.getUserItemsWithVariants.invalidate(),
-        ]);
-        // If the quest is finished, handle the next step
-        if (
-          currentStep?.title === "Academy Dialog Option" &&
-          variables?.nextObjectiveId
-        ) {
-          await handleNextStepAsync();
         }
         // If there is a userQuest, show the rewards
         if (data.userQuest && data.rewards) {
@@ -946,6 +929,28 @@ export const useCheckRewards = () => {
             : `Reward from ${quest.name}`;
           if (resolved || showToast)
             showRewardToast(notifications, rewards, message, false, quest, badges);
+        }
+        // Only the academy tutorial needs refreshed quest lists before its next highlight.
+        const questRefresh = Promise.all([
+          utils.quests.missionHall.invalidate(),
+          utils.quests.specificQuests.invalidate(),
+        ]);
+        // Reconcile other views without holding reward feedback or the collection loader.
+        void Promise.allSettled([
+          questRefresh,
+          utils.profile.getDashboard.invalidate(),
+          utils.quests.getQuestHistory.invalidate(),
+          utils.quests.allianceBuilding.invalidate(),
+          // Quest rewards can grant items
+          utils.item.getUserItems.invalidate(),
+          utils.item.getUserItemsWithVariants.invalidate(),
+        ]);
+        if (
+          currentStep?.title === "Academy Dialog Option" &&
+          variables?.nextObjectiveId
+        ) {
+          await questRefresh;
+          await handleNextStepAsync();
         }
       },
     });
