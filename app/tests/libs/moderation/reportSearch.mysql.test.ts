@@ -1,17 +1,19 @@
 import { beforeEach, expect, it, mock } from "bun:test";
-import { sql } from "drizzle-orm";
+import { and, asc, eq, ne, type SQL, sql } from "drizzle-orm";
 import {
   OPENAI_REPORT_EMBEDDING_MODEL,
   REPORT_EMBEDDING_DIMENSIONS,
 } from "@/drizzle/constants";
 import { userReport, userReportComment, userReportEmbedding } from "@/drizzle/schema";
 import {
+  deleteOrphanedReportEmbeddings,
   getRelatedReports,
   indexReportEmbeddings,
 } from "@/libs/moderation/reportSearch";
 import {
   describeWithDatabase,
   getTestDatabase,
+  indexColumns,
   resetTables,
   runRawSql,
 } from "../../setup/testDatabase";
@@ -48,6 +50,122 @@ describeWithDatabase("moderation retrieval against Community MySQL", () => {
     await resetTables(userReportEmbedding, userReportComment, userReport);
   });
 
+  it("indexes exactly the summary predicate and tracks every source-field update", async () => {
+    const client = await getTestDatabase();
+    const context = reportRow("context").additionalContext;
+    await client
+      .insert(userReport)
+      .values([
+        reportRow("eligible-old", {
+          aiInterpretation: "",
+          createdAt: new Date("2026-01-01"),
+        }),
+        reportRow("eligible-new", {
+          aiInterpretation: "",
+          createdAt: new Date("2026-02-01"),
+          status: "UNVIEWED",
+        }),
+        reportRow("summarized"),
+        reportRow("empty-context", { aiInterpretation: "", additionalContext: [] }),
+        reportRow("profile", { aiInterpretation: "", system: "user_profile" }),
+      ]);
+    const indexed = () =>
+      client
+        .select({ id: userReport.id })
+        .from(userReport)
+        .where(eq(userReport.needsAiSummary, true))
+        .orderBy(asc(userReport.createdAt));
+    const original = () =>
+      client
+        .select({ id: userReport.id })
+        .from(userReport)
+        .where(
+          and(
+            eq(userReport.aiInterpretation, ""),
+            sql`JSON_LENGTH(${userReport.additionalContext}) > 0`,
+            ne(userReport.system, "user_profile"),
+          ),
+        )
+        .orderBy(asc(userReport.createdAt));
+    expect(await indexed()).toEqual(await original());
+    expect((await indexed()).map(({ id }) => id)).toEqual([
+      "eligible-old",
+      "eligible-new",
+    ]);
+
+    await client
+      .update(userReport)
+      .set({ aiInterpretation: "Summary" })
+      .where(eq(userReport.id, "eligible-old"));
+    await client
+      .update(userReport)
+      .set({ additionalContext: context })
+      .where(eq(userReport.id, "empty-context"));
+    await client
+      .update(userReport)
+      .set({ system: "comment" })
+      .where(eq(userReport.id, "profile"));
+    await client
+      .update(userReport)
+      .set({ aiInterpretation: "" })
+      .where(eq(userReport.id, "summarized"));
+    await client
+      .update(userReport)
+      .set({ additionalContext: [] })
+      .where(eq(userReport.id, "eligible-new"));
+    expect(await indexed()).toEqual(await original());
+    expect((await indexed()).map(({ id }) => id).sort()).toEqual([
+      "empty-context",
+      "profile",
+      "summarized",
+    ]);
+    expect(
+      (await indexColumns("UserReport", "UserReport_needsAiSummary_createdAt_idx"))
+        .columns,
+    ).toEqual(["needsAiSummary", "createdAt"]);
+  });
+
+  it("deletes only orphans and preserves a parent restored between scan and delete", async () => {
+    const client = await getTestDatabase();
+    const embedding = sql`TO_VECTOR(${JSON.stringify(Array(REPORT_EMBEDDING_DIMENSIONS).fill(0))})`;
+    await client.insert(userReport).values(reportRow("live"));
+    await client.insert(userReportEmbedding).values(
+      ["live", "orphan", "restored"].map((reportId) => ({
+        reportId,
+        sourceText: "Summary",
+        model: OPENAI_REPORT_EMBEDDING_MODEL,
+        embedding,
+      })),
+    );
+    const realSelect = client.select.bind(client);
+    const cleanupClient = new Proxy(client, {
+      get(target, key, receiver) {
+        // Community MySQL has the vector type but not PlanetScale's DISTANCE.
+        if (key === "select")
+          return (fields: Record<string, unknown>) =>
+            "distance" in fields
+              ? { from: () => ({ limit: async () => [] }) }
+              : realSelect(fields as never);
+        if (key === "delete")
+          return () => ({
+            where: async (condition: SQL) => {
+              await client.insert(userReport).values(reportRow("restored"));
+              return client.delete(userReportEmbedding).where(condition);
+            },
+          });
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    await deleteOrphanedReportEmbeddings(cleanupClient);
+    const remaining = await client
+      .select({ reportId: userReportEmbedding.reportId })
+      .from(userReportEmbedding);
+    expect(remaining.map(({ reportId }) => reportId).sort()).toEqual([
+      "live",
+      "restored",
+    ]);
+  });
+
   it("ranks literal matches, filters ineligible reports and returns one latest comment", async () => {
     const client = new Proxy(await getTestDatabase(), {});
     await client
@@ -81,15 +199,13 @@ describeWithDatabase("moderation retrieval against Community MySQL", () => {
         createdAt: new Date("2026-02-01"),
       },
     ]);
-    await client
-      .insert(userReportComment)
-      .values({
-        id: "player-reply",
-        reportId: "closest",
-        userId: "player",
-        content: "Player reply",
-        createdAt: new Date("2026-03-01"),
-      });
+    await client.insert(userReportComment).values({
+      id: "player-reply",
+      reportId: "closest",
+      userId: "player",
+      content: "Player reply",
+      createdAt: new Date("2026-03-01"),
+    });
     const embed = mock(async () => [[1, 0]]);
     const reports = await getRelatedReports(client, "harassment threats", { embed });
     expect(reports.map((report) => report.id)).toEqual(["closest", "partial"]);
@@ -121,15 +237,13 @@ describeWithDatabase("moderation retrieval against Community MySQL", () => {
           reportRow("fulltext"),
           reportRow("other", { aiInterpretation: "Trade agreement" }),
         ]);
-      await client
-        .insert(userReportComment)
-        .values({
-          id: "comment",
-          reportId: "fulltext",
-          userId: "staff",
-          content: "Decision",
-          decision: "OFFICIAL_WARNING",
-        });
+      await client.insert(userReportComment).values({
+        id: "comment",
+        reportId: "fulltext",
+        userId: "staff",
+        content: "Decision",
+        decision: "OFFICIAL_WARNING",
+      });
       const reports = await getRelatedReports(client, "harassment");
       expect(reports.map((report) => report.id)).toEqual(["fulltext"]);
       expect(reports[0]?.score).toBeGreaterThan(0);
@@ -141,15 +255,13 @@ describeWithDatabase("moderation retrieval against Community MySQL", () => {
   it("does not turn punctuation or SQL wildcards into a match-all search", async () => {
     const client = new Proxy(await getTestDatabase(), {});
     await client.insert(userReport).values(reportRow("report"));
-    await client
-      .insert(userReportComment)
-      .values({
-        id: "comment",
-        reportId: "report",
-        userId: "staff",
-        content: "Decision",
-        decision: "OFFICIAL_WARNING",
-      });
+    await client.insert(userReportComment).values({
+      id: "comment",
+      reportId: "report",
+      userId: "staff",
+      content: "Decision",
+      decision: "OFFICIAL_WARNING",
+    });
     expect(await getRelatedReports(client, "% _ '")).toEqual([]);
   });
 
@@ -158,14 +270,12 @@ describeWithDatabase("moderation retrieval against Community MySQL", () => {
     const values = Array.from({ length: REPORT_EMBEDDING_DIMENSIONS }, (_, index) =>
       index === 0 ? 1 : 0,
     );
-    await client
-      .insert(userReportEmbedding)
-      .values({
-        reportId: "vector",
-        sourceText: "Threats",
-        model: OPENAI_REPORT_EMBEDDING_MODEL,
-        embedding: sql`TO_VECTOR(${JSON.stringify(values)})`,
-      });
+    await client.insert(userReportEmbedding).values({
+      reportId: "vector",
+      sourceText: "Threats",
+      model: OPENAI_REPORT_EMBEDDING_MODEL,
+      embedding: sql`TO_VECTOR(${JSON.stringify(values)})`,
+    });
     const [row] = await client
       .select({
         dimensions: sql<number>`VECTOR_DIM(${userReportEmbedding.embedding})`,

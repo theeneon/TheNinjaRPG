@@ -3586,6 +3586,10 @@ export const userReport = mysqlTable(
       .$type<AdditionalContext[]>()
       .notNull()
       .default([]),
+    needsAiSummary: boolean("needsAiSummary").generatedAlwaysAs(
+      sql`\`aiInterpretation\` = '' AND JSON_LENGTH(\`additionalContext\`) > 0 AND \`system\` <> 'user_profile'`,
+      { mode: "stored" },
+    ),
   },
   (table) => {
     return {
@@ -3597,6 +3601,10 @@ export const userReport = mysqlTable(
       ),
       statusIdx: index("UserReport_status_idx").on(table.status),
       createdAtIdx: index("UserReport_createdAt_idx").on(table.createdAt),
+      needsAiSummaryCreatedAtIdx: index("UserReport_needsAiSummary_createdAt_idx").on(
+        table.needsAiSummary,
+        table.createdAt,
+      ),
     };
   },
 );
