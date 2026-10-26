@@ -1162,14 +1162,15 @@ export const fetchConversation = async (params: FetchConvoOptions) => {
   // The reader is known before either lookup, including public title lookups.
   const [convo, initialPolicies] = await Promise.all([
     getConvo(),
-    fetchCommunicationPolicies(client, [userId], id),
+    fetchCommunicationPolicies(client, [userId]),
   ]);
   if (!convo) return undefined;
   const participantIds = [...new Set([userId, ...convo.users.map((u) => u.userId)])];
-  // An ID covers all memberships in the initial query; title fallbacks need the resolved members.
-  const otherParticipantIds = id
-    ? []
-    : participantIds.filter((participantId) => participantId !== userId);
+  // Only private, non-staff send restrictions need the other participants' policies.
+  const otherParticipantIds =
+    convo.isPublic || convo.isStaffAvailable
+      ? []
+      : participantIds.filter((participantId) => participantId !== userId);
   // A support ticket's creator keeps access to its conversation through the
   // ticket after leaving it, so only non-members of private staff threads need
   // the lookup.

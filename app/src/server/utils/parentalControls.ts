@@ -1,7 +1,7 @@
 import { scrypt as deriveKey, randomBytes, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
-import { eq, inArray, or, sql } from "drizzle-orm";
-import { parentalControl, user2conversation } from "@/drizzle/schema";
+import { inArray, sql } from "drizzle-orm";
+import { parentalControl } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
 const scrypt = promisify(deriveKey);
@@ -19,25 +19,10 @@ export const verifyParentalPin = async (pin: string, stored: string) => {
   const expected = Buffer.from(encoded, "hex");
   return expected.length === hash.length && timingSafeEqual(expected, hash);
 };
-/** Loads communication rules, optionally covering a known conversation's members in the same read. */
-export const fetchCommunicationPolicies = (
-  client: DrizzleClient,
-  ids: string[],
-  conversationId?: string,
-) =>
+/** Loads only communication rules, keeping credentials out of conversation responses. */
+export const fetchCommunicationPolicies = (client: DrizzleClient, ids: string[]) =>
   client.query.parentalControl.findMany({
-    where: or(
-      inArray(parentalControl.userId, [...new Set(ids)]),
-      conversationId
-        ? inArray(
-            parentalControl.userId,
-            client
-              .select({ userId: user2conversation.userId })
-              .from(user2conversation)
-              .where(eq(user2conversation.conversationId, conversationId)),
-          )
-        : undefined,
-    ),
+    where: inArray(parentalControl.userId, [...new Set(ids)]),
     columns: {
       userId: true,
       enabled: true,

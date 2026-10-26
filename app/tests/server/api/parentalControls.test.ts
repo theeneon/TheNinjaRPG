@@ -51,6 +51,9 @@ describeWithDatabase("parental controls", () => {
     expect(live.result?.id).toBe("live");
     expect(live.result).not.toHaveProperty("readerRole");
     expect(live.statements).toHaveLength(3);
+    const livePolicies = live.statements.filter((sql) => sql.includes("from `ParentalControl`"));
+    expect(livePolicies).toHaveLength(1);
+    expect(livePolicies[0]).not.toContain("UsersInConversation");
     expect(live.statements.some((sql) => sql.includes("QuestHistory"))).toBe(false);
     expect(live.statements.some((sql) => sql.includes("pinHash"))).toBe(false);
     expect((await api.fetchConversationComment({ commentId: "live" }))?.id).toBe("live");
