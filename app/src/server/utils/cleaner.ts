@@ -63,9 +63,8 @@ export const deleteCleanupCandidates = async (
       .limit(batchSize);
     if (!candidates.length) return;
 
-    // Drizzle's DELETE builder cannot force an index. Keep the target access on
-    // the selected key even when the optimizer estimates a scan is cheaper: scanned rows
-    // are locked under REPEATABLE READ, including rows the predicate excludes.
+    // Drizzle's DELETE builder cannot force an index. Scanned rows are locked
+    // under REPEATABLE READ, including rows the predicate excludes.
     const selected =
       columns.length === 1
         ? inArray(
@@ -81,10 +80,31 @@ export const deleteCleanupCandidates = async (
               ),
             ),
           );
-    await retryOnDeadlock(() =>
-      client.execute(sql`DELETE ${table} FROM ${table} FORCE INDEX (${sql.identifier(indexName)})
-        WHERE ${and(selected, predicate)}`),
-    );
+    // FORCE INDEX still permits a full scan for a dense composite-key batch.
+    // Drive those deletes from literal keys so each target access is a point lookup.
+    const statement =
+      columns.length > 1 && indexName === "PRIMARY"
+        ? sql`DELETE /*+ SET_VAR(optimizer_switch='semijoin=off') */ ${table}
+          FROM (${sql.join(
+            candidates.map(
+              (row) =>
+                sql`SELECT ${sql.join(
+                  columns.map(
+                    ([name]) =>
+                      sql`${cleanupKeyValue(row, name)} AS ${sql.identifier(name)}`,
+                  ),
+                  sql`, `,
+                )}`,
+            ),
+            sql` UNION ALL `,
+          )}) cleanup_keys
+          STRAIGHT_JOIN ${table} FORCE INDEX (PRIMARY)
+            ON ${and(...columns.map(([name, column]) => eq(column, sql`cleanup_keys.${sql.identifier(name)}`)))}
+          WHERE ${predicate}`
+        : sql`DELETE /*+ SET_VAR(optimizer_switch='semijoin=off') */ ${table}
+          FROM ${table} FORCE INDEX (${sql.identifier(indexName)})
+          WHERE ${and(selected, predicate)}`;
+    await retryOnDeadlock(() => client.execute(statement));
     // Keyset progress also skips candidates rescued between the read and write.
     cursor = candidates[candidates.length - 1];
     if (candidates.length < batchSize) return;
@@ -108,13 +128,13 @@ export const cleanupOrphanRows = async (
   ) =>
     notExists(
       client
-        .select({ id: sql`/*+ NO_SEMIJOIN() */ ${parentKey}` })
+        .select({ id: parentKey })
         .from(parent)
         .where(eq(parentKey, childKey))
         .limit(1),
     );
-  // Disable antijoin materialization: LIMIT alone can still scan and lock every
-  // parent inside DELETE. Recheck only the selected children's indexed parents.
+  // DELETE disables antijoin materialization to avoid locking unrelated parents;
+  // candidate SELECTs retain the optimizer's non-locking materialization choices.
   const withoutUser = (childKey: AnyMySqlColumn) =>
     missing(userData, userData.userId, childKey);
   const sweeps: Array<{
