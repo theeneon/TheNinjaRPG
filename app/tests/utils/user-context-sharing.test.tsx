@@ -15,7 +15,10 @@ import { UserContext, UserContextProvider } from "@/utils/UserContext";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 
 const BASE = Date.UTC(2026, 9, 26, 12);
-const key = [["profile", "getUser"], { type: "query" }];
+const key: ReturnType<typeof trpc.getQueryKey> = [
+  ["profile", "getUser"],
+  { type: "query" },
+];
 let now = BASE;
 const snapshot = (serverTime = BASE - 100) => ({
   serverTime,
@@ -112,8 +115,8 @@ describe("profile context structural sharing", () => {
       now += 300_000;
       await test.refresh(snapshot(now - latency));
       expect(test.current()).toBe(before);
-      expect(test.read().userData).toBe(before.data);
-      expect(test.read().achievementProgress).toBe(before.achievementProgress);
+      expect<unknown>(test.read().userData).toBe(before.data);
+      expect<unknown>(test.read().achievementProgress).toBe(before.achievementProgress);
     }
     expect(test.seen.length - renders).toBe(0);
     expect(test.current().timeDiff).toBe(0);
@@ -146,14 +149,14 @@ describe("profile context structural sharing", () => {
     expect(test.current().data).not.toBe(before.userData);
     expect(test.read().userData.userQuests).not.toBe(before.userData.userQuests);
     expect(test.read().userData.village).toBe(before.userData.village);
-    expect(test.current().achievementProgress).toBe(before.achievementProgress);
+    expect<unknown>(test.current().achievementProgress).toBe(before.achievementProgress);
 
     const achievement = structuredClone(changed);
     achievement.achievementProgress[0]!.updatedAt = new Date(BASE);
     await test.refresh(achievement);
     const afterAchievement = test.current();
     expect(afterAchievement.achievementProgress).not.toBe(before.achievementProgress);
-    expect(afterAchievement.data).toBe(test.read().userData);
+    expect<unknown>(afterAchievement.data).toBe(test.read().userData);
 
     await test.refresh({ ...achievement, notifications: [] });
     expect(test.current()).not.toBe(afterAchievement);

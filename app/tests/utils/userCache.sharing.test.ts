@@ -40,7 +40,7 @@ describe("profile cache structural sharing", () => {
   it("preserves own __proto__ fields without changing the resulting prototype", () => {
     const previous = JSON.parse('{"__proto__":{"at":1},"value":1}');
     const next = JSON.parse('{"__proto__":{"at":2},"value":1}');
-    const shared = shareUserCache(previous, next);
+    const shared = shareUserCache(previous, next) as object;
     expect(shared).toEqual(next);
     expect(Object.getPrototypeOf(shared)).toBe(Object.prototype);
     expect(Object.hasOwn(shared, "__proto__")).toBe(true);
