@@ -9,6 +9,7 @@ const makeCaller = (
   collect = false,
   missingUser = false,
   entryPaid?: boolean,
+  craftingItemsChanged = false,
 ) => {
   const location = { sector: 1, longitude: 1, latitude: 1 };
   const quest = {
@@ -53,6 +54,7 @@ const makeCaller = (
   stubProfile("fetchUpdatedUser", (async () => ({
     user: missingUser ? undefined : user,
     trackerResults: { consequences, notifications: [], questIdsUpdated: [] },
+    craftingItemsChanged,
   })) as never);
   const insertItems = vi.fn().mockResolvedValue({ rowsAffected: 1 });
   const drizzle = withEmptyIsolationHistory({
@@ -97,6 +99,11 @@ describe("location quest inventory signal", () => {
     expect((await caller.checkLocationQuest()).itemsChanged).toBe(false);
   });
 
+  it("reports crafting settlement without quest consequences", async () => {
+    const { caller } = makeCaller([], false, false, undefined, true);
+    expect((await caller.checkLocationQuest()).itemsChanged).toBe(true);
+  });
+
   it("reports and grants items collected in the location pass", async () => {
     const { caller, insertItems } = makeCaller([], true);
     expect((await caller.checkLocationQuest()).itemsChanged).toBe(true);
@@ -106,19 +113,19 @@ describe("location quest inventory signal", () => {
     ]);
   });
 
-  it.each([false, true])("refreshes combat entry costs only for an unpaid attempt (entryPaid: %s)", async (entryPaid) => {
+  it.each([false, true])("refreshes inventory for combat even if entry was already paid (entryPaid: %s)", async (entryPaid) => {
     const { caller } = makeCaller(
       [{ type: "combat", ids: ["opponent"], questId: "collection" }],
       false,
       false,
       entryPaid,
     );
-    expect((await caller.checkLocationQuest()).itemsChanged).toBe(!entryPaid);
+    expect((await caller.checkLocationQuest()).itemsChanged).toBe(true);
   });
 
-  it("does not refresh inventory for combat without quest entry costs", async () => {
+  it("refreshes inventory for combat without entry costs because battle setup can settle crafts", async () => {
     const { caller } = makeCaller([{ type: "combat", ids: ["opponent"] }]);
-    expect((await caller.checkLocationQuest()).itemsChanged).toBe(false);
+    expect((await caller.checkLocationQuest()).itemsChanged).toBe(true);
   });
 
   it("returns a false signal when the user is missing", async () => {

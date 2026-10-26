@@ -1903,16 +1903,19 @@ export const questsRouter = createTRPCRouter({
         userId: ctx.userId,
         hideInformation: false,
       });
-      const [{ user, trackerResults }, useritems, boundPlacementStatus] =
-        await Promise.all([
-          userPromise,
-          fetchUserItems(ctx.drizzle, ctx.userId),
-          userPromise.then(({ user }) =>
-            user
-              ? fetchBoundPlacementStatus(ctx.drizzle, user)
-              : new Map<string, boolean>(),
-          ),
-        ]);
+      const [
+        { user, trackerResults, craftingItemsChanged },
+        useritems,
+        boundPlacementStatus,
+      ] = await Promise.all([
+        userPromise,
+        fetchUserItems(ctx.drizzle, ctx.userId),
+        userPromise.then(({ user }) =>
+          user
+            ? fetchBoundPlacementStatus(ctx.drizzle, user)
+            : new Map<string, boolean>(),
+        ),
+      ]);
       // Guard
       if (!user) {
         return { success: false, itemsChanged: false, notifications: [] };
@@ -1953,13 +1956,10 @@ export const questsRouter = createTRPCRouter({
       user.questData = filterQuestTrackersForDbPersist(trackers, user);
 
       // Handle consequences
-      const { notifications: finalNotification } = await handleQuestConsequences(
-        ctx.drizzle,
-        user,
-        consequences,
-        notifications,
-        { rollObjectiveAttackers: true },
-      );
+      const { notifications: finalNotification, battleAttempted } =
+        await handleQuestConsequences(ctx.drizzle, user, consequences, notifications, {
+          rollObjectiveAttackers: true,
+        });
 
       user.questData = fullTrackers;
       const responseUser = getPublicQuestUser(user);
@@ -1967,21 +1967,20 @@ export const questsRouter = createTRPCRouter({
       // Return information
       return {
         success: true,
-        // The profile refresh can apply item consequences before the location pass.
+        // The profile refresh can settle crafts or item consequences before the location pass.
         // Conservatively refresh even if a concurrent snapshot claim skipped a write.
-        itemsChanged: [...trackerResults.consequences, ...consequences].some(
-          (consequence) =>
-            ((consequence.type === "add_item" || consequence.type === "remove_item") &&
-              consequence.ids.length > 0) ||
-            // A quest fight can pay entry costs when its attempt was started by an objective.
-            (consequence.type === "combat" &&
-              user.userQuests.some(
-                (entry) =>
-                  entry.questId === consequence.questId &&
-                  !entry.entryPaid &&
-                  !!entry.quest.content.entryItems?.length,
-              )),
-        ),
+        itemsChanged:
+          craftingItemsChanged ||
+          // Rolled objective ambushes are local to handleQuestConsequences.
+          battleAttempted ||
+          [...trackerResults.consequences, ...consequences].some(
+            (consequence) =>
+              ((consequence.type === "add_item" ||
+                consequence.type === "remove_item") &&
+                consequence.ids.length > 0) ||
+              // Battle setup can settle newly due crafts as well as pay quest entry costs.
+              consequence.type === "combat",
+          ),
         notifications: finalNotification,
         questData: responseUser.questData ?? [],
         questIdsUpdated,
@@ -5017,10 +5016,10 @@ export const handleQuestConsequences = async (
         opponent,
       });
 
-      return { notifications, claimed: true };
+      return { notifications, claimed: true, battleAttempted: !!opponent };
     }
   }
-  return { notifications, claimed: !shouldClaimUserState };
+  return { notifications, claimed: !shouldClaimUserState, battleAttempted: false };
 };
 
 /**

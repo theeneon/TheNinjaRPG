@@ -3341,7 +3341,11 @@ export const updateUserContent = async (props: {
 export const fetchUpdatedUser = async (
   props: Parameters<typeof fetchUpdatedUserOnce>[0],
 ) => {
-  const settlement = { startedQueuedJobs: 0, hasRejectedPassiveRegen: false };
+  const settlement = {
+    startedQueuedJobs: 0,
+    craftingItemsChanged: false,
+    hasRejectedPassiveRegen: false,
+  };
   for (let attempt = 0; attempt < 3; attempt++) {
     const result = await fetchUpdatedUserOnce(props, settlement);
     if (result !== null) {
@@ -3370,7 +3374,11 @@ const fetchUpdatedUserOnce = async (
     /** Server actions can omit display-only alerts while retaining all readiness settlement. */
     includeNotifications?: boolean;
   },
-  settlement: { startedQueuedJobs: number; hasRejectedPassiveRegen: boolean },
+  settlement: {
+    startedQueuedJobs: number;
+    craftingItemsChanged: boolean;
+    hasRejectedPassiveRegen: boolean;
+  },
 ) => {
   // Destructure
   const {
@@ -3482,6 +3490,12 @@ const fetchUpdatedUserOnce = async (
   // came. The in-memory check keeps every other request free of extra queries. When a
   // due queue was settled, the user is read again.
   if (user && hasDueTimedJob(user.queue, now)) {
+    // Crafts can insert outputs or refund materials even when no queued job starts.
+    // Keep the signal across hydration retries and partially successful settlements.
+    settlement.craftingItemsChanged ||= hasDueTimedJob(
+      user.queue.filter((entry) => entry.kind === "CRAFT"),
+      now,
+    );
     try {
       settlement.startedQueuedJobs += await settleDueTimedQueues(client, [user], now);
       // Drops refund resources and remove rows too; reconcile every due settlement.
@@ -3795,6 +3809,7 @@ const fetchUpdatedUserOnce = async (
       hasUnvotedPolls,
       trackerResults,
       startedQueuedJobs: settlement.startedQueuedJobs,
+      craftingItemsChanged: settlement.craftingItemsChanged,
     };
   }
 
@@ -4197,6 +4212,7 @@ const fetchUpdatedUserOnce = async (
       requiresUserRefresh: requiresUserRefresh || toastMessages.length > 0,
       /** Queued jutsu levels or crafts started by this refresh */
       startedQueuedJobs: settlement.startedQueuedJobs,
+      craftingItemsChanged: settlement.craftingItemsChanged,
     };
   } else {
     return {
@@ -4212,6 +4228,7 @@ const fetchUpdatedUserOnce = async (
       trackerResults: null,
       requiresUserRefresh: requiresUserRefresh || toastMessages.length > 0,
       startedQueuedJobs: settlement.startedQueuedJobs,
+      craftingItemsChanged: settlement.craftingItemsChanged,
     };
   }
 };

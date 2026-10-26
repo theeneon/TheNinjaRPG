@@ -50,7 +50,7 @@ describeWithDatabase("quest battle rejection feedback", () => {
       );
 
       expect(result).toEqual({
-        notifications: ["Attacking 1 target for Allies.", message], claimed: true,
+        notifications: ["Attacking 1 target for Allies.", message], claimed: true, battleAttempted: true,
       });
       expect(await client.query.battle.findMany()).toHaveLength(0);
       const saved = await client.query.userData.findFirst({
