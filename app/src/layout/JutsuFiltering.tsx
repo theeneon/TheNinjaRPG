@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   AttackMethods,
   AttackTargets,
@@ -5,6 +6,7 @@ import {
   ElementNames,
   JutsuTypes,
   StatTypes,
+  type UserRank,
   UserRanks,
 } from "@/drizzle/constants";
 import {
@@ -27,7 +29,7 @@ import { useUserData } from "@/utils/UserContext";
 import { effectFilters } from "@/validators/combat";
 
 // Single-source schema
-const makeJutsuFilteringSchema = () =>
+const makeJutsuFilteringSchema = (defaultRank: UserRank[] = []) =>
   defineFilteringSchema({
     fields: [
       { id: "name", label: "Name", type: "text", defaultValue: "" },
@@ -132,7 +134,7 @@ const makeJutsuFilteringSchema = () =>
         id: "rank",
         label: "Required Rank",
         type: "multi-select",
-        defaultValue: [],
+        defaultValue: defaultRank,
         options: UserRanks.map((r) => ({ value: r, label: r })),
       },
       {
@@ -194,8 +196,9 @@ interface JutsuFilteringProps {
   disabled?: boolean;
 }
 
-export const useFiltering = () => {
-  const cf = useContentFiltering(makeJutsuFilteringSchema());
+export const useFiltering = (defaultRank?: UserRank[]) => {
+  const schema = useMemo(() => makeJutsuFilteringSchema(defaultRank), [defaultRank]);
+  const cf = useContentFiltering(schema);
   return {
     ...cf.values,
     cf,

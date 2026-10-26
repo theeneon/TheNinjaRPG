@@ -26,6 +26,7 @@ import {
   type SetStateAction,
   startTransition,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { useForm, useWatch } from "react-hook-form";
@@ -1115,12 +1116,16 @@ const JutsuTraining: React.FC<TrainingProps> = (props) => {
   const utils = api.useUtils();
 
   // Two-level filtering
-  const state = useFiltering();
+  const [initialRanks] = useState(() => availableRanks(userData.rank));
+  const state = useFiltering(initialRanks);
+  const previousRank = useRef(userData.rank);
 
-  // Set the default selected ranks
+  // Rank changes update only ranks, preserving other filters and mount-time defaults.
   useEffect(() => {
+    if (previousRank.current === userData.rank) return;
+    previousRank.current = userData.rank;
     state.setRank(availableRanks(userData.rank));
-  }, [userData.rank]);
+  }, [userData.rank, state.setRank]);
 
   // Jutsus
   const {
