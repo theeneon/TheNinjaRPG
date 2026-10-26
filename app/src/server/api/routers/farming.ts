@@ -1,4 +1,17 @@
-import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -216,7 +229,7 @@ export const farmingRouter = createTRPCRouter({
         ctx.drizzle,
         user,
         baseXpGain,
-        questState,
+        farmingQuestStateAfterClaim(questState, user.updatedAt, claim.claimedAt),
         "seeds_planted",
       );
       if (xpGain === null) {
@@ -417,7 +430,7 @@ export const farmingRouter = createTRPCRouter({
         ctx.drizzle,
         user,
         baseXpGain,
-        questState,
+        farmingQuestStateAfterClaim(questState, user.updatedAt, claim.claimedAt),
         "plants_fertilized",
       );
       if (xpGain === null) {
@@ -503,18 +516,25 @@ export const farmingRouter = createTRPCRouter({
         return errorResponse("Harvested crop but failed to grant item");
       }
 
-      await recordFirstFarmHarvests(ctx.drizzle, ctx.userId, [plot.yieldItem.id], now);
-      const collectionCount = await getFarmCollectionCount(ctx.drizzle, ctx.userId);
-
-      const xpGain = await awardFarmingProgress(
+      const harvestRecorded = recordFirstFarmHarvests(
         ctx.drizzle,
-        user,
-        baseXpGain,
-        questState,
-        "plants_harvested",
-        1,
-        collectionCount,
+        ctx.userId,
+        [plot.yieldItem.id],
+        now,
       );
+      const [xpGain] = await Promise.all([
+        awardFarmingProgress(
+          ctx.drizzle,
+          user,
+          baseXpGain,
+          questState,
+          "plants_harvested",
+          1,
+          () =>
+            harvestRecorded.then(() => getFarmCollectionCount(ctx.drizzle, ctx.userId)),
+        ),
+        harvestRecorded,
+      ]);
       if (xpGain === null) {
         return errorResponse("Harvested crop but failed to update farming progress");
       }
@@ -663,7 +683,7 @@ export const farmingRouter = createTRPCRouter({
         ctx.drizzle,
         user,
         baseXpGain,
-        questState,
+        farmingQuestStateAfterClaim(questState, user.updatedAt, claim.claimedAt),
         "seeds_planted",
         emptyPlots.length,
       );
@@ -851,7 +871,7 @@ export const farmingRouter = createTRPCRouter({
         ctx.drizzle,
         user,
         baseXpGain,
-        questState,
+        farmingQuestStateAfterClaim(questState, user.updatedAt, claim.claimedAt),
         "plants_fertilized",
         fertilizable.length,
       );
@@ -943,22 +963,30 @@ export const farmingRouter = createTRPCRouter({
       if (awards.some((awarded) => !awarded)) {
         return errorResponse("Harvested crops but failed to grant items");
       }
-      await recordFirstFarmHarvests(ctx.drizzle, ctx.userId, [...harvests.keys()], now);
-      const collectionCount = await getFarmCollectionCount(ctx.drizzle, ctx.userId);
+      const harvestRecorded = recordFirstFarmHarvests(
+        ctx.drizzle,
+        ctx.userId,
+        [...harvests.keys()],
+        now,
+      );
       const baseXpGain = readyPlots.reduce(
         (sum, plot) =>
           sum + (plot.yieldItem ? getFarmHarvestExperience(plot.yieldItem) : 0),
         0,
       );
-      const xpGain = await awardFarmingProgress(
-        ctx.drizzle,
-        user,
-        baseXpGain,
-        questState,
-        "plants_harvested",
-        readyPlots.length,
-        collectionCount,
-      );
+      const [xpGain] = await Promise.all([
+        awardFarmingProgress(
+          ctx.drizzle,
+          user,
+          baseXpGain,
+          questState,
+          "plants_harvested",
+          readyPlots.length,
+          () =>
+            harvestRecorded.then(() => getFarmCollectionCount(ctx.drizzle, ctx.userId)),
+        ),
+        harvestRecorded,
+      ]);
       if (xpGain === null) {
         return errorResponse("Harvested crops but failed to update farming progress");
       }
@@ -1351,13 +1379,9 @@ const guardFarmingMutation = (user: Awaited<ReturnType<typeof fetchUser>>) => {
 const fetchFarmSeedAndYield = async (client: DrizzleClient, seedItemId: string) => {
   const seedItem = await client.query.item.findFirst({
     where: eq(item.id, seedItemId),
+    with: { farmYieldItem: true },
   });
-  const yieldItem = seedItem?.farmYieldItemId
-    ? await client.query.item.findFirst({
-        where: eq(item.id, seedItem.farmYieldItemId),
-      })
-    : null;
-  return { seedItem, yieldItem };
+  return { seedItem, yieldItem: seedItem?.farmYieldItem ?? null };
 };
 
 const fetchFarmPlotWithItems = async (
@@ -1367,48 +1391,26 @@ const fetchFarmPlotWithItems = async (
 ) => {
   const plot = await client.query.farmPlot.findFirst({
     where: and(eq(farmPlot.id, plotId), eq(farmPlot.userId, userId)),
-    with: { seedItem: true },
+    with: { seedItem: { with: { farmYieldItem: true } } },
   });
-  if (!plot) return null;
-  if (!plot.seedItemId) {
-    return { ...plot, seedItem: null, yieldItem: null };
-  }
-
-  const seedItem = plot.seedItem ?? null;
-  const yieldItem = seedItem?.farmYieldItemId
-    ? ((await client.query.item.findFirst({
-        where: eq(item.id, seedItem.farmYieldItemId),
-      })) ?? null)
+  return plot
+    ? {
+        ...plot,
+        seedItem: plot.seedItem ?? null,
+        yieldItem: plot.seedItem?.farmYieldItem ?? null,
+      }
     : null;
-
-  return { ...plot, seedItem, yieldItem };
 };
 
 const fetchFarmPlotsWithItems = async (client: DrizzleClient, userId: string) => {
   const plots = await client.query.farmPlot.findMany({
     where: eq(farmPlot.userId, userId),
-    with: { seedItem: true },
+    with: { seedItem: { with: { farmYieldItem: true } } },
   });
-  const yieldItemIds = [
-    ...new Set(
-      plots
-        .map((plot) => plot.seedItem?.farmYieldItemId)
-        .filter((itemId): itemId is string => !!itemId),
-    ),
-  ];
-  const yieldItems =
-    yieldItemIds.length > 0
-      ? await client.query.item.findMany({ where: inArray(item.id, yieldItemIds) })
-      : [];
-  const yieldItemsById = new Map(
-    yieldItems.map((yieldItem) => [yieldItem.id, yieldItem]),
-  );
   return plots.map((plot) => ({
     ...plot,
     seedItem: plot.seedItem ?? null,
-    yieldItem: plot.seedItem?.farmYieldItemId
-      ? (yieldItemsById.get(plot.seedItem.farmYieldItemId) ?? null)
-      : null,
+    yieldItem: plot.seedItem?.farmYieldItem ?? null,
   }));
 };
 
@@ -1565,16 +1567,8 @@ const resolveShopEntry = async (
   return entry ?? null;
 };
 
-const buildShopEntries = async (
-  client: DrizzleClient,
-  user: Awaited<ReturnType<typeof fetchUser>>,
-  farmingReductionPercent: number,
-): Promise<FarmShopEntryState[]> => {
-  const farmingLevel = getFarmingLevel(user.farmingExperience);
-  const maxPurchased = getMaxPurchasablePlots(farmingLevel);
-  const maxExtractors = getMaxExtractors(farmingLevel);
-
-  const [farmShopSeeds, farmShopFertilizers] = await Promise.all([
+const fetchFarmShopItems = async (client: DrizzleClient) => {
+  return await Promise.all([
     client.query.item.findMany({
       where: and(
         eq(item.isFarmSeed, true),
@@ -1593,18 +1587,19 @@ const buildShopEntries = async (
       orderBy: asc(item.name),
     }),
   ]);
+};
 
+const buildShopEntries = (
+  user: Awaited<ReturnType<typeof fetchUser>>,
+  [farmShopSeeds, farmShopFertilizers]: Awaited<ReturnType<typeof fetchFarmShopItems>>,
+  shopYieldById: ReadonlyMap<string, Item>,
+  farmingReductionPercent: number,
+): FarmShopEntryState[] => {
+  const farmingLevel = getFarmingLevel(user.farmingExperience);
+  const maxPurchased = getMaxPurchasablePlots(farmingLevel);
+  const maxExtractors = getMaxExtractors(farmingLevel);
   const dynamicItems = [...farmShopSeeds, ...farmShopFertilizers];
-  const shopYieldIds = farmShopSeeds
-    .map((seed) => seed.farmYieldItemId)
-    .filter((id): id is string => !!id);
-  const shopYieldItems =
-    shopYieldIds.length > 0
-      ? await client.query.item.findMany({ where: inArray(item.id, shopYieldIds) })
-      : [];
-  const shopYieldById = new Map(
-    shopYieldItems.map((yieldItem) => [yieldItem.id, yieldItem]),
-  );
+  const shopYieldIds = new Set(farmShopSeeds.map((seed) => seed.farmYieldItemId));
 
   const staticEntries: FarmShopEntryState[] = FARM_SHOP_ENTRIES.map((entry) => {
     let canPurchase = farmingLevel >= entry.minLevel && user.farmCurrency >= entry.cost;
@@ -1657,9 +1652,10 @@ const buildShopEntries = async (
       lockedReason = "Not enough farm coins";
       canPurchase = false;
     }
-    const yieldItem = shopItem.farmYieldItemId
-      ? shopYieldById.get(shopItem.farmYieldItemId)
-      : undefined;
+    const yieldItem =
+      shopItem.farmYieldItemId && shopYieldIds.has(shopItem.farmYieldItemId)
+        ? shopYieldById.get(shopItem.farmYieldItemId)
+        : undefined;
     return {
       type,
       label: shopItem.name,
@@ -1699,9 +1695,41 @@ export const buildFarmState = async (
   userId: string,
 ): Promise<FarmStateResponse | { success: false; message: string }> => {
   const now = new Date();
-  const [user, activeSeedExtractions, passiveSources] = await Promise.all([
-    fetchUser(client, userId),
-    settleFarmExtractions(client, userId, now),
+  const userPromise = fetchUser(client, userId);
+  const extractionsPromise = settleFarmExtractions(client, userId, now);
+  const plotsPromise = Promise.all([userPromise, fetchFarmPlots(client, userId)]).then(
+    ([user, existingPlots]) =>
+      ensureFarmPlots(
+        client,
+        userId,
+        getTotalFarmPlots(user.farmPlotsPurchased),
+        existingPlots,
+      ),
+  );
+  const [
+    user,
+    activeSeedExtractions,
+    plotsRaw,
+    shopItems,
+    collectionLog,
+    yieldSeeds,
+    userItems,
+    passiveSources,
+  ] = await Promise.all([
+    userPromise,
+    extractionsPromise,
+    plotsPromise,
+    fetchFarmShopItems(client),
+    getFarmCollectionState(client, userId),
+    // The small configured yield catalog is independent of inventory and plot reads.
+    // Include hidden/non-seed references too: owned seeds and planted crops still need them.
+    client.query.item.findMany({
+      where: isNotNull(item.farmYieldItemId),
+      columns: { id: true },
+      with: { farmYieldItem: true },
+    }),
+    // Settlement can grant seeds; the response must include those newly delivered stacks.
+    extractionsPromise.then(() => fetchUserItems(client, userId)),
     fetchMasterySources(client, userId),
   ]);
   const { farmingReductionPercent } = getActivityBonuses({
@@ -1709,32 +1737,39 @@ export const buildFarmState = async (
     ...passiveSources,
   });
   const totalPlots = getTotalFarmPlots(user.farmPlotsPurchased);
-
-  const plotsPromise = ensureFarmPlots(client, userId, totalPlots);
-  const userItemsPromise = fetchUserItems(client, userId);
-  const shopEntriesPromise = buildShopEntries(client, user, farmingReductionPercent);
-  const collectionLogPromise = getFarmCollectionState(client, userId);
-
-  const [plotsRaw, userItems] = await Promise.all([plotsPromise, userItemsPromise]);
-  const yieldIds = [
+  const yieldItemsById = new Map(
+    yieldSeeds.flatMap((seed) =>
+      seed.farmYieldItem ? [[seed.farmYieldItem.id, seed.farmYieldItem] as const] : [],
+    ),
+  );
+  // Independent reads can observe a seed reassignment after the catalog snapshot.
+  // Confirm missing yields before treating their planted crops as orphaned.
+  const missingYieldIds = [
     ...new Set(
       [
         ...plotsRaw.map((plot) => plot.seedItem?.farmYieldItemId),
         ...userItems.map((owned) => owned.item.farmYieldItemId),
-      ].filter((itemId): itemId is string => !!itemId),
+        ...shopItems.flat().map((shopItem) => shopItem.farmYieldItemId),
+      ].filter(
+        (yieldId): yieldId is string => !!yieldId && !yieldItemsById.has(yieldId),
+      ),
     ),
   ];
-  const [shopEntries, collectionLog, yieldItems] = await Promise.all([
-    shopEntriesPromise,
-    collectionLogPromise,
-    yieldIds.length > 0
-      ? client.query.item.findMany({ where: inArray(item.id, yieldIds) })
-      : Promise.resolve([]),
-  ]);
-
-  const yieldItemsById = new Map(
-    yieldItems.map((yieldItem) => [yieldItem.id, yieldItem]),
+  if (missingYieldIds.length > 0) {
+    const missingYieldItems = await client.query.item.findMany({
+      where: inArray(item.id, missingYieldIds),
+    });
+    for (const yieldItem of missingYieldItems) {
+      yieldItemsById.set(yieldItem.id, yieldItem);
+    }
+  }
+  const shopEntries = buildShopEntries(
+    user,
+    shopItems,
+    yieldItemsById,
+    farmingReductionPercent,
   );
+
   const orphanedPlotRefs = plotsRaw.flatMap((plot) => {
     if (!plot.seedItemId) return [];
     const seedItem = plot.seedItem;
@@ -2124,16 +2159,21 @@ const payOutExtractions = async (
   return new Set(doneIds);
 };
 
-export const ensureFarmPlots = async (
-  client: DrizzleClient,
-  userId: string,
-  totalPlots: number,
-) => {
-  const existing = await client.query.farmPlot.findMany({
+const fetchFarmPlots = async (client: DrizzleClient, userId: string) => {
+  return await client.query.farmPlot.findMany({
     where: eq(farmPlot.userId, userId),
     orderBy: (plot, { asc }) => [asc(plot.slotIndex)],
     with: { seedItem: true },
   });
+};
+
+export const ensureFarmPlots = async (
+  client: DrizzleClient,
+  userId: string,
+  totalPlots: number,
+  prefetchedPlots?: Awaited<ReturnType<typeof fetchFarmPlots>>,
+) => {
+  const existing = prefetchedPlots ?? (await fetchFarmPlots(client, userId));
   const existingSlots = new Set(existing.map((p) => p.slotIndex));
   const inserts = [];
   for (let slotIndex = 0; slotIndex < totalPlots; slotIndex++) {
@@ -2365,6 +2405,16 @@ const fetchFarmingQuestState = async (client: DrizzleClient, userId: string) => 
   });
 };
 
+/** Only the claim's own unchanged quest snapshot may inherit its new CAS timestamp. */
+const farmingQuestStateAfterClaim = (
+  questState: Awaited<ReturnType<typeof fetchFarmingQuestState>>,
+  updatedAt: Date,
+  claimedAt: Date,
+) =>
+  questState?.updatedAt.getTime() === updatedAt.getTime()
+    ? { ...questState, updatedAt: claimedAt }
+    : questState;
+
 /** Awards farming XP and advances the matching active quest objectives together. */
 /** Max read-modify-write passes before a contended quest update gives up. */
 const QUEST_PROGRESS_ATTEMPTS = 3;
@@ -2384,19 +2434,18 @@ const awardFarmingProgress = async (
   questState: Awaited<ReturnType<typeof fetchFarmingQuestState>>,
   task: FarmingQuestTask,
   increment = 1,
-  farmingCollectionCount?: number,
+  loadFarmingCollectionCount?: () => Promise<number>,
 ) => {
   xpGain = Math.floor(xpGain * (1 + getTerritoryWarBoost(user)));
   const emittedTasks = new Set<AllObjectiveTask>([
     task,
     ...(xpGain > 0 ? (["farming_level"] as const) : []),
-    ...(farmingCollectionCount !== undefined
-      ? (["farming_collection_log"] as const)
-      : []),
+    ...(loadFarmingCollectionCount ? (["farming_collection_log"] as const) : []),
   ]);
 
+  let collectionCountPromise: Promise<number> | undefined;
   /** Trackers this action would produce from one snapshot of the user's quest state. */
-  const questUpdateFor = (
+  const questUpdateFor = async (
     snapshotUser: Awaited<ReturnType<typeof fetchUser>>,
     snapshotQuests: Awaited<ReturnType<typeof fetchFarmingQuestState>>,
   ) => {
@@ -2417,6 +2466,22 @@ const awardFarmingProgress = async (
           | undefined,
       };
     }
+    const needsCollectionCount = snapshotQuests.userQuests.some((uq) =>
+      uq.quest?.content.objectives.some(
+        (objective) =>
+          objective.task === "farming_collection_log" &&
+          !snapshotQuests.questData
+            ?.find((tracker) => tracker.id === uq.questId)
+            ?.goals.find((goal) => goal.id === objective.id)?.done,
+      ),
+    );
+    // Recheck after a lost CAS as well: a collection objective may have become active.
+    if (needsCollectionCount && loadFarmingCollectionCount) {
+      collectionCountPromise ??= loadFarmingCollectionCount();
+    }
+    const farmingCollectionCount = collectionCountPromise
+      ? await collectionCountPromise
+      : undefined;
     const trackerUser = {
       ...snapshotUser,
       farmingExperience: snapshotUser.farmingExperience + xpGain,
@@ -2453,7 +2518,7 @@ const awardFarmingProgress = async (
     };
   };
 
-  const first = questUpdateFor(user, questState);
+  const first = await questUpdateFor(user, questState);
   if (xpGain <= 0 && !first.advancesObjective) return xpGain;
 
   // Nothing but XP to persist: the SQL increment is already conflict-free.
@@ -2474,7 +2539,7 @@ const awardFarmingProgress = async (
         fetchUser(client, user.userId),
         fetchFarmingQuestState(client, user.userId),
       ]);
-      update = questUpdateFor(snapshotUser, snapshotQuests);
+      update = await questUpdateFor(snapshotUser, snapshotQuests);
       if (!update.advancesObjective) {
         // Another action already satisfied every objective this one would have advanced;
         // only the XP is still outstanding.

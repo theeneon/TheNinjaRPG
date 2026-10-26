@@ -1662,6 +1662,11 @@ export const itemRelations = relations(item, ({ one, many }) => ({
   }),
   evolutions: many(item, { relationName: "itemEvolutions" }),
   variants: many(itemVariant),
+  farmYieldItem: one(item, {
+    fields: [item.farmYieldItemId],
+    references: [item.id],
+    relationName: "farmYield",
+  }),
   farmCollectionLogs: many(farmCollectionLog),
 }));
 
