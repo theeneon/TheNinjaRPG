@@ -1,8 +1,12 @@
+import dynamic from "next/dynamic";
 import type React from "react";
 import { api } from "@/app/_trpc/client";
 import ContentBox from "@/layout/ContentBox";
 import Loader from "@/layout/Loader";
-import DisplayUserReport from "@/layout/UserReport";
+
+const DisplayUserReport = dynamic(() => import("@/layout/UserReport"), {
+  loading: () => <Loader explanation="Loading report" />,
+});
 
 interface BanInfoProps {
   placeholder?: string;
