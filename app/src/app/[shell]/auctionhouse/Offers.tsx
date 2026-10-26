@@ -5,7 +5,7 @@ import { Check, ChevronsUpDown, Plus, Search } from "lucide-react";
 import { type ComponentProps, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
-import { api, type RouterOutputs } from "@/app/_trpc/client";
+import { api, type RouterInputs, type RouterOutputs } from "@/app/_trpc/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -43,6 +43,7 @@ import {
   type AuctionListingState,
   MAX_ITEM_STACK_SIZE,
 } from "@/drizzle/constants";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import Image from "@/layout/Image";
 import ItemWithEffects from "@/layout/ItemWithEffects";
 import Loader from "@/layout/Loader";
@@ -60,15 +61,28 @@ export function AuctionOffers({
   status: AuctionListingState;
 }) {
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
   const [onlyMine, setOnlyMine] = useState(false);
   const query = api.auction.getAuctionOffers.useInfiniteQuery(
-    { offerType, status, search, onlyMine, limit: 10 },
-    { getNextPageParam: (page) => page.nextCursor, refetchInterval: 10000 },
+    { offerType, status, search: debouncedSearch, onlyMine, limit: 10 },
+    {
+      getNextPageParam: (page) => page.nextCursor,
+      refetchInterval: 10000,
+      placeholderData: (previousData, previousQuery) => {
+        const previousInput = previousQuery?.queryKey[1]?.input as
+          | RouterInputs["auction"]["getAuctionOffers"]
+          | undefined;
+        return previousInput?.status === status && previousInput.onlyMine === onlyMine
+          ? previousData
+          : undefined;
+      },
+    },
   );
   const inventory = api.item.getUserItems.useQuery(undefined, {
     refetchOnMount: "always",
   });
   const offers = query.data?.pages.flatMap((page) => page.data) ?? [];
+  const isUpdatingFilters = search !== debouncedSearch || query.isPlaceholderData;
   return (
     <div>
       <div className="flex flex-wrap items-end gap-3 border-b py-3">
@@ -96,9 +110,16 @@ export function AuctionOffers({
           {offerType === "REQUEST" ? "My requests" : "My trades"}
         </Button>
       </div>
-      <div className="space-y-4 pt-3">
-        {query.isLoading ? (
-          <Loader explanation="Loading offers" />
+      <div className="space-y-4 pt-3" aria-busy={query.isLoading || isUpdatingFilters}>
+        {isUpdatingFilters && offers.length > 0 && (
+          <p role="status" className="text-muted-foreground text-sm">
+            Updating offers…
+          </p>
+        )}
+        {query.isLoading || (isUpdatingFilters && offers.length === 0) ? (
+          <Loader
+            explanation={query.isLoading ? "Loading offers" : "Updating offers…"}
+          />
         ) : query.isError ? (
           <p role="alert">
             Could not load offers.{" "}
@@ -128,7 +149,7 @@ export function AuctionOffers({
         {query.hasNextPage && (
           <Button
             variant="outline"
-            disabled={query.isFetchingNextPage}
+            disabled={query.isFetching || isUpdatingFilters}
             onClick={() => void query.fetchNextPage()}
           >
             Load more

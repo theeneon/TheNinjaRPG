@@ -25,7 +25,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
-import { api, type RouterOutputs } from "@/app/_trpc/client";
+import { api, type RouterInputs, type RouterOutputs } from "@/app/_trpc/client";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -95,6 +95,7 @@ import {
   RYO_FOR_REP_MIN_REPS,
   TRADEABLE_CURRENCY_TYPES,
 } from "@/drizzle/constants";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useAvatarRenditionWidth } from "@/layout/Avatar";
 import ContentBox from "@/layout/ContentBox";
 import { getRarityBackground } from "@/layout/ContentImage";
@@ -347,28 +348,42 @@ const AuctionListing: React.FC<AuctionListingProps> = ({
   // State
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
+  const debouncedSearchTerm = useDebouncedValue(searchTerm);
+  const debouncedSellerSearchTerm = useDebouncedValue(sellerSearchTerm);
+  const debouncedMinPrice = useDebouncedValue(minPrice);
+  const debouncedMaxPrice = useDebouncedValue(maxPrice);
+  const isDebouncing =
+    searchTerm !== debouncedSearchTerm ||
+    sellerSearchTerm !== debouncedSellerSearchTerm ||
+    minPrice !== debouncedMinPrice ||
+    maxPrice !== debouncedMaxPrice;
   const [selectedAuction, setSelectedAuction] = useState<string | null>(null);
   const [showDialog, setShowDialog] = useState(false);
   const [lastElement, setLastElement] = useState<HTMLDivElement | null>(null);
 
   // Queries
-  const parsedMinPrice = Number.parseFloat(minPrice);
-  const parsedMaxPrice = Number.parseFloat(maxPrice);
+  const parsedMinPrice = Number.parseFloat(debouncedMinPrice);
+  const parsedMaxPrice = Number.parseFloat(debouncedMaxPrice);
   const {
     data: listings,
     isLoading,
+    isPlaceholderData,
+    isError,
+    isFetching,
+    isFetchNextPageError,
+    refetch,
     fetchNextPage,
     hasNextPage,
   } = api.auction.getAuctionListings.useInfiniteQuery(
     {
-      itemName: searchTerm.trim() || undefined,
-      sellerSearch: sellerSearchTerm.trim() || undefined,
+      itemName: debouncedSearchTerm.trim() || undefined,
+      sellerSearch: debouncedSellerSearchTerm.trim() || undefined,
       minPrice:
-        minPrice && Number.isFinite(parsedMinPrice)
+        debouncedMinPrice && Number.isFinite(parsedMinPrice)
           ? Math.max(0, parsedMinPrice)
           : undefined,
       maxPrice:
-        maxPrice && Number.isFinite(parsedMaxPrice)
+        debouncedMaxPrice && Number.isFinite(parsedMaxPrice)
           ? Math.max(0, parsedMaxPrice)
           : undefined,
       ...(browseTab === "MINE"
@@ -385,13 +400,32 @@ const AuctionListing: React.FC<AuctionListingProps> = ({
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
+      placeholderData: (previousData, previousQuery) => {
+        const previousInput = previousQuery?.queryKey[1]?.input as
+          | RouterInputs["auction"]["getAuctionListings"]
+          | undefined;
+        const isSameScope =
+          browseTab === "MINE"
+            ? previousInput?.onlyMine === true
+            : browseTab === "MY_BIDS"
+              ? previousInput?.onlyBidOn === true
+              : previousInput?.listingType === browseTab;
+        return previousInput?.status === selectedStatus && isSameScope
+          ? previousData
+          : undefined;
+      },
       refetchInterval: 10000,
       refetchIntervalInBackground: false,
     },
   );
 
   // Infinite pagination
-  useInfinitePagination({ fetchNextPage, hasNextPage, lastElement });
+  const isUpdatingFilters = isDebouncing || isPlaceholderData;
+  useInfinitePagination({
+    fetchNextPage,
+    hasNextPage,
+    lastElement: isUpdatingFilters ? null : lastElement,
+  });
 
   // Flatten all pages data and filter out listings with missing userItem data
   // (can happen if item was deleted between query time and render time)
@@ -469,30 +503,35 @@ const AuctionListing: React.FC<AuctionListingProps> = ({
         </div>
       </div>
 
-      <div className="pt-3">
-        {isLoading && allListings.length === 0 ? (
+      <div className="pt-3" aria-busy={isLoading || isUpdatingFilters}>
+        {isUpdatingFilters && allListings.length > 0 && (
+          <p role="status" className="text-muted-foreground text-sm">
+            Updating lots…
+          </p>
+        )}
+        {(isLoading || isUpdatingFilters) && allListings.length === 0 ? (
           <div className="flex min-h-[40vh] items-center justify-center">
-            <Loader explanation="Loading lots…" />
+            <Loader explanation={isLoading ? "Loading lots…" : "Updating lots…"} />
           </div>
-        ) : allListings.length === 0 ? (
+        ) : allListings.length === 0 && !isError ? (
           <div className="flex min-h-[36vh] flex-col items-center justify-center rounded-xl border border-dashed bg-muted/20 px-6 py-16 text-center">
             <Landmark className="mb-3 h-12 w-12 text-muted-foreground opacity-60" />
             <p className="font-medium text-lg">No lots match your filters</p>
             <p className="mt-1 max-w-sm text-muted-foreground text-sm">
               {browseTab === "MINE"
-                ? sellerSearchTerm.trim()
+                ? debouncedSellerSearchTerm.trim()
                   ? "No listings match the seller search. Try clearing the seller filter."
                   : "You have no listings in this status. Use the + button to create one, or switch status above."
                 : browseTab === "MY_BIDS"
-                  ? sellerSearchTerm.trim()
+                  ? debouncedSellerSearchTerm.trim()
                     ? "No bids match the seller search. Try clearing the seller filter."
                     : "You have no bids in this status. Open Auctions and place a bid to see it here."
-                  : searchTerm.trim() || sellerSearchTerm.trim()
+                  : debouncedSearchTerm.trim() || debouncedSellerSearchTerm.trim()
                     ? "Try clearing the item or seller search, widening the price range, or switch to another tab."
                     : "Try widening the price range, or switch to another tab."}
             </p>
           </div>
-        ) : (
+        ) : allListings.length > 0 ? (
           <>
             <ul className="grid list-none gap-4 sm:grid-cols-2 xl:grid-cols-3">
               {allListings.map((listing) => (
@@ -520,6 +559,20 @@ const AuctionListing: React.FC<AuctionListingProps> = ({
               </div>
             )}
           </>
+        ) : null}
+        {isError && !isUpdatingFilters && (
+          <p role="alert">
+            Could not load lots.{" "}
+            <Button
+              variant="outline"
+              disabled={isFetching}
+              onClick={() =>
+                isFetchNextPageError ? void fetchNextPage() : void refetch()
+              }
+            >
+              Retry
+            </Button>
+          </p>
         )}
       </div>
 
