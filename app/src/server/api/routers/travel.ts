@@ -879,6 +879,8 @@ export const travelRouter = createTRPCRouter({
         x: longitude,
         y: latitude,
       });
+      // Larger maps can keep a predicted crossing local. Failed admission
+      // prefetches are retried below only when the move actually crosses.
       const prefetchedCampSector = sectorsToPrefetch[1];
       const [maps, originalUser, warCampEntry] = await Promise.all([
         fetchPublishedSectorMaps(ctx.drizzle, sectorsToPrefetch).catch(() => null),
@@ -888,7 +890,9 @@ export const travelRouter = createTRPCRouter({
         }),
         prefetchedCampSector === undefined
           ? undefined
-          : fetchWarCampEntry(ctx.drizzle, userId, prefetchedCampSector),
+          : fetchWarCampEntry(ctx.drizzle, userId, prefetchedCampSector).catch(
+              () => undefined,
+            ),
       ]);
       if (!originalUser) return errorResponse("User not found");
       let moveUser = originalUser;

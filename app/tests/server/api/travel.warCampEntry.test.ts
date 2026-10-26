@@ -31,6 +31,7 @@ const makeMap = (width = SECTOR_WIDTH, height = SECTOR_HEIGHT): NormalizedSector
 
 const fixture = ({ width = SECTOR_WIDTH, height = SECTOR_HEIGHT,
   reservedSectors = [] as number[], queued = false, settledVillage = "neutral",
+  failedCampReads = 0,
 } = {}) => {
   const reads: string[] = [];
   const campSectors: number[] = [];
@@ -67,6 +68,7 @@ const fixture = ({ width = SECTOR_WIDTH, height = SECTOR_HEIGHT,
       },
       war: { findMany: async () => {
         reads.push("camp wars");
+        if (campSectors.length <= failedCampReads) throw new Error("Camp admission unavailable");
         return reservedSectors.includes(campSectors.at(-1)!) ? [reservedWar] : [];
       } },
     },
@@ -123,6 +125,30 @@ describe("travel camp admission scheduling", () => {
     expect((await test.move(10, 10)).success).toBe(true);
     expect(test.campSectors).toEqual([]);
     expect(test.reads).not.toContain("mercenary");
+  });
+
+  it.each([0, 1])("allows a custom-map local step with an unused prediction (failed reads: %s)", async (failedCampReads) => {
+    const test = fixture({ width: SECTOR_WIDTH + 1, failedCampReads });
+    test.releaseUser();
+    expect(await test.move(SECTOR_WIDTH, 10)).toMatchObject({ success: true, data: { sector: SECTOR } });
+    expect(test.campSectors).toEqual([neighbors.east]);
+    expect(test.getWrites()).toBe(1);
+  });
+
+  it.each([true, false])("fetches required admission after a failed prediction (reserved: %s)", async (reserved) => {
+    const test = fixture({ failedCampReads: 1, reservedSectors: reserved ? [neighbors.east] : [] });
+    test.releaseUser();
+    expect((await test.move(SECTOR_WIDTH, 10)).success).toBe(!reserved);
+    expect(test.campSectors).toEqual([neighbors.east, neighbors.east]);
+    expect(test.getWrites()).toBe(reserved ? 0 : 1);
+  });
+
+  it("does not enter when both speculative and required admission reads fail", async () => {
+    const test = fixture({ failedCampReads: 2 });
+    test.releaseUser();
+    await expect(test.move(SECTOR_WIDTH, 10)).rejects.toMatchObject({ code: "INTERNAL_SERVER_ERROR" });
+    expect(test.campSectors).toEqual([neighbors.east, neighbors.east]);
+    expect(test.getWrites()).toBe(0);
   });
 
   it("uses serial admission when a custom-sized border was not predicted", async () => {
