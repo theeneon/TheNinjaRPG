@@ -259,18 +259,20 @@ const BaseComment: React.FC<BaseCommentProps> = (props) => {
     }
   }
 
-  // Handler for clicks outside emoji selector
-  const handleOutsideClick = (e: MouseEvent) => {
-    if (emojiRef.current && !emojiRef.current.contains(e.target as HTMLElement)) {
-      setEmojiOpen(false);
-    }
-  };
+  // Also dismiss while the picker chunk is loading, before its own outside-click
+  // handler is available. Closed comments do not need a document listener.
   useEffect(() => {
+    if (!emojiOpen) return;
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (emojiRef.current && !emojiRef.current.contains(e.target as HTMLElement)) {
+        setEmojiOpen(false);
+      }
+    };
     document.addEventListener("mousedown", handleOutsideClick);
     return () => {
       document.removeEventListener("mousedown", handleOutsideClick);
     };
-  });
+  }, [emojiOpen]);
 
   return (
     <Post
