@@ -5,6 +5,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { initBotId } from "botid/client/core";
 import { BOTID_PROTECTED_ROUTES } from "@/libs/botid";
+import { createPublicBrowserRouteProvider } from "@/libs/browserRouteTelemetry";
 import { stripQueryMetricUserAttributes } from "@/libs/queryTelemetry";
 import {
   isNetworkError as isNetworkErrorPattern,
@@ -29,6 +30,9 @@ Sentry.init({
   // Adjust this value in production, or use tracesSampler for greater control
   tracesSampleRate: 0.001,
   beforeSendMetric: stripQueryMetricUserAttributes,
+  // Resolve the public URL rather than the internal app/[shell] rewrite. The SDK
+  // also uses this provider for target navigations and delayed Web Vital reports.
+  routeProvider: createPublicBrowserRouteProvider(() => window.location.href),
 
   // Keep diagnostics without sending account credentials or request/user data.
   dataCollection: {
