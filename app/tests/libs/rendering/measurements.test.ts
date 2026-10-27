@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createFrameMeasurements, summarizeSamples } from "@/libs/rendering/measurements";
-import { spriteBenchmarkSchema } from "@/validators/renderingBenchmark";
+import { renderCaptureSchema } from "@/validators/renderingBenchmark";
 
 describe("render measurements", () => {
   it("uses nearest-rank percentiles and does not invent empty measurements", () => {
@@ -43,12 +43,12 @@ describe("render measurements", () => {
   });
 
   it("bounds external workload inputs and gives comparable protocol defaults", () => {
-    const options = { revision: "baseline", deviceLabel: "test", fixture: "sprites", kind: "moving", count: 500 };
-    expect(spriteBenchmarkSchema.parse(options)).toMatchObject({
-      warmupMs: 15_000, durationMs: 60_000, resolution: 1, antialias: false,
+    const options = { revision: "baseline", deviceLabel: "test", fixture: "combat-dense" };
+    expect(renderCaptureSchema.parse(options)).toMatchObject({
+      warmupMs: 15_000, durationMs: 60_000, cpuThrottlingRate: 1, networkProfile: "unthrottled",
     });
-    expect(spriteBenchmarkSchema.safeParse({ ...options, count: 0 }).success).toBe(false);
-    expect(spriteBenchmarkSchema.safeParse({ ...options, count: 1e9 }).success).toBe(false);
-    expect(spriteBenchmarkSchema.safeParse({ ...options, durationMs: Infinity }).success).toBe(false);
+    expect(renderCaptureSchema.safeParse({ ...options, cpuThrottlingRate: 0 }).success).toBe(false);
+    expect(renderCaptureSchema.safeParse({ ...options, durationMs: 1e9 }).success).toBe(false);
+    expect(renderCaptureSchema.safeParse({ ...options, durationMs: Infinity }).success).toBe(false);
   });
 });

@@ -111,10 +111,12 @@ export async function portAvailable(port) {
   });
 }
 
-async function reserve(paths, id, requestedPort) {
+async function reserve(paths, id, requestedPort, mode) {
   return locked(paths, async () => {
     const previous = await readJson(paths.stateFile);
     if (ownsSupervisor(previous)) {
+      if ((previous.mode ?? "development") !== mode)
+        throw new Error(`Already running in ${previous.mode ?? "development"} mode. Use make dev-down before changing DEV_SERVER_MODE.`);
       if (requestedPort && previous.port !== requestedPort)
         throw new Error(
           `Already running on ${previous.url}. Use make dev-down before changing PORT.`,
@@ -149,6 +151,7 @@ async function reserve(paths, id, requestedPort) {
         url: `http://localhost:${port}`,
         logPath: paths.logPath,
         phase: "starting",
+        mode,
       };
       await saveJson(paths.stateFile, state);
       return state;
@@ -172,8 +175,8 @@ export async function devStatus(paths = devPaths()) {
   };
 }
 
-async function supervise(paths, id, port) {
-  const state = await reserve(paths, id, port);
+async function supervise(paths, id, port, mode) {
+  const state = await reserve(paths, id, port, mode);
   if (!state) return;
   let child;
   let stopping = false;
@@ -204,6 +207,15 @@ async function supervise(paths, id, port) {
     return completion;
   };
   try {
+    // Production measurements must serve an explicitly built artifact, never trigger a build.
+    if (mode === "production") {
+      try {
+        await readFile(join(paths.root, "app/.next/BUILD_ID"), "utf8");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        throw new Error("Production build missing. Run make build before starting DEV_SERVER_MODE=production.");
+      }
+    }
     const prepared = await run("make", ["dev-prepare"]);
     state.childPid = null;
     if (prepared.code !== 0 || stopping)
@@ -212,13 +224,13 @@ async function supervise(paths, id, port) {
       process.execPath,
       [
         join(paths.root, "app/node_modules/next/dist/bin/next"),
-        "dev",
+        mode === "production" ? "start" : "dev",
         "-p",
         String(state.port),
       ],
       {
         cwd: join(paths.root, "app"),
-        env: { ...process.env, NODE_ENV: "development" },
+        env: { ...process.env, NODE_ENV: mode },
       },
     );
     let finished = false;
@@ -263,9 +275,11 @@ async function supervise(paths, id, port) {
   }
 }
 
-async function launch(paths, foreground, port) {
+async function launch(paths, foreground, port, mode) {
   const existing = await readJson(paths.stateFile);
   let launchError;
+  if (ownsSupervisor(existing) && (existing.mode ?? "development") !== mode)
+    throw new Error(`Already running in ${existing.mode ?? "development"} mode on ${existing.url}; use make dev-down first.`);
   if (ownsSupervisor(existing) && port && port !== existing.port)
     throw new Error(`Already running on ${existing.url}; use make dev-down first.`);
   if (!ownsSupervisor(existing)) {
@@ -322,17 +336,20 @@ async function launch(paths, foreground, port) {
 async function main() {
   const paths = devPaths();
   const [action, id, rawPort] = process.argv.slice(2);
+  const mode = process.env.DEV_SERVER_MODE ?? "development";
+  if (["serve", "start", "up"].includes(action) && !["development", "production"].includes(mode))
+    throw new Error("DEV_SERVER_MODE must be development or production.");
   const requested = action === "serve" ? rawPort : process.env.PORT;
   const port = requested ? Number(requested) : null;
   if (requested && (!Number.isInteger(port) || port < 1024 || port > 65535))
     throw new Error("PORT must be an integer from 1024 to 65535.");
   switch (action) {
     case "serve":
-      await supervise(paths, id, port);
+      await supervise(paths, id, port, mode);
       break;
     case "start":
     case "up":
-      await launch(paths, action === "start", port);
+      await launch(paths, action === "start", port, mode);
       break;
     case "status":
       console.log(JSON.stringify(await devStatus(paths), null, 2));

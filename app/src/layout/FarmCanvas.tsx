@@ -217,6 +217,7 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
     );
 
     mount.appendChild(renderer.domElement);
+    performanceMonitor.setCanvas(renderer.domElement);
 
     const setHoveredSlot = (slotIndex: number | null) => {
       if (hoveredSlotRef.current === slotIndex) return;

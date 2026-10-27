@@ -5,6 +5,7 @@ import {
   endRenderMeasurement,
   installRenderCapture,
   invalidateRenderMeasurement,
+  registerRenderCanvas,
 } from "@/libs/rendering/browserMetrics";
 
 /**
@@ -13,6 +14,7 @@ import {
  * @param unbounded - If true, removes vsync limitation for performance testing (dev only)
  */
 export const usePerformanceMonitor = (unbounded = false, scene = "scene") => {
+  const releaseCanvasRef = useRef<(() => void) | null>(null);
   const statsRef = useRef<{
     fps: Stats | null;
     ms: Stats | null;
@@ -25,7 +27,10 @@ export const usePerformanceMonitor = (unbounded = false, scene = "scene") => {
 
   useEffect(() => {
     installRenderCapture();
-    return () => invalidateRenderMeasurement(scene, "Scene unmounted during capture");
+    return () => {
+      invalidateRenderMeasurement(scene, "Scene unmounted during capture");
+      releaseCanvasRef.current?.();
+    };
   }, [scene]);
 
   useEffect(() => {
@@ -125,5 +130,10 @@ export const usePerformanceMonitor = (unbounded = false, scene = "scene") => {
     }
   };
 
-  return { begin, end, requestFrame, cancelFrame, isUnbounded: unbounded };
+  const setCanvas = (canvas: HTMLCanvasElement) => {
+    releaseCanvasRef.current?.();
+    releaseCanvasRef.current = registerRenderCanvas(scene, canvas);
+  };
+
+  return { begin, end, requestFrame, cancelFrame, setCanvas, isUnbounded: unbounded };
 };

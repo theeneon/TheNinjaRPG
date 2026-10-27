@@ -1,6 +1,14 @@
 import { z } from "zod";
 
-/** Shared by the browser runner, scene capture API and external benchmark automation. */
+export const renderSceneSchema = z.enum([
+  "globe",
+  "sector",
+  "combat",
+  "farm",
+  "towerDefense",
+]);
+
+/** Shared by actual gameplay capture and comparison automation. */
 export const renderCaptureSchema = z.object({
   revision: z.string().min(1).max(100),
   deviceLabel: z.string().min(1).max(200),
@@ -9,17 +17,52 @@ export const renderCaptureSchema = z.object({
   durationMs: z.number().int().min(100).max(120_000).default(60_000),
   run: z.number().int().min(1).max(100).default(1),
   simulated: z.boolean().default(false),
-});
-
-export const spriteBenchmarkSchema = renderCaptureSchema.extend({
-  kind: z.enum(["static", "moving", "animated"]),
-  count: z.number().int().min(1).max(10_000),
-  textureCount: z.number().int().min(1).max(16).default(1),
-  width: z.number().int().min(128).max(2048).default(640),
-  height: z.number().int().min(128).max(2048).default(480),
-  resolution: z.number().min(0.5).max(2).default(1),
-  antialias: z.boolean().default(false),
+  cpuThrottlingRate: z.number().min(1).max(20).default(1),
+  networkProfile: z
+    .enum(["unthrottled", "Slow 3G", "Fast 3G", "Slow 4G", "Fast 4G"])
+    .default("unthrottled"),
+  scenario: z
+    .record(
+      z.string(),
+      z.union([z.string(), z.number().finite(), z.boolean(), z.null()]),
+    )
+    .default({}),
 });
 
 export type RenderCaptureOptions = z.infer<typeof renderCaptureSchema>;
-export type SpriteBenchmarkOptions = z.infer<typeof spriteBenchmarkSchema>;
+
+const sampleList = z.array(z.number().finite().nonnegative());
+export const renderMeasurementResultSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    renderer: z.enum(["three", "pixi"]),
+    scene: renderSceneSchema,
+    options: renderCaptureSchema,
+    environment: z
+      .object({
+        userAgent: z.string(),
+        viewport: z.object({ width: z.number(), height: z.number() }),
+        devicePixelRatio: z.number(),
+        buildMode: z.string(),
+        canvas: z.object({
+          width: z.number(),
+          height: z.number(),
+          cssWidth: z.number(),
+          cssHeight: z.number(),
+        }),
+      })
+      .loose(),
+    result: z.object({
+      valid: z.boolean(),
+      invalidReasons: z.array(z.string()),
+      raw: z.object({
+        frameIntervalMs: z.array(z.number().finite().positive()),
+        cpuFrameMs: sampleList,
+        stagesMs: z.record(z.string(), sampleList),
+        counters: z.record(z.string(), sampleList),
+      }),
+    }),
+  })
+  .loose();
+
+export type RenderMeasurementResult = z.infer<typeof renderMeasurementResultSchema>;

@@ -173,6 +173,7 @@ const GlobalMap: React.FC<MapProps> = (props) => {
 
       // Create scene
       sceneRef.appendChild(renderer.domElement);
+      performanceMonitor.setCanvas(renderer.domElement);
       // Canvas element (renderer is non-null past the guard above) - used to
       // toggle the pointer cursor while hovering sectors on the globe
       const hoverCanvas = renderer.domElement;

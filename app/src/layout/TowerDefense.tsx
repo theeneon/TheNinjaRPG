@@ -473,6 +473,7 @@ const TowerDefenseInner = ({
     spriteMixerRef.current = new SpriteMixer();
 
     mount.appendChild(renderer.domElement);
+    performanceMonitor.setCanvas(renderer.domElement);
 
     preloadProjectileTextures();
     initDamageNumberPool();

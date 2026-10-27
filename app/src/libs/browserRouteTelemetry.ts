@@ -105,7 +105,6 @@ export const PUBLIC_PAGE_ROUTES = [
   "/manual/recruitment",
   "/manual/review",
   "/manual/review/battlefield",
-  "/manual/review/rendering",
   "/manual/rewards",
   "/manual/sageMode",
   "/manual/sageMode/edit/[sagemodeid]",

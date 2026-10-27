@@ -15,10 +15,10 @@ const roots: string[] = [];
 const git = (root: string, ...args: string[]) =>
   execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
 
-async function command(root: string, action: string, port = "") {
+async function command(root: string, action: string, port = "", mode = "development") {
   const child = spawn("node", [join(root, "scripts/dev-server.mjs"), action], {
     cwd: root,
-    env: { ...process.env, PORT: port },
+    env: { ...process.env, PORT: port, DEV_SERVER_MODE: mode },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -45,7 +45,7 @@ async function fixture() {
     `
     const http = require('node:http');
     const port = Number(process.argv[process.argv.indexOf('-p') + 1]);
-    console.log('fixture: starting');
+    console.log('fixture: starting', process.argv[2], process.env.NODE_ENV);
     http.createServer((req, res) => res.end('ready')).listen(port);
   `,
   );
@@ -72,6 +72,34 @@ afterEach(async () => {
 });
 
 describe("parallel worktree dev servers", () => {
+  test("serves a production build and refuses to silently reuse it as development", async () => {
+    const { root } = await fixture();
+    await mkdir(join(root, "app/.next"));
+    await writeFile(join(root, "app/.next/BUILD_ID"), "fixture-build");
+    const result = await command(root, "up", "", "production");
+    expect(result.code, result.output).toBe(0);
+    const state = JSON.parse(result.output);
+    expect(state.mode).toBe("production");
+    expect(await readFile(state.logPath, "utf8")).toContain("fixture: starting start production");
+    expect((await command(root, "up")).code).not.toBe(0);
+    expect((await command(root, "up", "", "production")).code).toBe(0);
+    expect((await fetch(state.url)).status).toBe(200);
+  }, 15_000);
+
+  test("fails production startup without a build instead of invoking one", async () => {
+    const { root } = await fixture();
+    const result = await command(root, "up", "", "production");
+    expect(result.code).not.toBe(0);
+    expect(await readFile(devPaths(root).logPath, "utf8")).toContain("Production build missing");
+  }, 10_000);
+
+  test("rejects unsupported server modes before reserving a port", async () => {
+    const { root } = await fixture();
+    const result = await command(root, "up", "", "preview");
+    expect(result.code).not.toBe(0);
+    expect(result.output).toContain("DEV_SERVER_MODE must be development or production");
+  });
+
   test("concurrent starts reuse one server without deleting its cache", async () => {
     const { root } = await fixture();
     await mkdir(join(root, "app/.next"));

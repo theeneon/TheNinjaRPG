@@ -2354,6 +2354,7 @@ const Sector: React.FC<SectorProps> = (props) => {
 
       // Create scene
       sceneRef.appendChild(renderer.domElement);
+      performanceMonitor.setCanvas(renderer.domElement);
 
       // Track WebGL context loss to prevent shader errors on iOS mobile browsers
       // Clear texture caches when context is lost to free memory

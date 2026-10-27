@@ -1089,6 +1089,7 @@ const Combat: React.FC<CombatProps> = (props) => {
 
       // Create scene
       sceneRef.appendChild(renderer.domElement);
+      performanceMonitor.setCanvas(renderer.domElement);
 
       // Track WebGL context loss to prevent shader errors on iOS mobile browsers
       let isContextLost = false;

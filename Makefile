@@ -26,7 +26,9 @@ endif
 -include ./app/.env
 
 PORT ?=
-export PORT REQUEST USER_KEY ENDPOINT INPUT_FILE
+DEV_SERVER_MODE ?= development
+export PORT DEV_SERVER_MODE REQUEST USER_KEY ENDPOINT INPUT_FILE
+export BENCHMARK_BEFORE BENCHMARK_AFTER BENCHMARK_OUTPUT
 
 SPACETIME_VERSION := $(shell node -p "require('./app/package.json').dependencies.spacetimedb")
 SPACETIME_BIN ?= $(HOME)/.local/share/spacetime/bin/$(SPACETIME_VERSION)/spacetimedb-cli
@@ -107,7 +109,7 @@ dev-prepare: ensure-env # Prepare a worktree without starting a server
 	@$(MAKE) install ensure-services
 
 .PHONY: dev-up dev-status dev-down
-dev-up: # Start/reuse this worktree's server, wait for HTTP readiness, print JSON
+dev-up: # Start/reuse this worktree's server (DEV_SERVER_MODE=production serves an existing build)
 	@node scripts/dev-server.mjs up
 dev-status: # Show this worktree's server, log, and browser context prefix as JSON
 	@node scripts/dev-server.mjs status
@@ -212,6 +214,10 @@ check: # Run Biome and TypeScript checks
 typecheck: # Run TypeScript type checking
 	@echo "${YELLOW}Running TypeScript type checking${RESET}"
 	cd app && node ../scripts/dev-bun.mjs run typecheck
+
+.PHONY: rendering-benchmark-report
+rendering-benchmark-report: # Compare exported runs (BENCHMARK_BEFORE, BENCHMARK_AFTER, optional BENCHMARK_OUTPUT)
+	@cd app && node ../scripts/dev-bun.mjs run scripts/rendering-benchmark-report.ts
 
 -------------DEPENDENCIES---------------: # -------------------------------------------------------
 .PHONY: deps-upgrade

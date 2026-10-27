@@ -1,5 +1,24 @@
 import { createFrameMeasurements } from "@/libs/rendering/measurements";
-import { renderCaptureSchema } from "@/validators/renderingBenchmark";
+import {
+  renderCaptureSchema,
+  renderSceneSchema,
+} from "@/validators/renderingBenchmark";
+
+const sceneCanvases = new Map<string, HTMLCanvasElement>();
+
+export const registerRenderCanvas = (scene: string, canvas: HTMLCanvasElement) => {
+  sceneCanvases.set(scene, canvas);
+  return () => {
+    if (sceneCanvases.get(scene) === canvas) sceneCanvases.delete(scene);
+  };
+};
+
+const canvasDimensions = (canvas: HTMLCanvasElement) => ({
+  width: canvas.width,
+  height: canvas.height,
+  cssWidth: canvas.getBoundingClientRect().width,
+  cssHeight: canvas.getBoundingClientRect().height,
+});
 
 /** Opt-in capture is available in production without enabling dev FPS panels or logs. */
 export const installRenderCapture = () => {
@@ -11,7 +30,14 @@ export const installRenderCapture = () => {
   window.tnrRenderMeasurements ??= {
     start: (scene, input) => {
       if (capture) throw new Error("A render measurement is already running");
+      renderSceneSchema.parse(scene);
       const options = renderCaptureSchema.parse(input);
+      const canvas = sceneCanvases.get(scene);
+      if (!canvas?.isConnected || !canvas.clientWidth || !canvas.clientHeight) {
+        throw new Error(`The ${scene} canvas is not visible and ready`);
+      }
+      const dimensions = canvasDimensions(canvas);
+      const environment = { ...captureRenderEnvironment(), canvas: dimensions };
       const startedAt = performance.now();
       const measurements = createFrameMeasurements();
       const onVisibility = () => {
@@ -19,6 +45,8 @@ export const installRenderCapture = () => {
           measurements.invalidate("Document was hidden during capture");
       };
       document.addEventListener("visibilitychange", onVisibility);
+      const onContextLoss = () => measurements.invalidate("WebGL context was lost");
+      canvas.addEventListener("webglcontextlost", onContextLoss);
       if (document.hidden) onVisibility();
       const current = {
         scene,
@@ -32,13 +60,17 @@ export const installRenderCapture = () => {
       return new Promise((resolve) => {
         setTimeout(() => {
           document.removeEventListener("visibilitychange", onVisibility);
+          canvas.removeEventListener("webglcontextlost", onContextLoss);
+          if (JSON.stringify(dimensions) !== JSON.stringify(canvasDimensions(canvas))) {
+            measurements.invalidate("Canvas dimensions changed during capture");
+          }
           if (capture === current) capture = null;
           resolve({
             schemaVersion: 1,
             renderer: "three",
             scene,
             options,
-            environment: captureRenderEnvironment(),
+            environment,
             result: measurements.snapshot(),
           });
         }, options.warmupMs + options.durationMs);
