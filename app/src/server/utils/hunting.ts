@@ -34,15 +34,19 @@ export const settleHuntingBattle = async (
   if (!meta) return false;
   // Reuse initiation's history and political metadata; combat settlement cannot fetch again.
   const hunter = current.usersState.find((user) => user.userId === meta.userId);
-  const boost = hunter
+  const clan = hunter?.clanId ? current.extraState.clans[hunter.clanId] : null;
+  const territoryBoost = hunter
     ? getTerritoryWarBoost({
         ...hunter,
         village: hunter.villageId
           ? current.extraState.villages[hunter.villageId]
           : null,
-        clan: hunter.clanId ? current.extraState.clans[hunter.clanId] : null,
+        clan,
       })
     : 0;
+  // Stack additively like quest rewards; outlaw factions have no clan hunter boost.
+  const clanBoost = hunter && !hunter.isOutlaw ? (clan?.hunterExpBoost ?? 0) / 100 : 0;
+  const boost = clanBoost + territoryBoost;
   const boostedMeta = {
     ...meta,
     contract: {
