@@ -1,0 +1,185 @@
+import { Container, WebGLRenderer } from "pixi.js";
+import { createSceneAssets } from "@/libs/rendering/assets";
+import {
+  beginRenderMeasurement,
+  endRenderMeasurement,
+  installRenderCapture,
+  invalidateRenderMeasurement,
+  markRenderStage,
+  recordRenderCounter,
+  registerRenderCanvas,
+} from "@/libs/rendering/browserMetrics";
+import { createFrameLoop } from "@/libs/rendering/frameLoop";
+import type { RenderScene } from "@/validators/renderingBenchmark";
+
+const frames = createFrameLoop(
+  (callback) => requestAnimationFrame(callback),
+  (id) => cancelAnimationFrame(id),
+);
+
+/** Owns the renderer, frame subscription, input listeners and texture leases together. */
+export const createGameRenderer = async (options: {
+  mount: HTMLElement;
+  scene: RenderScene;
+  signal: AbortSignal;
+  height: (width: number) => number;
+  background?: number;
+  onError: (error: unknown) => void;
+}) => {
+  const { mount, signal, scene } = options;
+  const renderer = new WebGLRenderer();
+  try {
+    const width = Math.max(1, mount.clientWidth);
+    await renderer.init({
+      width,
+      height: options.height(width),
+      preferWebGLVersion: 1,
+      resolution: 1,
+      autoDensity: true,
+      antialias: false,
+      background: options.background ?? 0x000000,
+      backgroundAlpha: options.background === undefined ? 0 : 1,
+      powerPreference: "low-power",
+      preserveDrawingBuffer: false,
+    });
+  } catch (error) {
+    // Initialization may fail before Pixi's systems have been constructed.
+    if (renderer.view?.canvas) renderer.destroy({ removeView: true });
+    throw error;
+  }
+  if (signal.aborted) {
+    renderer.destroy({ removeView: true });
+    throw new DOMException("Scene initialization cancelled", "AbortError");
+  }
+  const stage = new Container();
+  stage.eventMode = "none";
+  const assets = createSceneAssets();
+  const canvas = renderer.canvas as HTMLCanvasElement;
+  canvas.style.display = "block";
+  canvas.style.width = "100%";
+  canvas.style.touchAction = "none";
+  mount.appendChild(canvas);
+  installRenderCapture();
+  const unregister = registerRenderCanvas(scene, canvas, "pixi");
+  const motion = matchMedia("(prefers-reduced-motion: reduce)");
+  let visible = true;
+  let contextLost = false;
+  let disposed = false;
+  let unsubscribe: (() => void) | null = null;
+  let previousTime: number | null = null;
+  let update: (frame: GameFrame) => void = () => {};
+  let resize: (width: number, height: number) => void = () => {};
+  const listeners = new AbortController();
+  const cleanups: (() => void)[] = [];
+
+  const tick = (now: number) => {
+    if (disposed) return;
+    beginRenderMeasurement(scene);
+    try {
+      const endUpdate = markRenderStage("update");
+      update({
+        now,
+        delta: previousTime === null ? 0 : Math.min(0.1, (now - previousTime) / 1000),
+        reducedMotion: motion.matches,
+      });
+      previousTime = now;
+      endUpdate?.();
+      const endRender = markRenderStage("render");
+      renderer.render({ container: stage });
+      endRender?.();
+      recordRenderCounter("displayObjects", stage.children.length);
+    } catch (error) {
+      dispose();
+      options.onError(error);
+    } finally {
+      endRenderMeasurement(scene);
+    }
+  };
+  const updateSubscription = () => {
+    const active = visible && !document.hidden && !contextLost && !disposed;
+    if (active && !unsubscribe) unsubscribe = frames.subscribe(tick);
+    else if (!active && unsubscribe) {
+      unsubscribe();
+      unsubscribe = null;
+      previousTime = null;
+    }
+  };
+  const observer = new IntersectionObserver(([entry]) => {
+    visible = entry?.isIntersecting ?? true;
+    updateSubscription();
+  });
+  observer.observe(canvas);
+  const resizeObserver = new ResizeObserver(() => {
+    const width = Math.max(1, mount.clientWidth);
+    const height = options.height(width);
+    if (width === renderer.width && height === renderer.height) return;
+    renderer.resize(width, height);
+    resize(width, height);
+  });
+  resizeObserver.observe(mount);
+  const listen = <K extends keyof HTMLElementEventMap>(
+    type: K,
+    listener: (event: HTMLElementEventMap[K]) => void,
+  ) => canvas.addEventListener(type, listener, { signal: listeners.signal });
+  document.addEventListener("visibilitychange", updateSubscription, {
+    signal: listeners.signal,
+  });
+  canvas.addEventListener(
+    "webglcontextlost",
+    (event) => {
+      event.preventDefault();
+      contextLost = true;
+      updateSubscription();
+    },
+    { signal: listeners.signal },
+  );
+  canvas.addEventListener(
+    "webglcontextrestored",
+    () => {
+      contextLost = false;
+      updateSubscription();
+    },
+    { signal: listeners.signal },
+  );
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    invalidateRenderMeasurement(scene, "Scene unmounted during capture");
+    updateSubscription();
+    signal.removeEventListener("abort", dispose);
+    listeners.abort();
+    observer.disconnect();
+    resizeObserver.disconnect();
+    unregister();
+    stage.destroy({ children: true, texture: false, textureSource: false });
+    for (const cleanup of cleanups) cleanup();
+    cleanups.length = 0;
+    assets.dispose();
+    renderer.destroy({ removeView: true });
+  };
+  signal.addEventListener("abort", dispose, { once: true });
+  updateSubscription();
+  return {
+    stage,
+    renderer,
+    canvas,
+    assets,
+    signal,
+    listen,
+    dispose,
+    own: (cleanup: () => void) => {
+      cleanups.push(cleanup);
+    },
+    setUpdate: (callback: typeof update) => {
+      update = callback;
+    },
+    setResize: (callback: typeof resize) => {
+      resize = callback;
+      resize(renderer.width, renderer.height);
+    },
+  };
+};
+
+export type GameRenderer = Awaited<ReturnType<typeof createGameRenderer>>;
+export type GameFrame = { now: number; delta: number; reducedMotion: boolean };

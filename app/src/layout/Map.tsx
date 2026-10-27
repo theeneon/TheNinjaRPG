@@ -34,6 +34,7 @@ import { safeLocalStorageGetItem, safeLocalStorageSetItem } from "@/hooks/locals
 import { usePerformanceMonitor } from "@/hooks/performance-monitor";
 import { useTutorialStep } from "@/hooks/tutorial";
 import WebGlError from "@/layout/WebGLError";
+import type { GlobalMapData, GlobalTile } from "@/libs/sector-map/world-types";
 import {
   buildGlobeSurface,
   createUserAvatarSprite,
@@ -41,7 +42,6 @@ import {
   samplePolarCapColor,
 } from "@/libs/threejs/globe";
 import { TrackballControls } from "@/libs/threejs/TrackBallControls";
-import type { GlobalMapData, GlobalTile } from "@/libs/threejs/types";
 import {
   cleanUp,
   createTexture,

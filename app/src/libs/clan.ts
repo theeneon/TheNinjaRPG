@@ -1,5 +1,5 @@
 import { MAP_RESERVED_SECTORS } from "@/drizzle/constants";
-import { fetchMap } from "@/libs/threejs/mapData";
+import { fetchMap } from "@/libs/sector-map/topology";
 
 export const checkIfSectorIsAvailable = async (sector: number) => {
   const map = await fetchMap();

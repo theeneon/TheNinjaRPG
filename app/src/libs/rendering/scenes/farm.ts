@@ -1,0 +1,326 @@
+import { Container, Graphics, Sprite, Texture } from "pixi.js";
+import {
+  FARM_GROWTH_STAGES,
+  IMG_FARM_BACKGROUND,
+  IMG_FARM_PLOT_SOIL,
+  WORLD_NIGHT_BRIGHTNESS,
+} from "@/drizzle/constants";
+import { getWorldCycleBrightness } from "@/libs/dayNight";
+import { getPlotGrowthStage, isPlotReady } from "@/libs/farming";
+import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
+import { createGameRenderer } from "@/libs/rendering/runtime";
+import {
+  FARM_PLOT_SIZE,
+  FARM_VIEW_HEIGHT,
+  farmPlotAt,
+  farmPlotPosition,
+} from "@/libs/rendering/scenes/farmLayout";
+import type { FarmEffect, FarmPlotState, FarmVisualState } from "@/validators/farming";
+
+export const createFarmScene = async (options: {
+  mount: HTMLElement;
+  signal: AbortSignal;
+  initialState: FarmVisualState;
+  getTimeDiff: () => number;
+  showDayNight: () => boolean;
+  onPlotClick: (slot: number, plot: FarmPlotState | undefined) => void;
+  onError: (error: unknown) => void;
+}) => {
+  const game = await createGameRenderer({
+    ...options,
+    scene: "farm",
+    background: 0x87ae73,
+    height: (width) => Math.max(360, width * 0.55),
+  });
+  try {
+    const [backgroundTexture, soilTexture] = await Promise.all([
+      game.assets.texture(IMG_FARM_BACKGROUND),
+      game.assets.texture(IMG_FARM_PLOT_SOIL),
+    ]);
+    if (options.signal.aborted) throw new DOMException("Scene cancelled", "AbortError");
+    const background = new Sprite(backgroundTexture);
+    const world = new Container();
+    const soilLayer = new Container();
+    const ringLayer = new Container();
+    const night = new Sprite({ texture: Texture.WHITE, tint: 0x0a1030 });
+    const glowLayer = new Container();
+    const cropLayer = new Container();
+    const statusLayer = new Container();
+    const effectLayer = new Container();
+    world.addChild(
+      soilLayer,
+      ringLayer,
+      night,
+      glowLayer,
+      cropLayer,
+      statusLayer,
+      effectLayer,
+    );
+    game.stage.addChild(background, world);
+    let state = options.initialState;
+    let selected = state.selectedPlotIndex ?? null;
+    let hovered: number | null = null;
+    let reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const entries = new Map<number, PlotEntry>();
+    const effects: { sprite: Graphics; age: number }[] = [];
+    let refreshElapsed = 0;
+    const effectPool: Graphics[] = [];
+    const clock = () => new Date(Date.now() - options.getTimeDiff());
+
+    const syncEntry = (entry: PlotEntry, plot: FarmPlotState | undefined) => {
+      const position = farmPlotPosition(entry.slot, state.totalPlots);
+      entry.soil.position.set(position.x, position.y);
+      entry.crop.position.copyFrom(entry.soil.position);
+      entry.glow.position.copyFrom(entry.soil.position);
+      entry.water.position.set(position.x - 0.72, position.y - 0.72);
+      entry.fertilizer.position.set(position.x + 0.72, position.y - 0.72);
+      entry.ring.position.copyFrom(entry.soil.position);
+      const active = !!plot?.seedItemId && !!plot.cropImage;
+      entry.crop.visible = active;
+      entry.water.visible = active && !!plot?.canWater;
+      entry.fertilizer.visible = active && !!plot?.fertilizerApplied;
+      entry.ready = active && !!plot?.isReady;
+      entry.glow.visible = entry.ready;
+      const stage = Math.max(1, Math.min(FARM_GROWTH_STAGES, plot?.growthStage ?? 1));
+      const previousSize = entry.cropSize;
+      entry.cropSize = entry.ready ? 1.1 : 0.45 + (stage / FARM_GROWTH_STAGES) * 0.55;
+      if (previousSize !== entry.cropSize)
+        entry.crop.width = entry.crop.height = entry.cropSize;
+      if (active && plot?.cropImage !== entry.image) {
+        const path = plot?.cropImage;
+        entry.image = path ?? null;
+        if (path)
+          void game.assets.texture(path).then((texture) => {
+            if (options.signal.aborted || entry.image !== path) return;
+            entry.crop.texture = texture;
+            entry.glow.texture = texture;
+            entry.crop.width = entry.crop.height = entry.cropSize;
+          }, options.onError);
+      }
+      const isHovered = entry.slot === hovered;
+      entry.soil.tint = isHovered ? 0xe2f7d3 : 0xffffff;
+      const ringColor =
+        entry.slot === selected ? 0x4ade80 : isHovered ? 0xf8fafc : null;
+      if (ringColor === entry.ringColor) return;
+      entry.ringColor = ringColor;
+      entry.ring.clear();
+      if (ringColor !== null) {
+        const half = FARM_PLOT_SIZE * (entry.slot === selected ? 0.55 : 0.51);
+        entry.ring.rect(-half, -half, half * 2, half * 2).stroke({
+          color: entry.slot === selected ? 0x4ade80 : 0xf8fafc,
+          width: 0.025,
+        });
+      }
+    };
+    const refresh = () => {
+      const now = clock();
+      const plots = new Map(
+        state.plots.map((plot) => [plot.slotIndex, livePlot(plot, now)]),
+      );
+      for (let slot = 0; slot < state.totalPlots; slot++) {
+        let entry = entries.get(slot);
+        if (!entry) {
+          const soil = squareSprite(soilTexture, FARM_PLOT_SIZE);
+          const crop = squareSprite(Texture.EMPTY, 1);
+          const glow = squareSprite(Texture.EMPTY, 1);
+          glow.tint = 0xffd700;
+          glow.alpha = 0.35;
+          const water = squareSprite(Texture.WHITE, 0.28);
+          water.tint = 0x38bdf8;
+          water.alpha = 0.95;
+          const fertilizer = squareSprite(Texture.WHITE, 0.28);
+          fertilizer.tint = 0xf59e0b;
+          fertilizer.alpha = 0.95;
+          const ring = new Graphics();
+          entry = {
+            slot,
+            soil,
+            crop,
+            glow,
+            water,
+            fertilizer,
+            ring,
+            ringColor: null,
+            ready: false,
+            image: null,
+            cropSize: 1,
+            expand: 1,
+          };
+          entries.set(slot, entry);
+          soilLayer.addChild(soil);
+          cropLayer.addChild(crop);
+          glowLayer.addChild(glow);
+          statusLayer.addChild(water, fertilizer);
+          ringLayer.addChild(ring);
+        }
+        syncEntry(entry, plots.get(slot));
+      }
+      for (const [slot, entry] of entries) {
+        if (slot < state.totalPlots) continue;
+        for (const object of [
+          entry.soil,
+          entry.crop,
+          entry.glow,
+          entry.water,
+          entry.fertilizer,
+          entry.ring,
+        ])
+          object.destroy();
+        entries.delete(slot);
+      }
+    };
+    refresh();
+    game.setResize((width, height) => {
+      background.width = width;
+      background.height = height;
+      world.position.set(width / 2, height / 2);
+      world.scale.set(height / FARM_VIEW_HEIGHT);
+      night.position.set(-width / world.scale.x / 2, -FARM_VIEW_HEIGHT / 2);
+      night.width = width / world.scale.x;
+      night.height = FARM_VIEW_HEIGHT;
+    });
+    const setHovered = (slot: number | null) => {
+      if (hovered === slot) return;
+      hovered = slot;
+      game.canvas.style.cursor = slot === null ? "default" : "pointer";
+      refresh();
+    };
+    const pointerSlot = (event: PointerEvent) => {
+      const rect = game.canvas.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) * game.renderer.width) / rect.width;
+      const y = ((event.clientY - rect.top) * game.renderer.height) / rect.height;
+      return farmPlotAt(
+        (x - world.x) / world.scale.x,
+        (y - world.y) / world.scale.y,
+        state.totalPlots,
+      );
+    };
+    game.listen("pointermove", (event) => setHovered(pointerSlot(event)));
+    game.listen("pointerleave", () => setHovered(null));
+    game.listen("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      const slot = pointerSlot(event);
+      setHovered(slot);
+      if (slot === null) return;
+      const plot = state.plots.find((candidate) => candidate.slotIndex === slot);
+      options.onPlotClick(slot, plot ? livePlot(plot, clock()) : undefined);
+    });
+    game.setUpdate((frame) => {
+      reducedMotion = frame.reducedMotion;
+      let activeAnimations = effects.length;
+      for (const entry of entries.values()) {
+        if (entry.ready || entry.expand < 1) activeAnimations++;
+        entry.expand = reducedMotion
+          ? 1
+          : Math.min(1, entry.expand + frame.delta * 2.5);
+        entry.soil.width = entry.soil.height = FARM_PLOT_SIZE * entry.expand;
+        entry.soil.alpha = entry.expand;
+        const pulse = reducedMotion ? 1 : 1 + Math.sin(Date.now() / 250) * 0.08;
+        entry.glow.width = entry.glow.height = entry.cropSize * 1.35 * pulse;
+      }
+      for (let index = effects.length - 1; index >= 0; index--) {
+        const effect = effects[index];
+        if (!effect) continue;
+        effect.age += frame.delta;
+        effect.sprite.scale.set(0.2 + effect.age * 1.8);
+        effect.sprite.alpha = Math.max(0, 0.8 - effect.age);
+        if (effect.age >= 0.8 || reducedMotion) {
+          effect.sprite.removeFromParent();
+          effectPool.push(effect.sprite);
+          effects.splice(index, 1);
+        }
+      }
+      refreshElapsed += frame.delta;
+      if (refreshElapsed >= 2) {
+        refreshElapsed = 0;
+        refresh();
+      }
+      const darkness = Math.max(0, Math.min(1, 1 - getWorldCycleBrightness(clock())));
+      night.alpha = options.showDayNight()
+        ? darkness * (1 - WORLD_NIGHT_BRIGHTNESS + 0.15)
+        : 0;
+      recordRenderCounter("sprites", entries.size * 5 + 2);
+      recordRenderCounter("activeAnimations", activeAnimations);
+    });
+    game.own(() => {
+      for (const effect of effectPool) effect.destroy();
+    });
+    return {
+      dispose: game.dispose,
+      updateState: (next: FarmVisualState) => {
+        state = next;
+        selected = next.selectedPlotIndex ?? null;
+        refresh();
+      },
+      expandGrid: (total: number, slot: number) => {
+        if (entries.has(slot)) return;
+        state = { ...state, totalPlots: total };
+        refresh();
+        const entry = entries.get(slot);
+        if (entry && !reducedMotion) entry.expand = 0.01;
+      },
+      playEffect: (slot: number, effect: FarmEffect) => {
+        const entry = entries.get(slot);
+        if (!entry || reducedMotion) return;
+        if (effects.length >= 32) {
+          const oldest = effects.shift();
+          if (oldest) {
+            oldest.sprite.removeFromParent();
+            effectPool.push(oldest.sprite);
+          }
+        }
+        const sprite =
+          effectPool.pop() ?? new Graphics().circle(0, 0, 0.65).fill(0xffffff);
+        sprite.tint = FARM_EFFECT_COLORS[effect];
+        sprite.position.copyFrom(entry.soil.position);
+        sprite.scale.set(0.2);
+        sprite.alpha = 0.8;
+        effectLayer.addChild(sprite);
+        effects.push({ sprite, age: 0 });
+      },
+    };
+  } catch (error) {
+    game.dispose();
+    throw error;
+  }
+};
+
+const squareSprite = (texture: Texture, size: number) => {
+  const sprite = new Sprite(texture);
+  sprite.anchor.set(0.5);
+  sprite.width = sprite.height = size;
+  return sprite;
+};
+
+const livePlot = (plot: FarmPlotState, now: Date) => {
+  const active = !!plot.seedItemId && !!plot.plantedAt && !!plot.finishAt;
+  return {
+    ...plot,
+    isReady: active && isPlotReady(plot.finishAt, now),
+    growthStage: active ? getPlotGrowthStage(plot.plantedAt, plot.finishAt, now) : 0,
+  };
+};
+
+const FARM_EFFECT_COLORS: Record<FarmEffect, number> = {
+  plant: 0x4ade80,
+  water: 0x38bdf8,
+  fertilize: 0xf59e0b,
+  harvest: 0xfde047,
+  expand: 0xa78bfa,
+  level: 0xfbbf24,
+};
+
+type PlotEntry = {
+  slot: number;
+  soil: Sprite;
+  crop: Sprite;
+  glow: Sprite;
+  water: Sprite;
+  fertilizer: Sprite;
+  ring: Graphics;
+  ringColor: number | null;
+  ready: boolean;
+  image: string | null;
+  cropSize: number;
+  expand: number;
+};

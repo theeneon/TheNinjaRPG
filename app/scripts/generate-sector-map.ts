@@ -60,7 +60,7 @@ import {
 import { WORLD_PROTECTED_LAND_SECTORS } from "@/libs/sector-map/landmarks";
 import { normalizeTiledSectorMap } from "@/libs/sector-map/tiled";
 import type { SectorMapZone } from "@/libs/sector-map/types";
-import type { GlobalMapData } from "@/libs/threejs/types";
+import type { GlobalMapData } from "@/libs/sector-map/world-types";
 
 const globalMap = globalMapData as unknown as GlobalMapData;
 

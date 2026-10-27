@@ -106,8 +106,8 @@ import {
   isReachableCoordinate,
   isWalkableCoordinate,
 } from "@/libs/sector-map/validation";
+import type { GlobalTile, SectorPoint } from "@/libs/sector-map/world-types";
 import { getRemainingSensoryCooldown, getStealthStatus } from "@/libs/stealth";
-import type { GlobalTile, SectorPoint } from "@/libs/threejs/types";
 import { showMutationToast, showRewardToast } from "@/libs/toast";
 import { hasRequiredRank } from "@/libs/train";
 import {

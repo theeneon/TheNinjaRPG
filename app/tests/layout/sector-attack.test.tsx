@@ -8,7 +8,7 @@ import * as modal from "@/layout/Modal";
 import { SorroundingUsers } from "@/layout/Sector";
 import type { TerrainHex } from "@/libs/hexgrid";
 import { intersectUsers } from "@/libs/threejs/sector";
-import type { SectorUser } from "@/libs/threejs/types";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import type { UserWithRelations } from "@/routers/profile";
 import { ensureDom } from "../setup/dom.mjs";
 

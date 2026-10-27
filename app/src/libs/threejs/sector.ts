@@ -69,6 +69,7 @@ import {
   usesVillageWalls,
   type VillageWallPlan,
 } from "@/libs/sector-map/village-walls";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import {
   getAuthoredTileMaterial,
   getDirtMaterial,
@@ -89,7 +90,6 @@ import {
   mergeBufferGeometries,
 } from "@/libs/threejs/hexgrid";
 import { applyWaveShader } from "@/libs/threejs/shaders";
-import type { SectorUser } from "@/libs/threejs/types";
 import {
   createTexture,
   isObjectChainVisible,

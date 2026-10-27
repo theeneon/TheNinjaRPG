@@ -13,7 +13,7 @@ import {
 } from "@/libs/sector-map/crossing";
 import { isValidSectorId } from "@/libs/sector-map/sector-ids";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
-import type { GlobalMapData } from "@/libs/threejs/types";
+import type { GlobalMapData } from "@/libs/sector-map/world-types";
 import {
   findSectorMapForFetchUncachedPublishedMaps,
   listSectorMapForFetchPublishedSectorMaps,

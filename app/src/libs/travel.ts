@@ -6,7 +6,11 @@ import {
 import { COMBAT_LOBBY_SECONDS, COMBAT_SECONDS } from "@/libs/combat/constants";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { getSectorTile } from "@/libs/sector-map/validation";
-import type { GlobalMapData, GlobalTile, SectorPoint } from "@/libs/threejs/types";
+import type {
+  GlobalMapData,
+  GlobalTile,
+  SectorPoint,
+} from "@/libs/sector-map/world-types";
 import { secondsFromNow } from "@/utils/time";
 
 /**

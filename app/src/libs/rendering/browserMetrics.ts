@@ -4,12 +4,19 @@ import {
   renderSceneSchema,
 } from "@/validators/renderingBenchmark";
 
-const sceneCanvases = new Map<string, HTMLCanvasElement>();
+const sceneCanvases = new Map<
+  string,
+  { canvas: HTMLCanvasElement; renderer: "three" | "pixi" }
+>();
 
-export const registerRenderCanvas = (scene: string, canvas: HTMLCanvasElement) => {
-  sceneCanvases.set(scene, canvas);
+export const registerRenderCanvas = (
+  scene: string,
+  canvas: HTMLCanvasElement,
+  renderer: "three" | "pixi" = "three",
+) => {
+  sceneCanvases.set(scene, { canvas, renderer });
   return () => {
-    if (sceneCanvases.get(scene) === canvas) sceneCanvases.delete(scene);
+    if (sceneCanvases.get(scene)?.canvas === canvas) sceneCanvases.delete(scene);
   };
 };
 
@@ -32,8 +39,14 @@ export const installRenderCapture = () => {
       if (capture) throw new Error("A render measurement is already running");
       renderSceneSchema.parse(scene);
       const options = renderCaptureSchema.parse(input);
-      const canvas = sceneCanvases.get(scene);
-      if (!canvas?.isConnected || !canvas.clientWidth || !canvas.clientHeight) {
+      const registered = sceneCanvases.get(scene);
+      const canvas = registered?.canvas;
+      if (
+        !registered ||
+        !canvas?.isConnected ||
+        !canvas.clientWidth ||
+        !canvas.clientHeight
+      ) {
         throw new Error(`The ${scene} canvas is not visible and ready`);
       }
       const dimensions = canvasDimensions(canvas);
@@ -67,7 +80,7 @@ export const installRenderCapture = () => {
           if (capture === current) capture = null;
           resolve({
             schemaVersion: 1,
-            renderer: "three",
+            renderer: registered.renderer,
             scene,
             options,
             environment,

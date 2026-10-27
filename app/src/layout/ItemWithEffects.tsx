@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  BarChartBig,
-  Box,
-  Copy,
-  MessageSquarePlus,
-  SquarePen,
-  Trash2,
-} from "lucide-react";
-import dynamic from "next/dynamic";
+import { BarChartBig, Copy, MessageSquarePlus, SquarePen, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type React from "react";
 import { useRef, useState } from "react";
@@ -109,7 +101,6 @@ export interface ItemWithEffectsProps {
     | "sageMode";
   showStatistic?: "bloodline" | "item" | "jutsu" | "ai";
   showCopy?: "quest" | "ai" | "item" | "jutsu";
-  show3d?: boolean;
   hideTitle?: boolean;
   /** Turns the entry name into a link to its own page, so list views give search
    *  engines a crawlable path to each piece of content. */
@@ -121,17 +112,6 @@ export interface ItemWithEffectsProps {
   onDelete?: (id: string) => void;
   folderName?: string;
 }
-
-/**
- * three.js and the @react-three stack are ~296 KB gzip, and this dialog is the only thing that
- * renders them - behind a click, on content that has a 3D model at all. Statically imported here
- * they reached the root layout's chunk, so every visitor downloaded and parsed a WebGL engine
- * that almost none of them would ever run.
- */
-const Model3d = dynamic(() => import("@/layout/Model3d"), {
-  ssr: false,
-  loading: () => <Loader explanation="Loading 3D model" />,
-});
 
 type QuestCloneSource = {
   id: string;
@@ -489,7 +469,6 @@ const ItemWithEffects: React.FC<ItemWithEffectsProps> = (props) => {
     showEdit,
     showStatistic,
     showCopy,
-    show3d,
     hideTitle,
     detailHref,
     hideDetails,
@@ -681,24 +660,6 @@ const ItemWithEffects: React.FC<ItemWithEffectsProps> = (props) => {
                         source={{ id: item.id, name: item.name }}
                       />
                     )}
-                    {show3d &&
-                    "avatar" in item &&
-                    "avatar3d" in item &&
-                    item.avatar3d ? (
-                      <Confirm
-                        title="3d Model"
-                        button={
-                          <Box className="h-6 w-6 hover:cursor-pointer hover:text-popover-foreground/50" />
-                        }
-                      >
-                        <Model3d
-                          modelUrl={item.avatar3d as string}
-                          imageUrl={item.avatar as string}
-                          alt={item.name}
-                          size={100}
-                        />
-                      </Confirm>
-                    ) : undefined}
                     <Link href={`/manual/${showEdit}/edit/${item.id}`}>
                       <SquarePen className="h-6 w-6 hover:text-popover-foreground/50" />
                     </Link>

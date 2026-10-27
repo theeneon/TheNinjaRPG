@@ -43,8 +43,8 @@ import {
 } from "@/libs/mastery";
 import { masteryGainRoom } from "@/libs/masteryProgression";
 import { getPvpBoost } from "@/libs/pvpExperience";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
-import type { SectorUser } from "@/libs/threejs/types";
 import { getTimedRegeneration, type TimedBuff } from "@/libs/timedBuffs";
 import { regenerationBuffs } from "@/libs/titles";
 import { getReducedGainsDays } from "@/libs/train";

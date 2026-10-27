@@ -848,6 +848,13 @@
       "when": 1793020935047,
       "tag": "0121_reconcile_skill_points",
       "breakpoints": false
+    },
+    {
+      "idx": 122,
+      "version": "5",
+      "when": 1793095559454,
+      "tag": "0122_woozy_valkyrie",
+      "breakpoints": false
     }
   ]
 }

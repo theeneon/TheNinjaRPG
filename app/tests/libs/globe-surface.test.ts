@@ -9,7 +9,7 @@ import {
 } from "@/drizzle/constants";
 import { sectorAtGeographic } from "@/libs/sector-map/world-grid";
 import { buildGlobeSurface } from "@/libs/threejs/globe";
-import type { GlobalMapData, GlobalPoint } from "@/libs/threejs/types";
+import type { GlobalMapData, GlobalPoint } from "@/libs/sector-map/world-types";
 
 const hexasphere = globe as unknown as GlobalMapData;
 

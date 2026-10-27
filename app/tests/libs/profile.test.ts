@@ -8,7 +8,7 @@ import {
   SCALED_AI_STAT_BUDGET_SHARE,
 } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
-import type { SectorUser } from "@/libs/threejs/types";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import {
   calcLevel,
   calcLevelRequirements,

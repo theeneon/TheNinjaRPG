@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import { fetchMap } from "@/libs/threejs/mapData";
-import type { GlobalMapData } from "@/libs/threejs/types";
+import { fetchMap } from "@/libs/sector-map/topology";
+import type { GlobalMapData } from "@/libs/sector-map/world-types";
 import { ensureDom } from "../../setup/dom.mjs";
 
 const cacheKey = "hexasphere_map_cache";

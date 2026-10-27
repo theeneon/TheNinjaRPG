@@ -135,7 +135,6 @@ export type FormEntry<K> = {
   | { type: "boolean" }
   | { type: "audio"; href?: string | null }
   | { type: "avatar"; href?: string | null; size?: IMG_ORIENTATION; maxDim?: number }
-  | { type: "avatar3d"; modelUrl?: string | null; imgUrl?: string | null }
   | {
       type: "str_array";
       values: readonly string[];
@@ -543,7 +542,6 @@ export const EditContent = <
         {/* biome-ignore format: Keep the display-contents fieldset from reformatting the large field renderer. */}
         <fieldset disabled={submitLoading} aria-busy={submitLoading} className="contents">
         {formData
-          .filter((formEntry) => formEntry.type !== "avatar3d")
           .filter((formEntry) => {
             return (
               !["reward_hunter_items_ids", "reward_hunter_items"].includes(
@@ -632,7 +630,7 @@ export const EditContent = <
                 <div
                   className={cn(
                     "p-2",
-                    ["avatar", "avatar3d"].includes(type) &&
+                    type === "avatar" &&
                       !(formEntry.type === "avatar" && formEntry.size === "landscape")
                       ? "row-span-5"
                       : "",

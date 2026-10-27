@@ -70,6 +70,11 @@ import { mergeDecorationAssets } from "@/libs/sector-map/decorations";
 import { mergeTerrainSpecs } from "@/libs/sector-map/terrains";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { sectorGridNeighbors } from "@/libs/sector-map/world-grid";
+import type {
+  GlobalTile,
+  SectorPoint,
+  SectorUser,
+} from "@/libs/sector-map/world-types";
 import { isUserCurrentlyStealthed } from "@/libs/stealth";
 import { getBackgroundColor } from "@/libs/threejs/biome";
 import { applyCanvasDayNightBrightness } from "@/libs/threejs/dayNight";
@@ -94,7 +99,6 @@ import {
   sectorRenderKey,
 } from "@/libs/threejs/sectorRenderCache";
 import { updateWaveAnimation, updateWindAnimation } from "@/libs/threejs/shaders";
-import type { GlobalTile, SectorPoint, SectorUser } from "@/libs/threejs/types";
 import {
   cleanUp,
   isObjectChainVisible,

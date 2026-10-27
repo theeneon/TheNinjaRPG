@@ -235,7 +235,6 @@ const createPetBattleUser = (
     username: pet.name,
     avatar: pet.avatar,
     avatarLight: pet.avatar,
-    avatar3d: null,
     avatarFacing: pet.avatarFacing,
     isAi: true,
     isSummon: true,

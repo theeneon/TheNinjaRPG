@@ -12,7 +12,7 @@ import {
 } from "@/drizzle/constants";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { findNearestWalkableCoordinate } from "@/libs/sector-map/validation";
-import type { SectorUser } from "@/libs/threejs/types";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import { isInArray } from "@/utils/array";
 
 const RESERVED_SECTORS = new Set<number>([

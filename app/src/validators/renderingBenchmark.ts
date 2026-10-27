@@ -8,6 +8,8 @@ export const renderSceneSchema = z.enum([
   "towerDefense",
 ]);
 
+export type RenderScene = z.infer<typeof renderSceneSchema>;
+
 /** Shared by actual gameplay capture and comparison automation. */
 export const renderCaptureSchema = z.object({
   revision: z.string().min(1).max(100),
