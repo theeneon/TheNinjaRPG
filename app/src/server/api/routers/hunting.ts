@@ -17,11 +17,10 @@ import {
   insertActionLogForSave,
   insertHuntingHabitatForSave,
   insertHuntingProgressForAccept,
+  listHuntableItems,
   listHuntingHabitats,
   listHuntingProgressForGetBoard,
-  listItemForGetBoard,
   listItemForSave,
-  listItemForStart,
   listPublishedHuntingMaps,
   listSectorMapForSave,
   listUserDataForGetBoard,
@@ -79,7 +78,7 @@ export const huntingRouter = createTRPCRouter({
         listHuntingHabitats(ctx.drizzle),
         findHuntingSessionForUser(ctx.drizzle, ctx),
         listHuntingProgressForGetBoard(ctx.drizzle, ctx),
-        listItemForGetBoard(ctx.drizzle),
+        listHuntableItems(ctx.drizzle),
         listUserDataForGetBoard(ctx.drizzle),
       ],
     );
@@ -391,7 +390,7 @@ export const huntingRouter = createTRPCRouter({
         findUserById(ctx.drizzle, ctx.userId),
         findHuntingSessionForUser(ctx.drizzle, ctx),
         listHuntingProgressForGetBoard(ctx.drizzle, ctx),
-        listItemForStart(ctx.drizzle),
+        listHuntableItems(ctx.drizzle),
       ]);
       const contract = session?.content?.contracts.find(
         (c) => c.id === session?.contractId,

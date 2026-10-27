@@ -71,10 +71,9 @@ import {
   executeSavedForLeaveMercenary,
   fetchActiveWar,
   fetchEndedWars,
+  findLedVillageId,
   findVillageElderVoteForDeclareVillageWarOrRaid,
   findVillageElderVoteForDeclareVillageWarOrRaid2,
-  findVillageForGetActiveWars,
-  findVillageForGetMercenaries,
   findVillageForInviteMercenary,
   findVillageForVoteOnWarDeclaration,
   findVillageForVoteOnWarDeclaration2,
@@ -181,7 +180,7 @@ export const warRouter = createTRPCRouter({
         fetchUser(ctx.drizzle, ctx.userId),
         findWarForGetMercenaries(ctx.drizzle, input),
         listWarMercenaryForGetMercenaries(ctx.drizzle, input),
-        findVillageForGetMercenaries(ctx.drizzle, ctx),
+        findLedVillageId(ctx.drizzle, ctx.userId),
       ]);
       const canHire =
         !!activeWar?.rules &&
@@ -708,7 +707,7 @@ export const warRouter = createTRPCRouter({
       const [wars, viewer, ledVillage] = await Promise.all([
         fetchActiveWars(ctx.drizzle),
         fetchUser(ctx.drizzle, ctx.userId),
-        findVillageForGetActiveWars(ctx.drizzle, ctx),
+        findLedVillageId(ctx.drizzle, ctx.userId),
       ]);
       return wars
         .filter((w) =>

@@ -1265,13 +1265,13 @@ export const listWarMercenaryForGetMercenaries = (
     with: { user: { columns: { username: true } } },
   });
 
-/** Build the `village` lookup for `getMercenaries`, selecting only `id`, using predicates on `kageId`. */
-export const findVillageForGetMercenaries = (
+/** Build the ID-only lookup for the village led by a user. */
+export const findLedVillageId = (
   client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
+  userId: string,
 ) =>
   client.query.village.findFirst({
-    where: eq(village.kageId, ctx.userId),
+    where: eq(village.kageId, userId),
     columns: { id: true },
   });
 
@@ -1668,16 +1668,6 @@ export const executeSavedForConvertWarPoints = (
         AND ${warContribution.damage} > 0 AND ${warContribution.convertedAt} IS NULL AND ${warContribution.expiredAt} IS NULL
         AND ${war.endedAt} IS NOT NULL AND DATE_ADD(${war.endedAt}, INTERVAL ${WAR_POINT_CONVERSION_DAYS} DAY) > SYSDATE(3)
     `);
-
-/** Build the `village` lookup for `getActiveWars`, selecting only `id`, using predicates on `kageId`. */
-export const findVillageForGetActiveWars = (
-  client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
-) =>
-  client.query.village.findFirst({
-    columns: { id: true },
-    where: eq(village.kageId, ctx.userId),
-  });
 
 /** Build the `war` deletion for `adminEndWar`, using predicates on `id`. */
 export const deleteWarForAdminEndWar = (

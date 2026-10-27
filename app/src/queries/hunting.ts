@@ -74,8 +74,8 @@ export const listHuntingProgressForGetBoard = (
     where: eq(huntingProgress.userId, ctx.userId),
   });
 
-/** Build the `item` listing for `getBoard`, using predicates on `canBeHunted`. */
-export const listItemForGetBoard = (client: Pick<DrizzleClient, "query">) =>
+/** Build the huntable item catalogue with names and stacking rules. */
+export const listHuntableItems = (client: Pick<DrizzleClient, "query">) =>
   client.query.item.findMany({
     columns: { id: true, name: true, canStack: true, stackSize: true },
     where: eq(item.canBeHunted, true),
@@ -323,13 +323,6 @@ export const updateHuntingSessionForSessionAction = (
       version: sql`${huntingSession.version} + 1`,
     })
     .where(guard);
-
-/** Build the `item` listing for `start`, using predicates on `canBeHunted`. */
-export const listItemForStart = (client: Pick<DrizzleClient, "query">) =>
-  client.query.item.findMany({
-    where: eq(item.canBeHunted, true),
-    columns: { id: true, name: true, canStack: true, stackSize: true },
-  });
 
 /** Build the `huntingHabitat` lookup for `reconcileInactiveAllowance`, using predicates on `id`. */
 export const findHuntingHabitatForReconcileInactiveAllowance = (
