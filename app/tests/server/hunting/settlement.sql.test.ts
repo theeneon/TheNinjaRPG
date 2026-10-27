@@ -47,12 +47,12 @@ describeWithDatabase("Atomic hunting settlement", () => {
     expect((await db.query.userItem.findMany()).filter((i) => i.itemId === "hide").reduce((n, i) => n + i.quantity, 0)).toBe(2);
     expect((await db.query.huntingSession.findFirst())?.lastResult?.remaining).toBe(2);
   });
-  for (const [isOutlaw, expected] of [[false, 60], [true, 50]] as const)
-    it(`${isOutlaw ? "ignores" : "applies"} the clan hunter experience boost for ${isOutlaw ? "outlaw factions" : "village clans"}`, async () => {
+  for (const [isOutlaw, boostPct, expected] of [[false, 20, 60], [false, 16, 58], [true, 20, 50]] as const)
+    it(`${isOutlaw ? "ignores" : "applies"} a ${boostPct}% clan hunter experience boost for ${isOutlaw ? "outlaw factions" : "village clans"}`, async () => {
       const { db, current, result, version } = await setup();
       current.usersState[0]!.clanId = "clan";
       current.usersState[0]!.isOutlaw = isOutlaw;
-      current.extraState.clans = { clan: { id: "clan", hunterExpBoost: 20 } as (typeof current.extraState.clans)[string] };
+      current.extraState.clans = { clan: { id: "clan", hunterExpBoost: boostPct } as (typeof current.extraState.clans)[string] };
       expect(await settleHuntingBattle(db, current, result, version, settlePlayer)).toBe(true);
       expect((await db.query.userData.findFirst())?.huntingExperience).toBe(123 + expected);
       expect((await db.query.huntingSession.findFirst())?.lastResult?.experience).toBe(expected);

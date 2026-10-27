@@ -51,7 +51,8 @@ export const settleHuntingBattle = async (
     ...meta,
     contract: {
       ...meta.contract,
-      experience: Math.floor(meta.contract.experience * (1 + boost)),
+      // Epsilon keeps exact products such as 50 * 1.16 from flooring to 57.
+      experience: Math.floor(meta.contract.experience * (1 + boost) + 1e-9),
     },
   };
   const receipt = huntingVictoryReceipt(boostedMeta, current.id, result.outcome);
