@@ -1,12 +1,25 @@
 /**
  * Database access for bank; authorization and transaction scopes stay in callers.
  */
-import { and, desc, eq, gt, gte, inArray, lt, or, type SQL, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gt,
+  gte,
+  inArray,
+  lt,
+  lte,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { RYO_CAP } from "@/drizzle/constants";
 import { bankTransfers, dailyBankInterest, userData } from "@/drizzle/schema";
 import { serverError } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
+import { getBankInterestDateRange } from "@/utils/time";
 
 /**
  * Post-CAS pocket/bank read. Concurrent grants can change either column after
@@ -119,7 +132,7 @@ export const listBankTransfersForGetTransfers = (
 /** Build the `dailyBankInterest` listing for `getPendingInterest`, using the configured predicates. */
 export const listDailyBankInterestForGetPendingInterest = (
   client: Pick<DrizzleClient, "query">,
-  pendingInterestWhere: (userId: string) => SQL<unknown> | undefined,
+
   ctx: { userId: string },
 ) =>
   client.query.dailyBankInterest.findMany({
@@ -176,7 +189,7 @@ export const selectUserDataForClaimBankInterest = (
 /** Build the pending-interest locking lookup; keep it on the same caller transaction as the account claim. */
 export const selectDailyBankInterestForClaimBankInterest = (
   client: Pick<DrizzleClient, "select">,
-  pendingInterestWhere: (userId: string) => SQL<unknown> | undefined,
+
   userId: string,
 ) =>
   client
@@ -257,3 +270,14 @@ export const insertDailyBankInterestForGET = (
         id: sql`id`,
       },
     });
+
+/** Expiry is enforced on reads and claims independently of background cleanup. */
+const pendingInterestWhere = (userId: string) => {
+  const { oldestDate, today } = getBankInterestDateRange();
+  return and(
+    eq(dailyBankInterest.userId, userId),
+    eq(dailyBankInterest.claimed, false),
+    gte(dailyBankInterest.date, oldestDate),
+    lte(dailyBankInterest.date, today),
+  );
+};

@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { UserStatus } from "@/drizzle/constants";
 import {
   HOME_FURNITURE_STORAGE_CAPACITY,
@@ -8,7 +8,7 @@ import {
   HomeTypes,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
 } from "@/drizzle/constants";
-import { userData, userItem } from "@/drizzle/schema";
+import { userItem } from "@/drizzle/schema";
 import { applyActiveVariant } from "@/libs/combat/util";
 import {
   getHomeLayout,
@@ -689,28 +689,17 @@ const publishHomeFurnitureLayout = async (
   return retryOnDeadlock(() =>
     executeRowsForPublishHomeFurnitureLayout(
       client,
-      availableHomeFurnitureItems,
+
       user,
       styles,
       placements,
       placementCase,
-      homeFurnitureWriteGuard,
+
       userId,
       revision,
     ),
   );
 };
-
-/** Only available inventory can be placed; auction escrow and unfinished crafts remain inaccessible. */
-const availableHomeFurnitureItems = () =>
-  and(
-    gt(userItem.quantity, 0),
-    eq(userItem.isInAuction, false),
-    or(
-      isNull(userItem.craftingFinishedAt),
-      lte(userItem.craftingFinishedAt, new Date()),
-    ),
-  );
 
 /** The joined inventory snapshot supplies the same active-view geometry to reads and save guards. */
 const homeFurnitureDetails = (
@@ -748,24 +737,6 @@ const homeFurnitureAccessError = (
     return "You cannot furnish your home right now";
   return null;
 };
-
-/** Recheck access and the furniture revision in the same statement that publishes the change. */
-const homeFurnitureWriteGuard = (
-  user: NonNullable<Awaited<ReturnType<typeof fetchHomeFurnitureUser>>>,
-  userId: string,
-  revision: number,
-) =>
-  and(
-    eq(userData.userId, userId),
-    eq(userData.homeFurnitureRevision, revision),
-    eq(userData.updatedAt, user.updatedAt),
-    eq(userData.homeType, user.homeType),
-    eq(userData.isBanned, false),
-    eq(userData.villageId, user.villageId ?? ""),
-    eq(userData.sector, user.sector),
-    eq(userData.isOutlaw, user.isOutlaw),
-    inArray(userData.status, ["AWAKE", "ASLEEP"]),
-  );
 
 /** Create home-only settings on the first write; a concurrent insertion retains the existing row. */
 const ensureUserHome = async (

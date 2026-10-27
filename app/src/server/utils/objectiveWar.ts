@@ -46,12 +46,6 @@ export const fetchWarRules = async (client: DrizzleClient): Promise<WarRules> =>
   return warRulesSchema.parse(rules);
 };
 
-/** Reevaluate the deadline after row-lock waits rather than using the battle snapshot. */
-export const objectiveWarCombatGuard = () => sql`(${war.rules} IS NULL OR (
-  ${war.combatStartedAt} <= SYSDATE(3) AND
-  SYSDATE(3) < DATE_ADD(${war.combatStartedAt}, INTERVAL CAST(JSON_EXTRACT(${war.rules}, '$.durationDays') AS UNSIGNED) DAY)
-  AND ${war.attackerWarHealth} > 0 AND ${war.defenderWarHealth} > 0))`;
-
 /** Add paused combat time once; callers clear the pause in the same guarded user update. */
 export const resumeBracketImmunitySql = () => sql`CASE
   WHEN ${userData.bracketImmunityPausedAt} IS NOT NULL THEN
@@ -133,7 +127,7 @@ export const applyObjectiveWarAction = async (
         hp,
         activeWar,
         rules,
-        objectiveWarCombatGuard,
+
         destroyed,
         spyPath,
       );
@@ -294,7 +288,6 @@ export const syncWarCamps = async (
           guardianId,
           startsAt,
           endsAt,
-          objectiveWarCombatGuard,
         );
       }),
   );

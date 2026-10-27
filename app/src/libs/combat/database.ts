@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-import type { AnyMySqlColumn } from "drizzle-orm/mysql-core";
+
 import { nanoid } from "nanoid";
 import {
   ELITE_JONIN_JUTSU_ADVANCED_XP_TO_LEVEL,
@@ -1190,26 +1190,6 @@ export const updateRaidProgress = async (
 };
 
 /**
- * Single-statement battle XP grant for item ownership leveling:
- * rows at/over the level-up threshold gain a level and reset XP to 0, all other
- * rows gain `gain` XP. One atomic UPDATE keeps level and XP writes together.
- * The threshold must be independent of level. MySQL applies SET assignments
- * left to right, so `level` must be assigned
- * before `experience` to read the pre-update XP value.
- */
-const xpGainOrLevelUpSet = (
-  table: { level: AnyMySqlColumn; experience: AnyMySqlColumn },
-  xpToLevel: number,
-  gain: number,
-) => {
-  const threshold = xpToLevel - gain;
-  return {
-    level: sql`${table.level} + (${table.experience} >= ${threshold})`,
-    experience: sql`IF(${table.experience} >= ${threshold}, 0, ${table.experience} + ${gain})`,
-  };
-};
-
-/**
  * Persist player recovery and progression from the preloaded combat result.
  * Hunting calls may set settlingHunt only inside settleHuntingBattle's transaction;
  * ordinary action/poll callbacks skip those rewards to prevent a second settlement.
@@ -1613,7 +1593,7 @@ export const updateUser = async (
               () =>
                 updateUserItemForUpdateUser2(
                   client,
-                  xpGainOrLevelUpSet,
+
                   xpToLevel,
                   iExp,
                   user,

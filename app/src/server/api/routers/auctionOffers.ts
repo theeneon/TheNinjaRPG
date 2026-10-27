@@ -1,7 +1,6 @@
-import { and, eq, gte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { AUCTION_HOUSE_MIN_LEVEL, auctionHouseLevelMessage } from "@/drizzle/constants";
-import { type UserItemWithRelations, userData } from "@/drizzle/schema";
+import type { UserItemWithRelations, userData } from "@/drizzle/schema";
 import { isEquippableUserItem, isImbuing } from "@/libs/item";
 import { getAuctionPriceError } from "@/libs/itemEconomy";
 import {
@@ -93,7 +92,7 @@ export const auctionOfferProcedures = {
           const debit = await updateUserDataForCreateAuctionOffer(
             tx,
             input,
-            eligibleOfferUser,
+
             ctx,
           );
           requireOfferWrite(
@@ -242,17 +241,8 @@ const offerUserError = (user: typeof userData.$inferSelect | undefined | null) =
   return null;
 };
 
-const eligibleOfferUser = (id: string) =>
-  and(
-    eq(userData.userId, id),
-    sql`NOT EXISTS (SELECT 1 FROM StoreUserIdAlias WHERE StoreUserIdAlias.oldUserId = ${id})`,
-    eq(userData.isBanned, false),
-    eq(userData.isTradeBanned, false),
-    gte(userData.level, AUCTION_HOUSE_MIN_LEVEL),
-  );
-
 const claimOfferUser = async (tx: OfferTransaction, id: string) => {
-  const result = await updateUserDataForClaimOfferUser(tx, eligibleOfferUser, id);
+  const result = await updateUserDataForClaimOfferUser(tx, id);
   requireOfferWrite(result.rowsAffected, "Trading access changed; please refresh");
 };
 

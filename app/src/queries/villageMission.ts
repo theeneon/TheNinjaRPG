@@ -10,6 +10,7 @@ import {
   isNull,
   lte,
   ne,
+  or,
   type SQL,
   sql,
 } from "drizzle-orm";
@@ -132,12 +133,7 @@ export const listQuestForSelect = (client: Pick<DrizzleClient, "query">) =>
 export const updateVillageForSelect = (
   client: Pick<DrizzleClient, "update">,
   mission: import("@/validators/villageMission").VillageMission,
-  leaderGuard: (
-    client: Pick<DrizzleClient, "select">,
-    villageId: string,
-    userId: string,
-    allowStaff?: boolean,
-  ) => SQL<unknown> | undefined,
+
   ctx: { drizzle: import("@/server/db").DrizzleClient; userId: string },
   input: { villageId: string; missionId?: undefined | string },
   current: null | import("@/validators/villageMission").VillageMission,
@@ -166,12 +162,7 @@ export const updateVillageForSelect = (
  */
 export const updateVillageForCancel = (
   client: Pick<DrizzleClient, "update" | "select">,
-  leaderGuard: (
-    client: Pick<DrizzleClient, "select">,
-    villageId: string,
-    userId: string,
-    allowStaff?: boolean,
-  ) => SQL<unknown> | undefined,
+
   ctx: { drizzle: import("@/server/db").DrizzleClient; userId: string },
   input: { villageId: string; missionId: string },
 ) =>
@@ -198,12 +189,7 @@ export const updateVillageForCancel = (
 export const updateVillageForClaim = (
   client: Pick<DrizzleClient, "update">,
   rewardTokens: number,
-  leaderGuard: (
-    client: Pick<DrizzleClient, "select">,
-    villageId: string,
-    userId: string,
-    allowStaff?: boolean,
-  ) => SQL<unknown> | undefined,
+
   ctx: { drizzle: import("@/server/db").DrizzleClient; userId: string },
   input: { villageId: string },
   mission: {
@@ -262,3 +248,22 @@ export const selectUserDataForLeaderGuard2 = (
         eq(userData.isBanned, false),
       ),
     );
+
+/** Recheck village leadership or permitted staff access together with active village membership. */
+const leaderGuard = (
+  client: Pick<DrizzleClient, "select">,
+  villageId: string,
+  userId: string,
+  allowStaff = false,
+) =>
+  and(
+    eq(village.id, villageId),
+    allowStaff
+      ? or(
+          eq(village.kageId, userId),
+          exists(selectUserDataForLeaderGuard(client, userId)),
+        )
+      : eq(village.kageId, userId),
+    eq(village.type, "VILLAGE"),
+    exists(selectUserDataForLeaderGuard2(client, userId)),
+  );

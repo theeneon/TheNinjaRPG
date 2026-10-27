@@ -2035,11 +2035,7 @@ export const updateUserItemForExecuteMergeStacksForItemBucket = (
   sortedItems: UserItemMergeBucketRow[],
   claimedAt: Date,
   awakeOwner: SQL<unknown>,
-  mergeStackRowGuard: (
-    userId: string,
-    item: Pick<UserItemMergeBucketRow, "id" | "equipped" | "storedAtHome">,
-    quantity: number,
-  ) => SQL<unknown> | undefined,
+
   userId: string,
 ) =>
   client
@@ -2068,11 +2064,7 @@ export const updateUserItemForExecuteMergeStacksForItemBucket2 = (
   >[],
   awakeOwner: SQL<unknown>,
   sortedItems: UserItemMergeBucketRow[],
-  mergeStackRowGuard: (
-    userId: string,
-    item: Pick<UserItemMergeBucketRow, "id" | "equipped" | "storedAtHome">,
-    quantity: number,
-  ) => SQL<unknown> | undefined,
+
   userId: string,
 ) =>
   client
@@ -2288,3 +2280,18 @@ export const executeConsumedForConsumeMeal = (
         AND ${userRaidBuff.id} = ${id}
         AND ${userRaidBuff.userId} = ${user.userId}
     `);
+
+/** Match the owned inventory bucket and quantity before claiming or publishing a stack merge. */
+const mergeStackRowGuard = (
+  userId: string,
+  item: Pick<UserItemMergeBucketRow, "id" | "equipped" | "storedAtHome">,
+  quantity: number,
+) =>
+  and(
+    eq(userItem.id, item.id),
+    eq(userItem.userId, userId),
+    eq(userItem.isInAuction, false),
+    eq(userItem.quantity, quantity),
+    eq(userItem.equipped, item.equipped),
+    eq(userItem.storedAtHome, item.storedAtHome),
+  );

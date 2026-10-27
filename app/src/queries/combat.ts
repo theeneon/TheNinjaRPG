@@ -2370,11 +2370,7 @@ export const executeRowsForUpdateUser = (
 /** Build the `userItem` update for `updateUser`, using predicates on `userId`, `level`, `id`. */
 export const updateUserItemForUpdateUser2 = (
   client: Pick<DrizzleClient, "update">,
-  xpGainOrLevelUpSet: (
-    table: { level: AnyMySqlColumn; experience: AnyMySqlColumn },
-    xpToLevel: number,
-    gain: number,
-  ) => { level: SQL<unknown>; experience: SQL<unknown> },
+
   xpToLevel: number,
   iExp: number,
   user: { userId: string },
@@ -2572,3 +2568,23 @@ export const updateUserDataForCleanupCoopBattleStart = (
       updatedAt: new Date(),
     })
     .where(and(inArray(userData.userId, memberIds), eq(userData.battleId, battleId)));
+
+/**
+ * Single-statement battle XP grant for item ownership leveling:
+ * rows at/over the level-up threshold gain a level and reset XP to 0, all other
+ * rows gain `gain` XP. One atomic UPDATE keeps level and XP writes together.
+ * The threshold must be independent of level. MySQL applies SET assignments
+ * left to right, so `level` must be assigned
+ * before `experience` to read the pre-update XP value.
+ */
+const xpGainOrLevelUpSet = (
+  table: { level: AnyMySqlColumn; experience: AnyMySqlColumn },
+  xpToLevel: number,
+  gain: number,
+) => {
+  const threshold = xpToLevel - gain;
+  return {
+    level: sql`${table.level} + (${table.experience} >= ${threshold})`,
+    experience: sql`IF(${table.experience} >= ${threshold}, 0, ${table.experience} + ${gain})`,
+  };
+};

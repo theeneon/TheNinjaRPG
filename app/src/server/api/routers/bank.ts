@@ -1,7 +1,6 @@
-import { and, eq, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { RYO_CAP } from "@/drizzle/constants";
-import { dailyBankInterest } from "@/drizzle/schema";
+
 import { bankAccessBlockMessage } from "@/libs/bank";
 import {
   fetchUserBalances,
@@ -26,7 +25,6 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { getBankInterestDateRange } from "@/utils/time";
 
 export const bankRouter = createTRPCRouter({
   toBank: protectedProcedure
@@ -148,7 +146,7 @@ export const bankRouter = createTRPCRouter({
       // Query
       const pendingInterest = await listDailyBankInterestForGetPendingInterest(
         ctx.drizzle,
-        pendingInterestWhere,
+
         ctx,
       );
       // Derived
@@ -214,17 +212,6 @@ const transferRyo = async (
   };
 };
 
-/** Expiry is enforced on reads and claims independently of background cleanup. */
-const pendingInterestWhere = (userId: string) => {
-  const { oldestDate, today } = getBankInterestDateRange();
-  return and(
-    eq(dailyBankInterest.userId, userId),
-    eq(dailyBankInterest.claimed, false),
-    gte(dailyBankInterest.date, oldestDate),
-    lte(dailyBankInterest.date, today),
-  );
-};
-
 export const claimBankInterest = (client: DrizzleClient, userId: string) =>
   retryOnDeadlock(() =>
     client.transaction(async (tx) => {
@@ -236,7 +223,7 @@ export const claimBankInterest = (client: DrizzleClient, userId: string) =>
 
       const pending = await selectDailyBankInterestForClaimBankInterest(
         tx,
-        pendingInterestWhere,
+
         userId,
       );
       if (pending.length === 0) return errorResponse("No pending interest to claim");

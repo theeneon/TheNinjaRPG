@@ -1292,7 +1292,7 @@ const capturedSource = alias(sanctionTombstone, "capturedSource");
 /** Build the `userReport` lookup for `recordSanctionTombstone`, selecting only `id`, using the configured predicates. */
 export const findUserReportForRecordSanctionTombstone = (
   client: Pick<DrizzleClient, "query">,
-  activeSanctionReportsWhere: (userId: string) => SQL<unknown> | undefined,
+
   userId: string,
 ) =>
   client.query.userReport.findFirst({
@@ -1319,7 +1319,6 @@ export const insertSanctionTombstoneForRecordSanctionTombstone = (
   userId: string,
   sanction: SQL<"BAN" | "SILENCE">,
   hashes: { emailHash: null | string; accountHashes: string[] },
-  activeSanctionReportsWhere: (userId: string) => SQL<unknown> | undefined,
 ) =>
   client
     .insert(sanctionTombstone)
@@ -1524,3 +1523,15 @@ export const deleteSanctionTombstoneForRemoveExpiredSanctionTombstones = (
   client: Pick<DrizzleClient, "delete">,
   expired: undefined | SQL<unknown>,
 ) => client.delete(sanctionTombstone).where(expired);
+
+/** Current bans and silences, including timeouts, at both preflight and persistence. */
+const activeSanctionReportsWhere = (userId: string) =>
+  and(
+    eq(userReport.reportedUserId, userId),
+    inArray(userReport.status, [
+      "BAN_ACTIVATED",
+      "SILENCE_ACTIVATED",
+      "TIMEOUT_ACTIVATED",
+    ]),
+    gt(userReport.banEnd, new Date()),
+  );

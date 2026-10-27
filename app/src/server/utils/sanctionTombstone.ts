@@ -185,18 +185,6 @@ export const isClerkNotFound = (error: unknown) =>
   "status" in error &&
   error.status === 404;
 
-/** Current bans and silences, including timeouts, at both preflight and persistence. */
-const activeSanctionReportsWhere = (userId: string) =>
-  and(
-    eq(userReport.reportedUserId, userId),
-    inArray(userReport.status, [
-      "BAN_ACTIVATED",
-      "SILENCE_ACTIVATED",
-      "TIMEOUT_ACTIVATED",
-    ]),
-    gt(userReport.banEnd, new Date()),
-  );
-
 /**
  * Store a tombstone for every sanction still running on this account. Call it before the
  * account's reports or its Clerk user are removed.
@@ -215,7 +203,7 @@ export const recordSanctionTombstone = async (
   const [activeReport, user, linkedDiscord] = await Promise.all([
     findUserReportForRecordSanctionTombstone(
       client,
-      activeSanctionReportsWhere,
+
       userId,
     ),
     findUserDataForRecordSanctionTombstone(client, userId),
@@ -250,7 +238,6 @@ export const recordSanctionTombstone = async (
         userId,
         sanction,
         hashes,
-        activeSanctionReportsWhere,
       ),
     );
   }

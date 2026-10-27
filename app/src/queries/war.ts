@@ -184,7 +184,7 @@ export const executeClaimedForApplyObjectiveWarAction = (
   hp: SQL<unknown>,
   activeWar: { id: string },
   rules: { durationDays: number },
-  objectiveWarCombatGuard: () => SQL<unknown>,
+
   destroyed: SQL<unknown>,
   spyPath: "$.attackerEspionage" | "$.defenderEspionage",
 ) =>
@@ -340,7 +340,6 @@ export const executeRowsForSyncWarCamps = (
   guardianId: string,
   startsAt: Date,
   endsAt: Date,
-  objectiveWarCombatGuard: () => SQL<unknown>,
 ) =>
   client.execute(sql`
           INSERT IGNORE INTO WarCamp (id, warId, sector, guardianId, startsAt, endsAt)
@@ -439,7 +438,7 @@ export const executeClaimedForHandleWarEnd = (
   attackerCooldown: Date,
   defenderCooldown: Date,
   losingVillageId: undefined | string,
-  warRaidCombatGuard: () => SQL<unknown>,
+
   rosterMatches: SQL<unknown>,
 ) =>
   client.execute(sql`
@@ -572,9 +571,7 @@ export const executeRowsForFinishWarSettlement = (
   endedWar: { rules: null | import("@/validators/war").WarRules },
   winnerId: string,
   boostEnd: Date,
-  stepReceipt: (
-    key: "boostsDelivered" | "structuresDelivered" | "notified",
-  ) => SQL<unknown>,
+
   stepGuard: (
     key: "boostsDelivered" | "structuresDelivered" | "notified",
   ) => SQL<unknown>,
@@ -606,9 +603,7 @@ export const executeRowsForFinishWarSettlement2 = (
   endedAt: Date,
   penaltyEnd: Date,
   structureEnd: Date,
-  stepReceipt: (
-    key: "boostsDelivered" | "structuresDelivered" | "notified",
-  ) => SQL<unknown>,
+
   stepGuard: (
     key: "boostsDelivered" | "structuresDelivered" | "notified",
   ) => SQL<unknown>,
@@ -677,9 +672,7 @@ export const executeRowsForFinishWarSettlement3 = (
 export const executeRowsForFinishWarSettlement4 = (
   client: Pick<DrizzleClient, "execute">,
   endedWar: { attackerVillageId: string; defenderVillageId: string },
-  stepReceipt: (
-    key: "boostsDelivered" | "structuresDelivered" | "notified",
-  ) => SQL<unknown>,
+
   stepGuard: (
     key: "boostsDelivered" | "structuresDelivered" | "notified",
   ) => SQL<unknown>,
@@ -947,7 +940,6 @@ export const updateWarForApplyRaidHealthDecay = (
   drain: number,
   raid: { lastTokenReductionAt: Date; id: string },
   intervals: number,
-  warRaidCombatGuard: () => SQL<unknown>,
 ) =>
   client
     .update(war)
@@ -1097,7 +1089,6 @@ export const executeWithdrawnForWithdrawWarAlly = (
 export const selectWarMercenaryForFetchMercenaryWarId = (
   client: Pick<DrizzleClient, "select">,
   userId: string,
-  activeWarMercenaryWhere: () => SQL<unknown> | undefined,
 ) =>
   client
     .select({ warId: warMercenary.warId })
@@ -1154,7 +1145,6 @@ export const executeResultForAcceptWarMercenary = (
 export const listWarForFetchWarCampEntry = (
   client: Pick<DrizzleClient, "query" | "select">,
   destination: number,
-  activeWarMercenaryWhere: () => SQL<unknown> | undefined,
 ) =>
   client.query.war.findMany({
     where: inArray(
@@ -2137,3 +2127,13 @@ export const warMissionMembershipGuard = (
       AND ally.villageId = ${userData.villageId} AND ally.supportVillageId = ${side} AND ally.acceptedAt IS NOT NULL AND ally.endedAt IS NULL))
    OR EXISTS (SELECT 1 FROM WarMercenary merc WHERE merc.warId = ${warId} AND merc.userId = ${userId}
      AND merc.sideVillageId = ${side} AND merc.acceptedAt IS NOT NULL AND merc.endedAt IS NULL))`;
+
+/** Reevaluate the deadline after row-lock waits rather than using the battle snapshot. */
+const objectiveWarCombatGuard = () => sql`(${war.rules} IS NULL OR (
+  ${war.combatStartedAt} <= SYSDATE(3) AND
+  SYSDATE(3) < DATE_ADD(${war.combatStartedAt}, INTERVAL CAST(JSON_EXTRACT(${war.rules}, '$.durationDays') AS UNSIGNED) DAY)
+  AND ${war.attackerWarHealth} > 0 AND ${war.defenderWarHealth} > 0))`;
+
+/** Mark one settlement delivery step in the same statement that publishes its effects. */
+const stepReceipt = (key: "boostsDelivered" | "structuresDelivered" | "notified") =>
+  sql`JSON_SET(${war.settlement}, ${`$.${key}`}, CAST('true' AS JSON))`;

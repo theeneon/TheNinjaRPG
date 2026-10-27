@@ -93,7 +93,6 @@ export const executeActivatedForActivatePet = (
   user: import("@/drizzle/schema").UserData,
   now: Date,
   ownerSnapshotWhere: (user: UserData) => SQL<unknown> | undefined,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
 ) =>
   client.execute(sql`
           UPDATE ${userData}
@@ -135,7 +134,7 @@ export const executeFedForFeedPet = (
   isActive: false | true,
   experience: number,
   ownerSnapshotWhere: (user: UserData) => SQL<unknown> | undefined,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
+
   pet: import("@/drizzle/schema").UserPet & {
     species: import("@/drizzle/schema").PetSpecies;
   },
@@ -226,7 +225,7 @@ export const executeRemovedForReleasePet = (
   client: Pick<DrizzleClient, "execute">,
   ownerSnapshotWhere: (user: UserData) => SQL<unknown> | undefined,
   user: import("@/drizzle/schema").UserData,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
+
   pet: import("@/drizzle/schema").UserPet & {
     species: import("@/drizzle/schema").PetSpecies;
   },
@@ -241,7 +240,7 @@ export const executeRemovedForReleasePet = (
 /** Build the `userPet` deletion for `releasePet`, using the configured predicates. */
 export const deleteUserPetForReleasePet = (
   client: Pick<DrizzleClient, "delete">,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
+
   pet: import("@/drizzle/schema").UserPet & {
     species: import("@/drizzle/schema").PetSpecies;
   },
@@ -258,7 +257,7 @@ export const executeAssignedForAssignExperience = (
   spent: number,
   stats: Pick<UserData, CombatStatName>,
   ownerSnapshotWhere: (user: UserData) => SQL<unknown> | undefined,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
+
   pet: import("@/drizzle/schema").UserPet & {
     species: import("@/drizzle/schema").PetSpecies;
   },
@@ -284,7 +283,7 @@ export const updateUserPetForGenerateAppearance = (
   token: string,
   now: Date,
   attempts: number,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
+
   pet: import("@/drizzle/schema").UserPet & {
     species: import("@/drizzle/schema").PetSpecies;
   },
@@ -394,7 +393,7 @@ export const executeResultForUpdateOwnedPet = (
   cost: number,
   assignments: SQL<unknown>[],
   ownerSnapshotWhere: (user: UserData) => SQL<unknown> | undefined,
-  petSnapshotWhere: (pet: UserPet) => SQL<unknown> | undefined,
+
   pet: import("@/drizzle/schema").UserPet,
 ) =>
   client.execute(sql`
@@ -407,3 +406,11 @@ export const executeResultForUpdateOwnedPet = (
           ${userPet.updatedAt} = ${now}
       WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet), cost ? gte(userData.reputationPoints, cost) : undefined)}
     `);
+
+/** Every pet write must still own the selected identity at the fetched revision. */
+const petSnapshotWhere = (pet: UserPet) =>
+  and(
+    eq(userPet.id, pet.id),
+    eq(userPet.userId, pet.userId),
+    eq(userPet.revision, pet.revision),
+  );

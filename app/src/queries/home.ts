@@ -2,7 +2,7 @@
  * Database access for home; authorization and transaction scopes stay in callers.
  */
 import type { SQL } from "drizzle-orm";
-import { eq, gt } from "drizzle-orm";
+import { eq, gt, isNull, lte, or } from "drizzle-orm";
 import type { HomeType } from "@/drizzle/constants";
 import { userData, userItem } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
@@ -232,16 +232,12 @@ export const executeResultForToggleStoreItem = (
 /** Execute the database statement for `publishHomeFurnitureLayout`. */
 export const executeRowsForPublishHomeFurnitureLayout = (
   client: Pick<DrizzleClient, "execute">,
-  availableHomeFurnitureItems: () => SQL<unknown> | undefined,
+
   user: NonNullable<Awaited<ReturnType<typeof fetchHomeFurnitureUser>>>,
   styles: undefined | import("@/validators/home").HomeRoomStyle[],
   placements: import("@/validators/home").HomePlacement[],
   placementCase: (field: "room" | "x" | "y" | "rotation") => SQL<unknown>,
-  homeFurnitureWriteGuard: (
-    user: NonNullable<Awaited<ReturnType<typeof fetchHomeFurnitureUser>>>,
-    userId: string,
-    revision: number,
-  ) => SQL<unknown> | undefined,
+
   userId: string,
   revision: number,
 ) =>
@@ -275,3 +271,32 @@ export const insertUserHomeForEnsureUserHome = (
   client: Pick<DrizzleClient, "insert">,
   userId: string,
 ) => client.insert(userHome).ignore().values({ userId });
+
+/** Only available inventory can be placed; auction escrow and unfinished crafts remain inaccessible. */
+const availableHomeFurnitureItems = () =>
+  and(
+    gt(userItem.quantity, 0),
+    eq(userItem.isInAuction, false),
+    or(
+      isNull(userItem.craftingFinishedAt),
+      lte(userItem.craftingFinishedAt, new Date()),
+    ),
+  );
+
+/** Recheck access and the furniture revision in the same statement that publishes the change. */
+const homeFurnitureWriteGuard = (
+  user: NonNullable<Awaited<ReturnType<typeof fetchHomeFurnitureUser>>>,
+  userId: string,
+  revision: number,
+) =>
+  and(
+    eq(userData.userId, userId),
+    eq(userData.homeFurnitureRevision, revision),
+    eq(userData.updatedAt, user.updatedAt),
+    eq(userData.homeType, user.homeType),
+    eq(userData.isBanned, false),
+    eq(userData.villageId, user.villageId ?? ""),
+    eq(userData.sector, user.sector),
+    eq(userData.isOutlaw, user.isOutlaw),
+    inArray(userData.status, ["AWAKE", "ASLEEP"]),
+  );

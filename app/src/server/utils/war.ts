@@ -68,7 +68,6 @@ import {
   updateWarForApplyRaidHealthDecay,
   updateWarForFinishWarSettlement,
   updateWarMercenaryForFinishWarSettlement,
-  warRaidCombatGuard,
 } from "@/queries/war";
 import type { FetchActiveWarsReturnType } from "@/server/api/routers/war";
 import { type DrizzleClient, drizzleDB } from "@/server/db";
@@ -297,7 +296,7 @@ export const handleWarEnd = async (
         attackerCooldown,
         defenderCooldown,
         losingVillageId,
-        warRaidCombatGuard,
+
         rosterMatches,
       ),
     );
@@ -360,8 +359,7 @@ const finishWarSettlement = async (client: DrizzleClient, endedWar: War) => {
   ) => sql`
     ${war.id} = ${endedWar.id} AND ${war.settlementPending} = TRUE
     AND JSON_UNQUOTE(JSON_EXTRACT(${war.settlement}, ${`$.${key}`})) = 'false'`;
-  const stepReceipt = (key: "boostsDelivered" | "structuresDelivered" | "notified") =>
-    sql`JSON_SET(${war.settlement}, ${`$.${key}`}, CAST('true' AS JSON))`;
+
   const queueMatch = and(
     eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
     isNull(mpvpBattleQueue.battleId),
@@ -399,7 +397,7 @@ const finishWarSettlement = async (client: DrizzleClient, endedWar: War) => {
               endedWar,
               winnerId,
               boostEnd,
-              stepReceipt,
+
               stepGuard,
             ),
           )
@@ -416,7 +414,7 @@ const finishWarSettlement = async (client: DrizzleClient, endedWar: War) => {
               endedAt,
               penaltyEnd,
               structureEnd,
-              stepReceipt,
+
               stepGuard,
             ),
           )
@@ -434,7 +432,7 @@ const finishWarSettlement = async (client: DrizzleClient, endedWar: War) => {
     // The feed entry is durable before its count receipt is claimed; retries never increment twice.
     if (!receipt.notified)
       await retryOnDeadlock(() =>
-        executeRowsForFinishWarSettlement4(client, endedWar, stepReceipt, stepGuard),
+        executeRowsForFinishWarSettlement4(client, endedWar, stepGuard),
       );
     await Promise.all([
       retryOnDeadlock(() => updateUserDataForFinishWarSettlement2(client, receipt)),
@@ -682,13 +680,7 @@ export const applyRaidHealthDecay = async (
   );
   if (raid.type !== "WAR_RAID" || intervals <= 0) return;
   const drain = intervals * FACTION_RAID_DAILY_DRAIN;
-  const result = await updateWarForApplyRaidHealthDecay(
-    client,
-    drain,
-    raid,
-    intervals,
-    warRaidCombatGuard,
-  );
+  const result = await updateWarForApplyRaidHealthDecay(client, drain, raid, intervals);
   if (
     result.rowsAffected > 0 &&
     (raid.attackerWarHealth <= drain || raid.defenderWarHealth <= drain)

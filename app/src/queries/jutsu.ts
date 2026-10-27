@@ -4,6 +4,8 @@
 import { and, asc, desc, eq, getTableColumns, inArray } from "drizzle-orm";
 import type { z } from "zod";
 import { jutsu, jutsuLoadout, jutsuReskin, userData } from "@/drizzle/schema";
+import type { JutsuEquipCap } from "@/libs/jutsu";
+import { JUTSU_EQUIP_CAPS } from "@/libs/jutsu";
 import type { getJutsuReskinMechanics } from "@/libs/jutsu/reskins";
 import type { DrizzleClient } from "@/server/db";
 import type { baseReskinSchema } from "@/validators/jutsu";
@@ -811,7 +813,7 @@ export const updateUserJutsuForToggleEquip = (
   client: Pick<DrizzleClient, "update">,
   input: { userJutsuId: string },
   ctx: { userId: string },
-  activeJutsuLoadoutLacksJutsuSql: (userId: string, jutsuId: string) => SQL<unknown>,
+
   userjutsuObj: { jutsuId: string },
 ) =>
   client
@@ -1346,11 +1348,7 @@ export const updateUserJutsuForRollbackEquipIfOverCap = (
   client: Pick<DrizzleClient, "update">,
   userJutsuId: string,
   userId: string,
-  equipCapRollbackGuardSql: (
-    userId: string,
-    maxEquip: number,
-    flags: JutsuCapFlags,
-  ) => SQL<unknown>,
+
   maxEquip: number,
   flags: import("@/libs/jutsu").JutsuCapFlags,
 ) =>
@@ -1374,11 +1372,7 @@ export const updateUserJutsuForTryEquipUserJutsuAtomically = (
   client: Pick<DrizzleClient, "update">,
   userJutsuId: string,
   userId: string,
-  equipCapUnderGuardSql: (
-    userId: string,
-    maxEquip: number,
-    flags: JutsuCapFlags,
-  ) => SQL<unknown>,
+
   maxEquip: number,
   flags: import("@/libs/jutsu").JutsuCapFlags,
 ) =>
@@ -1415,7 +1409,6 @@ export const updateJutsuLoadoutForAppendJutsuIdToLoadoutAtomically = (
   jutsuId: string,
   loadoutId: string,
   userId: string,
-  isActiveJutsuLoadoutSql: (userId: string, loadoutId: string) => SQL<unknown>,
 ) =>
   client
     .update(jutsuLoadout)
@@ -1440,7 +1433,7 @@ export const updateJutsuLoadoutForRemoveJutsuIdFromLoadoutAtomically = (
   searchPattern: string,
   loadoutId: string,
   userId: string,
-  isActiveJutsuLoadoutSql: (userId: string, loadoutId: string) => SQL<unknown>,
+
   jutsuId: string,
 ) =>
   client
@@ -1561,3 +1554,131 @@ export const listJutsuByIds = (
   client: Pick<DrizzleClient, "query">,
   jutsusIds: string[],
 ) => client.query.jutsu.findMany({ where: inArray(jutsu.id, jutsusIds) });
+
+/** True when the user's active loadout does not currently contain `jutsuId`. */
+const activeJutsuLoadoutLacksJutsuSql = (userId: string, jutsuId: string) =>
+  sql`NOT EXISTS (
+    SELECT 1 FROM (
+      SELECT ${jutsuLoadout.jutsuIds} AS ids
+      FROM ${userData}
+      INNER JOIN ${jutsuLoadout} ON ${jutsuLoadout.id} = ${userData.jutsuLoadout}
+      WHERE ${userData.userId} = ${userId}
+        AND ${jutsuLoadout.userId} = ${userId}
+    ) AS active_loadout
+    WHERE JSON_CONTAINS(active_loadout.ids, JSON_QUOTE(${jutsuId}))
+  )`;
+
+/**
+ * Rollback predicate: unequip this row only when it sits outside the first N
+ * kept slots for an exceeded cap. Concurrent racers that both passed under-cap
+ * then both equip no longer both lose — earlier (updatedAt, id) keeps the slot.
+ */
+const equipCapRollbackGuardSql = (
+  userId: string,
+  maxEquip: number,
+  flags: JutsuCapFlags,
+) => {
+  const parts = [equippedRankExceedsCapSql(userId, maxEquip)];
+  for (const cap of JUTSU_EQUIP_CAPS) {
+    if (flags[cap.key]) {
+      parts.push(
+        equippedRankExceedsCapSql(userId, cap.max, equipCapCategorySql(cap, "j_rank")),
+      );
+    }
+  }
+  return sql`(${sql.join(parts, sql` OR `)})`;
+};
+
+/** Under-cap predicate: all applicable counts must still have room (AND). */
+const equipCapUnderGuardSql = (
+  userId: string,
+  maxEquip: number,
+  flags: JutsuCapFlags,
+) => {
+  const parts = [sql`c.total < ${maxEquip}`];
+  for (const cap of JUTSU_EQUIP_CAPS) {
+    if (flags[cap.key]) {
+      parts.push(sql`${sql.raw(`c.${cap.countAlias}`)} < ${cap.max}`);
+    }
+  }
+  return sql`(
+    SELECT ${sql.join(parts, sql` AND `)}
+    FROM ${equippedCapCountsDerivedSql(userId)} AS c
+  )`;
+};
+
+/** True when this loadout is still the user's active `userData.jutsuLoadout`. */
+const isActiveJutsuLoadoutSql = (userId: string, loadoutId: string) => sql`EXISTS (
+  SELECT 1 FROM ${userData}
+  WHERE ${userData.userId} = ${userId}
+    AND ${userData.jutsuLoadout} = ${loadoutId}
+)`;
+
+/**
+ * Detect nonzero numeric residual modifiers on a trusted jutsu table alias.
+ * JSON_SEARCH only matches strings, so extract the numeric array and test its digits.
+ */
+const residualModifierOnAliasSql = (alias: string) =>
+  sql.raw(
+    `CAST(JSON_EXTRACT(${alias}.effects, '$[*].residualModifier') AS CHAR) REGEXP '[1-9]'`,
+  );
+
+/** Build a cap category predicate against the supplied jutsu table alias. */
+const equipCapCategorySql = (cap: JutsuEquipCap, alias: string) => {
+  const kind = cap.sql;
+  if (kind.kind === "residual") return residualModifierOnAliasSql(alias);
+  if (kind.kind === "jutsuType") {
+    return sql.raw(`${alias}.jutsuType = '${kind.jutsuType}'`);
+  }
+  return sql`JSON_SEARCH(${sql.raw(`${alias}.effects`)}, 'one', ${kind.effectType}, NULL, '$[*].type') IS NOT NULL`;
+};
+
+/** Materialize all equipped-jutsu cap counts in one pass so UPDATE guards avoid MySQL ERROR 1093. */
+const equippedCapCountsDerivedSql = (userId: string) => {
+  const sumCols = JUTSU_EQUIP_CAPS.map(
+    (cap) =>
+      sql`COALESCE(SUM(CASE WHEN ${equipCapCategorySql(cap, "j_cap")} THEN 1 ELSE 0 END), 0) AS ${sql.raw(cap.countAlias)}`,
+  );
+  return sql`(
+    SELECT
+      COUNT(*) AS total,
+      ${sql.join(
+        sumCols,
+        sql`,
+      `,
+      )}
+    FROM ${userJutsu} AS uj_cap
+    INNER JOIN ${jutsu} AS j_cap ON j_cap.id = uj_cap.jutsuId
+    WHERE uj_cap.userId = ${userId}
+      AND uj_cap.equipped = true
+      AND j_cap.jutsuType != 'AI'
+  )`;
+};
+
+/**
+ * True when this updated row's rank among equipped peers (updatedAt ASC, id ASC)
+ * exceeds `cap`. Optional `categorySql` restricts the peer set (heal/event/…).
+ * Derived-table wrapper avoids ERROR 1093 on the table being updated.
+ */
+const equippedRankExceedsCapSql = (
+  userId: string,
+  cap: number,
+  categorySql?: ReturnType<typeof sql>,
+) => sql`(
+  SELECT cnt FROM (
+    SELECT COUNT(*) AS cnt
+    FROM ${userJutsu} AS uj_rank
+    INNER JOIN ${jutsu} AS j_rank ON j_rank.id = uj_rank.jutsuId
+    WHERE uj_rank.userId = ${userId}
+      AND uj_rank.equipped = true
+      AND j_rank.jutsuType != 'AI'
+      ${categorySql ? sql`AND ${categorySql}` : sql``}
+      AND (
+        uj_rank.updatedAt < ${userJutsu.updatedAt}
+        OR (
+          uj_rank.updatedAt = ${userJutsu.updatedAt}
+          AND uj_rank.id <= ${userJutsu.id}
+        )
+      )
+  ) AS equip_rank_cnt
+) > ${cap}`;

@@ -25,6 +25,7 @@ import {
   type LetterRank,
   MAX_EXPERIENCE_LEVEL,
   NPC_ONLY_QUEST_TYPES,
+  PET_TASK_MIN_RANK,
   type QuestType,
   type UserRole,
   UserRoles,
@@ -54,6 +55,7 @@ import {
   userData,
   userItem,
   userJutsu,
+  userPet,
   userQuestAttempt,
   userRaidBuff,
   userRewards,
@@ -68,6 +70,7 @@ import {
   buildRewardChoiceCards,
   type RewardChoiceOwnership,
 } from "@/libs/rewardChoice";
+import { getSageMasteryDisplayRank, sageRanksAtOrBelow } from "@/libs/sageMode";
 import {
   extendWarParticipantSql,
   liftBracketImmunitySql,
@@ -819,7 +822,6 @@ export const executeCancelledForCancelPetTask = (
   owner: { updatedAt: Date },
   now: Date,
   ctx: { userId: string },
-  petTaskReceiptCondition: (task: PetTask) => SQL<unknown>,
 ) =>
   client.execute(sql`
         UPDATE ${userData}
@@ -1355,9 +1357,6 @@ export const selectQuestForFetchUncompletedQuests = (
   type: QuestType,
   now: string,
   availableLetters: import("@/drizzle/schema").BloodlineRank[],
-  sageQuestFilters: (
-    user: Pick<UserData, "sageModeId" | "sageMasteryExperience">,
-  ) => (SQL<unknown> | undefined)[],
 ) =>
   client
     .select()
@@ -1760,8 +1759,7 @@ export const executeResultForCommitQuestObjectiveRewards = (
     periodStartAt?: undefined | null | Date;
   },
   completionConditions: undefined | SQL<unknown>,
-  petTaskReceiptCondition: (task: PetTask) => SQL<unknown>,
-  petTaskOwnerReturnCondition: (userId: string, task: PetTask) => SQL<unknown>,
+
   where: import("@/utils/typeutils").QueryCondition[],
 ) =>
   client.execute(sql`
@@ -2266,3 +2264,52 @@ const buildQuestDiscoveryWhere = (options: QuestDiscoveryOptions) =>
     options.ranks?.length ? inArray(quest.questRank, options.ranks) : undefined,
     ...(options.level !== undefined ? questLevelFilters(options.level) : []),
   );
+
+/** Compare the complete accepted receipt, including its deadline and content revision. */
+const petTaskReceiptCondition = (task: PetTask) =>
+  sql`${userData.petTask} = CAST(${JSON.stringify(task)} AS JSON)`;
+
+/**
+ * SQL predicates shared by mission-hall and uncompleted-quest fetches: exact
+ * `requiredSageModeId` (or unset) and minimum `requiredSageRank` (or unset).
+ *
+ * @param user - Equipped mode and mastery experience from the questing player.
+ */
+const sageQuestFilters = (
+  user: Pick<UserData, "sageModeId" | "sageMasteryExperience">,
+) => [
+  or(
+    isNull(quest.requiredSageModeId),
+    eq(quest.requiredSageModeId, user.sageModeId ?? ""),
+  ),
+  or(
+    isNull(quest.requiredSageRank),
+    inArray(
+      quest.requiredSageRank,
+      sageRanksAtOrBelow(
+        getSageMasteryDisplayRank(user.sageMasteryExperience, !!user.sageModeId),
+      ),
+    ),
+  ),
+];
+
+/**
+ * Guard return and terminal history in the same account claim; occupation may change
+ * while away. As at dispatch, accepted current-rank art remains usable during redraws.
+ */
+const petTaskOwnerReturnCondition = (userId: string, task: PetTask) =>
+  sql`${and(
+    eq(userData.status, "AWAKE"),
+    isNull(userData.battleId),
+    eq(userData.isBanned, false),
+    eq(userData.isAi, false),
+  )} AND ${task.finishesAt} <= ${Date.now()}
+    AND EXISTS (SELECT 1 FROM ${userPet} WHERE ${and(
+      eq(userPet.id, task.petId),
+      eq(userPet.userId, userId),
+      gte(userPet.rank, PET_TASK_MIN_RANK),
+      inArray(userPet.generationStatus, ["READY", "GENERATING"]),
+      eq(userPet.artRank, userPet.rank),
+      isNotNull(userPet.avatar),
+      ne(userPet.avatar, ""),
+    )})`;

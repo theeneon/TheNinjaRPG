@@ -174,7 +174,6 @@ export const petsRouter = createTRPCRouter({
           user,
           now,
           ownerSnapshotWhere,
-          petSnapshotWhere,
         ),
       );
       return activated.rowsAffected > 0
@@ -256,7 +255,7 @@ export const petsRouter = createTRPCRouter({
           isActive,
           experience,
           ownerSnapshotWhere,
-          petSnapshotWhere,
+
           pet,
           ctx,
         ),
@@ -528,7 +527,7 @@ export const petsRouter = createTRPCRouter({
               ctx.drizzle,
               ownerSnapshotWhere,
               user,
-              petSnapshotWhere,
+
               pet,
             ),
           );
@@ -552,7 +551,7 @@ export const petsRouter = createTRPCRouter({
               set: { petExperience: 0, activePetId: null },
             });
             if (!claim.success) return false;
-            const removed = await deleteUserPetForReleasePet(tx, petSnapshotWhere, pet);
+            const removed = await deleteUserPetForReleasePet(tx, pet);
             if (removed.rowsAffected !== 1) throw petMutationConflict();
             return true;
           }),
@@ -664,7 +663,7 @@ export const petsRouter = createTRPCRouter({
           spent,
           stats,
           ownerSnapshotWhere,
-          petSnapshotWhere,
+
           pet,
         ),
       );
@@ -792,7 +791,7 @@ export const petsRouter = createTRPCRouter({
           token,
           now,
           attempts,
-          petSnapshotWhere,
+
           pet,
           ownerSnapshotWhere,
           user,
@@ -925,13 +924,7 @@ const ownerSnapshotWhere = (user: UserData) =>
     eq(userData.updatedAt, user.updatedAt),
     ...ownerMutationWhere(user),
   );
-/** Every pet write must still own the selected identity at the fetched revision. */
-const petSnapshotWhere = (pet: UserPet) =>
-  and(
-    eq(userPet.id, pet.id),
-    eq(userPet.userId, pet.userId),
-    eq(userPet.revision, pet.revision),
-  );
+
 /** Snapshot conflicts remain recoverable mutation results, not server exceptions. */
 const changedResponse = () =>
   errorResponse("Your character or companion changed. Refresh and try again.");
@@ -972,7 +965,7 @@ const updateOwnedPet = async (
       cost,
       assignments,
       ownerSnapshotWhere,
-      petSnapshotWhere,
+
       pet,
     ),
   );

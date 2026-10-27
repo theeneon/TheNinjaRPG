@@ -1,6 +1,5 @@
 import { TRPCError } from "@trpc/server";
 import {
-  and,
   eq,
   exists,
   gt,
@@ -4102,20 +4101,6 @@ type MergeStacksExecutionResult =
   | { success: true; didMerge: boolean; message: string }
   | { success: false; didMerge: false; message: string };
 
-const mergeStackRowGuard = (
-  userId: string,
-  item: Pick<UserItemMergeBucketRow, "id" | "equipped" | "storedAtHome">,
-  quantity: number,
-) =>
-  and(
-    eq(userItem.id, item.id),
-    eq(userItem.userId, userId),
-    eq(userItem.isInAuction, false),
-    eq(userItem.quantity, quantity),
-    eq(userItem.equipped, item.equipped),
-    eq(userItem.storedAtHome, item.storedAtHome),
-  );
-
 /**
  * Merges stacks only within the same inventory bucket (`storedAtHome` + `equipped`) so
  * merge never deletes an equipped row while keeping a backpack copy (or mixes home vs carried).
@@ -4200,7 +4185,7 @@ async function executeMergeStacksForItemBucket(
       sortedItems,
       claimedAt,
       awakeOwner,
-      mergeStackRowGuard,
+
       userId,
     );
 
@@ -4216,7 +4201,7 @@ async function executeMergeStacksForItemBucket(
       publishTargets,
       awakeOwner,
       sortedItems,
-      mergeStackRowGuard,
+
       userId,
     );
     publishedRows = publishResult.rowsAffected;

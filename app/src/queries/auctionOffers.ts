@@ -1,7 +1,8 @@
+import { AUCTION_HOUSE_MIN_LEVEL } from "@/drizzle/constants";
 /**
  * Database access for auction offers; authorization and transaction scopes stay in callers.
  */
-import type { SQL } from "drizzle-orm";
+
 import { and, eq } from "drizzle-orm";
 import type { z } from "zod";
 import { userItem } from "@/drizzle/schema";
@@ -72,7 +73,7 @@ export const listAuctionOfferForGetAuctionOffers = (
 export const updateUserDataForCreateAuctionOffer = (
   client: Pick<DrizzleClient, "update">,
   input: { ryo: number },
-  eligibleOfferUser: (id: string) => SQL<unknown> | undefined,
+
   ctx: { userId: string },
 ) =>
   client
@@ -206,7 +207,7 @@ export const updateUserItemForCancelAuctionOffer = (
 /** Build the `userData` update for `claimOfferUser`, setting `updatedAt`, using the configured predicates. */
 export const updateUserDataForClaimOfferUser = (
   client: Pick<DrizzleClient, "update">,
-  eligibleOfferUser: (id: string) => SQL<unknown> | undefined,
+
   id: string,
 ) =>
   client
@@ -312,3 +313,13 @@ export const logOffer = (
     relatedId: id,
     changes: JSON.stringify({ action, details: changes }),
   });
+
+/** Require an eligible account and reject aliases before claiming auction funds. */
+const eligibleOfferUser = (id: string) =>
+  and(
+    eq(userData.userId, id),
+    sql`NOT EXISTS (SELECT 1 FROM StoreUserIdAlias WHERE StoreUserIdAlias.oldUserId = ${id})`,
+    eq(userData.isBanned, false),
+    eq(userData.isTradeBanned, false),
+    gte(userData.level, AUCTION_HOUSE_MIN_LEVEL),
+  );

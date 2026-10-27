@@ -1,6 +1,5 @@
-import { and, eq, exists, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { village } from "@/drizzle/schema";
+
 import { boostPvpGain } from "@/libs/pvpExperience";
 import { collapseRewards } from "@/libs/rewards";
 import { getVillageLoyaltyBonuses } from "@/libs/villageLoyalty";
@@ -12,8 +11,6 @@ import { fetchUser } from "@/queries/profile";
 import { findVillageById } from "@/queries/village";
 import {
   listQuestForSelect,
-  selectUserDataForLeaderGuard,
-  selectUserDataForLeaderGuard2,
   updateVillageForCancel,
   updateVillageForClaim,
   updateVillageForSelect,
@@ -25,7 +22,7 @@ import {
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
+
 import { getRandomElement } from "@/utils/array";
 import { isStaffRole } from "@/utils/permissions";
 import { idSchema } from "@/validators/misc";
@@ -118,7 +115,7 @@ export const villageMissionRouter = createTRPCRouter({
       const result = await updateVillageForSelect(
         ctx.drizzle,
         mission,
-        leaderGuard,
+
         ctx,
         input,
         current,
@@ -144,7 +141,7 @@ export const villageMissionRouter = createTRPCRouter({
       if (user.isBanned) return errorResponse("You are banned");
       if (user.villageId !== input.villageId || user.isOutlaw)
         return errorResponse("You must belong to this village");
-      const result = await updateVillageForCancel(ctx.drizzle, leaderGuard, ctx, input);
+      const result = await updateVillageForCancel(ctx.drizzle, ctx, input);
       if (result.rowsAffected === 0)
         return errorResponse(
           "Village membership or mission changed; refresh and try again",
@@ -190,7 +187,7 @@ export const villageMissionRouter = createTRPCRouter({
       const result = await updateVillageForClaim(
         ctx.drizzle,
         rewardTokens,
-        leaderGuard,
+
         ctx,
         input,
         mission,
@@ -205,21 +202,3 @@ export const villageMissionRouter = createTRPCRouter({
       };
     }),
 });
-
-const leaderGuard = (
-  client: Pick<DrizzleClient, "select">,
-  villageId: string,
-  userId: string,
-  allowStaff = false,
-) =>
-  and(
-    eq(village.id, villageId),
-    allowStaff
-      ? or(
-          eq(village.kageId, userId),
-          exists(selectUserDataForLeaderGuard(client, userId)),
-        )
-      : eq(village.kageId, userId),
-    eq(village.type, "VILLAGE"),
-    exists(selectUserDataForLeaderGuard2(client, userId)),
-  );

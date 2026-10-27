@@ -1,6 +1,5 @@
 import { getWarSide, isObjectiveWarActive } from "@/libs/objectiveWar";
 import {
-  activeWarMercenaryWhere,
   executeResultForAcceptWarMercenary,
   executeRowsForAcceptWarMercenary,
   listWarForFetchWarCampEntry,
@@ -12,11 +11,7 @@ import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlE
 
 /** One indexed membership read; callers schedule it with their other initial queries. */
 export const fetchMercenaryWarId = async (client: DrizzleClient, userId: string) => {
-  const rows = await selectWarMercenaryForFetchMercenaryWarId(
-    client,
-    userId,
-    activeWarMercenaryWhere,
-  );
+  const rows = await selectWarMercenaryForFetchMercenaryWarId(client, userId);
   return rows[0]?.warId ?? null;
 };
 
@@ -53,7 +48,7 @@ export const fetchWarCampEntry = async (
   destination: number,
 ) => {
   const [wars, mercenaryWarId] = await Promise.all([
-    listWarForFetchWarCampEntry(client, destination, activeWarMercenaryWhere),
+    listWarForFetchWarCampEntry(client, destination),
     fetchMercenaryWarId(client, userId),
   ]);
   return { wars, mercenaryWarId };

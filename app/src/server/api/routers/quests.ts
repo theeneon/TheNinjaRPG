@@ -1,17 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import {
-  and,
-  eq,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  ne,
-  notExists,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, gte, inArray, isNull, lte, ne, notExists, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -122,7 +110,7 @@ import {
   verifyRewardChoiceForSave,
 } from "@/libs/rewardChoice";
 import { collapseRewards } from "@/libs/rewards";
-import { getSageMasteryDisplayRank, sageRanksAtOrBelow } from "@/libs/sageMode";
+
 import { callDiscordContent } from "@/libs/socials";
 import { availableQuestLetterRanks, availableRanks } from "@/libs/train";
 import { villageMissionCompletionEvents } from "@/libs/villageMission";
@@ -1357,14 +1345,7 @@ export const questsRouter = createTRPCRouter({
       // A LEFT JOIN permits recovery after content/history deletion. The exact start
       // guard prevents cancellation from closing a restarted attempt in a reused row.
       const cancelled = await retryOnDeadlock(() =>
-        executeCancelledForCancelPetTask(
-          ctx.drizzle,
-          task,
-          owner,
-          now,
-          ctx,
-          petTaskReceiptCondition,
-        ),
+        executeCancelledForCancelPetTask(ctx.drizzle, task, owner, now, ctx),
       );
       return cancelled.rowsAffected > 0
         ? { success: true, message: "Your companion returned without task rewards." }
@@ -2416,7 +2397,6 @@ export const fetchUncompletedQuests = async (
     type,
     now,
     availableLetters,
-    sageQuestFilters,
   );
   return history
     .map((quest) => quest.Quest)
@@ -3221,10 +3201,6 @@ export const insertNextQuest = async (
   return undefined;
 };
 
-/** Compare the complete accepted receipt, including its deadline and content revision. */
-const petTaskReceiptCondition = (task: PetTask) =>
-  sql`${userData.petTask} = CAST(${JSON.stringify(task)} AS JSON)`;
-
 /** Start only the same open, versioned attempt that was accepted through normal quest assignment. */
 const petTaskAttemptCondition = (task: PetTask, userId: string) =>
   sql`EXISTS (SELECT 1 FROM ${questHistory} WHERE ${and(
@@ -3248,27 +3224,6 @@ const petTaskContentCondition = (task: PetTask, role: UserRole) =>
     lte(quest.petTaskMinutes, PET_TASK_MAX_MINUTES),
     canPlayHiddenQuests(role) ? undefined : eq(quest.hidden, false),
   )})`;
-
-/**
- * Guard return and terminal history in the same account claim; occupation may change
- * while away. As at dispatch, accepted current-rank art remains usable during redraws.
- */
-const petTaskOwnerReturnCondition = (userId: string, task: PetTask) =>
-  sql`${and(
-    eq(userData.status, "AWAKE"),
-    isNull(userData.battleId),
-    eq(userData.isBanned, false),
-    eq(userData.isAi, false),
-  )} AND ${task.finishesAt} <= ${Date.now()}
-    AND EXISTS (SELECT 1 FROM ${userPet} WHERE ${and(
-      eq(userPet.id, task.petId),
-      eq(userPet.userId, userId),
-      gte(userPet.rank, PET_TASK_MIN_RANK),
-      inArray(userPet.generationStatus, ["READY", "GENERATING"]),
-      eq(userPet.artRank, userPet.rank),
-      isNotNull(userPet.avatar),
-      ne(userPet.avatar, ""),
-    )})`;
 
 /** Explain invalid or unfinished tasks without discarding the player's ability to return safely. */
 const petTaskReturnBlockMessage = (
@@ -3622,8 +3577,7 @@ export const commitQuestObjectiveRewards = async (info: {
             user,
             managedRun,
             completionConditions,
-            petTaskReceiptCondition,
-            petTaskOwnerReturnCondition,
+
             where,
           ),
         );
@@ -4351,30 +4305,6 @@ const prepareOverworldBindings = async (
     ? { success: true, objectives: derived }
     : { success: false, message: friendlyCheck.message };
 };
-
-/**
- * SQL predicates shared by mission-hall and uncompleted-quest fetches: exact
- * `requiredSageModeId` (or unset) and minimum `requiredSageRank` (or unset).
- *
- * @param user - Equipped mode and mastery experience from the questing player.
- */
-export const sageQuestFilters = (
-  user: Pick<UserData, "sageModeId" | "sageMasteryExperience">,
-) => [
-  or(
-    isNull(quest.requiredSageModeId),
-    eq(quest.requiredSageModeId, user.sageModeId ?? ""),
-  ),
-  or(
-    isNull(quest.requiredSageRank),
-    inArray(
-      quest.requiredSageRank,
-      sageRanksAtOrBelow(
-        getSageMasteryDisplayRank(user.sageMasteryExperience, !!user.sageModeId),
-      ),
-    ),
-  ),
-];
 
 /**
  * Resolves pending reward-choice offers for display: one query per referenced content type,
