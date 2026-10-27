@@ -7,7 +7,11 @@ const textures = createLeaseCache<Texture>({
   load: (url) =>
     Assets.load<Texture>({
       src: url,
-      parser: "loadTextures",
+      // SVG textures need rasterization; createImageBitmap only decodes raster images.
+      parser:
+        /\.svg(?:[?#]|$)/i.test(url) || url.startsWith("data:image/svg+xml")
+          ? "loadSVG"
+          : "loadTextures",
       data: { scaleMode: url.endsWith("#tnr-nearest") ? "nearest" : "linear" },
     }),
   unload: (url) => Assets.unload(url),

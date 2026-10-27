@@ -14,6 +14,13 @@ import {
   TD_PLAYER_BASE_HEALTH,
   TD_PROJECTILE_SPEED,
 } from "@/drizzle/constants";
+import { markRenderStage } from "@/libs/rendering/browserMetrics";
+import {
+  clearEnemyAssetConfigCache,
+  clearPlayerAssetConfigCache,
+  registerEnemyAssetConfig,
+  registerPlayerAssetConfig,
+} from "@/libs/rendering/towerDefenseCharacters";
 import {
   type CompletedRun,
   type Enemy,
@@ -25,13 +32,6 @@ import {
   type SessionUpgrade,
   type SpacetimeDBEvent,
 } from "@/libs/spacetimedb/client";
-import {
-  clearEnemyAssetConfigCache,
-  clearPlayerAssetConfigCache,
-  registerEnemyAssetConfig,
-  registerPlayerAssetConfig,
-} from "@/libs/threejs/towerDefense";
-import { profiler } from "@/libs/threejs/util";
 import { showMutationToast } from "@/libs/toast";
 import { getDefaultPlayerBonuses } from "@/libs/towerDefense/abilities";
 import { calculateHexDistance } from "@/libs/towerDefense/game";
@@ -854,7 +854,7 @@ export const useTowerDefense = (userId?: string) => {
     const connection = connectionRef.current;
 
     const handleEvent = (event: SpacetimeDBEvent) => {
-      const endMark = profiler.mark(`stdb_event_${event.type}`);
+      const endMark = markRenderStage(`stdb_event_${event.type}`);
 
       switch (event.type) {
         case "connection_state":
@@ -956,7 +956,7 @@ export const useTowerDefense = (userId?: string) => {
           }));
           break;
       }
-      endMark();
+      endMark?.();
     };
 
     const unsubscribe = connection.subscribe(handleEvent);
@@ -1059,7 +1059,7 @@ export const useTowerDefense = (userId?: string) => {
         gridSize: secureSession.params.initialGridSize,
       };
 
-      // PERFORMANCE: Update runtime ref IMMEDIATELY so ThreeJS sees it on mount
+      // PERFORMANCE: Update runtime ref IMMEDIATELY so the renderer sees it on mount
       runtimeStateRef.current = {
         ...runtimeStateRef.current,
         maxHealth: secureSession.params.playerMaxHealth,
@@ -1106,16 +1106,6 @@ export const useTowerDefense = (userId?: string) => {
       resetGameRefs();
       hudStore.reset();
 
-      const connection = connectionRef.current;
-      await connection.connect(userId);
-
-      // Set the session ID reference to the existing session
-      const existingSessionId = BigInt(sessionToResume.id);
-      sessionIdRef.current = existingSessionId;
-
-      // PERFORMANCE: Subscribe to session-specific data (enemies, projectiles)
-      connection.subscribeToSession(existingSessionId);
-
       // Transition to connecting mode and set initial state
       // The mode will be corrected to "playing" or "wave-end" when session_state arrives
       const center = Math.floor(sessionToResume.gridSize / 2);
@@ -1127,7 +1117,7 @@ export const useTowerDefense = (userId?: string) => {
         gridSize: sessionToResume.gridSize,
       };
 
-      // PERFORMANCE: Update runtime ref IMMEDIATELY so ThreeJS sees it on mount
+      // PERFORMANCE: Update runtime ref IMMEDIATELY so the renderer sees it on mount
       // We use current values from ref for abilities/bonuses since we don't have them in existingSession yet
       // They will be updated by the first session_state event.
       runtimeStateRef.current = {
@@ -1149,6 +1139,18 @@ export const useTowerDefense = (userId?: string) => {
         state: initialState,
         existingSession: null,
       }));
+
+      // A reused connection can publish its cached snapshot while connecting.
+      // Prepare fallback state first so it cannot overwrite authoritative abilities or mode.
+      const connection = connectionRef.current;
+      await connection.connect(userId);
+
+      // Set the session ID reference to the existing session
+      const existingSessionId = BigInt(sessionToResume.id);
+      sessionIdRef.current = existingSessionId;
+
+      // PERFORMANCE: Subscribe to session-specific data (enemies, projectiles)
+      connection.subscribeToSession(existingSessionId);
 
       // PERFORMANCE: Sync HUD store so UI updates immediately
       syncHudStore();

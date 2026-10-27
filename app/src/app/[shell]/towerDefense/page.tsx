@@ -99,7 +99,7 @@ const TowerDefensePage: React.FC = () => {
     playerHitEventsRef,
   } = useTowerDefense(userData?.userId);
 
-  // Ref for imperative updates to ThreeJS scene
+  // Ref for infrequent scene updates
   const canvasRef = useRef<TowerDefenseHandle>(null);
 
   // PERFORMANCE: Fetch game assets at page level (stable across re-renders)
@@ -117,41 +117,6 @@ const TowerDefensePage: React.FC = () => {
       sfxUrl: sfxAsset?.url,
     };
   }, [gameAssets]);
-
-  // Game loop ref
-  const animationFrameRef = useRef<number | null>(null);
-  const lastTimeRef = useRef<number>(0);
-
-  // Game loop
-  const gameLoop = useCallback(
-    (timestamp: number) => {
-      if (gameState.mode === "playing") {
-        const deltaTime = (timestamp - lastTimeRef.current) / 1000;
-        lastTimeRef.current = timestamp;
-
-        if (deltaTime < 0.1) {
-          update(deltaTime);
-        }
-
-        animationFrameRef.current = requestAnimationFrame(gameLoop);
-      }
-    },
-    [gameState.mode, update],
-  );
-
-  // Start/stop game loop
-  useEffect(() => {
-    if (gameState.mode === "playing") {
-      lastTimeRef.current = performance.now();
-      animationFrameRef.current = requestAnimationFrame(gameLoop);
-    }
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [gameState.mode, gameLoop]);
 
   // Check for existing sessions on mount or when user data becomes available
   useEffect(() => {
@@ -410,7 +375,6 @@ const TowerDefensePage: React.FC = () => {
 
       {/* Game Canvas */}
       <div className="relative w-full overflow-hidden rounded-lg border bg-slate-900">
-        {/* PERFORMANCE: TowerDefenseCanvas is internally memoized with () => true */}
         {gameState.seed && gameState.state && (
           <TowerDefenseCanvas
             ref={canvasRef}
@@ -418,6 +382,8 @@ const TowerDefensePage: React.FC = () => {
             initialGridSize={gameState.state.gridSize}
             initialPlayerPosition={gameState.state.playerPosition}
             onTileClick={handleTileClick}
+            active={gameState.mode === "playing"}
+            onFrame={update}
             entitiesRef={entitiesRef}
             runtimeStateRef={runtimeStateRef}
             playerHitEventsRef={playerHitEventsRef}

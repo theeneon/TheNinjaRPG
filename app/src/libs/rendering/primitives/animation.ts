@@ -3,7 +3,7 @@ import { type AnimationClip, sampleAnimationClip } from "@/libs/rendering/animat
 import type { GameRenderer } from "@/libs/rendering/runtime";
 
 /** Each animation owns texture views; decoded image sources remain leased and immutable. */
-export const createSpriteClip = async (
+export const createClipTextures = async (
   game: GameRenderer,
   clip: AnimationClip,
   options: { size: number; rendition?: number; nearest?: boolean },
@@ -35,6 +35,26 @@ export const createSpriteClip = async (
       ),
     });
   });
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    for (const view of views) view.destroy(false);
+  };
+  game.own(dispose);
+  return { clip, views, dispose };
+};
+
+/** Sprites own playback while texture views can be shared by a character population. */
+export const createSpriteClip = async (
+  game: GameRenderer,
+  clip: AnimationClip,
+  options: { size: number; rendition?: number; nearest?: boolean },
+) => {
+  const frames = await createClipTextures(game, clip, options);
+  if (game.isDisposed() || game.signal.aborted)
+    throw new DOMException("Animation cancelled", "AbortError");
+  const views = frames.views;
   const sprite = new Sprite(views[0]);
   sprite.anchor.set(0.5);
   sprite.width = options.size;
@@ -46,7 +66,7 @@ export const createSpriteClip = async (
     if (disposed) return;
     disposed = true;
     if (!sprite.destroyed) sprite.destroy({ texture: false, textureSource: false });
-    for (const view of views) view.destroy(false);
+    frames.dispose();
   };
   game.own(dispose);
   return {

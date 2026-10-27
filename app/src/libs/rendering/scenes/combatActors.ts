@@ -1,5 +1,5 @@
 import type { Grid } from "honeycomb-grid";
-import { Container, Graphics, Sprite, Texture } from "pixi.js";
+import { Container, Graphics, Sprite } from "pixi.js";
 import {
   IMG_AVATAR_DEFAULT,
   IMG_BATTLEFIELD_STAR,
@@ -19,6 +19,7 @@ import {
 } from "@/libs/combat/util";
 import { PathCalculator, type TerrainHex } from "@/libs/hexgrid";
 import { createCombatMaxPoolCache } from "@/libs/rendering/combatMaxPools";
+import { createSoftShadowTexture } from "@/libs/rendering/primitives/shadow";
 import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
 import { createStatusMeter } from "@/libs/rendering/primitives/statusMeter";
 import type { GameFrame, GameRenderer } from "@/libs/rendering/runtime";
@@ -40,7 +41,7 @@ export const createCombatActors = (
   let needsSort = true,
     expiresAt = Number.POSITIVE_INFINITY,
     calculatedAt = 0;
-  const shadow = softShadow();
+  const shadow = createSoftShadowTexture();
   game.own(() => shadow.destroy(true));
   const sync = (next: CombatActorSnapshot) => {
     snapshot = next;
@@ -392,21 +393,6 @@ export const combatActorParts = (
   return parts;
 };
 
-const softShadow = () => {
-  const canvas = document.createElement("canvas");
-  canvas.width = 128;
-  canvas.height = 64;
-  const context = canvas.getContext("2d");
-  if (context) {
-    context.scale(2, 1);
-    const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
-    gradient.addColorStop(0, "rgba(0,0,0,.45)");
-    gradient.addColorStop(1, "rgba(0,0,0,0)");
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, 64, 64);
-  }
-  return Texture.from(canvas, true);
-};
 export type CombatActorSnapshot = {
   battle: ReturnedBattle;
   playerId?: string;
