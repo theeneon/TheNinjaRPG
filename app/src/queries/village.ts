@@ -527,21 +527,21 @@ export const executeReleasedForReleaseSector = (
             )
         `);
 
-/** Build the `actionLog` insert for `releaseSector`. */
-export const insertActionLogForReleaseSector = (
+/** Build the action log entry for releasing a village sector. */
+export const insertSectorReleaseLog = (
   client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
-  input: { sector: number },
-  sectorData: { village: { name: string } },
+  userId: string,
+  sectorNumber: number,
+  villageName: string,
   villageId: string,
 ) =>
   client.insert(actionLog).values({
     id: nanoid(),
-    userId: ctx.userId,
+    userId: userId,
     tableName: "war",
-    changes: [`Released sector ${input.sector} from ${sectorData.village.name}`],
+    changes: [`Released sector ${sectorNumber} from ${villageName}`],
     relatedId: villageId,
-    relatedMsg: `Released sector ${input.sector}`,
+    relatedMsg: `Released sector ${sectorNumber}`,
     relatedImage: IMG_AVATAR_DEFAULT,
   });
 

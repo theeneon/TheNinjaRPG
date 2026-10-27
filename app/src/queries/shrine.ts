@@ -714,20 +714,6 @@ export const selectMpvpBattleUserForLeaveShrineBattle = (
     .from(mpvpBattleUser)
     .where(eq(mpvpBattleUser.clanBattleId, input.shrineBattleId));
 
-/** Build the `mpvpBattleQueue` deletion for `leaveShrineBattle`, using predicates on `id` and `battleId`. */
-export const deleteMpvpBattleQueueForLeaveShrineBattle = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { shrineBattleId: string },
-) =>
-  client
-    .delete(mpvpBattleQueue)
-    .where(
-      and(
-        eq(mpvpBattleQueue.id, input.shrineBattleId),
-        isNull(mpvpBattleQueue.battleId),
-      ),
-    );
-
 /**
  * Build the `userData` listing for `initiateShrineBattle`, selecting only `userId`,
  * using predicates on `isAi` and `inShrines`.
@@ -740,55 +726,6 @@ export const listUserDataForInitiateShrineBattle = (
     columns: { userId: true },
     limit: SHRINE_BATTLE_MAX_USERS_PER_SIDE,
   });
-
-/**
- * Build the `mpvpBattleQueue` update for `initiateShrineBattle`, setting `battleId`,
- * using predicates on `id` and `battleId`.
- */
-export const updateMpvpBattleQueueForInitiateShrineBattle = (
-  client: Pick<DrizzleClient, "update">,
-  claimId: string,
-  input: { shrineBattleId: string },
-) =>
-  client
-    .update(mpvpBattleQueue)
-    .set({ battleId: claimId })
-    .where(
-      and(
-        eq(mpvpBattleQueue.id, input.shrineBattleId),
-        isNull(mpvpBattleQueue.battleId),
-      ),
-    );
-
-/** Build the `mpvpBattleQueue` update for `initiateShrineBattle`, setting `battleId`, using predicates on `id`. */
-export const updateMpvpBattleQueueForInitiateShrineBattle2 = (
-  client: Pick<DrizzleClient, "update">,
-  result: { battleId: string },
-  input: { shrineBattleId: string },
-) =>
-  client
-    .update(mpvpBattleQueue)
-    .set({ battleId: result.battleId })
-    .where(eq(mpvpBattleQueue.id, input.shrineBattleId));
-
-/**
- * Build the `mpvpBattleQueue` update for `initiateShrineBattle`, setting `battleId`,
- * using predicates on `id` and `battleId`.
- */
-export const updateMpvpBattleQueueForInitiateShrineBattle3 = (
-  client: Pick<DrizzleClient, "update">,
-  input: { shrineBattleId: string },
-  claimId: string,
-) =>
-  client
-    .update(mpvpBattleQueue)
-    .set({ battleId: null })
-    .where(
-      and(
-        eq(mpvpBattleQueue.id, input.shrineBattleId),
-        eq(mpvpBattleQueue.battleId, claimId),
-      ),
-    );
 
 /**
  * Build the `sector` selection for `hasLevel3Shrine`, using predicates on `villageId`,

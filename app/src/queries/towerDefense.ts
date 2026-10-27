@@ -281,11 +281,8 @@ export const deleteTowerDefenseCharacterForDeleteCharacter = (
   input: { id: string },
 ) => client.delete(towerDefenseCharacter).where(eq(towerDefenseCharacter.id, input.id));
 
-/**
- * Build the `towerDefenseCharacter` update for `processCharacterZip`, setting
- * `assetConfig` and `updatedAt`, using predicates on `id`.
- */
-export const updateTowerDefenseCharacterForProcessCharacterZip = (
+/** Build a tower defense character asset update with a fresh update timestamp. */
+export const updateTowerDefenseCharacterAssets = (
   client: Pick<DrizzleClient, "update">,
   assetConfig: {
     rotations: Record<string, string>;
@@ -297,7 +294,7 @@ export const updateTowerDefenseCharacterForProcessCharacterZip = (
       loop: false | true;
     }[];
   },
-  input: { characterId: string },
+  characterId: string,
 ) =>
   client
     .update(towerDefenseCharacter)
@@ -305,26 +302,7 @@ export const updateTowerDefenseCharacterForProcessCharacterZip = (
       assetConfig,
       updatedAt: new Date(),
     })
-    .where(eq(towerDefenseCharacter.id, input.characterId));
-
-/**
- * Build the `towerDefenseCharacter` update for `updateAssetConfig`, setting
- * `assetConfig` and `updatedAt`, using predicates on `id`.
- */
-export const updateTowerDefenseCharacterForUpdateAssetConfig = (
-  client: Pick<DrizzleClient, "update">,
-  input: {
-    assetConfig: import("@/validators/towerDefense").CharacterAssetConfig;
-    characterId: string;
-  },
-) =>
-  client
-    .update(towerDefenseCharacter)
-    .set({
-      assetConfig: input.assetConfig,
-      updatedAt: new Date(),
-    })
-    .where(eq(towerDefenseCharacter.id, input.characterId));
+    .where(eq(towerDefenseCharacter.id, characterId));
 
 /** Build a tower defense upgrade lookup by ID. */
 export const findTowerDefenseUpgradeById = (

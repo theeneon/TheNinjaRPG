@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   JUTSU_LEVEL_CAP,
@@ -46,15 +46,14 @@ import { insertUserItems } from "@/queries/item";
 import { debitUserMoney, incrementUserMoney } from "@/queries/profile";
 import { fetchStudents } from "@/queries/sensei";
 import {
+  deleteDeadQueueRows,
   deleteUserQueueForClaimQueueRow,
-  deleteUserQueueForDeleteDeadRows,
   findUserDataForFetchQuestUser,
   insertUserCookingJobForStartQueuedCraft,
   insertUserItemForReturnMaterials,
   insertUserJutsuForStartQueuedJutsu,
   insertUserQueueForAppendQueueEntries,
-  insertUserQueueForClaimAndReplaceTrainingQueue,
-  insertUserQueueForRestoreQueueRow,
+  insertUserQueueRows,
   listUserQueueForFetchCraftingQueue,
   listUserQueueForFetchJutsuTrainingQueue,
   selectUserItemForSettleCrafts,
@@ -62,7 +61,6 @@ import {
   selectUserJutsuForSettleJutsus,
   selectUserJutsuForSettleWaitingJobs,
   selectUserQueueForAppendQueueEntries,
-  selectUserQueueForFetchJutsuQueueSummary,
   selectUserQueueForFetchQueuedJutsuIds,
   updateUserDataForSettleWaitingJobs,
   updateUserDataForUpdateQueueOwner,
@@ -72,7 +70,6 @@ import {
   updateUserQueueForRescheduleWaiting,
 } from "@/queries/train";
 import type { UserWithRelations } from "@/routers/profile";
-
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -138,9 +135,6 @@ export type QueueEntryInsert = Omit<
   "id" | "userId" | "kind" | "position"
 >;
 
-const queueOf = (userId: string, kind: QueueKind) =>
-  and(eq(userQueue.userId, userId), eq(userQueue.kind, kind));
-
 /** Timed rows keep their timestamps; a row missing them is treated as due now. */
 const timed = (row: UserQueue) => {
   const startsAt = row.startsAt ?? row.createdAt;
@@ -173,26 +167,15 @@ export const toQueuedCraft = (row: UserQueue & { item: Item | null }): QueuedCra
 
 /** Waiting jutsu levels in queue order. */
 export const fetchJutsuTrainingQueue = async (client: DrizzleClient, userId: string) =>
-  (await listUserQueueForFetchJutsuTrainingQueue(client, queueOf, userId)).map(
-    toQueuedJutsu,
-  );
+  (await listUserQueueForFetchJutsuTrainingQueue(client, userId)).map(toQueuedJutsu);
 
 /** Waiting crafts in queue order. */
 export const fetchCraftingQueue = async (client: DrizzleClient, userId: string) =>
-  (await listUserQueueForFetchCraftingQueue(client, queueOf, userId)).map(
-    toQueuedCraft,
-  );
-
-/**
- * Waiting jutsu levels for display, in queue order, each with the jutsu's name and the
- * level the user owns now, in one query.
- */
-export const fetchJutsuQueueSummary = (client: DrizzleClient, userId: string) =>
-  selectUserQueueForFetchJutsuQueueSummary(client, queueOf, userId);
+  (await listUserQueueForFetchCraftingQueue(client, userId)).map(toQueuedCraft);
 
 /** Jutsu ids with levels waiting in the user's queue. */
 export const fetchQueuedJutsuIds = async (client: DrizzleClient, userId: string) => {
-  const rows = await selectUserQueueForFetchQueuedJutsuIds(client, queueOf, userId);
+  const rows = await selectUserQueueForFetchQueuedJutsuIds(client, userId);
   return new Set(rows.flatMap((row) => (row.jutsuId ? [row.jutsuId] : [])));
 };
 
@@ -232,12 +215,7 @@ export const appendQueueEntries = async (
   if (entries.length === 0) return;
   let last = lastPosition;
   if (last === undefined) {
-    const [row] = await selectUserQueueForAppendQueueEntries(
-      client,
-      queueOf,
-      userId,
-      kind,
-    );
+    const [row] = await selectUserQueueForAppendQueueEntries(client, userId, kind);
     last = Number(row?.position ?? 0);
   }
   await insertUserQueueForAppendQueueEntries(client, entries, userId, kind, last);
@@ -280,14 +258,6 @@ const trainingQueueRows = (
     createdAt,
   }));
 };
-
-/** Delete MASTERY, ELEMENT or ENERGY rows at or below `head`: already consumed or replaced. */
-const deleteDeadRows = (
-  client: QueueClient,
-  userId: string,
-  kind: "MASTERY" | "ELEMENT" | "ENERGY",
-  head: number,
-) => deleteUserQueueForDeleteDeadRows(client, queueOf, userId, kind, head);
 
 /**
  * Publish replacement rows and the head together. The snapshot guards the edit, while
@@ -336,8 +306,8 @@ export const claimAndReplaceTrainingQueue = async ({
         set: heads,
       });
       if (!claim.success) return null;
-      if (rows.length) await insertUserQueueForClaimAndReplaceTrainingQueue(tx, rows);
-      if (existing.length) await deleteDeadRows(tx, user.userId, kind, head);
+      if (rows.length) await insertUserQueueRows(tx, rows);
+      if (existing.length) await deleteDeadQueueRows(tx, user.userId, kind, head);
       return {
         updatedAt: claim.claimedAt,
         ...heads,
@@ -930,7 +900,7 @@ const restoreQueueRow = async (
 ) => {
   const { jutsu: _jutsu, item: _item, ...row } = entry as QueuedJutsu & QueuedCraft;
   try {
-    await insertUserQueueForRestoreQueueRow(client, row);
+    await insertUserQueueRows(client, [row]);
   } catch (error) {
     if (!isMysqlDuplicateKeyError(error)) throw error;
     if (entry.kind === "JUTSU")

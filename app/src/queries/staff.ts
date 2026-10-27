@@ -4,7 +4,6 @@
 import type { Client as PlanetScaleClient } from "@planetscale/database";
 import { and, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
 import {
   actionLog,
   aiProfile,
@@ -46,7 +45,6 @@ import {
   pollOption,
   questHistory,
   raidParticipation,
-  rankedPvpQueue,
   rankedUserRewards,
   recruitReferral,
   reportLog,
@@ -85,7 +83,6 @@ import {
   userRequest,
   userReview,
   userRewards,
-  userSkill,
   userTitle,
   userUpload,
   userVote,
@@ -287,18 +284,6 @@ export const insertActionLogForForceAwake = (
     ],
   });
 
-/** Build the `mpvpBattleUser` deletion for `forceAwake`, using predicates on `userId`. */
-export const deleteMpvpBattleUserForForceAwake = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { userId: string },
-) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.userId, input.userId));
-
-/** Build the `rankedPvpQueue` deletion for `forceAwake`, using predicates on `userId`. */
-export const deleteRankedPvpQueueForForceAwake = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { userId: string },
-) => client.delete(rankedPvpQueue).where(eq(rankedPvpQueue.userId, input.userId));
-
 /** Build the `mpvpBattleQueue` lookup for `forceAwake`, using predicates on `id`. */
 export const findMpvpBattleQueueForForceAwake = (
   client: Pick<DrizzleClient, "query">,
@@ -392,42 +377,6 @@ export const listRankedUserRewardsForCloneUserForDebug = (
     where: eq(rankedUserRewards.userId, input.userId),
   });
 
-/** Build the `userJutsu` deletion for `cloneUserForDebug`, using predicates on `userId`. */
-export const deleteUserJutsuForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "delete">,
-  user: { userId: string },
-) => client.delete(userJutsu).where(eq(userJutsu.userId, user.userId));
-
-/** Build the `userItem` deletion for `cloneUserForDebug`, using predicates on `userId`. */
-export const deleteUserItemForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "delete">,
-  user: { userId: string },
-) => client.delete(userItem).where(eq(userItem.userId, user.userId));
-
-/** Build the `userQueue` deletion for `cloneUserForDebug`, using predicates on `userId`. */
-export const deleteUserQueueForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "delete">,
-  user: { userId: string },
-) => client.delete(userQueue).where(eq(userQueue.userId, user.userId));
-
-/** Build the `userCookingJob` deletion for `cloneUserForDebug`, using predicates on `userId`. */
-export const deleteUserCookingJobForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "delete">,
-  user: { userId: string },
-) => client.delete(userCookingJob).where(eq(userCookingJob.userId, user.userId));
-
-/** Build the `questHistory` deletion for `cloneUserForDebug`, using predicates on `userId`. */
-export const deleteQuestHistoryForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "delete">,
-  user: { userId: string },
-) => client.delete(questHistory).where(eq(questHistory.userId, user.userId));
-
-/** Build the `rankedUserRewards` deletion for `cloneUserForDebug`, using predicates on `userId`. */
-export const deleteRankedUserRewardsForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "delete">,
-  user: { userId: string },
-) => client.delete(rankedUserRewards).where(eq(rankedUserRewards.userId, user.userId));
-
 /** Build the `anbuSquad` update for `cloneUserForDebug`, setting `memberCount`, using predicates on `id`. */
 export const updateAnbuSquadForCloneUserForDebug = (
   client: Pick<DrizzleClient, "update">,
@@ -439,16 +388,6 @@ export const updateAnbuSquadForCloneUserForDebug = (
       memberCount: sql`GREATEST(${anbuSquad.memberCount} - 1, 0)`,
     })
     .where(eq(anbuSquad.id, user.anbuId));
-
-/** Build the `anbuSquad` update for `cloneUserForDebug`, setting `memberCount`, using predicates on `id`. */
-export const updateAnbuSquadForCloneUserForDebug2 = (
-  client: Pick<DrizzleClient, "update">,
-  target: { anbuId: string },
-) =>
-  client
-    .update(anbuSquad)
-    .set({ memberCount: sql`${anbuSquad.memberCount} + 1` })
-    .where(eq(anbuSquad.id, target.anbuId));
 
 /** Build the `userData` update for `cloneUserForDebug`, using predicates on `userId`. */
 export const updateUserDataForCloneUserForDebug = (
@@ -635,23 +574,6 @@ export const deleteSectorForReleaseSector = (
   input: { sector: number },
 ) => client.delete(sector).where(eq(sector.sector, input.sector));
 
-/** Build the `actionLog` insert for `releaseSector`. */
-export const insertActionLogForReleaseSector = (
-  client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
-  input: { sector: number },
-  sectorData: { village: { name: string }; villageId: string },
-) =>
-  client.insert(actionLog).values({
-    id: nanoid(),
-    userId: ctx.userId,
-    tableName: "war",
-    changes: [`Released sector ${input.sector} from ${sectorData.village.name}`],
-    relatedId: sectorData.villageId,
-    relatedMsg: `Released sector ${input.sector}`,
-    relatedImage: IMG_AVATAR_DEFAULT,
-  });
-
 /** Build the `userActivityEvent` listing for `getUserActivityEvents`, using predicates on `userId`. */
 export const listUserActivityEventForGetUserActivityEvents = (
   client: Pick<DrizzleClient, "query">,
@@ -662,20 +584,6 @@ export const listUserActivityEventForGetUserActivityEvents = (
     orderBy: [desc(userActivityEvent.createdAt)],
     limit: 100, // Limit to last 100 activity events
   });
-
-/** Build the `storeUserIdAlias` insert for `updateUserId`, updating duplicate keys. */
-export const insertStoreUserIdAliasForUpdateUserId = (
-  client: Pick<DrizzleClient, "insert">,
-  input: { userId: string; newUserId: string },
-) =>
-  client
-    .insert(storeUserIdAlias)
-    .values({
-      oldUserId: input.userId,
-      newUserId: input.newUserId,
-      updatedAt: new Date(),
-    })
-    .onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
 
 /** Build the `userData` update for `updateUserId`, setting `userId`, using predicates on `userId`, `status`, `battleId`. */
 export const updateUserDataForUpdateUserId = (
@@ -1751,8 +1659,8 @@ export const deletePollOptionForDeleteUserInternal2 = (
   userId: string,
 ) => client.delete(pollOption).where(eq(pollOption.createdByUserId, userId));
 
-/** Build the `userItem` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserItemForDeleteUserInternal = (
+/** Build deletion of all inventory rows belonging to one user. */
+export const deleteUserItems = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(userItem).where(eq(userItem.userId, userId));
@@ -1775,35 +1683,23 @@ export const deleteFarmCollectionLogForDeleteUserInternal = (
   userId: string,
 ) => client.delete(farmCollectionLog).where(eq(farmCollectionLog.userId, userId));
 
-/** Build the `userJutsu` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserJutsuForDeleteUserInternal = (
+/** Build deletion of all jutsus belonging to one user. */
+export const deleteUserJutsus = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(userJutsu).where(eq(userJutsu.userId, userId));
 
-/** Build the `userQueue` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserQueueForDeleteUserInternal = (
+/** Build deletion of all queue rows belonging to one user. */
+export const deleteUserQueues = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(userQueue).where(eq(userQueue.userId, userId));
 
-/** Build the `userCookingJob` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserCookingJobForDeleteUserInternal = (
+/** Build deletion of all cooking jobs belonging to one user. */
+export const deleteUserCookingJobs = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(userCookingJob).where(eq(userCookingJob.userId, userId));
-
-/** Build the `userSkill` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserSkillForDeleteUserInternal = (
-  client: Pick<DrizzleClient, "delete">,
-  userId: string,
-) => client.delete(userSkill).where(eq(userSkill.userId, userId));
-
-/** Build the `userAttribute` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserAttributeForDeleteUserInternal = (
-  client: Pick<DrizzleClient, "delete">,
-  userId: string,
-) => client.delete(userAttribute).where(eq(userAttribute.userId, userId));
 
 /** Build the `jutsuLoadout` deletion for `deleteUserInternal`, using predicates on `userId`. */
 export const deleteJutsuLoadoutForDeleteUserInternal = (
@@ -1811,8 +1707,8 @@ export const deleteJutsuLoadoutForDeleteUserInternal = (
   userId: string,
 ) => client.delete(jutsuLoadout).where(eq(jutsuLoadout.userId, userId));
 
-/** Build the `questHistory` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteQuestHistoryForDeleteUserInternal = (
+/** Build deletion of all quest history belonging to one user. */
+export const deleteUserQuestHistory = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(questHistory).where(eq(questHistory.userId, userId));
@@ -2022,8 +1918,8 @@ export const deleteUserRequestForDeleteUserInternal2 = (
   userId: string,
 ) => client.delete(userRequest).where(eq(userRequest.receiverId, userId));
 
-/** Build the `rankedUserRewards` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteRankedUserRewardsForDeleteUserInternal = (
+/** Build deletion of all ranked rewards belonging to one user. */
+export const deleteUserRankedRewards = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(rankedUserRewards).where(eq(rankedUserRewards.userId, userId));

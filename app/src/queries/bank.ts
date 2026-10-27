@@ -44,16 +44,16 @@ export const updateUserDataForTransfer = (
     .set({ bank: sql`${userData.bank} - ${value}` })
     .where(and(eq(userData.userId, ctx.userId), gte(userData.bank, value)));
 
-/** Build the `userData` update for `transfer`, setting `bank`, using predicates on `userId`. */
-export const updateUserDataForTransfer2 = (
+/** Build an atomic bank balance increment for one user. */
+export const incrementUserBank = (
   client: Pick<DrizzleClient, "update">,
-  value: number,
-  input: { targetId: string },
+  amount: number,
+  userId: string,
 ) =>
   client
     .update(userData)
-    .set({ bank: sql`${userData.bank} + ${value}` })
-    .where(eq(userData.userId, input.targetId));
+    .set({ bank: sql`${userData.bank} + ${amount}` })
+    .where(eq(userData.userId, userId));
 
 /** Build the `bankTransfers` insert for `transfer`. */
 export const insertBankTransfersForTransfer = (

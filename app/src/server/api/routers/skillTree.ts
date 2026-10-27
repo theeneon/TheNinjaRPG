@@ -17,7 +17,7 @@ import {
   deleteSkillTreeFolderForDeleteFolder,
   deleteSkillTreeForDelete,
   deleteUserSkillForResetAllUsersSkillPoints,
-  deleteUserSkillForResetSkillPoints,
+  deleteUserSkills,
   fetchSkillTreeViewer,
   fetchUserSkills,
   findBloodlineIdentityById,
@@ -559,7 +559,7 @@ export const skillTreeRouter = createTRPCRouter({
 
       // Perform the reset
       const writes: Promise<unknown>[] = [
-        deleteUserSkillForResetSkillPoints(ctx.drizzle, ctx),
+        deleteUserSkills(ctx.drizzle, ctx.userId),
         insertActionLogForResetSkillPoints(
           ctx.drizzle,
           ctx,

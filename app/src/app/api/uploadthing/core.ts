@@ -15,10 +15,9 @@ import { insertHistoricalSoundEffect } from "@/queries/audio";
 import {
   insertHistoricalAvatarForUploadHistoricalAvatar,
   selectHistoricalAvatarForAvatarMiddleware,
-  updateUserDataForUploadHistoricalAvatar,
+  updateUserAvatar,
 } from "@/queries/avatar";
 import { findUserById, insertUserUploadForTavernUploader } from "@/queries/profile";
-
 import { drizzleDB } from "@/server/db";
 import { claimTavernImageUpload } from "@/server/utils/tavernUploads";
 import { getUserFederalStatus } from "@/utils/paypal";
@@ -328,9 +327,7 @@ const uploadHistoricalAvatar = async (
       thumbnailUrl,
       userId,
     ),
-    ...(updateUser
-      ? [updateUserDataForUploadHistoricalAvatar(drizzleDB, userPatch, userId)]
-      : []),
+    ...(updateUser ? [updateUserAvatar(drizzleDB, userPatch, userId)] : []),
   ];
   const [, userUpdate] = await Promise.all(promises);
   return userUpdate?.rowsAffected === 1 ? userPatch : undefined;

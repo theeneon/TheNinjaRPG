@@ -82,7 +82,6 @@ import { fetchSectorVillage, findVillageBySector } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser } from "@/routers/profile";
 import { breakStealth } from "@/routers/stealth";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -96,7 +95,6 @@ import { isTransientDatabaseError } from "@/server/dbRetry";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
-
 import {
   fetchPublishedSectorMap,
   fetchPublishedSectorMaps,

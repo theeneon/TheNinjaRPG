@@ -26,10 +26,15 @@ import {
 import { getServerPusher } from "@/libs/pusher";
 import { fetchActiveUserMpvpBattles } from "@/queries/clan";
 import { fetchUser, queueAwakeUser, wakeQueuedUser } from "@/queries/profile";
-import { deleteQueueById } from "@/queries/raids";
+import {
+  claimBattleQueue,
+  deleteQueueById,
+  deleteUnclaimedBattleQueue,
+  releaseBattleQueueClaim,
+  setQueueBattleId,
+} from "@/queries/raids";
 import {
   deleteMpvpBattleQueueForGetShrineBattles,
-  deleteMpvpBattleQueueForLeaveShrineBattle,
   deleteMpvpBattleUserForLeaveShrineBattle,
   findMpvpBattleQueueForJoinShrineBattle,
   findMpvpBattleQueueForLeaveShrineBattle,
@@ -50,9 +55,6 @@ import {
   selectMpvpBattleUserForGetUserQueuedShrineBattle,
   selectMpvpBattleUserForLeaveShrineBattle,
   selectSectorForHasLevel3Shrine,
-  updateMpvpBattleQueueForInitiateShrineBattle,
-  updateMpvpBattleQueueForInitiateShrineBattle2,
-  updateMpvpBattleQueueForInitiateShrineBattle3,
   updateSectorForPayWeeklyMaintenance,
   updateSectorForUpgradeShrine,
   updateUserDataForChallengeShrine2,
@@ -87,7 +89,6 @@ import { canSeeSecretData } from "@/utils/permissions";
 import { secondsFromDate } from "@/utils/time";
 import { getBoostTemplateSchema, setBoostTemplateSchema } from "@/validators/shrine";
 import { userDeltaResponseSchema } from "@/validators/userCache";
-
 import { fetchActiveWars } from "./war";
 
 // Pusher instance
@@ -929,7 +930,7 @@ export const shrineRouter = createTRPCRouter({
 
         // Only revert if user is still QUEUED and not in this battle
         if (currentUser?.status === "QUEUED" && !existingEntry) {
-          await wakeQueuedUser(ctx.drizzle, user);
+          await wakeQueuedUser(ctx.drizzle, user.userId);
         }
 
         if (isDuplicateError) {
@@ -989,14 +990,14 @@ export const shrineRouter = createTRPCRouter({
         if (battle && battle.createdAt <= shrineLobbyStaleBefore) {
           // Lobby is confirmed stale — reset status immediately so the user
           // isn't blocked until the cron tick clears it.
-          await wakeQueuedUser(ctx.drizzle, user);
+          await wakeQueuedUser(ctx.drizzle, user.userId);
           return errorResponse("Shrine battle expired");
         }
         return errorResponse("Not in this shrine battle queue");
       }
 
       // Only update user status if we successfully deleted the queue entry
-      await wakeQueuedUser(ctx.drizzle, user);
+      await wakeQueuedUser(ctx.drizzle, user.userId);
 
       // If no one left in queue, delete the battle queue
       const counts = await selectMpvpBattleUserForLeaveShrineBattle(ctx.drizzle, input);
@@ -1004,7 +1005,7 @@ export const shrineRouter = createTRPCRouter({
 
       if (remaining === 0) {
         // Only delete if battleId is still null (battle hasn't started)
-        await deleteMpvpBattleQueueForLeaveShrineBattle(ctx.drizzle, input);
+        await deleteUnclaimedBattleQueue(ctx.drizzle, input.shrineBattleId);
       }
 
       return { success: true, message: "Left shrine battle queue" };
@@ -1140,10 +1141,10 @@ export const shrineRouter = createTRPCRouter({
       // CRITICAL: Claim the battle BEFORE calling initiateBattle()
       // Use a placeholder battle ID to atomically claim this queue
       const claimId = `claiming-${nanoid()}`;
-      const claimResult = await updateMpvpBattleQueueForInitiateShrineBattle(
+      const claimResult = await claimBattleQueue(
         ctx.drizzle,
         claimId,
-        input,
+        input.shrineBattleId,
       );
 
       // If no rows updated, another process already claimed this battle
@@ -1166,7 +1167,7 @@ export const shrineRouter = createTRPCRouter({
 
       if (result.success && result.battleId) {
         // Update with the real battleId (replace our claim placeholder)
-        await updateMpvpBattleQueueForInitiateShrineBattle2(ctx.drizzle, result, input);
+        await setQueueBattleId(ctx.drizzle, result.battleId, input.shrineBattleId);
 
         // Note: initiateBattle() sets human participants to status="BATTLE".
         // AI defender rows are never claimed or modified — the shared AI row
@@ -1190,7 +1191,7 @@ export const shrineRouter = createTRPCRouter({
       }
 
       // If initiateBattle failed, release the claim so others can try
-      await updateMpvpBattleQueueForInitiateShrineBattle3(ctx.drizzle, input, claimId);
+      await releaseBattleQueueClaim(ctx.drizzle, input.shrineBattleId, claimId);
 
       return errorResponse(`Failed to initiate shrine battle: ${result.message}`);
     }),

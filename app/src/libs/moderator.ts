@@ -16,10 +16,10 @@ import {
 import { getRelatedReports } from "@/libs/moderation/reportSearch";
 import {
   insertModerationScanForModerateContent,
+  markConversationCommentReported,
+  markForumPostReported,
   selectConversationCommentForGetAdditionalContext,
   selectForumPostForGetAdditionalContext,
-  updateConversationCommentForUpdateReportedStatus,
-  updateForumPostForUpdateReportedStatus,
   updateModerationScanForModerateContent,
   updateModerationScanForModerateContent2,
   updateModerationScanForModerateContent3,
@@ -240,10 +240,10 @@ const updateReportedStatus = async (
   switch (system) {
     case "comment":
     case "privateMessage":
-      await updateConversationCommentForUpdateReportedStatus(client, relationId);
+      await markConversationCommentReported(client, relationId);
       break;
     case "forumPost":
-      await updateForumPostForUpdateReportedStatus(client, relationId);
+      await markForumPostReported(client, relationId);
       break;
     case "userReport":
       await updateUserReportCommentForUpdateReportedStatus(client, relationId);

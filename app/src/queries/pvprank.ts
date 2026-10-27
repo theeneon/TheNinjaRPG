@@ -537,7 +537,7 @@ export const countRankedPvpQueueForGetRankedQueueCount = (
   client: Pick<DrizzleClient, "$count">,
 ) => client.$count(rankedPvpQueue, eq(rankedPvpQueue.hasClaimed, true));
 
-/** Build the `rankedPvpQueue` deletion for `user`, using predicates on `userId`. */
+/** Build deletion of a user’s ranked PvP queue entry. */
 export const deleteRankedQueueForUser = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,

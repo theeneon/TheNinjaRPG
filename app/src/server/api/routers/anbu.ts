@@ -21,6 +21,8 @@ import { anbuSquad } from "@/drizzle/schema";
 import { getServerPusher } from "@/libs/pusher";
 import { hasRequiredRank } from "@/libs/train";
 import {
+  assignUserToAnbu,
+  clearUserAnbuMembership,
   countAnbuSquads,
   countVillageClans,
   deleteAnbuSquadForDisbandSquad,
@@ -34,6 +36,7 @@ import {
   fetchSquadSummary,
   fetchSquads,
   findAnbuSquadForEditSquad,
+  incrementAnbuMemberCount,
   insertAnbuSquadForCreateSquad,
   listAnbuSquadForGetAllNames,
   listUserDataForElectAnbuLeader,
@@ -48,15 +51,10 @@ import {
   updateAnbuSquadForPurchaseEspionageUpgrade,
   updateAnbuSquadForPurchaseStealthUpgrade,
   updateAnbuSquadForRemoveFromSquad,
-  updateAnbuSquadForRemoveFromSquad2,
   updateAnbuSquadForRemoveFromSquad3,
-  updateUserDataForAcceptAnbuRequest,
-  updateUserDataForCreateSquad,
-  updateUserDataForCreateSquad2,
   updateUserDataForDisbandSquad,
   updateUserDataForDisbandSquad2,
   updateUserDataForPerformEspionage,
-  updateUserDataForRemoveFromSquad,
   updateUserRequestForCreateAnbuRequest,
   updateUserRequestForTransitionAnbuRequestState,
 } from "@/queries/anbu";
@@ -66,7 +64,6 @@ import { fetchVillage } from "@/queries/village";
 import { createConvo } from "@/routers/comments";
 import { updateNindo } from "@/routers/profile";
 import { fetchRequest } from "@/routers/sparring";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -221,11 +218,7 @@ export const anbuRouter = createTRPCRouter({
       if (!moderationResult.success) return moderationResult;
       // Mutate
       const anbuId = nanoid();
-      const leaderClaim = await updateUserDataForCreateSquad(
-        ctx.drizzle,
-        anbuId,
-        leader,
-      );
+      const leaderClaim = await assignUserToAnbu(ctx.drizzle, anbuId, leader.userId);
       if (leaderClaim.rowsAffected === 0) {
         return errorResponse("Leader already in a squad");
       }
@@ -238,7 +231,7 @@ export const anbuRouter = createTRPCRouter({
           leader,
         );
       } catch (error) {
-        await updateUserDataForCreateSquad2(ctx.drizzle, leader, anbuId);
+        await clearUserAnbuMembership(ctx.drizzle, leader.userId, anbuId);
         throw error;
       }
       // Create
@@ -829,11 +822,7 @@ export async function acceptAnbuRequest(args: {
     await transitionAnbuRequestState(ctx.drizzle, input.id, "ACCEPTED", "PENDING");
     return errorResponse("Squad is full");
   }
-  const joinResult = await updateUserDataForAcceptAnbuRequest(
-    ctx.drizzle,
-    squad,
-    requester,
-  );
+  const joinResult = await assignUserToAnbu(ctx.drizzle, squad.id, requester.userId);
   if (joinResult.rowsAffected === 0) {
     await Promise.all([
       releaseAnbuCapacity(ctx.drizzle, squad.id),
@@ -927,9 +916,9 @@ export const removeFromSquad = async (
   const capacityRelease = await updateAnbuSquadForRemoveFromSquad(client, squad);
   if (capacityRelease.rowsAffected === 0) return false;
 
-  const memberRemoval = await updateUserDataForRemoveFromSquad(client, userId, squad);
+  const memberRemoval = await clearUserAnbuMembership(client, userId, squad.id);
   if (memberRemoval.rowsAffected === 0) {
-    await updateAnbuSquadForRemoveFromSquad2(client, squad);
+    await incrementAnbuMemberCount(client, squad.id);
     return false;
   }
 

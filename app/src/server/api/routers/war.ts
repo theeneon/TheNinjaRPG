@@ -62,6 +62,7 @@ import {
   fetchVillages,
 } from "@/queries/village";
 import {
+  approvePendingWarDeclaration,
   deleteWarAllyForAdminEndWar,
   deleteWarForAdminEndWar,
   deleteWarKillForAdminEndWar,
@@ -122,14 +123,11 @@ import {
   updateUserDataForDeclareSectorWar,
   updateUserDataForStartWarMission,
   updateVillageElderVoteForCancelWarDeclaration,
-  updateVillageElderVoteForVoteOnWarDeclaration,
   updateVillageElderVoteForVoteOnWarDeclaration2,
 } from "@/queries/war";
-
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser } from "@/routers/profile";
 import { fetchRequest } from "@/routers/sparring";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -1892,7 +1890,7 @@ export const warRouter = createTRPCRouter({
       if (outcome === "APPROVED") {
         // Atomically claim the motion and pre-fetch needed data in parallel
         const [claimResult, defenderVillage, currentActiveWars] = await Promise.all([
-          updateVillageElderVoteForVoteOnWarDeclaration(ctx.drizzle, input),
+          approvePendingWarDeclaration(ctx.drizzle, input.voteId),
           findVillageForVoteOnWarDeclaration(ctx.drizzle, voteRecord),
           fetchActiveWars(ctx.drizzle),
         ]);

@@ -123,6 +123,7 @@ import {
   settleQueuedTraining,
 } from "@/libs/train";
 import { fetchSquad } from "@/queries/anbu";
+import { incrementUserBank } from "@/queries/bank";
 import { fetchClan } from "@/queries/clan";
 import { listHuntingHabitats } from "@/queries/hunting";
 import { fetchKageReplacement } from "@/queries/kage";
@@ -221,7 +222,6 @@ import {
   updateUserDataForGetPublicUser,
   updateUserDataForGetUser,
   updateUserDataForGetUser2,
-  updateUserDataForLevelUp,
   updateUserDataForToggleDeletionTimer,
   updateUserDataForUpdateAi,
   updateUserDataForUpdateBattleDescription,
@@ -236,16 +236,17 @@ import {
   updateUserVoteForClaimVotes,
   updateVillageForFetchUpdatedUserOnce,
 } from "@/queries/profile";
-import { fetchBloodlineCollectionRolls } from "@/queries/quests";
+import {
+  fetchBloodlineCollectionRolls,
+  fetchQuestDiscoverySummaryCandidates,
+} from "@/queries/quests";
 import { fetchEventNoticeState } from "@/queries/tournamentEvents";
+import { fetchJutsuQueueSummary } from "@/queries/train";
 import { fetchVillage, fetchVillages } from "@/queries/village";
 import { removeFromSquad } from "@/routers/anbu";
 import { removeFromClan } from "@/routers/clan";
-
 import { handleQuestConsequences, insertNextQuest } from "@/routers/quests";
-
 import { deleteUser } from "@/server/api/routers/staff";
-
 import {
   baseServerResponse,
   cdnCachedProcedure,
@@ -277,7 +278,6 @@ import {
   fetchBloodlineCollectionCatalogue,
   hydrateQuestCollections,
 } from "@/server/utils/questCollections";
-import { fetchQuestDiscoverySummaryCandidates } from "@/server/utils/questDiscovery";
 import {
   applyQuestParty,
   type LoadedQuestParty,
@@ -294,7 +294,6 @@ import {
 import { retainSanctionIps } from "@/server/utils/sanctionTombstone";
 import { fetchPublishedSectorMaps } from "@/server/utils/sectorMap";
 import {
-  fetchJutsuQueueSummary,
   hasDueTimedJob,
   settleDueTimedQueues,
   settleJutsuTrainingQueue,
@@ -701,9 +700,7 @@ export const profileRouter = createTRPCRouter({
           ),
         );
         await Promise.all([
-          updateUserDataForLevelUp(ctx.drizzle, amount, {
-            recruiterId: user.recruiterId,
-          }),
+          incrementUserBank(ctx.drizzle, amount, user.recruiterId),
           insertRecruitmentRewardsForLevelUp(
             ctx.drizzle,
             { recruiterId: user.recruiterId },

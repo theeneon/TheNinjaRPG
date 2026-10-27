@@ -155,23 +155,20 @@ import {
   selectUserJutsuForFetchUserJutsus,
   selectUserJutsuForGetJutsuRelations,
   selectUserJutsuForStartTraining,
+  setUserJutsuReskin,
   updateJutsuForSaveJutsuFamily,
   updateJutsuForSaveJutsuFamily2,
   updateJutsuLoadoutForAppendJutsuIdToLoadoutAtomically,
-  updateJutsuLoadoutForEvolveJutsu,
   updateJutsuLoadoutForRemoveJutsuIdFromLoadoutAtomically,
   updateJutsuLoadoutForRenameLoadout,
   updateJutsuLoadoutForUnequipAll,
-  updateJutsuLoadoutForUpdateUserJutsuOrder,
+  updateJutsuLoadoutIds,
   updateJutsuReskinForCreateReskin,
   updateJutsuReskinForEvolveJutsu,
   updateJutsuReskinForUpdateReskin,
   updateUserDataForCreateReskin,
-  updateUserDataForEvolveJutsu,
   updateUserDataForWriteDefaultPointer,
   updateUserJutsuForAdjustUserJutsu,
-  updateUserJutsuForCreateReskin,
-  updateUserJutsuForCreateReskin2,
   updateUserJutsuForEvolveJutsu,
   updateUserJutsuForRemoveReskin,
   updateUserJutsuForRollbackEquipIfOverCap,
@@ -191,10 +188,9 @@ import {
   findUserRoleById,
   incrementUserMoney,
 } from "@/queries/profile";
+import { updateUserQuestData } from "@/queries/quests";
 import { fetchStudents } from "@/queries/sensei";
-
 import { findRequiredSkillTreeEntry } from "@/queries/skillTree";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -232,7 +228,6 @@ import {
   type ZodAllTags,
   type ZodJutsuType,
 } from "@/validators/combat";
-
 import {
   createLinkedJutsuSchema,
   evolveJutsuSchema,
@@ -246,7 +241,6 @@ import {
   updateJutsuSchema,
   userJutsuFilteringSchema,
 } from "@/validators/jutsu";
-
 import {
   importJutsuLoadoutSchema,
   previewJutsuLoadoutSchema,
@@ -897,9 +891,9 @@ export const jutsuRouter = createTRPCRouter({
               ),
         }));
       await Promise.all([
-        updateUserDataForEvolveJutsu(ctx.drizzle, questDataForDb, ctx),
+        updateUserQuestData(ctx.drizzle, questDataForDb, ctx.userId),
         ...loadoutsToUpdate.map((loadout) =>
-          updateJutsuLoadoutForEvolveJutsu(ctx.drizzle, loadout),
+          updateJutsuLoadoutIds(ctx.drizzle, loadout.jutsuIds, loadout.id),
         ),
         // No-collision reskin carry-forward: update the reskin row's jutsuId so
         // createReskin's by-jutsuId lookup still works after evolution. (The
@@ -1472,7 +1466,7 @@ export const jutsuRouter = createTRPCRouter({
         }
 
         await Promise.all([
-          updateUserDataForEvolveJutsu(ctx.drizzle, questDataForDb, ctx),
+          updateUserQuestData(ctx.drizzle, questDataForDb, ctx.userId),
           canAutoEquip
             ? rollbackEquipIfOverCap({
                 client: ctx.drizzle,
@@ -1843,7 +1837,7 @@ export const jutsuRouter = createTRPCRouter({
       newOrder.push(input.jutsuId);
       newOrder.push(...loadout.jutsuIds.filter((id) => !newOrder.includes(id)));
 
-      await updateJutsuLoadoutForUpdateUserJutsuOrder(ctx.drizzle, newOrder, loadout);
+      await updateJutsuLoadoutIds(ctx.drizzle, newOrder, loadout.id);
 
       return {
         success: true,
@@ -1918,13 +1912,13 @@ export const jutsuRouter = createTRPCRouter({
             resolvedImage,
             existingReskin,
           ),
-          updateUserJutsuForCreateReskin(ctx.drizzle, existingReskin, jutsuData, ctx),
+          setUserJutsuReskin(ctx.drizzle, existingReskin.id, jutsuData.id, ctx.userId),
         ]);
         return { success: true, message: "Jutsu reskin updated successfully" };
       } else {
         const reskinId = nanoid();
         await Promise.all([
-          updateUserJutsuForCreateReskin2(ctx.drizzle, reskinId, jutsuData, ctx),
+          setUserJutsuReskin(ctx.drizzle, reskinId, jutsuData.id, ctx.userId),
           insertJutsuReskinForCreateReskin(
             ctx.drizzle,
             reskinId,

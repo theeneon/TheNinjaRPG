@@ -256,15 +256,15 @@ export const insertDungeonRunForCreate = (
     },
   });
 
-/** Build the `dungeonMember` insert for `create`. */
-export const insertDungeonMemberForCreate = (
+/** Build a dungeon membership insert that marks the user active in the run. */
+export const insertDungeonMember = (
   client: Pick<DrizzleClient, "insert">,
-  id: string,
-  ctx: { userId: string },
+  runId: string,
+  userId: string,
 ) =>
   client
     .insert(dungeonMember)
-    .values({ runId: id, userId: ctx.userId, activeUserId: ctx.userId });
+    .values({ runId: runId, userId: userId, activeUserId: userId });
 
 /** Build the `dungeonRun` deletion for `create`, including predicates on `id`, `version`, `status`. */
 export const deleteDungeonRunForCreate = (
@@ -343,18 +343,6 @@ export const updateDungeonRunForUpdateParty = (
     .set({ state, status, version: sql`${dungeonRun.version} + 1` })
     .where(and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)));
 
-/** Build the `dungeonMember` insert for `updateParty`. */
-export const insertDungeonMemberForUpdateParty = (
-  client: Pick<DrizzleClient, "insert">,
-  run: { id: string },
-  ctx: { userId: string },
-) =>
-  client.insert(dungeonMember).values({
-    runId: run.id,
-    userId: ctx.userId,
-    activeUserId: ctx.userId,
-  });
-
 /** Build the `dungeonMember` deletion for `updateParty`, using predicates on `runId` and `userId`. */
 export const deleteDungeonMemberForUpdateParty = (
   client: Pick<DrizzleClient, "delete">,
@@ -365,15 +353,15 @@ export const deleteDungeonMemberForUpdateParty = (
     .delete(dungeonMember)
     .where(and(eq(dungeonMember.runId, run.id), eq(dungeonMember.userId, removedUser)));
 
-/** Build the party active-user reset shared by dungeon party updates and run expiry. */
+/** Build the active-user reset for every member of a dungeon run. */
 export const clearDungeonActiveUsers = (
   client: Pick<DrizzleClient, "update">,
-  run: { id: string },
+  runId: string,
 ) =>
   client
     .update(dungeonMember)
     .set({ activeUserId: null })
-    .where(eq(dungeonMember.runId, run.id));
+    .where(eq(dungeonMember.runId, runId));
 
 /** Build the `dungeonMember` lookup for `claim`, using predicates on `runId` and `userId`. */
 export const findDungeonMemberForClaim = (
@@ -496,16 +484,6 @@ export const updateUserDataForSettleDungeonBattle = (
         eq(userData.battleId, current.id),
       ),
     );
-
-/** Build the `dungeonMember` update for `settleDungeonBattle`, setting `activeUserId`, using predicates on `runId`. */
-export const updateDungeonMemberForSettleDungeonBattle = (
-  client: Pick<DrizzleClient, "update">,
-  meta: { runId: string },
-) =>
-  client
-    .update(dungeonMember)
-    .set({ activeUserId: null })
-    .where(eq(dungeonMember.runId, meta.runId));
 
 /** Build the `battle` lookup for `expireDungeonRun`, using predicates on `id`. */
 export const findBattleForExpireDungeonRun = (

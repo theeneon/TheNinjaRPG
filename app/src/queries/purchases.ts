@@ -1106,15 +1106,15 @@ export const listStorePurchaseForApplyStoreTransfer = (
     ),
   });
 
-/** Build the `storeUserIdAlias` insert for `retireStoreUserId`, updating duplicate keys. */
-export const insertStoreUserIdAliasForRetireStoreUserId = (
+/** Build a retired user ID alias insert that preserves the first writer’s destination. */
+export const insertStoreUserIdAlias = (
   client: Pick<DrizzleClient, "insert">,
-  userId: string,
-  tombstone: string,
+  oldUserId: string,
+  newUserId: string,
 ) =>
   client
     .insert(storeUserIdAlias)
-    .values({ oldUserId: userId, newUserId: tombstone, updatedAt: new Date() })
+    .values({ oldUserId: oldUserId, newUserId: newUserId, updatedAt: new Date() })
     // newUserId is deliberately absent from the update: leaving it out is what makes the
     // first writer keep the row.
     .onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });

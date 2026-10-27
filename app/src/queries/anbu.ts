@@ -1,19 +1,9 @@
 /**
  * Database access for anbu; authorization and transaction scopes stay in callers.
  */
-import {
-  and,
-  count,
-  eq,
-  exists,
-  gt,
-  gte,
-  isNull,
-  lt,
-  or,
-  type SQL,
-  sql,
-} from "drizzle-orm";
+
+import type { SQL } from "drizzle-orm";
+import { and, count, eq, exists, gt, gte, isNull, lt, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   ANBU_ESPIONAGE_POINTS_COST,
@@ -277,16 +267,16 @@ export const listAnbuSquadForGetAllNames = (client: Pick<DrizzleClient, "query">
     columns: { id: true, name: true, image: true },
   });
 
-/** Build the `userData` update for `createSquad`, setting `anbuId`, using predicates on `userId` and `anbuId`. */
-export const updateUserDataForCreateSquad = (
+/** Build an ANBU assignment guarded by the user having no current squad. */
+export const assignUserToAnbu = (
   client: Pick<DrizzleClient, "update">,
   anbuId: string,
-  leader: { userId: string },
+  userId: string,
 ) =>
   client
     .update(userData)
     .set({ anbuId })
-    .where(and(eq(userData.userId, leader.userId), isNull(userData.anbuId)));
+    .where(and(eq(userData.userId, userId), isNull(userData.anbuId)));
 
 /** Build the `anbuSquad` insert for `createSquad`. */
 export const insertAnbuSquadForCreateSquad = (
@@ -307,16 +297,16 @@ export const insertAnbuSquadForCreateSquad = (
     leaderOrderId: nanoid(),
   });
 
-/** Build the `userData` update for `createSquad`, setting `anbuId`, using predicates on `userId` and `anbuId`. */
-export const updateUserDataForCreateSquad2 = (
+/** Build an ANBU membership reset guarded by the expected squad. */
+export const clearUserAnbuMembership = (
   client: Pick<DrizzleClient, "update">,
-  leader: { userId: string },
+  userId: string,
   anbuId: string,
 ) =>
   client
     .update(userData)
     .set({ anbuId: null })
-    .where(and(eq(userData.userId, leader.userId), eq(userData.anbuId, anbuId)));
+    .where(and(eq(userData.userId, userId), eq(userData.anbuId, anbuId)));
 
 /** Build the `anbuSquad` deletion for `disbandSquad`, using predicates on `id`. */
 export const deleteAnbuSquadForDisbandSquad = (
@@ -462,17 +452,6 @@ export const updateAnbuSquadForAcceptAnbuRequest = (
       and(eq(anbuSquad.id, squad.id), lt(anbuSquad.memberCount, ANBU_MAX_MEMBERS)),
     );
 
-/** Build the `userData` update for `acceptAnbuRequest`, setting `anbuId`, using predicates on `userId` and `anbuId`. */
-export const updateUserDataForAcceptAnbuRequest = (
-  client: Pick<DrizzleClient, "update">,
-  squad: { id: string },
-  requester: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ anbuId: squad.id })
-    .where(and(eq(userData.userId, requester.userId), isNull(userData.anbuId)));
-
 /** Build the `anbuSquad` update for `acceptAnbuRequest`, setting `leaderId`, using predicates on `id` and `leaderId`. */
 export const updateAnbuSquadForAcceptAnbuRequest2 = (
   client: Pick<DrizzleClient, "update">,
@@ -494,26 +473,15 @@ export const updateAnbuSquadForRemoveFromSquad = (
     .set({ memberCount: sql`${anbuSquad.memberCount} - 1` })
     .where(and(eq(anbuSquad.id, squad.id), gt(anbuSquad.memberCount, 1)));
 
-/** Build the `userData` update for `removeFromSquad`, setting `anbuId`, using predicates on `userId` and `anbuId`. */
-export const updateUserDataForRemoveFromSquad = (
+/** Build an atomic increment of an ANBU squad’s member count. */
+export const incrementAnbuMemberCount = (
   client: Pick<DrizzleClient, "update">,
-  userId: string,
-  squad: { id: string },
-) =>
-  client
-    .update(userData)
-    .set({ anbuId: null })
-    .where(and(eq(userData.userId, userId), eq(userData.anbuId, squad.id)));
-
-/** Build the `anbuSquad` update for `removeFromSquad`, setting `memberCount`, using predicates on `id`. */
-export const updateAnbuSquadForRemoveFromSquad2 = (
-  client: Pick<DrizzleClient, "update">,
-  squad: { id: string },
+  anbuId: string,
 ) =>
   client
     .update(anbuSquad)
     .set({ memberCount: sql`${anbuSquad.memberCount} + 1` })
-    .where(eq(anbuSquad.id, squad.id));
+    .where(eq(anbuSquad.id, anbuId));
 
 /** Build the `anbuSquad` update for `removeFromSquad`, setting `leaderId`, using predicates on `id` and `leaderId`. */
 export const updateAnbuSquadForRemoveFromSquad3 = (
@@ -651,3 +619,14 @@ export const updateAnbuSquadForGET = (client: Pick<DrizzleClient, "update">) =>
   client.update(anbuSquad).set({
     pvpActivity: 0,
   });
+
+/** Build an atomic points increment for one ANBU squad. */
+export const incrementAnbuPoints = (
+  client: Pick<DrizzleClient, "update">,
+  points: number,
+  anbuId: string,
+) =>
+  client
+    .update(anbuSquad)
+    .set({ points: sql`${anbuSquad.points} + ${points}` })
+    .where(eq(anbuSquad.id, anbuId));

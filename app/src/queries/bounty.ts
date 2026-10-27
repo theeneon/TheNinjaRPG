@@ -125,17 +125,17 @@ export const insertBountyForCreate = (
     createdAt: new Date(),
   });
 
-/** Build the `bountyContribution` insert for `create`. */
-export const insertBountyContributionForCreate = (
+/** Build a bounty contribution insert with a generated ID and creation timestamp. */
+export const insertBountyContribution = (
   client: Pick<DrizzleClient, "insert">,
   bountyId: string,
-  ctx: { userId: string },
+  userId: string,
   amountRyo: number,
 ) =>
   client.insert(bountyContribution).values({
     id: nanoid(),
     bountyId,
-    contributorUserId: ctx.userId,
+    contributorUserId: userId,
     amountRyo,
     createdAt: new Date(),
   });
@@ -215,22 +215,11 @@ export const updateBountyForCollect = (
 ) =>
   client.update(bounty).set({ collectedAt: new Date() }).where(eq(bounty.id, bountyId));
 
-/** Build the `bountySignup` deletion for `collect`, using predicates on `bountyId`. */
-export const deleteBountySignupForCollect = (
+/** Build deletion of all hunter signups for a bounty. */
+export const deleteBountySignups = (
   client: Pick<DrizzleClient, "delete">,
   bountyId: string,
 ) => client.delete(bountySignup).where(eq(bountySignup.bountyId, bountyId));
-
-/** Build the `userData` update for `collect`, setting `money`, using predicates on `userId`. */
-export const updateUserDataForCollect = (
-  client: Pick<DrizzleClient, "update">,
-  curBounty: { amountRyo: number },
-  ctx: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ money: sql`${userData.money} + ${curBounty.amountRyo}` })
-    .where(eq(userData.userId, ctx.userId));
 
 /** Build the `bounty` update for `addMoney`, setting `amountRyo`, using predicates on `id`. */
 export const updateBountyForAddMoney = (
@@ -252,20 +241,6 @@ export const updateUserDataForAddMoney = (
     .update(userData)
     .set({ money: sql`${userData.money} - ${input.amountRyo}` })
     .where(eq(userData.userId, ctx.userId));
-
-/** Build the `bountyContribution` insert for `addMoney`. */
-export const insertBountyContributionForAddMoney = (
-  client: Pick<DrizzleClient, "insert">,
-  input: { bountyId: string; amountRyo: number },
-  ctx: { userId: string },
-) =>
-  client.insert(bountyContribution).values({
-    id: nanoid(),
-    bountyId: input.bountyId,
-    contributorUserId: ctx.userId,
-    amountRyo: input.amountRyo,
-    createdAt: new Date(),
-  });
 
 /** Build the contribution listing for a bounty. */
 export const listBountyContributions = (
@@ -293,30 +268,11 @@ export const updateBountyForRetract = (
       ),
     );
 
-/** Build the `bountySignup` deletion for `retract`, using predicates on `bountyId`. */
-export const deleteBountySignupForRetract = (
+/** Build deletion of all contributions to a bounty. */
+export const deleteBountyContributions = (
   client: Pick<DrizzleClient, "delete">,
-  input: { bountyId: string },
-) => client.delete(bountySignup).where(eq(bountySignup.bountyId, input.bountyId));
-
-/** Build the `bountyContribution` deletion for `retract`, using predicates on `bountyId`. */
-export const deleteBountyContributionForRetract = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { bountyId: string },
-) =>
-  client
-    .delete(bountyContribution)
-    .where(eq(bountyContribution.bountyId, input.bountyId));
-
-/** Build the SQL balance increment that returns a bounty contribution without overwriting concurrent credits. */
-export const refundBountyContribution = (
-  client: Pick<DrizzleClient, "update">,
-  contribution: { amountRyo: number; contributorUserId: string },
-) =>
-  client
-    .update(userData)
-    .set({ money: sql`${userData.money} + ${contribution.amountRyo}` })
-    .where(eq(userData.userId, contribution.contributorUserId));
+  bountyId: string,
+) => client.delete(bountyContribution).where(eq(bountyContribution.bountyId, bountyId));
 
 /** Build the `bounty` lookup for `removeAllTrackers`, using predicates on `id`. */
 export const findBountyForRemoveAllTrackers = (
@@ -409,18 +365,3 @@ export const updateBountyForBountyExpire = (
     .update(bounty)
     .set({ status: "EXPIRED" })
     .where(eq(bounty.id, expiredBounty.id));
-
-/** Build the `bountySignup` deletion for `bountyExpire`, using predicates on `bountyId`. */
-export const deleteBountySignupForBountyExpire = (
-  client: Pick<DrizzleClient, "delete">,
-  expiredBounty: { id: string },
-) => client.delete(bountySignup).where(eq(bountySignup.bountyId, expiredBounty.id));
-
-/** Build the `bountyContribution` deletion for `bountyExpire`, using predicates on `bountyId`. */
-export const deleteBountyContributionForBountyExpire = (
-  client: Pick<DrizzleClient, "delete">,
-  expiredBounty: { id: string },
-) =>
-  client
-    .delete(bountyContribution)
-    .where(eq(bountyContribution.bountyId, expiredBounty.id));

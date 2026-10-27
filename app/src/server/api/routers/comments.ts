@@ -28,8 +28,8 @@ import {
   deleteConversationCommentForDeleteConversationComment,
   deleteConversationCommentForExitConversation,
   deleteConversationForExitConversation,
+  deleteConversationMembership,
   deleteForumPostForDeleteForumComment,
-  deleteUser2conversationForExitConversation,
   fetchComments,
   fetchForumThreadPage,
   fetchPrivateConversationSenders,
@@ -45,8 +45,7 @@ import {
   findSupportTicketForUpdateSupportTicketStatusAfterComment,
   findUserDataForGetUserConversations,
   findUserDataForSendTypingIndicator,
-  insertConversationCommentForCreateConversationComment,
-  insertConversationCommentForCreateConvo,
+  insertConversationComment,
   insertConversationForCreateConvo,
   insertForumPostForCreateForumComment,
   insertSupportTicketActivityForUpdateSupportTicketStatusAfterComment,
@@ -401,10 +400,10 @@ export const commentsRouter = createTRPCRouter({
         return errorResponse("You are not allowed to view this conversation");
       }
       // Mutate
-      const membershipDeleteResult = await deleteUser2conversationForExitConversation(
+      const membershipDeleteResult = await deleteConversationMembership(
         ctx.drizzle,
-        convo,
-        ctx,
+        convo.id,
+        ctx.userId,
       );
 
       // A support ticket's conversation is its message history with staff, and
@@ -708,13 +707,13 @@ export const commentsRouter = createTRPCRouter({
           convo,
         ),
         // Insert into DB
-        insertConversationCommentForCreateConversationComment(
+        insertConversationComment(
           ctx.drizzle,
           commentId,
           sanitized,
           effectiveUserId,
-          ctx,
-          convo,
+          ctx.userId,
+          convo.id,
         ).then(() => {
           if (convo.isPublic) {
             deferModeration(ctx.drizzle, {
@@ -1096,7 +1095,7 @@ export const createConvo = async (info: {
     ...(receiverUserIds.length > 0
       ? [updateUserDataForCreateConversationComment(client, receiverUserIds)]
       : []),
-    insertConversationCommentForCreateConvo(
+    insertConversationComment(
       client,
       messageId,
       sanitized,

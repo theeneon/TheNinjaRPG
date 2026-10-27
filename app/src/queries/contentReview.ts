@@ -890,24 +890,6 @@ export const deleteContentProposalChangeForReviseAgentProposal = (
 ) =>
   client.delete(contentProposalChange).where(eq(contentProposalChange.proposalId, id));
 
-/** Build the `contentProposalChange` insert for `reviseAgentProposal`. */
-export const insertContentProposalChangeForReviseAgentProposal = (
-  client: Pick<DrizzleClient, "insert">,
-  plan: { changes: ChangeInsert[] },
-) => client.insert(contentProposalChange).values(plan.changes);
-
-/** Build the `contentProposalBasis` insert for `reviseAgentProposal`. */
-export const insertContentProposalBasisForReviseAgentProposal = (
-  client: Pick<DrizzleClient, "insert">,
-  plan: { basis: import("@/drizzle/schema").ContentProposalBasis[] },
-) => client.insert(contentProposalBasis).values(plan.basis);
-
-/** Build the `contentProposalMedia` insert for `reviseAgentProposal`. */
-export const insertContentProposalMediaForReviseAgentProposal = (
-  client: Pick<DrizzleClient, "insert">,
-  plan: { media: MediaInsert[] },
-) => client.insert(contentProposalMedia).values(plan.media);
-
 /** Build the `contentProposalChange` selection for `openTargets`, using predicates on `status`, `id`, `entityId`. */
 export const selectContentProposalChangeForOpenTargets = (
   client: Pick<DrizzleClient, "select">,
@@ -988,20 +970,20 @@ export const insertContentProposalForInsertRows = (
   rows: Rows[],
 ) => client.insert(contentProposal).values(rows.map((row) => row.proposal));
 
-/** Build the `contentProposalChange` insert for `insertRows`. */
-export const insertContentProposalChangeForInsertRows = (
+/** Build insertion of a content proposal’s change rows. */
+export const insertContentProposalChanges = (
   client: Pick<DrizzleClient, "insert">,
   changes: ChangeInsert[],
 ) => client.insert(contentProposalChange).values(changes);
 
-/** Build the `contentProposalBasis` insert for `insertRows`. */
-export const insertContentProposalBasisForInsertRows = (
+/** Build insertion of a content proposal’s basis rows. */
+export const insertContentProposalBasis = (
   client: Pick<DrizzleClient, "insert">,
   basis: import("@/drizzle/schema").ContentProposalBasis[],
 ) => client.insert(contentProposalBasis).values(basis);
 
-/** Build the `contentProposalMedia` insert for `insertRows`. */
-export const insertContentProposalMediaForInsertRows = (
+/** Build insertion of a content proposal’s media rows. */
+export const insertContentProposalMedia = (
   client: Pick<DrizzleClient, "insert">,
   media: MediaInsert[],
 ) => client.insert(contentProposalMedia).values(media);

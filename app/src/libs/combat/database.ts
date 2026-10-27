@@ -70,8 +70,9 @@ import {
   prepareExclusiveRaidActivation,
 } from "@/libs/raids";
 import { battleItemExp, battleJutsuExp } from "@/libs/train";
+import { incrementAnbuPoints } from "@/queries/anbu";
+import type { DataBattleAction } from "@/queries/combat";
 import {
-  type DataBattleAction,
   deleteBattleIfVersionMatches,
   deleteMpvpBattleQueueForFinishBattle,
   deleteMpvpBattleUserForFinishBattle,
@@ -89,7 +90,6 @@ import {
   insertWarKillForUpdateWars,
   selectMpvpBattleQueueForCreateAction,
   updateAnbuSquadForUpdateVillageAnbuClan,
-  updateAnbuSquadForUpdateVillageAnbuClan2,
   updateBattleForUpdateBattleState,
   updateBountyForUpdateUser,
   updateClanForUpdateClanLeaders,
@@ -1067,11 +1067,7 @@ export const updateVillageAnbuClan = async (
       ? [updateAnbuSquadForUpdateVillageAnbuClan(client, { anbuId: user.anbuId })]
       : []),
     ...(user.anbuId && result.anbuPoints > 0
-      ? [
-          updateAnbuSquadForUpdateVillageAnbuClan2(client, result, {
-            anbuId: user.anbuId,
-          }),
-        ]
+      ? [incrementAnbuPoints(client, result.anbuPoints, user.anbuId)]
       : []),
     ...(user.clanId && result.clanPoints > 0
       ? [updateClanForUpdateVillageAnbuClan(client, result, { clanId: user.clanId })]

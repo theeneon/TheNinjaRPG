@@ -12,11 +12,10 @@ import {
   insertHistoricalAvatarForCreateAvatar,
   listHistoricalAvatarForGetHistoricalAvatars,
   updateHistoricalAvatarForUpdateAvatar,
+  updateUserAvatar,
   updateUserDataForCreateAvatar,
-  updateUserDataForUpdateAvatar,
 } from "@/queries/avatar";
 import { fetchUser, findUserById } from "@/queries/profile";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -126,7 +125,7 @@ export const avatarRouter = createTRPCRouter({
         data &&
         (user.avatar !== data.avatar || user.avatarLight !== data.avatarLight)
       ) {
-        const result = await updateUserDataForUpdateAvatar(ctx.drizzle, data, ctx);
+        const result = await updateUserAvatar(ctx.drizzle, data, ctx.userId);
         if (result.rowsAffected === 0) {
           return errorResponse("Could not update avatar. Please try again");
         }

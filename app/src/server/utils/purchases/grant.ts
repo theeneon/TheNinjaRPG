@@ -1,3 +1,29 @@
+/**
+ * Turning a store purchase into reputation or federal status.
+ *
+ * The receipt is durable before value moves. A single multi-table UPDATE then claims its
+ * `grantedAt` marker and changes the user's balance/status atomically, so retries can finish
+ * an interrupted grant without either losing or doubling paid value on PlanetScale.
+ */
+
+import * as Sentry from "@sentry/node";
+import { and, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import {
+  type FederalStatus,
+  FederalStatuses,
+  STORE_FEDERAL_PRODUCTS,
+  STORE_PLATFORMS,
+  STORE_REP_PRODUCTS,
+  type StorePlatform,
+} from "@/drizzle/constants";
+import {
+  paypalSubscription,
+  storePurchase,
+  stripePayment,
+  userData,
+} from "@/drizzle/schema";
+import { env } from "@/env/server.mjs";
 import {
   deleteStoreEntitlementRevocationForMigrateStoreEntitlementRevocations,
   deleteStoreEntitlementStateForMigrateStoreEntitlementStates,
@@ -25,7 +51,7 @@ import {
   insertStoreEntitlementStateForApplyStoreTransfer,
   insertStorePurchaseForApplyStorePurchase,
   insertStorePurchaseTransferForApplyStoreTransfer,
-  insertStoreUserIdAliasForRetireStoreUserId,
+  insertStoreUserIdAlias,
   listPaypalSubscriptionForPaypalFederalFloor,
   listStoreEntitlementRevocationForMigrateStoreEntitlementRevocations,
   listStorePurchaseForApplyFederalRevocation,
@@ -56,32 +82,6 @@ import {
   updateStorePurchaseTransferForMigrateStorePurchaseTransfers3,
   updateUserDataForSetFederalStatusWithStoreFloor,
 } from "@/queries/purchases";
-/**
- * Turning a store purchase into reputation or federal status.
- *
- * The receipt is durable before value moves. A single multi-table UPDATE then claims its
- * `grantedAt` marker and changes the user's balance/status atomically, so retries can finish
- * an interrupted grant without either losing or doubling paid value on PlanetScale.
- */
-
-import * as Sentry from "@sentry/node";
-import { and, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
-import {
-  type FederalStatus,
-  FederalStatuses,
-  STORE_FEDERAL_PRODUCTS,
-  STORE_PLATFORMS,
-  STORE_REP_PRODUCTS,
-  type StorePlatform,
-} from "@/drizzle/constants";
-import {
-  paypalSubscription,
-  storePurchase,
-  stripePayment,
-  userData,
-} from "@/drizzle/schema";
-import { env } from "@/env/server.mjs";
 import type { DrizzleClient } from "@/server/db";
 import { isMysqlDeadlockError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
@@ -1203,7 +1203,7 @@ export const retireStoreUserId = async (
   // lookup for the old id on a deleted identity. The row is read back rather than assumed:
   // if a rename owns it, the identity is being moved, and this deletion stops here rather
   // than shred what the rename is relocating.
-  await insertStoreUserIdAliasForRetireStoreUserId(client, userId, tombstone);
+  await insertStoreUserIdAlias(client, userId, tombstone);
   const claim = await findStoreUserIdAlias(client, userId);
   if (claim && !isDeletedStoreUserId(claim.newUserId)) {
     throw new Error(`User ${userId} is being renamed and cannot be deleted`);

@@ -77,12 +77,12 @@ export const updateHistoricalAvatarForUpdateAvatar = (
     .set({ avatarLight: thumbnailUrl })
     .where(eq(historicalAvatar.id, input.avatar));
 
-/** Build the `userData` update for `updateAvatar`, using predicates on `userId`. */
-export const updateUserDataForUpdateAvatar = (
+/** Build the avatar and light-avatar update for one user. */
+export const updateUserAvatar = (
   client: Pick<DrizzleClient, "update">,
   data: Pick<import("@/drizzle/schema").UserData, "avatar" | "avatarLight">,
-  ctx: { userId: string },
-) => client.update(userData).set(data).where(eq(userData.userId, ctx.userId));
+  userId: string,
+) => client.update(userData).set(data).where(eq(userData.userId, userId));
 
 /** Build the `historicalAvatar` deletion for `deleteAvatar`, using predicates on `id`. */
 export const deleteHistoricalAvatarForDeleteAvatar = (
@@ -130,13 +130,6 @@ export const insertHistoricalAvatarForUploadHistoricalAvatar = (
     userId: userId,
     done: true,
   });
-
-/** Build the `userData` update for `uploadHistoricalAvatar`, using predicates on `userId`. */
-export const updateUserDataForUploadHistoricalAvatar = (
-  client: Pick<DrizzleClient, "update">,
-  userPatch: { avatar: string; avatarLight: null | string },
-  userId: string,
-) => client.update(userData).set(userPatch).where(eq(userData.userId, userId));
 
 /** Build the `historicalAvatar` listing for `createImg`, using predicates on `status`, `done`, `createdAt`. */
 export const listHistoricalAvatarForCreateImg = (

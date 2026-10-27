@@ -25,21 +25,18 @@ import {
 } from "@/queries/elder";
 import { updateVillageStructureForClearExpiredStructureBonuses } from "@/queries/village";
 import {
+  approvePendingWarDeclaration,
   expireWarPoints,
   incrementWarInitiatorNotifications,
   listActiveWarsWithRules,
-  updateVillageElderVoteForHandleExpiredWarDeclaration,
-  updateVillageForGET,
-  updateVillageForGET2,
   updateWarForGET,
   updateWarForGET2,
+  updateWarVillageTokens,
 } from "@/queries/war";
-
 import {
   type FetchActiveWarsReturnType,
   fetchActiveWars,
 } from "@/server/api/routers/war";
-
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { syncStrongholdMembership } from "@/server/utils/faction";
@@ -193,8 +190,16 @@ export async function GET(request: Request) {
           if (result.rowsAffected > 0) {
             // Update token counts
             await Promise.all([
-              updateVillageForGET(drizzleDB, activeWar),
-              updateVillageForGET2(drizzleDB, activeWar),
+              updateWarVillageTokens(
+                drizzleDB,
+                activeWar.attackerVillage.tokens,
+                activeWar.attackerVillage.id,
+              ),
+              updateWarVillageTokens(
+                drizzleDB,
+                activeWar.defenderVillage.tokens,
+                activeWar.defenderVillage.id,
+              ),
             ]);
 
             // Build updated war object with drained health values to avoid an extra DB roundtrip
@@ -224,8 +229,16 @@ export async function GET(request: Request) {
 
         if (result.rowsAffected > 0) {
           await Promise.all([
-            updateVillageForGET(drizzleDB, activeWar),
-            updateVillageForGET2(drizzleDB, activeWar),
+            updateWarVillageTokens(
+              drizzleDB,
+              activeWar.attackerVillage.tokens,
+              activeWar.attackerVillage.id,
+            ),
+            updateWarVillageTokens(
+              drizzleDB,
+              activeWar.defenderVillage.tokens,
+              activeWar.defenderVillage.id,
+            ),
           ]);
         }
       }
@@ -356,10 +369,7 @@ async function handleExpiredWarDeclaration(
   }
 
   // APPROVED → atomically claim the motion, then start war
-  const warClaimResult = await updateVillageElderVoteForHandleExpiredWarDeclaration(
-    drizzleDB,
-    vote,
-  );
+  const warClaimResult = await approvePendingWarDeclaration(drizzleDB, vote.id);
   if (warClaimResult.rowsAffected === 0) return;
 
   if (!attackerVillage) {

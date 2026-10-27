@@ -6,9 +6,9 @@ import {
 } from "@/drizzle/constants";
 import { getServerPusher } from "@/libs/pusher";
 import { getTerritoryCompetitor, getTerritoryWarBoostUntil } from "@/libs/territoryWar";
-import { deleteClanBattleMemberById } from "@/queries/clan";
+import { deleteBattleQueueMemberById } from "@/queries/clan";
 import { wakeQueuedUser } from "@/queries/profile";
-import { listQueueMembers } from "@/queries/raids";
+import { claimBattleQueue, listQueueMembers } from "@/queries/raids";
 import {
   deleteMpvpBattleQueueForCreateTeam,
   executeClaimedForJoinTeam,
@@ -22,7 +22,6 @@ import {
   insertMpvpBattleQueueForCreateTeam,
   listMpvpBattleQueueForGetCurrent,
   listTerritoryWarScoreForGetCurrent,
-  updateMpvpBattleQueueForStartBattle,
 } from "@/queries/territoryWar";
 import { initiateBattle } from "@/server/api/routers/combat";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
@@ -113,7 +112,7 @@ export const territoryWarRouter = createTRPCRouter({
       );
       if (!removed.rowsAffected)
         return errorResponse("This team has already started or you have left it");
-      await wakeQueuedUser(ctx.drizzle, ctx);
+      await wakeQueuedUser(ctx.drizzle, ctx.userId);
       return { success: true, message: "Left the team" };
     }),
 
@@ -134,11 +133,7 @@ export const territoryWarRouter = createTRPCRouter({
       if (!team.queue.length || team.queue.length > TERRITORY_WAR_TEAM_SIZE)
         return errorResponse("Invalid team size");
       const battleId = nanoid();
-      const claimed = await updateMpvpBattleQueueForStartBattle(
-        ctx.drizzle,
-        battleId,
-        team,
-      );
+      const claimed = await claimBattleQueue(ctx.drizzle, battleId, team.id);
       if (!claimed.rowsAffected)
         return errorResponse("Another teammate already started this battle");
       try {
@@ -215,6 +210,6 @@ const joinTeam = async (
       ? { success: true, message: "Joined the team. Start solo or wait for teammates" }
       : errorResponse("Your status or this team changed. Try again");
   } finally {
-    if (!joined) await deleteClanBattleMemberById(client, memberId);
+    if (!joined) await deleteBattleQueueMemberById(client, memberId);
   }
 };

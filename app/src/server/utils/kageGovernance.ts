@@ -10,10 +10,9 @@ import {
   insertNotificationForSettleKageRemoval,
   listEligibleKageRemovalElders,
   updateVillageElderVoteForSettleKageRemoval,
-  updateVillageForSettleKageRemoval,
   updateVillageForSettleKageRemoval2,
 } from "@/queries/kage";
-
+import { incrementKageScheduleVersion } from "@/queries/kageDefense";
 import { findVillageById } from "@/queries/village";
 import type { DrizzleClient } from "@/server/db";
 import { queryInTransaction } from "@/server/utils/concurrency";
@@ -37,7 +36,7 @@ export const settleKageRemoval = async (
     client.transaction(async (transaction) => {
       const tx = transaction as unknown as DrizzleClient;
       // Use the same first lock as defense assignments and successor appointments.
-      await updateVillageForSettleKageRemoval(tx, initial);
+      await incrementKageScheduleVersion(tx, initial.villageId);
       const [motion, v, elders] = await queryInTransaction([
         findKageRemovalVoteById(tx, voteId),
         findVillageById(tx, initial.villageId),

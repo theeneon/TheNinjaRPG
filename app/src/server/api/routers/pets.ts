@@ -42,7 +42,7 @@ import {
   petRankUpBlockMessage,
 } from "@/libs/pets/progression";
 import { getAssignedCombatStatTotal } from "@/libs/profile";
-import { deleteConsumedMeal } from "@/queries/item";
+import { deleteEmptyUserItem } from "@/queries/item";
 import {
   deleteUserPetForReleasePet,
   executeActivatedForActivatePet,
@@ -264,7 +264,9 @@ export const petsRouter = createTRPCRouter({
       if (fed.rowsAffected === 0) return changedResponse();
       if (meal.quantity === 1) {
         try {
-          await retryOnDeadlock(() => deleteConsumedMeal(ctx.drizzle, meal, ctx));
+          await retryOnDeadlock(() =>
+            deleteEmptyUserItem(ctx.drizzle, meal.id, ctx.userId),
+          );
         } catch (error) {
           // The feed already committed; inventory hides zero stacks and its cleaner
           // reclaims them. Report success so a cleanup failure cannot repeat the grant.

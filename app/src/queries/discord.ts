@@ -240,9 +240,12 @@ export const selectUserReportForFetchIndefiniteSanction = (
 const discordAccountUserIds = (discordId: string) =>
   sql`(SELECT ${discordLink.userId} FROM ${discordLink} WHERE ${discordLink.discordId} = ${discordId})`;
 
-/** Build the active indefinite sanction listing for characters linked to a Discord account. */
-export const selectUserReportForFetchDiscordAccountSanctions = (
-  client: Pick<DrizzleClient, "select">,
+/**
+ * Indefinite sanctions of any character linked to a Discord account: the account stays banned
+ * while one of them runs.
+ */
+export const fetchDiscordAccountSanctions = (
+  client: DrizzleClient,
   discordId: string,
 ) =>
   client

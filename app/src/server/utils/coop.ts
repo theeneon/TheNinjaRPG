@@ -3,10 +3,9 @@ import {
   deleteBattleById,
   deleteBattleHistoryByBattleId,
   insertConversationForJoinCoopChat,
-  insertUser2conversationForJoinCoopChat,
   updateUserDataForCleanupCoopBattleStart,
 } from "@/queries/combat";
-
+import { insertConversationMember } from "@/queries/comments";
 import { errorResponse } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -56,7 +55,7 @@ export const joinCoopChat = async (
 ) => {
   await Promise.all([
     insertConversationForJoinCoopChat(client, partyId, title, userId),
-    insertUser2conversationForJoinCoopChat(client, partyId, userId),
+    insertConversationMember(client, partyId, userId),
   ]);
 };
 

@@ -3,18 +3,17 @@ import { NextResponse } from "next/server";
 import type { BountyContribution } from "@/drizzle/schema";
 import { handleEndpointError, lockWithHourlyTimer } from "@/libs/gamesettings";
 import {
-  deleteBountyContributionForBountyExpire,
-  deleteBountySignupForBountyExpire,
+  deleteBountyContributions,
+  deleteBountySignups,
   listBountyContributions,
   listBountyForBountyExpire,
-  refundBountyContribution,
   updateBountyForBountyExpire,
 } from "@/queries/bounty";
 import {
   deleteAbEventForDeleteExpiredVisitorAnalytics,
   deleteVisitorLogForDeleteExpiredVisitorAnalytics,
 } from "@/queries/data";
-import { countUsersActiveInLastDay } from "@/queries/profile";
+import { countUsersActiveInLastDay, incrementUserMoney } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { accrueVillageStructureMaintenance } from "@/server/utils/villageMaintenance";
@@ -85,14 +84,18 @@ const bountyExpire = async () => {
         updateBountyForBountyExpire(drizzleDB, expiredBounty),
 
         // Remove all hunter signups for this bounty
-        deleteBountySignupForBountyExpire(drizzleDB, expiredBounty),
+        deleteBountySignups(drizzleDB, expiredBounty.id),
 
         // Remove all contributions for this bounty
-        deleteBountyContributionForBountyExpire(drizzleDB, expiredBounty),
+        deleteBountyContributions(drizzleDB, expiredBounty.id),
 
         // Refund all contributors their money
         ...contributions.map((contribution: BountyContribution) =>
-          refundBountyContribution(drizzleDB, contribution),
+          incrementUserMoney(
+            drizzleDB,
+            contribution.amountRyo,
+            contribution.contributorUserId,
+          ),
         ),
       ]);
     }),

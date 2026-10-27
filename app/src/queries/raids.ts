@@ -519,8 +519,8 @@ export const executeInsertResultForJoinRaidQueue = (
           ) < ${RAID_MAX_CONCURRENT_TEAMS}
         `);
 
-/** Build the `mpvpBattleQueue` deletion for `joinRaidQueue`, using predicates on `id` and `battleId`. */
-export const deleteMpvpBattleQueueForJoinRaidQueue = (
+/** Build deletion of a multiplayer battle queue guarded by it having no battle claim. */
+export const deleteUnclaimedBattleQueue = (
   client: Pick<DrizzleClient, "delete">,
   teamId: string,
 ) =>
@@ -563,21 +563,15 @@ export const findMpvpBattleUserForLeaveRaidQueue = (
     with: { clanBattle: true },
   });
 
-/** Build the `mpvpBattleUser` deletion for `leaveRaidQueue`, using predicates on `id`. */
-export const deleteMpvpBattleUserForLeaveRaidQueue = (
-  client: Pick<DrizzleClient, "delete">,
-  queueEntry: { id: string },
-) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.id, queueEntry.id));
-
-/** Build the queue battle-reference reset, leaving unrelated queue fields unchanged. */
+/** Build the battle-ID reset for a multiplayer battle queue. */
 export const clearQueueBattleId = (
   client: Pick<DrizzleClient, "update">,
-  queueEntry: { clanBattleId: string },
+  teamId: string,
 ) =>
   client
     .update(mpvpBattleQueue)
     .set({ battleId: null })
-    .where(eq(mpvpBattleQueue.id, queueEntry.clanBattleId));
+    .where(eq(mpvpBattleQueue.id, teamId));
 
 /** Build the multiplayer battle roster lookup by team ID. */
 export const listQueueMembers = (
@@ -588,7 +582,7 @@ export const listQueueMembers = (
     where: eq(mpvpBattleUser.clanBattleId, teamId),
   });
 
-/** Build the `mpvpBattleQueue` deletion, using predicates on `id`. */
+/** Build deletion of a multiplayer battle queue by team ID. */
 export const deleteQueueById = (
   client: Pick<DrizzleClient, "delete">,
   teamId: string,
@@ -628,50 +622,38 @@ export const updateMpvpBattleQueueForStartRaidBattle = (
       ),
     );
 
-/** Build the `mpvpBattleQueue` update for `startRaidBattle`, setting `battleId`, using predicates on `id` and `battleId`. */
-export const updateMpvpBattleQueueForStartRaidBattle2 = (
+/** Build a battle queue claim guarded by it having no existing battle ID. */
+export const claimBattleQueue = (
   client: Pick<DrizzleClient, "update">,
-  claimId: string,
-  input: { teamId: string },
+  battleId: string,
+  teamId: string,
 ) =>
   client
     .update(mpvpBattleQueue)
-    .set({ battleId: claimId })
-    .where(and(eq(mpvpBattleQueue.id, input.teamId), isNull(mpvpBattleQueue.battleId)));
+    .set({ battleId: battleId })
+    .where(and(eq(mpvpBattleQueue.id, teamId), isNull(mpvpBattleQueue.battleId)));
 
-/** Build the `mpvpBattleQueue` update for `startRaidBattle`, setting `battleId`, using predicates on `id`. */
-export const updateMpvpBattleQueueForStartRaidBattle3 = (
+/** Build a battle queue claim release guarded by the expected claim ID. */
+export const releaseBattleQueueClaim = (
   client: Pick<DrizzleClient, "update">,
-  input: { teamId: string },
-) =>
-  client
-    .update(mpvpBattleQueue)
-    .set({ battleId: null })
-    .where(eq(mpvpBattleQueue.id, input.teamId));
-
-/** Build the `mpvpBattleQueue` update for `startRaidBattle`, setting `battleId`, using predicates on `id` and `battleId`. */
-export const updateMpvpBattleQueueForStartRaidBattle4 = (
-  client: Pick<DrizzleClient, "update">,
-  input: { teamId: string },
+  teamId: string,
   claimId: string,
 ) =>
   client
     .update(mpvpBattleQueue)
     .set({ battleId: null })
-    .where(
-      and(eq(mpvpBattleQueue.id, input.teamId), eq(mpvpBattleQueue.battleId, claimId)),
-    );
+    .where(and(eq(mpvpBattleQueue.id, teamId), eq(mpvpBattleQueue.battleId, claimId)));
 
-/** Build the `mpvpBattleQueue` update for `startRaidBattle`, setting `battleId`, using predicates on `id`. */
-export const updateMpvpBattleQueueForStartRaidBattle5 = (
+/** Build the battle-ID update for a multiplayer battle queue. */
+export const setQueueBattleId = (
   client: Pick<DrizzleClient, "update">,
-  result: { battleId: string },
-  input: { teamId: string },
+  battleId: string,
+  teamId: string,
 ) =>
   client
     .update(mpvpBattleQueue)
-    .set({ battleId: result.battleId })
-    .where(eq(mpvpBattleQueue.id, input.teamId));
+    .set({ battleId: battleId })
+    .where(eq(mpvpBattleQueue.id, teamId));
 
 /** Build the `raidDamageThreshold` lookup for `claimDamageReward`, using predicates on `id` and `questId`. */
 export const findRaidDamageThresholdForClaimDamageReward = (
@@ -833,16 +815,6 @@ export const deleteMpvpBattleUserForRollbackJoinRaidQueue = (
       and(eq(mpvpBattleUser.userId, userId), eq(mpvpBattleUser.clanBattleId, teamId)),
     );
 
-/** Build the `userData` update for `rollbackJoinRaidQueue`, setting `status`, using predicates on `userId` and `status`. */
-export const updateUserDataForRollbackJoinRaidQueue = (
-  client: Pick<DrizzleClient, "update">,
-  userId: string,
-) =>
-  client
-    .update(userData)
-    .set({ status: "AWAKE" })
-    .where(and(eq(userData.userId, userId), eq(userData.status, "QUEUED")));
-
 /**
  * Build the `mpvpBattleUser` lookup for `rollbackJoinRaidQueue`, selecting only `id`,
  * using predicates on `clanBattleId`.
@@ -881,12 +853,6 @@ export const updateUserDataForRollbackStartRaidBattle = (
       and(inArray(userData.userId, attackerUserIds), eq(userData.status, "QUEUED")),
     );
 
-/** Build the `mpvpBattleUser` deletion for `rollbackStartRaidBattle`, using predicates on `clanBattleId`. */
-export const deleteMpvpBattleUserForRollbackStartRaidBattle = (
-  client: Pick<DrizzleClient, "delete">,
-  teamId: string,
-) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.clanBattleId, teamId));
-
 /** Build the `conversation` insert for `ensureRaidChatConversation`, updating duplicate keys. */
 export const insertConversationForEnsureRaidChatConversation = (
   client: Pick<DrizzleClient, "insert">,
@@ -905,17 +871,6 @@ export const insertConversationForEnsureRaidChatConversation = (
       isEnabled: true,
     })
     .onDuplicateKeyUpdate({ set: { id: sql`id` } });
-
-/** Build the `user2conversation` insert for `ensureRaidChatConversation`, updating duplicate keys. */
-export const insertUser2conversationForEnsureRaidChatConversation = (
-  client: Pick<DrizzleClient, "insert">,
-  conversationId: string,
-  userId: string,
-) =>
-  client
-    .insert(user2conversation)
-    .values({ conversationId, userId })
-    .onDuplicateKeyUpdate({ set: { conversationId: sql`conversationId` } });
 
 /**
  * Build the `user2conversation` deletion for `purgeRaidChatMembership`, using

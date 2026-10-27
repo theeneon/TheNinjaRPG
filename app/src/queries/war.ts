@@ -98,25 +98,12 @@ export const updateWarForGET = (
     })
     .where(and(eq(war.id, activeWar.id), isNull(war.endedAt)));
 
-/** Build the `village` update for `GET`, setting `tokens`, using predicates on `id`. */
-export const updateVillageForGET = (
+/** Build a village token update from its settled war balance. */
+export const updateWarVillageTokens = (
   client: Pick<DrizzleClient, "update">,
-  activeWar: { attackerVillage: { tokens: number; id: string } },
-) =>
-  client
-    .update(village)
-    .set({ tokens: activeWar.attackerVillage.tokens })
-    .where(eq(village.id, activeWar.attackerVillage.id));
-
-/** Build the `village` update for `GET`, setting `tokens`, using predicates on `id`. */
-export const updateVillageForGET2 = (
-  client: Pick<DrizzleClient, "update">,
-  activeWar: { defenderVillage: { tokens: number; id: string } },
-) =>
-  client
-    .update(village)
-    .set({ tokens: activeWar.defenderVillage.tokens })
-    .where(eq(village.id, activeWar.defenderVillage.id));
+  tokens: number,
+  villageId: string,
+) => client.update(village).set({ tokens: tokens }).where(eq(village.id, villageId));
 
 /** Build the `war` update for `GET`, using predicates on `id` and `endedAt`. */
 export const updateWarForGET2 = (
@@ -134,19 +121,16 @@ export const updateWarForGET2 = (
     })
     .where(and(eq(war.id, activeWar.id), isNull(war.endedAt)));
 
-/**
- * Build the `villageElderVote` update for `handleExpiredWarDeclaration`, setting
- * `status`, using predicates on `id` and `status`.
- */
-export const updateVillageElderVoteForHandleExpiredWarDeclaration = (
+/** Build a war declaration approval guarded by its pending status. */
+export const approvePendingWarDeclaration = (
   client: Pick<DrizzleClient, "update">,
-  vote: { id: string },
+  voteId: string,
 ) =>
   client
     .update(villageElderVote)
     .set({ status: "APPROVED" })
     .where(
-      and(eq(villageElderVote.id, vote.id), eq(villageElderVote.status, "PENDING")),
+      and(eq(villageElderVote.id, voteId), eq(villageElderVote.status, "PENDING")),
     );
 
 /** Build the `gameSetting` listing for `fetchWarRules`, using predicates on `name`. */
@@ -1958,24 +1942,6 @@ export const selectUserDataForVoteOnWarDeclaration = (
         eq(userData.villageId, input.userVillageId),
         eq(userData.rank, "ELDER"),
         eq(userData.isAi, false),
-      ),
-    );
-
-/**
- * Build the `villageElderVote` update for `voteOnWarDeclaration`, setting `status`,
- * using predicates on `id` and `status`.
- */
-export const updateVillageElderVoteForVoteOnWarDeclaration = (
-  client: Pick<DrizzleClient, "update">,
-  input: { voteId: string },
-) =>
-  client
-    .update(villageElderVote)
-    .set({ status: "APPROVED" })
-    .where(
-      and(
-        eq(villageElderVote.id, input.voteId),
-        eq(villageElderVote.status, "PENDING"),
       ),
     );
 

@@ -8,26 +8,21 @@ import {
   type ContentProposalEntityType,
 } from "@/drizzle/constants";
 import type { contentProposalMedia } from "@/drizzle/schema";
+import type { MediaInsert, Rows } from "@/queries/contentReview";
 import {
   deleteContentProposalBasisForReviseAgentProposal,
   deleteContentProposalChangeForReviseAgentProposal,
   deleteContentProposalMediaForReviseAgentProposal,
-  insertContentProposalBasisForInsertRows,
-  insertContentProposalBasisForReviseAgentProposal,
-  insertContentProposalChangeForInsertRows,
-  insertContentProposalChangeForReviseAgentProposal,
+  insertContentProposalBasis,
+  insertContentProposalChanges,
   insertContentProposalForInsertRows,
-  insertContentProposalMediaForInsertRows,
-  insertContentProposalMediaForReviseAgentProposal,
-  type MediaInsert,
-  type Rows,
+  insertContentProposalMedia,
   readAgentProposal,
   rejectedChanges,
   selectContentProposalChangeForOpenTargets,
   selectContentProposalChangeForTakenNames,
   updateContentProposalForReviseAgentProposal,
 } from "@/queries/contentReview";
-
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { DAY_S, secondsFromNow } from "@/utils/time";
@@ -346,12 +341,9 @@ export const reviseAgentProposal = async (
         await deleteContentProposalMediaForReviseAgentProposal(tx, id);
         await deleteContentProposalBasisForReviseAgentProposal(tx, id);
         await deleteContentProposalChangeForReviseAgentProposal(tx, id);
-        if (plan.changes.length)
-          await insertContentProposalChangeForReviseAgentProposal(tx, plan);
-        if (plan.basis.length)
-          await insertContentProposalBasisForReviseAgentProposal(tx, plan);
-        if (plan.media.length)
-          await insertContentProposalMediaForReviseAgentProposal(tx, plan);
+        if (plan.changes.length) await insertContentProposalChanges(tx, plan.changes);
+        if (plan.basis.length) await insertContentProposalBasis(tx, plan.basis);
+        if (plan.media.length) await insertContentProposalMedia(tx, plan.media);
         return true;
       }),
     );
@@ -782,9 +774,9 @@ const insertRows = async (client: DrizzleClient, rows: Rows[]) => {
   await retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       await insertContentProposalForInsertRows(tx, rows);
-      if (changes.length) await insertContentProposalChangeForInsertRows(tx, changes);
-      if (basis.length) await insertContentProposalBasisForInsertRows(tx, basis);
-      if (media.length) await insertContentProposalMediaForInsertRows(tx, media);
+      if (changes.length) await insertContentProposalChanges(tx, changes);
+      if (basis.length) await insertContentProposalBasis(tx, basis);
+      if (media.length) await insertContentProposalMedia(tx, media);
     }),
   );
 };

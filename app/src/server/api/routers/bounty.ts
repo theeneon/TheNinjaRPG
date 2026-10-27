@@ -7,10 +7,9 @@ import {
   VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
 import {
-  deleteBountyContributionForRetract,
-  deleteBountySignupForCollect,
+  deleteBountyContributions,
   deleteBountySignupForResign,
-  deleteBountySignupForRetract,
+  deleteBountySignups,
   findBountyById,
   findBountyForCreate,
   findBountyForRemoveAllTrackers,
@@ -18,23 +17,19 @@ import {
   findBountySignupForResign,
   findBountySignupForSignup,
   insertActionLogForRemoveAllTrackers,
-  insertBountyContributionForAddMoney,
-  insertBountyContributionForCreate,
+  insertBountyContribution,
   insertBountyForCreate,
   insertBountySignupForSignup,
   listBountyContributions,
   listBountyForBoard,
   listBountySignupForGetTrackedBounties,
   listBountySignupForSignup,
-  refundBountyContribution,
   updateBountyForAddMoney,
   updateBountyForCollect,
   updateBountyForRetract,
   updateUserDataForAddMoney,
-  updateUserDataForCollect,
 } from "@/queries/bounty";
-import { debitUserMoney, fetchUser } from "@/queries/profile";
-
+import { debitUserMoney, fetchUser, incrementUserMoney } from "@/queries/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -145,7 +140,7 @@ export const bountyRouter = createTRPCRouter({
       const bountyId = nanoid();
       await Promise.all([
         insertBountyForCreate(ctx.drizzle, bountyId, targetUserId, ctx, amountRyo),
-        insertBountyContributionForCreate(ctx.drizzle, bountyId, ctx, amountRyo),
+        insertBountyContribution(ctx.drizzle, bountyId, ctx.userId, amountRyo),
       ]);
       return { success: true, message: "Bounty created" };
     }),
@@ -256,9 +251,9 @@ export const bountyRouter = createTRPCRouter({
         // Update bounty as claimed
         updateBountyForCollect(ctx.drizzle, bountyId),
         // Update hunter signup as fulfilled
-        deleteBountySignupForCollect(ctx.drizzle, bountyId),
+        deleteBountySignups(ctx.drizzle, bountyId),
         // Award the bounty money to the hunter
-        updateUserDataForCollect(ctx.drizzle, curBounty, ctx),
+        incrementUserMoney(ctx.drizzle, curBounty.amountRyo, ctx.userId),
       ]);
 
       return { success: true, message: "Bounty claimed successfully" };
@@ -287,7 +282,12 @@ export const bountyRouter = createTRPCRouter({
         // Deduct money from the user
         updateUserDataForAddMoney(ctx.drizzle, input, ctx),
         // Track the contribution
-        insertBountyContributionForAddMoney(ctx.drizzle, input, ctx),
+        insertBountyContribution(
+          ctx.drizzle,
+          input.bountyId,
+          ctx.userId,
+          input.amountRyo,
+        ),
       ]);
 
       return {
@@ -317,12 +317,16 @@ export const bountyRouter = createTRPCRouter({
       // Execute mutations in parallel
       await Promise.all([
         // Remove all hunter signups for this bounty
-        deleteBountySignupForRetract(ctx.drizzle, input),
+        deleteBountySignups(ctx.drizzle, input.bountyId),
         // Remove all contributions for this bounty
-        deleteBountyContributionForRetract(ctx.drizzle, input),
+        deleteBountyContributions(ctx.drizzle, input.bountyId),
         // Refund all contributors their money
         ...contributions.map((contribution) =>
-          refundBountyContribution(ctx.drizzle, contribution),
+          incrementUserMoney(
+            ctx.drizzle,
+            contribution.amountRyo,
+            contribution.contributorUserId,
+          ),
         ),
       ]);
       return { success: true, message: "Bounty retracted successfully" };
@@ -354,7 +358,7 @@ export const bountyRouter = createTRPCRouter({
       // Execute deletion and logging in parallel (no transaction to avoid PlanetScale deadlocks)
       await Promise.all([
         // Remove all hunter signups for this bounty
-        deleteBountySignupForRetract(ctx.drizzle, input),
+        deleteBountySignups(ctx.drizzle, input.bountyId),
 
         // Log the action
         insertActionLogForRemoveAllTrackers(ctx.drizzle, ctx, hunters, input),

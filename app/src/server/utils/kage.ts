@@ -14,6 +14,7 @@ import { setKageCandidateToJonin } from "@/queries/kage";
 import {
   findVillageForLoadKageDefense,
   findVillageForReadKageDefensePublic,
+  incrementKageScheduleVersion,
   insertActionLogForRemoveAbsentKage,
   insertNotificationForRemoveAbsentKage,
   listKageDefendedChallengesForAssignKageMatches,
@@ -37,7 +38,6 @@ import {
   updateUserDataForRemoveAbsentKage2,
   updateVillageForMaintainKageDefenses,
   updateVillageForRemoveAbsentKage,
-  updateVillageForWithKageDefense,
 } from "@/queries/kageDefense";
 import type { DrizzleClient } from "@/server/db";
 import { queryInTransaction } from "@/server/utils/concurrency";
@@ -69,7 +69,7 @@ export const withKageDefense = async <T>(
   retryOnDeadlock(() =>
     client.transaction(async (transaction) => {
       const tx = transaction as unknown as DrizzleClient;
-      await updateVillageForWithKageDefense(tx, villageId);
+      await incrementKageScheduleVersion(tx, villageId);
       const hall = await loadKageDefense(tx, villageId);
       if (hall?.village.type !== "VILLAGE") return null;
       return callback(tx, hall);

@@ -713,8 +713,8 @@ export const updateVillageForMaintainKageDefenses = (
       ),
     );
 
-/** Build the `village` update for `withKageDefense`, setting `kageScheduleVersion`, using predicates on `id`. */
-export const updateVillageForWithKageDefense = (
+/** Build an atomic increment of a village’s Kage defense schedule version. */
+export const incrementKageScheduleVersion = (
   client: Pick<DrizzleClient, "update">,
   villageId: string,
 ) =>

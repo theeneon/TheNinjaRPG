@@ -62,29 +62,26 @@ export const updateQuestPartyForDisband = (
       ),
     );
 
-/**
- * Build the `questParty` update for `disband`, setting `battleId` and `version`, using
- * predicates on `id` and `battleId`.
- */
-export const updateQuestPartyForDisband2 = (
+/** Build a quest party battle-claim release guarded by the claim ID, advancing its version. */
+export const releaseQuestPartyBattleClaim = (
   client: Pick<DrizzleClient, "update">,
-  party: { id: string },
+  partyId: string,
   claimId: string,
 ) =>
   client
     .update(questParty)
     .set({ battleId: null, version: sql`${questParty.version} + 1` })
-    .where(and(eq(questParty.id, party.id), eq(questParty.battleId, claimId)));
+    .where(and(eq(questParty.id, partyId), eq(questParty.battleId, claimId)));
 
-/** Build the `questParty` deletion for `disband`, using predicates on `id` and `battleId`. */
-export const deleteQuestPartyForDisband = (
+/** Build deletion of a quest party guarded by its battle claim. */
+export const deleteClaimedQuestParty = (
   client: Pick<DrizzleClient, "delete">,
-  party: { id: string },
+  partyId: string,
   claimId: string,
 ) =>
   client
     .delete(questParty)
-    .where(and(eq(questParty.id, party.id), eq(questParty.battleId, claimId)));
+    .where(and(eq(questParty.id, partyId), eq(questParty.battleId, claimId)));
 
 /** Build the `user2conversation` deletion for `disband`, using predicates on `conversationId`. */
 export const deleteUser2conversationForDisband = (
@@ -328,30 +325,6 @@ export const updateQuestPartyForRemoveMember = (
         battleGuard,
       ),
     );
-
-/**
- * Build the `questParty` update for `removeMember`, setting `battleId` and `version`,
- * using predicates on `id` and `battleId`.
- */
-export const updateQuestPartyForRemoveMember2 = (
-  client: Pick<DrizzleClient, "update">,
-  partyId: string,
-  departureClaimId: string,
-) =>
-  client
-    .update(questParty)
-    .set({ battleId: null, version: sql`${questParty.version} + 1` })
-    .where(and(eq(questParty.id, partyId), eq(questParty.battleId, departureClaimId)));
-
-/** Build the `questParty` deletion for `removeMember`, using predicates on `id` and `battleId`. */
-export const deleteQuestPartyForRemoveMember2 = (
-  client: Pick<DrizzleClient, "delete">,
-  partyId: string,
-  departureClaimId: string,
-) =>
-  client
-    .delete(questParty)
-    .where(and(eq(questParty.id, partyId), eq(questParty.battleId, departureClaimId)));
 
 /** Build the `overworldAiPlacement` listing for `startQuestPartyEncounter`, using predicates on `id` and `isActive`. */
 export const listOverworldAiPlacementForStartQuestPartyEncounter = (

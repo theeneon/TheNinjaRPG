@@ -9,6 +9,7 @@ import type { DiscordLink, discordLink } from "@/drizzle/schema";
 import { DISCORD_RELINK_REQUIRED, discordNicknameFor } from "@/libs/discordLink";
 import {
   fetchDiscordAccountLinks,
+  fetchDiscordAccountSanctions,
   findDiscordAccountIdForUser,
   saveSyncState,
   selectDiscordLinkForFetchLinksNeedingSync,
@@ -18,15 +19,11 @@ import {
   updateDiscordLinkForGetClerkLinkAccessToken,
   updateDiscordLinkForGetLinkAccessToken,
 } from "@/queries/discord";
-
 import { fetchActiveSanctionTombstones } from "@/queries/reports";
 import type { DrizzleClient } from "@/server/db";
 import { fetchClerkDiscordToken } from "@/server/utils/discord/clerk";
 import { type DiscordConfig, getDiscordConfig } from "@/server/utils/discord/config";
-import {
-  discordTombstoneHash,
-  fetchDiscordAccountSanctions,
-} from "@/server/utils/discord/links";
+import { discordTombstoneHash } from "@/server/utils/discord/links";
 import {
   addGuildMember,
   addRole,

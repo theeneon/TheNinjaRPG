@@ -9,8 +9,9 @@ import { huntingProgress, huntingReceipt, huntingSession } from "@/drizzle/schem
 import { deleteUserReportEmbeddings } from "@/libs/moderation/reportSearch";
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { deleteRowsForUser } from "@/queries/accountDeletion";
+import { incrementAnbuMemberCount } from "@/queries/anbu";
 import { fetchBadge } from "@/queries/badge";
-import { deleteClanBattleMembersForUser } from "@/queries/clan";
+import { deleteBattleQueueMembersForUser } from "@/queries/clan";
 import { deleteBattleById } from "@/queries/combat";
 import { findHuntingSessionForUser } from "@/queries/hunting";
 import { renameParentalContact } from "@/queries/parentalControls";
@@ -22,9 +23,10 @@ import {
   listUserItemsByUserId,
   listUserJutsuByUserId,
 } from "@/queries/profile";
-import { findStoreUserIdAlias } from "@/queries/purchases";
+import { findStoreUserIdAlias, insertStoreUserIdAlias } from "@/queries/purchases";
 import { deleteRankedQueueForUser } from "@/queries/pvprank";
 import { clearQueueBattleId, deleteQueueById, listQueueMembers } from "@/queries/raids";
+import { deleteUserSkills } from "@/queries/skillTree";
 import {
   applyDevelopmentBackup,
   clearDevelopmentBackupTarget,
@@ -52,19 +54,13 @@ import {
   deleteLinkPromotionForDeleteUserInternal,
   deleteLinkPromotionForDeleteUserInternal2,
   deleteModerationScanForDeleteUserInternal,
-  deleteMpvpBattleUserForForceAwake,
   deleteNotificationForDeleteUserInternal,
   deleteOverworldAiPlacementForDeleteUserInternal,
   deleteOverworldAiPlacementQuestForDeleteUserInternal,
   deletePollForDeleteUserInternal,
   deletePollOptionForDeleteUserInternal,
   deletePollOptionForDeleteUserInternal2,
-  deleteQuestHistoryForCloneUserForDebug,
-  deleteQuestHistoryForDeleteUserInternal,
   deleteRaidParticipationForDeleteUserInternal,
-  deleteRankedPvpQueueForForceAwake,
-  deleteRankedUserRewardsForCloneUserForDebug,
-  deleteRankedUserRewardsForDeleteUserInternal,
   deleteRecruitReferralForDeleteUserInternal,
   deleteReportLogForDeleteUserInternal,
   deleteReportLogForDeleteUserInternal2,
@@ -75,20 +71,16 @@ import {
   deleteTrainingLogForDeleteUserInternal,
   deleteUser2conversationForDeleteUserInternal,
   deleteUserActivityEventForDeleteUserInternal,
-  deleteUserAttributeForDeleteUserInternal,
   deleteUserBadgeForDeleteUserInternal,
   deleteUserBadgeForRemoveUserBadge,
   deleteUserBlackListForDeleteUserInternal,
   deleteUserBlackListForDeleteUserInternal2,
-  deleteUserCookingJobForCloneUserForDebug,
-  deleteUserCookingJobForDeleteUserInternal,
+  deleteUserCookingJobs,
   deleteUserDataForDeleteUserInternal,
   deleteUserDeviceForDeleteUserInternal,
   deleteUserHomeForDeleteUserInternal,
-  deleteUserItemForCloneUserForDebug,
-  deleteUserItemForDeleteUserInternal,
-  deleteUserJutsuForCloneUserForDebug,
-  deleteUserJutsuForDeleteUserInternal,
+  deleteUserItems,
+  deleteUserJutsus,
   deleteUserLikesForDeleteUserInternal,
   deleteUserLiveActivityForDeleteUserInternal,
   deleteUserNindoForDeleteUserInternal,
@@ -96,9 +88,10 @@ import {
   deleteUserPollVoteForDeleteUserInternal,
   deleteUserPushPreferenceForDeleteUserInternal,
   deleteUserQuestAttemptForDeleteUserInternal,
-  deleteUserQueueForCloneUserForDebug,
-  deleteUserQueueForDeleteUserInternal,
+  deleteUserQuestHistory,
+  deleteUserQueues,
   deleteUserRaidBuffForDeleteUserInternal,
+  deleteUserRankedRewards,
   deleteUserReportCommentForDeleteUserInternal,
   deleteUserReportForDeleteUserInternal,
   deleteUserReportForDeleteUserInternal2,
@@ -108,7 +101,6 @@ import {
   deleteUserReviewForDeleteUserInternal2,
   deleteUserRewardsForDeleteUserInternal,
   deleteUserRewardsForDeleteUserInternal2,
-  deleteUserSkillForDeleteUserInternal,
   deleteUserTitleForDeleteUserInternal,
   deleteUserUploadForDeleteUserInternal,
   deleteUserVoteForDeleteUserInternal,
@@ -124,13 +116,11 @@ import {
   insertActionLogForDeleteReferral,
   insertActionLogForForceAwake,
   insertActionLogForInsertUserBadge,
-  insertActionLogForReleaseSector,
   insertActionLogForRemoveUserBadge,
   insertContentBackupForCreateBackup,
   insertContentBackupForCreateBackup2,
   insertQuestHistoryForCloneUserForDebug,
   insertRankedUserRewardsForCloneUserForDebug,
-  insertStoreUserIdAliasForUpdateUserId,
   insertUserAttributeForCloneUserForDebug,
   insertUserBadgeForInsertUserBadge,
   insertUserItemForCloneUserForDebug,
@@ -144,7 +134,6 @@ import {
   updateActionLogForUpdateUserId,
   updateAiProfileForUpdateUserId,
   updateAnbuSquadForCloneUserForDebug,
-  updateAnbuSquadForCloneUserForDebug2,
   updateAuctionOfferForDeleteUserInternal,
   updateAuctionOfferForUpdateUserId,
   updateAuctionOfferForUpdateUserId2,
@@ -242,7 +231,7 @@ import {
   updateWebStoreOrderForUpdateUserId2,
   validateDevelopmentBackup,
 } from "@/queries/staff";
-import { fetchSector, fetchVillages } from "@/queries/village";
+import { fetchSector, fetchVillages, insertSectorReleaseLog } from "@/queries/village";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
@@ -506,9 +495,9 @@ export const staffRouter = createTRPCRouter({
         // its cancelled session/version guard rejects terminal settlement before any payout.
         ...(hunt?.battleId ? [deleteBattleById(ctx.drizzle, hunt.battleId)] : []),
         // Clean up raid/clan/shrine battle queue
-        deleteMpvpBattleUserForForceAwake(ctx.drizzle, input),
+        deleteBattleQueueMembersForUser(ctx.drizzle, input.userId),
         // Clean up ranked PVP queue
-        deleteRankedPvpQueueForForceAwake(ctx.drizzle, input),
+        deleteRankedQueueForUser(ctx.drizzle, input.userId),
       ]);
       // Clean up empty teams or stuck claiming states if user was in a team
       if (queueEntry) {
@@ -523,7 +512,7 @@ export const staffRouter = createTRPCRouter({
           // If there are remaining members but battleId is a claiming ID, reset it
           const team = await findMpvpBattleQueueForForceAwake(ctx.drizzle, queueEntry);
           if (team?.battleId?.startsWith("claiming-")) {
-            await clearQueueBattleId(ctx.drizzle, queueEntry);
+            await clearQueueBattleId(ctx.drizzle, queueEntry.clanBattleId);
           }
         }
       }
@@ -617,22 +606,18 @@ export const staffRouter = createTRPCRouter({
           listRankedUserRewardsForCloneUserForDebug(ctx.drizzle, input),
         ]);
       await Promise.all([
-        deleteUserJutsuForCloneUserForDebug(ctx.drizzle, user),
-        deleteUserItemForCloneUserForDebug(ctx.drizzle, user),
-        deleteUserQueueForCloneUserForDebug(ctx.drizzle, user),
-        deleteUserCookingJobForCloneUserForDebug(ctx.drizzle, user),
-        deleteQuestHistoryForCloneUserForDebug(ctx.drizzle, user),
-        deleteUserAttributes(ctx.drizzle, user),
-        deleteRankedUserRewardsForCloneUserForDebug(ctx.drizzle, user),
+        deleteUserJutsus(ctx.drizzle, user.userId),
+        deleteUserItems(ctx.drizzle, user.userId),
+        deleteUserQueues(ctx.drizzle, user.userId),
+        deleteUserCookingJobs(ctx.drizzle, user.userId),
+        deleteUserQuestHistory(ctx.drizzle, user.userId),
+        deleteUserAttributes(ctx.drizzle, user.userId),
+        deleteUserRankedRewards(ctx.drizzle, user.userId),
         ...(user.anbuId !== target.anbuId && user.anbuId
           ? [updateAnbuSquadForCloneUserForDebug(ctx.drizzle, { anbuId: user.anbuId })]
           : []),
         ...(user.anbuId !== target.anbuId && target.anbuId
-          ? [
-              updateAnbuSquadForCloneUserForDebug2(ctx.drizzle, {
-                anbuId: target.anbuId,
-              }),
-            ]
+          ? [incrementAnbuMemberCount(ctx.drizzle, target.anbuId)]
           : []),
         updateUserDataForCloneUserForDebug(ctx.drizzle, target, ctx),
       ]);
@@ -715,7 +700,13 @@ export const staffRouter = createTRPCRouter({
       // Mutate
       await Promise.all([
         deleteSectorForReleaseSector(ctx.drizzle, input),
-        insertActionLogForReleaseSector(ctx.drizzle, ctx, input, sectorData),
+        insertSectorReleaseLog(
+          ctx.drizzle,
+          ctx.userId,
+          input.sector,
+          sectorData.village.name,
+          sectorData.villageId,
+        ),
       ]);
 
       // Return
@@ -803,7 +794,7 @@ export const staffRouter = createTRPCRouter({
       // write keeps its tombstone, and the rename stops here before moving anything.
       // A receipt that lands under the old id in between is re-homed by the ledger's
       // own owner reconciliation, so nothing here holds a lock.
-      await insertStoreUserIdAliasForUpdateUserId(ctx.drizzle, input);
+      await insertStoreUserIdAlias(ctx.drizzle, input.userId, input.newUserId);
       const claim = await findStoreUserIdAlias(ctx.drizzle, input.userId);
       if (claim && isDeletedStoreUserId(claim.newUserId)) {
         return {
@@ -1086,17 +1077,17 @@ const deleteUserInternal = async (client: DrizzleClient, userId: string) => {
     ...[huntingSession, huntingProgress, huntingReceipt].map((table) =>
       deleteRowsForUser(client, table, userId),
     ),
-    deleteUserItemForDeleteUserInternal(client, userId),
+    deleteUserItems(client, userId),
     deleteFarmPlotForDeleteUserInternal(client, userId),
     deleteFarmExtractionForDeleteUserInternal(client, userId),
     deleteFarmCollectionLogForDeleteUserInternal(client, userId),
-    deleteUserJutsuForDeleteUserInternal(client, userId),
-    deleteUserQueueForDeleteUserInternal(client, userId),
-    deleteUserCookingJobForDeleteUserInternal(client, userId),
-    deleteUserSkillForDeleteUserInternal(client, userId),
-    deleteUserAttributeForDeleteUserInternal(client, userId),
+    deleteUserJutsus(client, userId),
+    deleteUserQueues(client, userId),
+    deleteUserCookingJobs(client, userId),
+    deleteUserSkills(client, userId),
+    deleteUserAttributes(client, userId),
     deleteJutsuLoadoutForDeleteUserInternal(client, userId),
-    deleteQuestHistoryForDeleteUserInternal(client, userId),
+    deleteUserQuestHistory(client, userId),
     deleteUserQuestAttemptForDeleteUserInternal(client, userId),
     deleteBloodlineRollsForDeleteUserInternal(client, userId),
   ]);
@@ -1161,9 +1152,9 @@ const deleteUserInternal = async (client: DrizzleClient, userId: string) => {
 
   // Batch 10: Battle, war & ranked PVP
   await Promise.all([
-    deleteClanBattleMembersForUser(client, userId),
+    deleteBattleQueueMembersForUser(client, userId),
     deleteRankedQueueForUser(client, userId),
-    deleteRankedUserRewardsForDeleteUserInternal(client, userId),
+    deleteUserRankedRewards(client, userId),
     deleteKageDefendedChallengesForDeleteUserInternal(client, userId),
     deleteKageDefendedChallengesForDeleteUserInternal2(client, userId),
     deleteWarKillForDeleteUserInternal(client, userId),

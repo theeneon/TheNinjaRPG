@@ -1,8 +1,8 @@
 import {
   deleteBattleActionForClearClanCombat,
   deleteBattleForClearClanCombat,
+  deleteBattleQueueMembersForTeam,
   deleteMpvpBattleQueueForDeleteClanBattle,
-  deleteMpvpBattleUserForDeleteClanBattle,
   executeCreditedForRewardClanBattleVictory,
   updateUserDataForClearClanCombat,
   updateUserDataForDeleteClanBattle,
@@ -59,7 +59,7 @@ export const deleteClanBattle = async (
     // Only a claimed ranked row owns QUEUED. A provisional ranked join may have
     // lost its claim to this clan lobby and must not block the lobby's wake-up.
     await updateUserDataForDeleteClanBattle(client, snapshot);
-    await deleteMpvpBattleUserForDeleteClanBattle(client, snapshot);
+    await deleteBattleQueueMembersForTeam(client, snapshot.id);
   });
   return true;
 };

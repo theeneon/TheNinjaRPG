@@ -429,16 +429,6 @@ export const findVillageElderVoteForSettleKageRemoval = (
     where: eq(villageElderVote.id, voteId),
   });
 
-/** Build the `village` update for `settleKageRemoval`, setting `kageScheduleVersion`, using predicates on `id`. */
-export const updateVillageForSettleKageRemoval = (
-  client: Pick<DrizzleClient, "update">,
-  initial: { villageId: string },
-) =>
-  client
-    .update(village)
-    .set({ kageScheduleVersion: sql`${village.kageScheduleVersion} + 1` })
-    .where(eq(village.id, initial.villageId));
-
 /** Build a Kage removal vote lookup including its ballots; execution stays with the caller. */
 export const findKageRemovalVoteById = (
   client: Pick<DrizzleClient, "query">,

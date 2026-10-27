@@ -35,7 +35,6 @@ import {
   automatedModeration,
   battleAction,
   conversation,
-  conversationComment,
   forumPost,
   historicalAvatar,
   historicalIp,
@@ -724,17 +723,6 @@ export const updateUserDataForGetBan = (
       ),
     );
 
-/** Build the `userData` update for `getBan`, setting `isBanned`, using predicates on `userId`. */
-export const updateUserDataForGetBan2 = (
-  client: Pick<DrizzleClient, "update">,
-  ctx: { userId: string },
-  noActiveReport: (statuses: BanState[]) => SQL<unknown>,
-) =>
-  client
-    .update(userData)
-    .set({ isBanned: false })
-    .where(and(eq(userData.userId, ctx.userId), noActiveReport(["BAN_ACTIVATED"])));
-
 /** Build the `userData` update for `acceptWarning`, setting `isWarned`, using predicates on `userId`. */
 export const updateUserDataForAcceptWarning = (
   client: Pick<DrizzleClient, "update">,
@@ -763,26 +751,6 @@ export const findConversationForGetInfraction = (
     columns: { isPublic: true },
     where: eq(conversation.id, commentData.conversationId),
   });
-
-/** Build the `forumPost` update for `umPostForCreate`, setting `isReported`, using predicates on `id`. */
-export const updateForumPostForCreate = (
-  client: Pick<DrizzleClient, "update">,
-  input: { system_id: string },
-) =>
-  client
-    .update(forumPost)
-    .set({ isReported: true })
-    .where(eq(forumPost.id, input.system_id));
-
-/** Build the `conversationComment` update for `create`, setting `isReported`, using predicates on `id`. */
-export const updateConversationCommentForCreate = (
-  client: Pick<DrizzleClient, "update">,
-  input: { system_id: string },
-) =>
-  client
-    .update(conversationComment)
-    .set({ isReported: true })
-    .where(eq(conversationComment.id, input.system_id));
 
 /** Build the `battleAction` update for `create`, setting `updatedAt`, using predicates on `id`. */
 export const updateBattleActionForCreate = (
@@ -986,16 +954,16 @@ export const selectUserReportForNoActiveReport2 = (
       ),
     );
 
-/** Build the `userData` update for `clear`, setting `isBanned`, using predicates on `userId`. */
-export const updateUserDataForClear = (
+/** Build a ban reset guarded by the caller’s active-report predicate. */
+export const clearUserBanWithoutActiveReport = (
   client: Pick<DrizzleClient, "update">,
-  reportedUserId: string,
+  userId: string,
   noActiveReport: (statuses: BanState[]) => SQL<unknown>,
 ) =>
   client
     .update(userData)
     .set({ isBanned: false })
-    .where(and(eq(userData.userId, reportedUserId), noActiveReport(["BAN_ACTIVATED"])));
+    .where(and(eq(userData.userId, userId), noActiveReport(["BAN_ACTIVATED"])));
 
 /** Build the `userData` update for `clear`, setting `isSilenced`, using predicates on `userId`. */
 export const updateUserDataForClear2 = (

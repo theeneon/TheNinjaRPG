@@ -25,10 +25,9 @@ import {
 } from "@/server/utils/achievementObjectives";
 import { territoryWarBoostWindowsSql } from "@/server/utils/territoryWar";
 
-/** Build the `userQueue` listing for `fetchJutsuTrainingQueue`, using the configured predicates. */
+/** Build the `userQueue` listing for `fetchJutsuTrainingQueue`. */
 export const listUserQueueForFetchJutsuTrainingQueue = (
   client: Pick<DrizzleClient, "query">,
-  queueOf: (userId: string, kind: QueueKind) => SQL<unknown> | undefined,
   userId: string,
 ) =>
   client.query.userQueue.findMany({
@@ -37,10 +36,9 @@ export const listUserQueueForFetchJutsuTrainingQueue = (
     with: { jutsu: true },
   });
 
-/** Build the `userQueue` listing for `fetchCraftingQueue`, using the configured predicates. */
+/** Build the `userQueue` listing for `fetchCraftingQueue`. */
 export const listUserQueueForFetchCraftingQueue = (
   client: Pick<DrizzleClient, "query">,
-  queueOf: (userId: string, kind: QueueKind) => SQL<unknown> | undefined,
   userId: string,
 ) =>
   client.query.userQueue.findMany({
@@ -49,12 +47,11 @@ export const listUserQueueForFetchCraftingQueue = (
     with: { item: true },
   });
 
-/** Build the `userQueue` selection for `fetchJutsuQueueSummary`, using the configured predicates. */
-export const selectUserQueueForFetchJutsuQueueSummary = (
-  client: Pick<DrizzleClient, "select">,
-  queueOf: (userId: string, kind: QueueKind) => SQL<unknown> | undefined,
-  userId: string,
-) =>
+/**
+ * Waiting jutsu levels for display, in queue order, each with the jutsu's name and the
+ * level the user owns now, in one query.
+ */
+export const fetchJutsuQueueSummary = (client: DrizzleClient, userId: string) =>
   client
     .select({
       id: userQueue.id,
@@ -76,10 +73,9 @@ export const selectUserQueueForFetchJutsuQueueSummary = (
     .where(queueOf(userId, "JUTSU"))
     .orderBy(asc(userQueue.position));
 
-/** Build the `userQueue` selection for `fetchQueuedJutsuIds`, using the configured predicates. */
+/** Build the `userQueue` selection for `fetchQueuedJutsuIds`. */
 export const selectUserQueueForFetchQueuedJutsuIds = (
   client: Pick<DrizzleClient, "select">,
-  queueOf: (userId: string, kind: QueueKind) => SQL<unknown> | undefined,
   userId: string,
 ) =>
   client
@@ -87,10 +83,9 @@ export const selectUserQueueForFetchQueuedJutsuIds = (
     .from(userQueue)
     .where(queueOf(userId, "JUTSU"));
 
-/** Build the `userQueue` selection for `appendQueueEntries`, using the configured predicates. */
+/** Build the `userQueue` selection for `appendQueueEntries`. */
 export const selectUserQueueForAppendQueueEntries = (
   client: Pick<DrizzleClient, "select">,
-  queueOf: (userId: string, kind: QueueKind) => SQL<unknown> | undefined,
   userId: string,
   kind: "JUTSU" | "CRAFT",
 ) =>
@@ -117,10 +112,9 @@ export const insertUserQueueForAppendQueueEntries = (
     })),
   );
 
-/** Build the `userQueue` deletion for `deleteDeadRows`, using predicates on `position`. */
-export const deleteUserQueueForDeleteDeadRows = (
+/** Build deletion of consumed or replaced MASTERY, ELEMENT or ENERGY rows at or below the head. */
+export const deleteDeadQueueRows = (
   client: Pick<DrizzleClient, "delete">,
-  queueOf: (userId: string, kind: QueueKind) => SQL<unknown> | undefined,
   userId: string,
   kind: "MASTERY" | "ENERGY" | "ELEMENT",
   head: number,
@@ -129,8 +123,8 @@ export const deleteUserQueueForDeleteDeadRows = (
     .delete(userQueue)
     .where(and(queueOf(userId, kind), sql`${userQueue.position} <= ${head}`));
 
-/** Build the `userQueue` insert for `claimAndReplaceTrainingQueue`. */
-export const insertUserQueueForClaimAndReplaceTrainingQueue = (
+/** Build insertion of caller-prepared training queue rows. */
+export const insertUserQueueRows = (
   client: Pick<DrizzleClient, "insert">,
   rows: import("@/drizzle/schema").UserQueue[],
 ) => client.insert(userQueue).values(rows);
@@ -227,24 +221,6 @@ export const deleteUserQueueForClaimQueueRow = (
   client: Pick<DrizzleClient, "delete">,
   id: string,
 ) => client.delete(userQueue).where(eq(userQueue.id, id));
-
-/** Build the `userQueue` insert for `restoreQueueRow`. */
-export const insertUserQueueForRestoreQueueRow = (
-  client: Pick<DrizzleClient, "insert">,
-  row: Pick<
-    import("@/drizzle/schema").UserQueue,
-    "id" | "kind" | "createdAt" | "speed" | "userId" | "position" | "stat" | "energy"
-  > & {
-    quantity: number;
-    itemId: string;
-    materials: import("@/validators/train").CraftingQueueMaterial[];
-    jutsuId: string;
-    reservedRyo: number;
-    durationSeconds: number;
-    startsAt: Date;
-    finishesAt: Date;
-  },
-) => client.insert(userQueue).values(row);
 
 /**
  * Build the `userData` update for `updateQueueOwner`, setting `questData` and
@@ -385,39 +361,20 @@ export const selectUserItemForSettleWaitingJobs = (
     .from(userItem)
     .where(and(eq(userItem.userId, userId), isNotNull(userItem.craftingFinishedAt)));
 
-/** Build the `trainingLog` insert for `startTraining`. */
-export const insertTrainingLogForStartTraining = (
+/** Build a timed stat or mastery training log insert using the supplied completion time. */
+export const insertTrainingLog = (
   client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
+  userId: string,
   amount: number,
-  input: {
-    stat: CombatStatName;
-  },
-  user: { trainingSpeed: TrainingSpeed },
-  trainingFinishedAt: Date,
-) =>
-  client.insert(trainingLog).values({
-    userId: ctx.userId,
-    amount,
-    stat: input.stat,
-    speed: user.trainingSpeed,
-    trainingFinishedAt,
-  });
-
-/** Build the `trainingLog` insert for `stopMasteryTraining`. */
-export const insertTrainingLogForStopMasteryTraining = (
-  client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
-  gained: number,
-  trained: TimedMasteryName,
+  stat: CombatStatName | TimedMasteryName,
   speed: TrainingSpeed,
   trainingFinishedAt: Date,
 ) =>
   client.insert(trainingLog).values({
-    userId: ctx.userId,
-    amount: gained,
-    stat: trained,
-    speed,
+    userId: userId,
+    amount,
+    stat: stat,
+    speed: speed,
     trainingFinishedAt,
   });
 
@@ -443,3 +400,7 @@ export const listTrainingLogForGetTrainingLog = (
       gt(trainingLog.trainingFinishedAt, sql`NOW() - INTERVAL 1 DAY`),
     ),
   });
+
+/** Restrict a queue statement to one user and queue kind. */
+const queueOf = (userId: string, kind: QueueKind) =>
+  and(eq(userQueue.userId, userId), eq(userQueue.kind, kind));

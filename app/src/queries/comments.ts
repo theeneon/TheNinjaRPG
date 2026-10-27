@@ -1,20 +1,10 @@
 /**
  * Database access for comments; authorization and transaction scopes stay in callers.
  */
-import type { SQL } from "drizzle-orm";
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
-import type { SupportTicketStatus, UserRole } from "@/drizzle/constants";
-import {
-  conversation,
-  conversationComment,
-  forumPost,
-  user2conversation,
-  userBlackList,
-  userData,
-} from "@/drizzle/schema";
-import { fetchThread } from "@/queries/forum";
 
-import type { DrizzleClient } from "@/server/db";
+import type { SupportTicketStatus, UserRole } from "@/drizzle/constants";
+
+import { fetchThread } from "@/queries/forum";
 
 /**
  * Fetches comments from the database.
@@ -145,16 +135,24 @@ export const fetchForumThreadPage = async (
   };
 };
 
-import { desc, isNull, notInArray } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
 import {
+  conversation,
+  conversationComment,
+  forumPost,
   forumThread,
   supportTicket,
   supportTicketActivity,
+  user2conversation,
+  userBlackList,
+  userData,
   userReportComment,
   village,
 } from "@/drizzle/schema";
+import type { DrizzleClient } from "@/server/db";
 import { displayTitleSql } from "@/server/utils/titleDisplay";
 import { canModerateRoles, canSeeSecretData } from "@/utils/permissions";
 import sanitize from "@/utils/sanitize";
@@ -319,21 +317,6 @@ export const findSupportTicketForExitConversation = (
     where: eq(supportTicket.conversationId, input.convo_id),
     columns: { id: true },
   });
-
-/** Build the `user2conversation` deletion for `exitConversation`, using predicates on `conversationId` and `userId`. */
-export const deleteUser2conversationForExitConversation = (
-  client: Pick<DrizzleClient, "delete">,
-  convo: { id: string },
-  ctx: { userId: string },
-) =>
-  client
-    .delete(user2conversation)
-    .where(
-      and(
-        eq(user2conversation.conversationId, convo.id),
-        eq(user2conversation.userId, ctx.userId),
-      ),
-    );
 
 /** Build the `conversation` deletion for `exitConversation`, using predicates on `id`. */
 export const deleteConversationForExitConversation = (
@@ -517,21 +500,21 @@ export const findSupportTicketForCreateConversationComment = (
     columns: { createdByUserId: true },
   });
 
-/** Build the `conversationComment` insert for `createConversationComment`. */
-export const insertConversationCommentForCreateConversationComment = (
+/** Build a conversation comment insert with separate displayed user and author IDs. */
+export const insertConversationComment = (
   client: Pick<DrizzleClient, "insert">,
-  commentId: string,
-  sanitized: string,
-  effectiveUserId: string,
-  ctx: { userId: string },
-  convo: { id: string },
+  id: string,
+  content: string,
+  userId: string,
+  authorId: string,
+  conversationId: string,
 ) =>
   client.insert(conversationComment).values({
-    id: commentId,
-    content: sanitized,
-    userId: effectiveUserId,
-    authorId: ctx.userId,
-    conversationId: convo.id,
+    id: id,
+    content: content,
+    userId: userId,
+    authorId: authorId,
+    conversationId: conversationId,
   });
 
 /** Build the `conversation` update for `createConversationComment`, setting `updatedAt`, using predicates on `id`. */
@@ -735,19 +718,28 @@ export const insertUser2conversationForCreateConvo = (
     userId: user,
   });
 
-/** Build the `conversationComment` insert for `createConvo`. */
-export const insertConversationCommentForCreateConvo = (
+/** Build conversation membership insertion, retaining existing membership on duplicate keys. */
+export const insertConversationMember = (
   client: Pick<DrizzleClient, "insert">,
-  messageId: string,
-  sanitized: string,
-  senderUserId: string,
-  authorUserId: string,
-  insertId: string,
+  conversationId: string,
+  userId: string,
 ) =>
-  client.insert(conversationComment).values({
-    id: messageId,
-    content: sanitized,
-    userId: senderUserId,
-    authorId: authorUserId,
-    conversationId: insertId,
-  });
+  client
+    .insert(user2conversation)
+    .values({ conversationId: conversationId, userId })
+    .onDuplicateKeyUpdate({ set: { conversationId: sql`conversationId` } });
+
+/** Build deletion of one user’s membership in a conversation. */
+export const deleteConversationMembership = (
+  client: DrizzleClient,
+  conversationId: string,
+  userId: string,
+) =>
+  client
+    .delete(user2conversation)
+    .where(
+      and(
+        eq(user2conversation.conversationId, conversationId),
+        eq(user2conversation.userId, userId),
+      ),
+    );

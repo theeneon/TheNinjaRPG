@@ -157,25 +157,21 @@ export const selectForumPostForGetAdditionalContext = (
     .orderBy(desc(forumPost.createdAt))
     .limit(REPORT_CONTEXT_WINDOW);
 
-/** Build the `conversationComment` update for `updateReportedStatus`, setting `isReported`, using predicates on `id`. */
-export const updateConversationCommentForUpdateReportedStatus = (
+/** Build the reported-flag update for one conversation comment. */
+export const markConversationCommentReported = (
   client: Pick<DrizzleClient, "update">,
-  relationId: string,
+  commentId: string,
 ) =>
   client
     .update(conversationComment)
     .set({ isReported: true })
-    .where(eq(conversationComment.id, relationId));
+    .where(eq(conversationComment.id, commentId));
 
-/** Build the `forumPost` update for `umPostForUpdateReportedStatus`, setting `isReported`, using predicates on `id`. */
-export const updateForumPostForUpdateReportedStatus = (
+/** Build the reported-flag update for one forum post. */
+export const markForumPostReported = (
   client: Pick<DrizzleClient, "update">,
-  relationId: string,
-) =>
-  client
-    .update(forumPost)
-    .set({ isReported: true })
-    .where(eq(forumPost.id, relationId));
+  postId: string,
+) => client.update(forumPost).set({ isReported: true }).where(eq(forumPost.id, postId));
 
 /** Build the `userReportComment` update for `updateReportedStatus`, setting `isReported`, using predicates on `id`. */
 export const updateUserReportCommentForUpdateReportedStatus = (

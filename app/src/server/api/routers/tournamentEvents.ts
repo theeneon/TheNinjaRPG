@@ -20,9 +20,9 @@ import {
   generateEventBracket,
 } from "@/libs/tournament/events";
 import { findUserById, findUserRoleById } from "@/queries/profile";
+import { deleteTournamentMatches } from "@/queries/tournament";
 import {
   deleteTournamentForMaintainEventTournaments,
-  deleteTournamentMatchForMaintainEventTournaments,
   deleteTournamentRewardClaimForMaintainEventTournaments,
   fetchEvent,
   fetchEventNoticeState,
@@ -814,7 +814,7 @@ export const maintainEventTournaments = async (client: DrizzleClient) => {
       const removed = await deleteTournamentForMaintainEventTournaments(client, row);
       if (removed.rowsAffected !== 1) continue;
       await Promise.all([
-        deleteTournamentMatchForMaintainEventTournaments(client, row),
+        deleteTournamentMatches(client, row.id),
         deleteTournamentRewardClaimForMaintainEventTournaments(client, row),
       ]);
     } else await syncEventTournament(client, row.id);

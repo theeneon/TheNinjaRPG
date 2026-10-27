@@ -9,8 +9,13 @@ import { generateModerationDecision, getAdditionalContext } from "@/libs/moderat
 import { getServerPusher } from "@/libs/pusher";
 import { findConversationCommentById } from "@/queries/comments";
 import { fetchImage } from "@/queries/conceptart";
+import {
+  markConversationCommentReported,
+  markForumPostReported,
+} from "@/queries/moderator";
 import { fetchUser } from "@/queries/profile";
 import {
+  clearUserBanWithoutActiveReport,
   deleteUserNindoForClearNindo,
   findConversationForGetInfraction,
   findForumPostForGetInfraction,
@@ -45,15 +50,11 @@ import {
   selectUserReportForNoActiveReport,
   selectUserReportForNoActiveReport2,
   updateBattleActionForCreate,
-  updateConversationCommentForCreate,
-  updateForumPostForCreate,
   updateUserDataForAcceptWarning,
   updateUserDataForBan,
-  updateUserDataForClear,
   updateUserDataForClear2,
   updateUserDataForClear3,
   updateUserDataForGetBan,
-  updateUserDataForGetBan2,
   updateUserDataForSilence,
   updateUserDataForTradeBan,
   updateUserDataForUpdateUserAvatar,
@@ -204,7 +205,7 @@ export const reportsRouter = createTRPCRouter({
         ? [updateUserDataForGetBan(ctx.drizzle, ctx, noActiveReport)]
         : []),
       ...(!activeReport("BAN_ACTIVATED") && user.isBanned
-        ? [updateUserDataForGetBan2(ctx.drizzle, ctx, noActiveReport)]
+        ? [clearUserBanWithoutActiveReport(ctx.drizzle, ctx.userId, noActiveReport)]
         : []),
     ]);
     if (
@@ -355,9 +356,9 @@ export const reportsRouter = createTRPCRouter({
         additionalContext: context,
       });
       if (input.system === "forum_comment") {
-        await updateForumPostForCreate(ctx.drizzle, input);
+        await markForumPostReported(ctx.drizzle, input.system_id);
       } else if (input.system === "conversation_comment") {
-        await updateConversationCommentForCreate(ctx.drizzle, input);
+        await markConversationCommentReported(ctx.drizzle, input.system_id);
       } else if (input.system === "battle_log") {
         await updateBattleActionForCreate(ctx.drizzle, input);
       }
@@ -610,7 +611,13 @@ export const reportsRouter = createTRPCRouter({
           );
         mutations.push(
           ...(bans.length === 0
-            ? [updateUserDataForClear(ctx.drizzle, reportedUserId, noActiveReport)]
+            ? [
+                clearUserBanWithoutActiveReport(
+                  ctx.drizzle,
+                  reportedUserId,
+                  noActiveReport,
+                ),
+              ]
             : []),
           ...(activeSilenceOrTimeout.length === 0
             ? [updateUserDataForClear2(ctx.drizzle, reportedUserId, noActiveReport)]

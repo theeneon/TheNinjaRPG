@@ -26,12 +26,6 @@ export const findGameSettingByName = (
     where: eq(gameSetting.name, name),
   });
 
-/** Build the `gameSetting` insert for `getGameSetting`. */
-export const insertGameSettingForGetGameSetting = (
-  client: Pick<DrizzleClient, "insert">,
-  setting: import("@/drizzle/schema").GameSetting,
-) => client.insert(gameSetting).values(setting);
-
 /** Build the `gameSetting` update for `updateGameSetting`, setting `value` and `time`, using predicates on `name`. */
 export const updateGameSettingForUpdateGameSetting = (
   client: Pick<DrizzleClient, "update">,
@@ -82,8 +76,8 @@ export const selectGameSettingForFetchDmgConfig = (
 ) =>
   client.select().from(gameSetting).where(inArray(gameSetting.name, DMG_SETTING_NAMES));
 
-/** Build the `gameSetting` insert for `fetchDmgConfig`. */
-export const insertGameSettingForFetchDmgConfig = (
+/** Build insertion of game setting rows. */
+export const insertGameSettings = (
   client: Pick<DrizzleClient, "insert">,
-  newSettings: import("@/drizzle/schema").GameSetting[],
-) => client.insert(gameSetting).values(newSettings);
+  settings: import("@/drizzle/schema").GameSetting[],
+) => client.insert(gameSetting).values(settings);

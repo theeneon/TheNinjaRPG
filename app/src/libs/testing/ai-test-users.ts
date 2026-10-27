@@ -15,8 +15,8 @@ import { findUserIdentityById } from "@/queries/profile";
 import {
   findVillageForResolveVillage,
   findVillageForResolveVillage2,
+  insertStarterHomeItems,
   insertUserDataForUpsertUserData,
-  insertUserItemForUpsertUserData,
   insertUserStreakProgressForSuppressActivityStreakPopup,
   selectActivityStreakConfigForSuppressActivityStreakPopup,
   selectUserStreakProgressForSuppressActivityStreakPopup,
@@ -290,7 +290,7 @@ const upsertUserData = async ({
       AGENT_FRIENDLY_SETTINGS,
     );
     await Promise.all([
-      insertUserItemForUpsertUserData(drizzleDB, userId),
+      insertStarterHomeItems(drizzleDB, userId),
       suppressActivityStreakPopup(userId),
     ]);
     return;

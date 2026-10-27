@@ -745,15 +745,6 @@ export const findUserItemForAwardItemToUser = (
     columns: { quantity: true },
   });
 
-/** Build the `userItem` insert for `awardItemToUser`. */
-export const insertUserItemForAwardItemToUser = (
-  client: Pick<DrizzleClient, "insert">,
-  inserts: (Pick<
-    import("@/drizzle/schema").UserItem,
-    "id" | "quantity" | "userId" | "itemId"
-  > & { equipped: "NONE" })[],
-) => client.insert(userItem).values(inserts);
-
 /** Build the `userData` update for `awardFarmingProgress`, setting `farmingExperience`, using predicates on `userId`. */
 export const updateUserDataForAwardFarmingProgress = (
   client: Pick<DrizzleClient, "update">,

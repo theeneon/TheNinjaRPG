@@ -36,8 +36,7 @@ import {
 } from "@/libs/train";
 import { findUserWithBloodline } from "@/queries/profile";
 import {
-  insertTrainingLogForStartTraining,
-  insertTrainingLogForStopMasteryTraining,
+  insertTrainingLog,
   listTrainingLogForGetTrainingLog,
   updateUserDataForUpdateTrainingSpeed,
 } from "@/queries/train";
@@ -268,12 +267,12 @@ export const trainRouter = createTRPCRouter({
       // History is independent of the committed gains; keep it off the response path.
       after(async () => {
         try {
-          await insertTrainingLogForStartTraining(
+          await insertTrainingLog(
             ctx.drizzle,
-            ctx,
+            ctx.userId,
             amount,
-            input,
-            user,
+            input.stat,
+            user.trainingSpeed,
             trainingFinishedAt,
           );
         } catch (error) {
@@ -478,9 +477,9 @@ export const trainRouter = createTRPCRouter({
         const trainingFinishedAt = new Date();
         after(async () => {
           try {
-            await insertTrainingLogForStopMasteryTraining(
+            await insertTrainingLog(
               ctx.drizzle,
-              ctx,
+              ctx.userId,
               gained,
               trained,
               speed,

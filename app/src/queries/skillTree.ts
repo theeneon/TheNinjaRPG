@@ -380,11 +380,11 @@ export const updateUserDataForResetSkillPoints = (
       ),
     );
 
-/** Build the `userSkill` deletion for `resetSkillPoints`, using predicates on `userId`. */
-export const deleteUserSkillForResetSkillPoints = (
+/** Build deletion of all skills belonging to one user. */
+export const deleteUserSkills = (
   client: Pick<DrizzleClient, "delete">,
-  ctx: { userId: string },
-) => client.delete(userSkill).where(eq(userSkill.userId, ctx.userId));
+  userId: string,
+) => client.delete(userSkill).where(eq(userSkill.userId, userId));
 
 /** Build the `actionLog` insert for `resetSkillPoints`. */
 export const insertActionLogForResetSkillPoints = (

@@ -351,17 +351,6 @@ export const findMpvpBattleQueueForStartBattle = (
     with: { queue: true },
   });
 
-/** Build the `mpvpBattleQueue` update for `startBattle`, setting `battleId`, using predicates on `id` and `battleId`. */
-export const updateMpvpBattleQueueForStartBattle = (
-  client: Pick<DrizzleClient, "update">,
-  battleId: string,
-  team: { id: string },
-) =>
-  client
-    .update(mpvpBattleQueue)
-    .set({ battleId })
-    .where(and(eq(mpvpBattleQueue.id, team.id), isNull(mpvpBattleQueue.battleId)));
-
 /** Execute the database statement for `startBattle`. */
 export const executeRowsForStartBattle = (
   client: Pick<DrizzleClient, "execute">,

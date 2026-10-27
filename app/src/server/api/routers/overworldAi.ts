@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { overworldAiPlacement, quest, type UserQuest } from "@/drizzle/schema";
+import { overworldAiPlacement, type UserQuest } from "@/drizzle/schema";
 
 import {
   findActionableBoundObjective,
@@ -27,9 +27,10 @@ import { availableQuestLetterRanks } from "@/libs/train";
 import { clearActiveNpcQuest } from "@/queries/concurrency";
 import {
   deleteOverworldAiPlacementForDeletePlacement,
-  deleteOverworldAiPlacementQuestForDeletePlacement,
-  deleteOverworldAiPlacementQuestForUpsertPlacement,
+  deleteOverworldAiPlacementQuests,
   fetchPlacement,
+  fetchQuestNamesBindingPlacement,
+  fetchQuestsBindingPlacement,
   findOverworldAiPlacementForUpsertPlacement,
   findUserDataForUpsertPlacement,
   insertOverworldAiPlacementForUpsertPlacement,
@@ -37,8 +38,6 @@ import {
   insertUserQuestAttemptForInteractWithOverworldAi,
   listOverworldAiPlacementForGetAllPlacementNames,
   listOverworldAiPlacementForGetPlacementsForAi,
-  listQuestForFetchQuestNamesBindingPlacement,
-  listQuestForFetchQuestsBindingPlacement,
   listQuestForUpsertPlacement,
   listQuestHistoryForInteractWithOverworldAi,
   selectUserQuestAttemptForInteractWithOverworldAi,
@@ -280,7 +279,7 @@ export const overworldAiRouter = createTRPCRouter({
         if (updated.rowsAffected === 0) {
           return errorResponse("Placement no longer exists");
         }
-        await deleteOverworldAiPlacementQuestForUpsertPlacement(ctx.drizzle, id);
+        await deleteOverworldAiPlacementQuests(ctx.drizzle, id);
       } else {
         await insertOverworldAiPlacementForUpsertPlacement(ctx.drizzle, row);
       }
@@ -312,7 +311,7 @@ export const overworldAiRouter = createTRPCRouter({
       }
       // No foreign keys link these tables in PlanetScale, so both deletes are independent.
       await Promise.all([
-        deleteOverworldAiPlacementQuestForDeletePlacement(ctx.drizzle, input),
+        deleteOverworldAiPlacementQuests(ctx.drizzle, input.id),
         deleteOverworldAiPlacementForDeletePlacement(ctx.drizzle, input),
       ]);
       // Return
@@ -791,34 +790,6 @@ export const overworldAiRouter = createTRPCRouter({
       };
     }),
 });
-
-/** Exact JSON membership predicate: a quest's objective content binds this placement
- *  (overworldPlacementId). Shared by the name-only and content-bearing fetches below. */
-const questBindsPlacementWhere = (placementId: string) =>
-  sql`JSON_CONTAINS(JSON_EXTRACT(${quest.content}, '$.objectives[*].overworldPlacementId'), JSON_QUOTE(${placementId})) = 1`;
-
-/** Quests (id + name only) whose objective content binds this placement — for name-only guards.
- *  Skips the potentially large `content` JSON the deactivate/delete callers never inspect. */
-const fetchQuestNamesBindingPlacement = async (
-  client: DrizzleClient,
-  placementId: string,
-) =>
-  listQuestForFetchQuestNamesBindingPlacement(
-    client,
-    questBindsPlacementWhere,
-    placementId,
-  );
-
-/** Same binding set, plus objective content for friendly interaction and fixed structure guards. */
-const fetchQuestsBindingPlacement = async (
-  client: DrizzleClient,
-  placementId: string,
-) =>
-  listQuestForFetchQuestsBindingPlacement(
-    client,
-    questBindsPlacementWhere,
-    placementId,
-  );
 
 /**
  * Start an OVERWORLD PvE battle against a placement's AI for a HOSTILE interaction

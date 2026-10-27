@@ -16,8 +16,7 @@ import {
   findUserDataForGetAvailable,
   insertActionLogForSave,
   insertDungeonForSave,
-  insertDungeonMemberForCreate,
-  insertDungeonMemberForUpdateParty,
+  insertDungeonMember,
   insertDungeonRunForCreate,
   listBattleForGetState,
   listDungeonForGetAvailable,
@@ -264,7 +263,7 @@ export const dungeonRouter = createTRPCRouter({
       // inserts can leave only an empty, unreferenced run, which support can remove.
       await insertDungeonRunForCreate(ctx.drizzle, id, definition, ctx, content);
       try {
-        await insertDungeonMemberForCreate(ctx.drizzle, id, ctx);
+        await insertDungeonMember(ctx.drizzle, id, ctx.userId);
       } catch (error) {
         // Never remove a run if membership committed despite an ambiguous driver failure.
         await deleteDungeonRunForCreate(ctx.drizzle, id);
@@ -382,10 +381,10 @@ export const dungeonRouter = createTRPCRouter({
       ) => {
         const claim = await updateDungeonRunForUpdateParty(client, state, status, run);
         if (claim.rowsAffected !== 1) return false;
-        if (joined) await insertDungeonMemberForUpdateParty(client, run, ctx);
+        if (joined) await insertDungeonMember(client, run.id, ctx.userId);
         if (removedUser)
           await deleteDungeonMemberForUpdateParty(client, run, removedUser);
-        if (ending) await clearDungeonActiveUsers(client, run);
+        if (ending) await clearDungeonActiveUsers(client, run.id);
         return true;
       };
       try {

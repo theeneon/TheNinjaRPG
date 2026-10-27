@@ -32,7 +32,6 @@ import {
 } from "@/drizzle/constants";
 import {
   actionLog,
-  anbuSquad,
   badge,
   bankTransfers,
   bloodline,
@@ -966,13 +965,12 @@ export const deleteQuestHistoryForDeleteUserQuest = (
       ),
     );
 
-/** Build the `userData` update for `deleteUserQuest`, setting `questData`, using predicates on `userId`. */
-export const updateUserDataForDeleteUserQuest = (
+/** Build a quest tracker update for one user. */
+export const updateUserQuestData = (
   client: Pick<DrizzleClient, "update">,
   questData: import("@/validators/objectives").QuestTrackerType[],
-  input: { userId: string },
-) =>
-  client.update(userData).set({ questData }).where(eq(userData.userId, input.userId));
+  userId: string,
+) => client.update(userData).set({ questData }).where(eq(userData.userId, userId));
 
 /** Build the `actionLog` insert for `deleteUserQuest`. */
 export const insertActionLogForDeleteUserQuest = (
@@ -1210,17 +1208,6 @@ export const updateClanForUpdateRewards = (
       activityPoints: sql`${clan.activityPoints} + ${rewards.reward_clanpoints}`,
     })
     .where(eq(clan.id, user.clanId));
-
-/** Build the `anbuSquad` update for `updateRewards`, setting `points`, using predicates on `id`. */
-export const updateAnbuSquadForUpdateRewards = (
-  client: Pick<DrizzleClient, "update">,
-  rewards: { reward_anbupoints: number },
-  user: { anbuId: string },
-) =>
-  client
-    .update(anbuSquad)
-    .set({ points: sql`${anbuSquad.points} + ${rewards.reward_anbupoints}` })
-    .where(eq(anbuSquad.id, user.anbuId));
 
 /** Build the `userJutsu` insert for `updateRewards`, updating duplicate keys. */
 export const insertUserJutsuForUpdateRewards = (
@@ -2082,11 +2069,16 @@ export interface QuestDiscoveryOptions {
   ranks?: LetterRank[];
 }
 
-/** Build full quest discovery candidates with the caller's prepared filters and attempt history. */
-export const selectQuestForFetchQuestDiscoveryCandidates = (
-  client: Pick<DrizzleClient, "select">,
+/**
+ * Shared candidate query for quest discovery screens. Availability remains the caller's
+ * responsibility because each destination adds its own contextual rules (war state, structure,
+ * occupation, or NPC discovery). Keeping this join shared prevents dashboard discovery from
+ * loading the full profile independently for every content category.
+ */
+export const fetchQuestDiscoveryCandidates = async (
+  client: DrizzleClient,
   userId: string,
-  where: SQL<unknown> | undefined,
+  options: QuestDiscoveryOptions,
 ) =>
   client
     .select({
@@ -2102,14 +2094,17 @@ export const selectQuestForFetchQuestDiscoveryCandidates = (
       questHistory,
       and(eq(quest.id, questHistory.questId), eq(questHistory.userId, userId)),
     )
-    .where(where)
+    .where(buildQuestDiscoveryWhere(options))
     .orderBy(asc(quest.name));
 
-/** Build quest discovery summaries with attempt history and viewer-authorized hidden content. */
-export const selectQuestForFetchQuestDiscoverySummaryCandidates = (
-  client: Pick<DrizzleClient, "select">,
+/**
+ * Discovery inputs without objective JSON. Authorize hidden summaries in the join,
+ * because callers resolve display eligibility against the cached client profile.
+ */
+export const fetchQuestDiscoverySummaryCandidates = async (
+  client: DrizzleClient,
   userId: string,
-  where: SQL<unknown> | undefined,
+  options: QuestDiscoveryOptions,
 ) =>
   client
     .select({
@@ -2164,7 +2159,7 @@ export const selectQuestForFetchQuestDiscoverySummaryCandidates = (
     .innerJoin(userData, eq(userData.userId, userId))
     .where(
       and(
-        where,
+        buildQuestDiscoveryWhere(options),
         or(
           eq(quest.hidden, false),
           inArray(userData.role, UserRoles.filter(canPlayHiddenQuests)),
@@ -2260,3 +2255,14 @@ export const questLevelFilters = (level: number) => [
     level > MAX_EXPERIENCE_LEVEL ? eq(quest.maxLevel, MAX_EXPERIENCE_LEVEL) : undefined,
   ),
 ];
+
+/** Build the shared discovery filters; destination-specific availability stays in callers. */
+const buildQuestDiscoveryWhere = (options: QuestDiscoveryOptions) =>
+  and(
+    inArray(quest.questType, options.questTypes),
+    options.villageId
+      ? or(isNull(quest.requiredVillage), eq(quest.requiredVillage, options.villageId))
+      : undefined,
+    options.ranks?.length ? inArray(quest.questRank, options.ranks) : undefined,
+    ...(options.level !== undefined ? questLevelFilters(options.level) : []),
+  );

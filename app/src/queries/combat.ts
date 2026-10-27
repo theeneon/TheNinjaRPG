@@ -79,7 +79,6 @@ import {
   tournamentMatch,
   trainingLog,
   type UserData,
-  user2conversation,
   userData,
   userItem,
   userItemImbuement,
@@ -2154,17 +2153,6 @@ export const updateAnbuSquadForUpdateVillageAnbuClan = (
     .set({ pvpActivity: sql`${anbuSquad.pvpActivity} + 1` })
     .where(eq(anbuSquad.id, user.anbuId));
 
-/** Build the `anbuSquad` update for `updateVillageAnbuClan`, setting `points`, using predicates on `id`. */
-export const updateAnbuSquadForUpdateVillageAnbuClan2 = (
-  client: Pick<DrizzleClient, "update">,
-  result: { anbuPoints: number },
-  user: { anbuId: string },
-) =>
-  client
-    .update(anbuSquad)
-    .set({ points: sql`${anbuSquad.points} + ${result.anbuPoints}` })
-    .where(eq(anbuSquad.id, user.anbuId));
-
 /** Build the `clan` update for `updateVillageAnbuClan`, using predicates on `id`. */
 export const updateClanForUpdateVillageAnbuClan = (
   client: Pick<DrizzleClient, "update">,
@@ -2567,28 +2555,6 @@ export const insertConversationForJoinCoopChat = (
       isEnabled: true,
     })
     .onDuplicateKeyUpdate({ set: { id: sql`id` } });
-
-/** Build the `user2conversation` insert for `joinCoopChat`, updating duplicate keys. */
-export const insertUser2conversationForJoinCoopChat = (
-  client: Pick<DrizzleClient, "insert">,
-  partyId: string,
-  userId: string,
-) =>
-  client
-    .insert(user2conversation)
-    .values({ conversationId: partyId, userId })
-    .onDuplicateKeyUpdate({ set: { conversationId: sql`conversationId` } });
-
-/** Idempotently revoke this member's conversation access after preserving their quest progress. */
-export const leaveCoopChat = (client: DrizzleClient, partyId: string, userId: string) =>
-  client
-    .delete(user2conversation)
-    .where(
-      and(
-        eq(user2conversation.conversationId, partyId),
-        eq(user2conversation.userId, userId),
-      ),
-    );
 
 /** Build the `userData` update for `cleanupCoopBattleStart`, using predicates on `userId` and `battleId`. */
 export const updateUserDataForCleanupCoopBattleStart = (

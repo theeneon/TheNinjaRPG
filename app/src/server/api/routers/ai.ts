@@ -10,13 +10,11 @@ import {
   listItemForUpdateAiProfile,
   listJutsuForUpdateAiProfile,
   listQuestForGetAiRelations,
+  setUserAiProfile,
   updateAiProfileForUpdateAiProfile,
   updateUserDataForToggleAiProfile,
-  updateUserDataForToggleAiProfile2,
-  updateUserDataForToggleAiProfile3,
 } from "@/queries/ai";
 import { fetchUser } from "@/queries/profile";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -127,12 +125,12 @@ export const aiRouter = createTRPCRouter({
         await updateUserDataForToggleAiProfile(ctx.drizzle, target);
       } else {
         if (profile) {
-          await updateUserDataForToggleAiProfile2(ctx.drizzle, profile, target);
+          await setUserAiProfile(ctx.drizzle, profile.id, target.userId);
         } else {
           const id = nanoid();
           await Promise.all([
             insertAiProfileForToggleAiProfile(ctx.drizzle, id, target),
-            updateUserDataForToggleAiProfile3(ctx.drizzle, id, target),
+            setUserAiProfile(ctx.drizzle, id, target.userId),
           ]);
         }
       }

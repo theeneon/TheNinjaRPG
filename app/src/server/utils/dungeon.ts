@@ -4,18 +4,15 @@ import { combatEnergyRecoverySql } from "@/libs/combat/database";
 import type { CompleteBattle } from "@/libs/combat/types";
 import { dungeonBattleOutcome, dungeonNextState } from "@/libs/dungeon";
 import { deleteBattleById, deleteBattleIfVersionMatches } from "@/queries/combat";
-
 import {
   clearDungeonActiveUsers,
   findBattleForExpireDungeonRun,
-  updateDungeonMemberForSettleDungeonBattle,
   updateDungeonRunForExpireDungeonRun,
   updateDungeonRunForRollbackDungeonStart,
   updateDungeonRunForSettleDungeonBattle,
   updateUserDataForExpireDungeonRun,
   updateUserDataForSettleDungeonBattle,
 } from "@/queries/dungeon";
-
 import type { DrizzleClient } from "@/server/db";
 import { cleanupCoopBattleStart } from "@/server/utils/coop";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -89,7 +86,7 @@ export const settleDungeonBattle = async (
         meta,
         settledAt,
       );
-      if (status === "ENDED") await updateDungeonMemberForSettleDungeonBattle(tx, meta);
+      if (status === "ENDED") await clearDungeonActiveUsers(tx, meta.runId);
       return true;
     }),
   );
@@ -131,7 +128,7 @@ export const expireDungeonRun = async (
           settledAt,
         );
       }
-      await clearDungeonActiveUsers(tx, run);
+      await clearDungeonActiveUsers(tx, run.id);
     }),
   );
   return true;

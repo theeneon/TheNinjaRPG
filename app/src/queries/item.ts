@@ -1033,11 +1033,11 @@ export const selectItemVariantForUpsertItemVariant = (
     .from(itemVariant)
     .where(eq(itemVariant.itemId, input.itemId));
 
-/** Build the `itemVariant` deletion for `upsertItemVariant`, using predicates on `id`. */
-export const deleteItemVariantForUpsertItemVariant = (
+/** Build deletion of an item variant by ID. */
+export const deleteItemVariantById = (
   client: Pick<DrizzleClient, "delete">,
-  newVariantId: string,
-) => client.delete(itemVariant).where(eq(itemVariant.id, newVariantId));
+  variantId: string,
+) => client.delete(itemVariant).where(eq(itemVariant.id, variantId));
 
 /** Build the `itemVariant` lookup for `deleteItemVariant`, using predicates on `id`. */
 export const findItemVariantForDeleteItemVariant = (
@@ -1065,12 +1065,6 @@ export const updateUserItemForDeleteItemVariant = (
     .update(userItem)
     .set({ activeVariantId: null })
     .where(eq(userItem.activeVariantId, input.variantId));
-
-/** Build the `itemVariant` deletion for `deleteItemVariant`, using predicates on `id`. */
-export const deleteItemVariantForDeleteItemVariant = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { variantId: string },
-) => client.delete(itemVariant).where(eq(itemVariant.id, input.variantId));
 
 /** Build the `itemVariant` lookup for `purchaseVariant`, using predicates on `id`. */
 export const findItemVariantForPurchaseVariant = (
@@ -1495,81 +1489,38 @@ export const updateUserDataForCommitConsumption = (
     })
     .where(eq(userData.userId, ctx.userId));
 
-/** Build the `userItem` deletion for `commitConsumption`, using predicates on `id`, `userId`, `quantity`. */
-export const deleteUserItemForCommitConsumption = (
+/** Build deletion of an empty inventory row guarded by its owner and zero quantity. */
+export const deleteEmptyUserItem = (
   client: Pick<DrizzleClient, "delete">,
-  input: { userItemId: string },
-  ctx: { userId: string },
+  userItemId: string,
+  userId: string,
 ) =>
   client
     .delete(userItem)
     .where(
       and(
-        eq(userItem.id, input.userItemId),
-        eq(userItem.userId, ctx.userId),
+        eq(userItem.id, userItemId),
+        eq(userItem.userId, userId),
         eq(userItem.quantity, 0),
       ),
     );
 
-/**
- * Build the `userItem` update for `useRepairItem`, setting `durability`, using
- * predicates on `id`, `userId`, `durability`.
- */
-export const updateUserItemForUseRepairItem = (
+/** Build a durability rollback guarded by the item owner and expected durability. */
+export const restoreUserItemDurability = (
   client: Pick<DrizzleClient, "update">,
-  targetUserItem: { durability: number },
-  input: { targetItemId: string },
-  ctx: { userId: string },
-  newDurability: number,
+  durability: number,
+  userItemId: string,
+  userId: string,
+  expectedDurability: number,
 ) =>
   client
     .update(userItem)
-    .set({ durability: targetUserItem.durability })
+    .set({ durability: durability })
     .where(
       and(
-        eq(userItem.id, input.targetItemId),
-        eq(userItem.userId, ctx.userId),
-        eq(userItem.durability, newDurability),
-      ),
-    );
-
-/**
- * Build the `userItem` update for `useRepairAll`, setting `durability`, using
- * predicates on `id`, `userId`, `durability`.
- */
-export const updateUserItemForUseRepairAll = (
-  client: Pick<DrizzleClient, "update">,
-  o: { useritem: { durability: number; id: string; item: { maxDurability: number } } },
-  ctx: { userId: string },
-) =>
-  client
-    .update(userItem)
-    .set({ durability: o.useritem.durability })
-    .where(
-      and(
-        eq(userItem.id, o.useritem.id),
-        eq(userItem.userId, ctx.userId),
-        eq(userItem.durability, o.useritem.item.maxDurability),
-      ),
-    );
-
-/**
- * Build the `userItem` update for `useRepairAll`, setting `durability`, using
- * predicates on `id`, `userId`, `durability`.
- */
-export const updateUserItemForUseRepairAll2 = (
-  client: Pick<DrizzleClient, "update">,
-  useritem: { durability: number; id: string; item: { maxDurability: number } },
-  ctx: { userId: string },
-) =>
-  client
-    .update(userItem)
-    .set({ durability: useritem.durability })
-    .where(
-      and(
-        eq(userItem.id, useritem.id),
-        eq(userItem.userId, ctx.userId),
-        eq(userItem.durability, useritem.item.maxDurability),
+        eq(userItem.id, userItemId),
+        eq(userItem.userId, userId),
+        eq(userItem.durability, expectedDurability),
       ),
     );
 
@@ -1653,12 +1604,6 @@ export const updateItemPurchaseCounterForBuy = (
         lte(itemPurchaseCounter.quantity, allowance.limit - input.stack),
       ),
     );
-
-/** Build the `userItem` insert for `buy`. */
-export const insertUserItemForBuy = (
-  client: Pick<DrizzleClient, "insert">,
-  purchasedItem: import("@/drizzle/schema").UserItem,
-) => client.insert(userItem).values(purchasedItem);
 
 /**
  * Build the `userItem` update for `autoEquipOptimal`, setting `equipped`, including
@@ -2183,7 +2128,7 @@ export const listUserItemForExecuteMergeStacksForItem = (
     with: { imbuements: true },
   });
 
-/** Build the `userItem` insert. */
+/** Build insertion of caller-prepared inventory rows. */
 export const insertUserItems = (
   client: Pick<DrizzleClient, "insert">,
   craftingItemValues: (typeof userItem.$inferInsert)[],
@@ -2343,19 +2288,3 @@ export const executeConsumedForConsumeMeal = (
         AND ${userRaidBuff.id} = ${id}
         AND ${userRaidBuff.userId} = ${user.userId}
     `);
-
-/** Build the `userItem` deletion, using predicates on `id`, `userId`, `quantity`. */
-export const deleteConsumedMeal = (
-  client: Pick<DrizzleClient, "delete">,
-  owned: { id: string },
-  user: { userId: string },
-) =>
-  client
-    .delete(userItem)
-    .where(
-      and(
-        eq(userItem.id, owned.id),
-        eq(userItem.userId, user.userId),
-        eq(userItem.quantity, 0),
-      ),
-    );

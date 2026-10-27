@@ -122,13 +122,13 @@ import {
 } from "@/libs/weightedCache";
 import { fetchBloodlines, fetchItemBloodlineRolls } from "@/queries/bloodline";
 import { listHuntingHabitats } from "@/queries/hunting";
+import type { UserItemMergeBucketRow } from "@/queries/item";
 import {
   deleteCraftingRequirementForUpdate,
+  deleteEmptyUserItem,
   deleteItemForDelete,
+  deleteItemVariantById,
   deleteItemVariantForDelete,
-  deleteItemVariantForDeleteItemVariant,
-  deleteItemVariantForUpsertItemVariant,
-  deleteUserItemForCommitConsumption,
   deleteUserItemForDelete,
   deleteUserItemForExecuteMergeStacksForItemBucket,
   deleteUserItemForSellUserItem,
@@ -175,9 +175,9 @@ import {
   insertItemPurchaseCounterForBuy,
   insertItemVariantForUpsertItemVariant,
   insertSageModeRollsForConsume,
-  insertUserItemForBuy,
   insertUserItemForEvolveItem,
   insertUserItemForSplitItemStack,
+  insertUserItems,
   insertUserItemVariantForPurchaseVariant,
   insertUserSkillForConsume,
   listItemForDelete,
@@ -197,6 +197,7 @@ import {
   listUserItemForFetchUserItemsWithVariants,
   listUserItemForMergeAllStacks,
   listUserPetForConsume,
+  restoreUserItemDurability,
   selectEvoSiblingCountForUpdate,
   selectItemForDelete,
   selectItemForUpdate,
@@ -209,7 +210,6 @@ import {
   selectUserItemForSelectItemLoadout,
   selectUserItemVariantForGetUserUnlockedVariants,
   selectVillageStructureForSellUserItem,
-  type UserItemMergeBucketRow,
   updateBloodlineRollsForConsume,
   updateItemForUpdate,
   updateItemLoadoutForEvolveItem,
@@ -239,11 +239,7 @@ import {
   updateUserItemForTryRepairUserItemDurability,
   updateUserItemForUnequipAllItems,
   updateUserItemForUpdate,
-  updateUserItemForUseRepairAll,
-  updateUserItemForUseRepairAll2,
-  updateUserItemForUseRepairItem,
 } from "@/queries/item";
-
 import { findActionLogById } from "@/queries/logs";
 import { insertUserPet, listVisiblePetJutsu } from "@/queries/pets";
 import {
@@ -254,16 +250,13 @@ import {
   incrementUserMoney,
 } from "@/queries/profile";
 import { fetchQuest, fetchUserQuestByQuestId } from "@/queries/quests";
-
 import {
   fetchMasterySources,
   fetchUserSkills,
   findRequiredSkillTreeEntry,
 } from "@/queries/skillTree";
 import { fetchStructures } from "@/queries/village";
-
 import { fetchUpdatedUser } from "@/routers/profile";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -315,7 +308,6 @@ import {
   NonCombatQuestTag,
   type ZodAllTags,
 } from "@/validators/combat";
-
 import { consumeItemInputSchema } from "@/validators/cooking";
 import {
   adjustUserItemSchema,
@@ -331,7 +323,6 @@ import {
   UserUnlockedVariantResponseSchema,
   upsertItemVariantInputSchema,
 } from "@/validators/item";
-
 import { renameLoadoutSchema } from "@/validators/loadout";
 import { idSchema } from "@/validators/misc";
 import {
@@ -339,7 +330,6 @@ import {
   type ObjectiveRewardType,
   type PostProcessedRewards,
 } from "@/validators/rewards";
-
 import { userDeltaResponseSchema } from "@/validators/userCache";
 import {
   type CacheRewardDisplay,
@@ -1234,7 +1224,7 @@ export const itemRouter = createTRPCRouter({
           input,
         );
         if ((countRow?.n ?? 0) > MAX_ITEM_VARIANTS) {
-          await deleteItemVariantForUpsertItemVariant(ctx.drizzle, newVariantId);
+          await deleteItemVariantById(ctx.drizzle, newVariantId);
           return errorResponse(`Items can have at most ${MAX_ITEM_VARIANTS} variants`);
         }
       }
@@ -1263,7 +1253,7 @@ export const itemRouter = createTRPCRouter({
         updateUserItemForDeleteItemVariant(ctx.drizzle, input),
       ]);
       // Step 2: delete the variant row itself (after FK dependents are cleared)
-      await deleteItemVariantForDeleteItemVariant(ctx.drizzle, input);
+      await deleteItemVariantById(ctx.drizzle, input.variantId);
       if (variant?.item) {
         await outdateProposalsFor(
           ctx.drizzle,
@@ -2441,7 +2431,7 @@ export const itemRouter = createTRPCRouter({
               : undefined,
           () =>
             useritem.quantity === 1
-              ? deleteUserItemForCommitConsumption(client, input, ctx)
+              ? deleteEmptyUserItem(client, input.userItemId, ctx.userId)
               : undefined,
           () =>
             useritem.quantity === 1
@@ -2794,11 +2784,11 @@ export const itemRouter = createTRPCRouter({
           // Restore live durability after a lost kit claim. Admission may already
           // hold the repaired snapshot, so settlement can retain the player's
           // repaired durability; the guarded kit quantity remains available.
-          await updateUserItemForUseRepairItem(
+          await restoreUserItemDurability(
             ctx.drizzle,
-            targetUserItem,
-            input,
-            ctx,
+            targetUserItem.durability,
+            input.targetItemId,
+            ctx.userId,
             newDurability,
           );
           return errorResponse(
@@ -2882,7 +2872,15 @@ export const itemRouter = createTRPCRouter({
         await Promise.all(
           repairOutcomes
             .filter((o) => o.repaired)
-            .map((o) => updateUserItemForUseRepairAll(ctx.drizzle, o, ctx)),
+            .map((o) =>
+              restoreUserItemDurability(
+                ctx.drizzle,
+                o.useritem.durability,
+                o.useritem.id,
+                ctx.userId,
+                o.useritem.item.maxDurability,
+              ),
+            ),
         );
         return errorResponse(
           "Could not repair all items — one or more were stored, auctioned, or changed. No kits were consumed.",
@@ -2926,7 +2924,13 @@ export const itemRouter = createTRPCRouter({
       if (kitConsumeResults.some((result) => result === false)) {
         await Promise.all([
           ...itemsNeedingRepair.map((useritem) =>
-            updateUserItemForUseRepairAll2(ctx.drizzle, useritem, ctx),
+            restoreUserItemDurability(
+              ctx.drizzle,
+              useritem.durability,
+              useritem.id,
+              ctx.userId,
+              useritem.item.maxDurability,
+            ),
           ),
           ...kitConsumeResults.flatMap((result) =>
             result
@@ -3209,7 +3213,7 @@ export const itemRouter = createTRPCRouter({
             if (claimed.rowsAffected !== 1) throw quotaConflict;
           }
 
-          await insertUserItemForBuy(tx, purchasedItem);
+          await insertUserItems(tx, [purchasedItem]);
           return true;
         }),
       ).catch((error: unknown) => {

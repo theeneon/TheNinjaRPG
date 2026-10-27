@@ -148,8 +148,8 @@ export const updateUserDataForJoinMatch = (
       inArray(userData.userId, [matchData.userId1 ?? "", matchData.userId2 ?? ""]),
     );
 
-/** Build the `tournamentMatch` deletion for `cleanupCompletedTournament`, using predicates on `tournamentId`. */
-export const deleteTournamentMatchForCleanupCompletedTournament = (
+/** Build deletion of all matches in a tournament. */
+export const deleteTournamentMatches = (
   client: Pick<DrizzleClient, "delete">,
   tournamentId: string,
 ) =>

@@ -553,7 +553,7 @@ export const pvpRankRouter = createTRPCRouter({
         deleteUserRankedQueueRow(ctx.drizzle, ctx.userId),
         // Guard on QUEUED so a concurrent match that already claimed us into a
         // battle (status BATTLE) is not clobbered back to AWAKE.
-        wakeQueuedUser(ctx.drizzle, ctx),
+        wakeQueuedUser(ctx.drizzle, ctx.userId),
       ]);
       // No row matched: status changed between the guard read and this update.
       // That can mean a concurrent match claimed us into a battle, OR a failed

@@ -5,6 +5,7 @@ import { dailyBankInterest } from "@/drizzle/schema";
 import { bankAccessBlockMessage } from "@/libs/bank";
 import {
   fetchUserBalances,
+  incrementUserBank,
   insertBankTransfersForTransfer,
   listBankTransfersForGetTransfers,
   listDailyBankInterestForGetPendingInterest,
@@ -14,11 +15,9 @@ import {
   updateDailyBankInterestForClaimBankInterest,
   updateUserDataForClaimBankInterest,
   updateUserDataForTransfer,
-  updateUserDataForTransfer2,
   updateUserDataForTransferRyo,
 } from "@/queries/bank";
 import { fetchUser } from "@/queries/profile";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -84,7 +83,7 @@ export const bankRouter = createTRPCRouter({
       const result = await updateUserDataForTransfer(ctx.drizzle, value, ctx);
       if (result.rowsAffected === 0) return errorResponse("Not enough money in bank");
       await Promise.all([
-        updateUserDataForTransfer2(ctx.drizzle, value, input),
+        incrementUserBank(ctx.drizzle, value, input.targetId),
         insertBankTransfersForTransfer(ctx.drizzle, ctx, input, value),
       ]);
       // Re-fetch user to get accurate bank balance after concurrent updates

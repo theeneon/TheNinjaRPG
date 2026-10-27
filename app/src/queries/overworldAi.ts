@@ -148,14 +148,14 @@ export const updateOverworldAiPlacementForUpsertPlacement = (
     .set(row)
     .where(eq(overworldAiPlacement.id, input.id));
 
-/** Build the `overworldAiPlacementQuest` deletion for `upsertPlacement`, using predicates on `placementId`. */
-export const deleteOverworldAiPlacementQuestForUpsertPlacement = (
+/** Build deletion of the quest assignments for an overworld AI placement. */
+export const deleteOverworldAiPlacementQuests = (
   client: Pick<DrizzleClient, "delete">,
-  id: string,
+  placementId: string,
 ) =>
   client
     .delete(overworldAiPlacementQuest)
-    .where(eq(overworldAiPlacementQuest.placementId, id));
+    .where(eq(overworldAiPlacementQuest.placementId, placementId));
 
 /** Build the `overworldAiPlacement` insert for `upsertPlacement`. */
 export const insertOverworldAiPlacementForUpsertPlacement = (
@@ -191,15 +191,6 @@ export const insertOverworldAiPlacementQuestForUpsertPlacement = (
       chance: q.chance,
     })),
   );
-
-/** Build the `overworldAiPlacementQuest` deletion for `deletePlacement`, using predicates on `placementId`. */
-export const deleteOverworldAiPlacementQuestForDeletePlacement = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { id: string },
-) =>
-  client
-    .delete(overworldAiPlacementQuest)
-    .where(eq(overworldAiPlacementQuest.placementId, input.id));
 
 /** Build the `overworldAiPlacement` deletion for `deletePlacement`, using predicates on `id`. */
 export const deleteOverworldAiPlacementForDeletePlacement = (
@@ -268,13 +259,10 @@ export const insertUserQuestAttemptForInteractWithOverworldAi = (
     .values(attemptRowsToInsert)
     .onDuplicateKeyUpdate({ set: { lastAttemptAt: now } });
 
-/**
- * Build the `quest` listing for `fetchQuestNamesBindingPlacement`, selecting only `id`
- * and `name`, using the configured predicates.
- */
-export const listQuestForFetchQuestNamesBindingPlacement = (
-  client: Pick<DrizzleClient, "query">,
-  questBindsPlacementWhere: (placementId: string) => SQL<unknown>,
+/** Quests (id + name only) whose objective content binds this placement — for name-only guards.
+ *  Skips the potentially large `content` JSON the deactivate/delete callers never inspect. */
+export const fetchQuestNamesBindingPlacement = async (
+  client: DrizzleClient,
   placementId: string,
 ) =>
   client.query.quest.findMany({
@@ -282,13 +270,17 @@ export const listQuestForFetchQuestNamesBindingPlacement = (
     where: questBindsPlacementWhere(placementId),
   });
 
-/** Build the `quest` listing for `fetchQuestsBindingPlacement`, using the configured predicates. */
-export const listQuestForFetchQuestsBindingPlacement = (
-  client: Pick<DrizzleClient, "query">,
-  questBindsPlacementWhere: (placementId: string) => SQL<unknown>,
+/** Same binding set, plus objective content for friendly interaction and fixed structure guards. */
+export const fetchQuestsBindingPlacement = async (
+  client: DrizzleClient,
   placementId: string,
 ) =>
   client.query.quest.findMany({
     columns: { id: true, name: true, content: true },
     where: questBindsPlacementWhere(placementId),
   });
+
+/** Exact JSON membership predicate: a quest's objective content binds this placement
+ *  (overworldPlacementId). Shared by the name-only and content-bearing fetches. */
+const questBindsPlacementWhere = (placementId: string) =>
+  sql`JSON_CONTAINS(JSON_EXTRACT(${quest.content}, '$.objectives[*].overworldPlacementId'), JSON_QUOTE(${placementId})) = 1`;

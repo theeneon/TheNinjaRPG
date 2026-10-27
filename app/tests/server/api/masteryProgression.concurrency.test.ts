@@ -10,13 +10,15 @@ import {
   masteryGainUpdates,
   masteryRankUpdate,
 } from "@/server/utils/masteryProgression";
-import { fetchQuestDiscoverySummaryCandidates } from "@/server/utils/questDiscovery";
+
 import { insertUsers } from "../../setup/factories";
 import {
   describeWithDatabase,
   getTestDatabase,
   resetTables,
 } from "../../setup/testDatabase";
+import { fetchQuestDiscoverySummaryCandidates } from "@/queries/quests";
+
 
 const USER_ID = "mastery-concurrency";
 const readPlayer = async () =>

@@ -60,7 +60,6 @@ import {
   insertFarmExtractionForExtractSeeds,
   insertFarmPlotForBuyShopItem,
   insertFarmPlotForEnsureFarmPlots,
-  insertUserItemForAwardItemToUser,
   listFarmPlotForPlantAllEmpty,
   listFarmPlotForWaterAll,
   listItemForBuildFarmState,
@@ -87,9 +86,8 @@ import {
   updateUserDataForSellCrop,
   updateUserItemForAwardItemToUser,
 } from "@/queries/farming";
-import { fetchItem, listItemsByIds } from "@/queries/item";
+import { fetchItem, insertUserItems, listItemsByIds } from "@/queries/item";
 import { fetchMasterySources, fetchUserSkills } from "@/queries/skillTree";
-
 import { fetchUserItems } from "@/server/api/routers/item";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
@@ -2108,7 +2106,7 @@ const awardItemToUser = async (
     remaining -= qty;
   }
   if (inserts.length > 0) {
-    await insertUserItemForAwardItemToUser(client, inserts);
+    await insertUserItems(client, inserts);
   }
   return true;
 };

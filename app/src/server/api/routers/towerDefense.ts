@@ -52,8 +52,7 @@ import {
   listTowerDefenseUpgradeForGetUpgrades,
   listTowerDefenseUpgradeForInitiateSecureSession,
   listUserTowerDefenseUpgradeForGetUserUpgrades,
-  updateTowerDefenseCharacterForProcessCharacterZip,
-  updateTowerDefenseCharacterForUpdateAssetConfig,
+  updateTowerDefenseCharacterAssets,
   updateTowerDefenseCharacterForUpdateCharacter,
   updateTowerDefenseUpgradeForUpdateUpgrade,
   updateUserDataForClaimCompletedRun,
@@ -817,10 +816,10 @@ export const towerDefenseRouter = createTRPCRouter({
         };
 
         // Save to database
-        await updateTowerDefenseCharacterForProcessCharacterZip(
+        await updateTowerDefenseCharacterAssets(
           ctx.drizzle,
           assetConfig,
-          input,
+          input.characterId,
         );
 
         return {
@@ -856,7 +855,11 @@ export const towerDefenseRouter = createTRPCRouter({
         return errorResponse("Not allowed to update asset config");
       }
 
-      await updateTowerDefenseCharacterForUpdateAssetConfig(ctx.drizzle, input);
+      await updateTowerDefenseCharacterAssets(
+        ctx.drizzle,
+        input.assetConfig,
+        input.characterId,
+      );
 
       return { success: true, message: "Asset config updated" };
     }),

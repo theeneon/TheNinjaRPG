@@ -19,13 +19,12 @@ import {
   findVillageForCreateCharacter,
   findVisitorLogForSetReferralSource,
   insertBloodlineRollsForCreateCharacter,
-  insertHistoricalIpForCreateCharacter,
-  insertHistoricalIpForSetReferralSource,
   insertQuestHistoryForCreateCharacter,
   insertRecruitReferralForCreateCharacter,
   insertReferralSourceForSetReferralSource,
+  insertStarterHomeItems,
   insertUserAttributeForCreateCharacter,
-  insertUserItemForCreateCharacter,
+  insertUserHistoricalIp,
   listUserReportForCreateCharacter,
   updateUserDataForCreateCharacter,
 } from "@/queries/register";
@@ -91,7 +90,7 @@ export const registerRouter = createTRPCRouter({
           ctx,
         );
         if (!currentIp) {
-          await insertHistoricalIpForSetReferralSource(ctx.drizzle, ctx, ip);
+          await insertUserHistoricalIp(ctx.drizzle, ctx.userId, ip);
         }
       }
 
@@ -292,9 +291,9 @@ export const registerRouter = createTRPCRouter({
       if (createdUser.rowsAffected === 0) {
         return errorResponse("Character already created for this account");
       }
-      await deleteUserAttributes(ctx.drizzle, ctx);
+      await deleteUserAttributes(ctx.drizzle, ctx.userId);
       await Promise.all([
-        insertUserItemForCreateCharacter(ctx.drizzle, ctx),
+        insertStarterHomeItems(ctx.drizzle, ctx.userId),
         insertQuestHistoryForCreateCharacter(ctx.drizzle, ctx),
         insertUserAttributeForCreateCharacter(ctx.drizzle, unique_attributes, ctx),
         insertBloodlineRollsForCreateCharacter(ctx.drizzle, ctx, {
@@ -302,7 +301,7 @@ export const registerRouter = createTRPCRouter({
           rank: selectedBloodline.rank,
         }),
         ...(ctx.userIp && !currentIp
-          ? [insertHistoricalIpForCreateCharacter(ctx.drizzle, ctx)]
+          ? [insertUserHistoricalIp(ctx.drizzle, ctx.userId, ctx.userIp)]
           : []),
         ...(input.recruiter_userid
           ? [

@@ -699,17 +699,6 @@ export const selectUserDataForLevelUp = (
     .innerJoin(recruiterData, eq(userData.recruiterId, recruiterData.userId))
     .where(eq(userData.userId, ctx.userId));
 
-/** Build the `userData` update for `levelUp`, setting `bank`, using predicates on `userId`. */
-export const updateUserDataForLevelUp = (
-  client: Pick<DrizzleClient, "update">,
-  amount: number,
-  user: { recruiterId: string },
-) =>
-  client
-    .update(userData)
-    .set({ bank: sql`${userData.bank} + ${amount}` })
-    .where(eq(userData.userId, user.recruiterId));
-
 /** Build the `recruitmentRewards` insert for `levelUp`. */
 export const insertRecruitmentRewardsForLevelUp = (
   client: Pick<DrizzleClient, "insert">,
@@ -2151,11 +2140,11 @@ export const selectQuestForFetchQuestBootstrap = (
     )
     .where(inArray(quest.questType, [...BOOTSTRAP_QUEST_TYPES]));
 
-/** Build the `userAttribute` deletion, using predicates on `userId`. */
+/** Build deletion of all attributes belonging to one user. */
 export const deleteUserAttributes = (
   client: Pick<DrizzleClient, "delete">,
-  ctx: { userId: string },
-) => client.delete(userAttribute).where(eq(userAttribute.userId, ctx.userId));
+  userId: string,
+) => client.delete(userAttribute).where(eq(userAttribute.userId, userId));
 
 /** Build the AWAKE-to-QUEUED state change; the caller owns queue admission and must check rowsAffected. */
 export const queueAwakeUser = (
@@ -2167,17 +2156,14 @@ export const queueAwakeUser = (
     .set({ status: "QUEUED" })
     .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "AWAKE")));
 
-/** Build the QUEUED-to-AWAKE state change without waking users whose state has already advanced. */
-export const wakeQueuedUser = (
-  client: Pick<DrizzleClient, "update">,
-  ctx: { userId: string },
-) =>
+/** Build a wake-up update guarded by the user still being queued. */
+export const wakeQueuedUser = (client: Pick<DrizzleClient, "update">, userId: string) =>
   client
     .update(userData)
     .set({ status: "AWAKE" })
-    .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED")));
+    .where(and(eq(userData.userId, userId), eq(userData.status, "QUEUED")));
 
-/** Build an SQL money increment so concurrent credits do not overwrite one another. */
+/** Build an atomic money increment for one user. */
 export const incrementUserMoney = (
   client: Pick<DrizzleClient, "update">,
   amount: number,
@@ -2188,7 +2174,7 @@ export const incrementUserMoney = (
     .set({ money: sql`${userData.money} + ${amount}` })
     .where(eq(userData.userId, userId));
 
-/** Build a balance-guarded money debit. Callers must check rowsAffected before granting the funded benefit. */
+/** Build a money debit guarded by the user’s available balance. */
 export const debitUserMoney = (
   client: Pick<DrizzleClient, "update">,
   amountRyo: number,

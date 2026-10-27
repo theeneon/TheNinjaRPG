@@ -20,9 +20,9 @@ import {
   fetchStructures,
   fetchVillage,
   fetchVillages,
-  insertActionLogForReleaseSector,
   insertActionLogForRestoreStructurePoints,
   insertNotificationForDeclareEnemy,
+  insertSectorReleaseLog,
   insertVillageAllianceForUpsertAllianceStatus,
   listKageDefendedChallengesForGet,
   listSectorForGetSectorOwnerships,
@@ -42,7 +42,6 @@ import {
 } from "@/queries/village";
 import { createConvo } from "@/routers/comments";
 import { fetchUpdatedUser } from "@/routers/profile";
-
 import { updateRequestState } from "@/routers/sparring";
 import {
   baseServerResponse,
@@ -561,11 +560,11 @@ export const villageRouter = createTRPCRouter({
           "Sector ownership or leadership changed, or this is an active war objective. Refresh and try again.",
         );
       }
-      await insertActionLogForReleaseSector(
+      await insertSectorReleaseLog(
         ctx.drizzle,
-        ctx,
-        input,
-        sectorData,
+        ctx.userId,
+        input.sector,
+        sectorData.village.name,
         villageId,
       );
 

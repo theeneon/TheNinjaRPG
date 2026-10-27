@@ -31,10 +31,9 @@ import { hasEnergyQueue } from "@/libs/queue";
 import { hasRequiredRank } from "@/libs/train";
 import { findHistoricalAvatarByImage } from "@/queries/avatar";
 import {
-  deleteClanBattleMemberById,
-  deleteClanBattleMembersForUser,
+  deleteBattleQueueMemberById,
+  deleteBattleQueueMembersForUser,
   deleteClanForRemoveFromClan,
-  deleteMpvpBattleQueueForRemoveFromClan,
   deleteMpvpBattleQueueForRemoveFromClanBattle,
   deleteSectorForRemoveFromClan,
   deleteUserRequestForRemoveFromClan,
@@ -71,6 +70,7 @@ import {
   listClanForGetAllNames,
   listClanForNominateElder,
   listClanForSearchClans,
+  setClanVillageKage,
   updateClanForClanDonate,
   updateClanForClearLeadership,
   updateClanForConvertPointsToRyo,
@@ -96,21 +96,17 @@ import {
   updateUserDataForPurchaseHideout,
   updateUserDataForRemoveFromClan,
   updateUserDataForRemoveFromClan2,
-  updateUserDataForToBank,
-  updateUserDataForToBank2,
   updateUserDataForUndoClanBattleJoin,
   updateVillageForEditClanColor,
-  updateVillageForInstantJoinAndLead,
-  updateVillageForPromoteMember,
   updateVillageForRemoveFromClan,
 } from "@/queries/clan";
-import { fetchUser } from "@/queries/profile";
+import { debitUserMoney, fetchUser, incrementUserMoney } from "@/queries/profile";
+import { deleteQueueById } from "@/queries/raids";
 import { fetchRequests, insertRequest } from "@/queries/sparring";
 import { fetchStructures, fetchVillage, fetchVillages } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { updateNindo } from "@/routers/profile";
 import { fetchRequest, updateRequestState } from "@/routers/sparring";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -835,7 +831,7 @@ export const clanRouter = createTRPCRouter({
       await Promise.all([
         updateClanForPromoteMember(ctx.drizzle, updateData, fetchedClan),
         ...(isMemberColeader && hadHideout
-          ? [updateVillageForPromoteMember(ctx.drizzle, input, fetchedClan)]
+          ? [setClanVillageKage(ctx.drizzle, input.memberId, fetchedClan.villageId)]
           : []),
       ]);
       // Create
@@ -1078,13 +1074,13 @@ export const clanRouter = createTRPCRouter({
           userPatch: { clan: { id: fetchedClan.id } },
         };
       }
-      const result = await updateUserDataForToBank(ctx.drizzle, input, ctx);
+      const result = await debitUserMoney(ctx.drizzle, input.amount, ctx);
       if (result.rowsAffected === 0) {
         return { success: false, message: "Not enough money in pocket" };
       }
       const creditResult = await updateClanForToBank(ctx.drizzle, input);
       if (creditResult.rowsAffected === 0) {
-        await updateUserDataForToBank2(ctx.drizzle, input, ctx);
+        await incrementUserMoney(ctx.drizzle, input.amount, ctx.userId);
         return errorResponse("Clan bank no longer exists; your deposit was refunded");
       }
       return {
@@ -1594,7 +1590,7 @@ export const clanRouter = createTRPCRouter({
         updateUserDataForInstantJoinAndLead(ctx.drizzle, fetchedClan, user),
         updateClanForInstantJoinAndLead(ctx.drizzle, user, fetchedClan),
         ...(["HIDEOUT", "STRONGHOLD"].includes(fetchedClan.village?.type ?? "")
-          ? [updateVillageForInstantJoinAndLead(ctx.drizzle, user, fetchedClan)]
+          ? [setClanVillageKage(ctx.drizzle, user.userId, fetchedClan.villageId)]
           : []),
       ]);
 
@@ -1668,7 +1664,7 @@ const undoClanBattleJoin = async (
   userId: string,
   entryId: string,
 ) => {
-  await deleteClanBattleMemberById(client, entryId);
+  await deleteBattleQueueMemberById(client, entryId);
   await retryOnDeadlock(() => updateUserDataForUndoClanBattleJoin(client, userId));
 };
 
@@ -1702,7 +1698,7 @@ export const removeFromClan = async (
   await Promise.all([
     updateUserDataForRemoveFromClan(client, userId),
     deleteUserRequestForRemoveFromClan(client, userId),
-    deleteClanBattleMembersForUser(client, userId),
+    deleteBattleQueueMembersForUser(client, userId),
     insertActionLogForRemoveFromClan(client, userId, reasons, clanData, user),
     ...(!otherUser && ["HIDEOUT", "STRONGHOLD"].includes(clanData.village?.type)
       ? [
@@ -1720,7 +1716,7 @@ export const removeFromClan = async (
       ? [
           deleteClanForRemoveFromClan(client, clanData),
           updateUserDataForRemoveFromClan2(client, clanData, userId),
-          deleteMpvpBattleQueueForRemoveFromClan(client, clanData),
+          deleteQueueById(client, clanData.id),
         ]
       : [
           updateClanForRemoveFromClan(

@@ -16,24 +16,28 @@ import {
   raidRewardBlockMessage,
   validateRaidIsActive,
 } from "@/libs/raids";
-import { fetchActiveUserMpvpBattles } from "@/queries/clan";
+import {
+  deleteBattleQueueMemberById,
+  deleteBattleQueueMembersForTeam,
+  fetchActiveUserMpvpBattles,
+} from "@/queries/clan";
+import { insertConversationMember } from "@/queries/comments";
 import { fetchUser, queueAwakeUser, wakeQueuedUser } from "@/queries/profile";
 import { deleteRankedQueueForUser } from "@/queries/pvprank";
 import { fetchQuest } from "@/queries/quests";
 import {
+  claimBattleQueue,
   clearQueueBattleId,
   deleteMpvpBattleQueueForCheckAndCleanupExpiredRaid,
-  deleteMpvpBattleQueueForJoinRaidQueue,
   deleteMpvpBattleQueueForReadyToQueue,
   deleteMpvpBattleQueueForRollbackStartRaidBattle,
   deleteMpvpBattleUserForCheckAndCleanupExpiredRaid,
-  deleteMpvpBattleUserForLeaveRaidQueue,
   deleteMpvpBattleUserForReadyToQueue,
   deleteMpvpBattleUserForRollbackJoinRaidQueue,
-  deleteMpvpBattleUserForRollbackStartRaidBattle,
   deleteQueueById,
   deleteRaidDamageThresholdForDeleteDamageThreshold,
   deleteSectorForCleanupExpiredExclusiveRaids,
+  deleteUnclaimedBattleQueue,
   executeInsertResultForJoinRaidQueue,
   fetchRaidJoinUser,
   fetchRaidListUser,
@@ -55,7 +59,6 @@ import {
   insertConversationForEnsureRaidChatConversation,
   insertMpvpBattleUserForJoinRaidQueue,
   insertRaidDamageThresholdForCreateDamageThreshold,
-  insertUser2conversationForEnsureRaidChatConversation,
   insertUserRaidBuffForClaimDamageReward,
   listMpvpBattleQueueForCheckAndCleanupExpiredRaid,
   listMpvpBattleQueueForGetActiveRaidTeams,
@@ -68,18 +71,15 @@ import {
   listUserRaidBuffForGetUserRaidBuffs,
   listWarForGetAvailableRaids,
   purgeAllRaidChatMembershipsForUser,
+  releaseBattleQueueClaim,
+  setQueueBattleId,
   updateMpvpBattleQueueForReadyToQueue,
   updateMpvpBattleQueueForStartRaidBattle,
-  updateMpvpBattleQueueForStartRaidBattle2,
-  updateMpvpBattleQueueForStartRaidBattle3,
-  updateMpvpBattleQueueForStartRaidBattle4,
-  updateMpvpBattleQueueForStartRaidBattle5,
   updateRaidDamageThresholdForUpdateDamageThreshold,
   updateRaidParticipationForClaimDamageReward,
   updateUserDataForCheckAndCleanupExpiredRaid,
   updateUserDataForReadyToQueue,
   updateUserDataForReadyToQueue2,
-  updateUserDataForRollbackJoinRaidQueue,
   updateUserDataForRollbackStartRaidBattle,
   updateUserRequestForReadyToQueue,
   updateUserRequestForReadyToQueue2,
@@ -826,7 +826,7 @@ export const raidsRouter = createTRPCRouter({
       if (statusResult.rowsAffected === 0) {
         // Rollback - clean up newly created team if status update fails
         if (createdNewTeam && teamId) {
-          await deleteMpvpBattleQueueForJoinRaidQueue(ctx.drizzle, teamId);
+          await deleteUnclaimedBattleQueue(ctx.drizzle, teamId);
         }
         return errorResponse("Failed to update status - you may already be in a queue");
       }
@@ -846,7 +846,7 @@ export const raidsRouter = createTRPCRouter({
 
         // Guard - team still exists
         if (!freshTeam) {
-          await wakeQueuedUser(ctx.drizzle, ctx);
+          await wakeQueuedUser(ctx.drizzle, ctx.userId);
           return errorResponse("Team is no longer available");
         }
 
@@ -855,7 +855,7 @@ export const raidsRouter = createTRPCRouter({
 
         // Guard - slot available
         if (availableSlot === undefined) {
-          await wakeQueuedUser(ctx.drizzle, ctx);
+          await wakeQueuedUser(ctx.drizzle, ctx.userId);
           return errorResponse("Team is full");
         }
       }
@@ -917,8 +917,8 @@ export const raidsRouter = createTRPCRouter({
         // every raid-chat membership row this user owns to drop access to any
         // stale conversation that survived a prior raid reset.
         await Promise.all([
-          deleteMpvpBattleUserForLeaveRaidQueue(ctx.drizzle, queueEntry),
-          wakeQueuedUser(ctx.drizzle, ctx),
+          deleteBattleQueueMemberById(ctx.drizzle, queueEntry.id),
+          wakeQueuedUser(ctx.drizzle, ctx.userId),
           purgeAllRaidChatMembershipsForUser(ctx.drizzle, ctx.userId),
         ]);
         return { success: true, message: "Left the queue" };
@@ -941,12 +941,12 @@ export const raidsRouter = createTRPCRouter({
       // Mutation - delete queue entry, update user status, drop chat
       // membership, and cleanup claiming ID in parallel.
       await Promise.all([
-        deleteMpvpBattleUserForLeaveRaidQueue(ctx.drizzle, queueEntry),
-        wakeQueuedUser(ctx.drizzle, ctx),
+        deleteBattleQueueMemberById(ctx.drizzle, queueEntry.id),
+        wakeQueuedUser(ctx.drizzle, ctx.userId),
         purgeRaidChatMembership(ctx.drizzle, raidChatConversationId, ctx.userId),
         // Clean up claiming ID if present
         isClaimingState
-          ? clearQueueBattleId(ctx.drizzle, queueEntry)
+          ? clearQueueBattleId(ctx.drizzle, queueEntry.clanBattleId)
           : Promise.resolve(),
       ]);
 
@@ -1051,11 +1051,7 @@ export const raidsRouter = createTRPCRouter({
 
       // Mutation - claim the battle atomically
       const claimId = `claiming-${nanoid()}`;
-      const claimResult = await updateMpvpBattleQueueForStartRaidBattle2(
-        ctx.drizzle,
-        claimId,
-        input,
-      );
+      const claimResult = await claimBattleQueue(ctx.drizzle, claimId, input.teamId);
 
       if (claimResult.rowsAffected === 0) {
         return errorResponse("Battle was already started by another player");
@@ -1066,13 +1062,13 @@ export const raidsRouter = createTRPCRouter({
 
       // Guard - members validation after claim
       if (currentQueueMembers.length === 0) {
-        await updateMpvpBattleQueueForStartRaidBattle3(ctx.drizzle, input);
+        await clearQueueBattleId(ctx.drizzle, input.teamId);
         return errorResponse("No team members available to start battle");
       }
 
       const isStillMember = currentQueueMembers.some((m) => m.userId === ctx.userId);
       if (!isStillMember) {
-        await updateMpvpBattleQueueForStartRaidBattle4(ctx.drizzle, input, claimId);
+        await releaseBattleQueueClaim(ctx.drizzle, input.teamId, claimId);
         return errorResponse("You are no longer in this team");
       }
 
@@ -1099,7 +1095,7 @@ export const raidsRouter = createTRPCRouter({
 
         if (result.success && result.battleId) {
           // Mutation - update with real battle ID
-          await updateMpvpBattleQueueForStartRaidBattle5(ctx.drizzle, result, input);
+          await setQueueBattleId(ctx.drizzle, result.battleId, input.teamId);
 
           // Pusher - notify sector about team changes (battle started)
           const pusher = getServerPusher();
@@ -1373,7 +1369,7 @@ const rollbackJoinRaidQueue = async ({
       ? [deleteMpvpBattleUserForRollbackJoinRaidQueue(client, userId, teamId)]
       : []),
     purgeRaidChatMembership(client, raidChatConversationId, userId),
-    updateUserDataForRollbackJoinRaidQueue(client, userId),
+    wakeQueuedUser(client, userId),
   ]);
   // Only delete the team if no other queue rows still reference it. A concurrent
   // joiner could have inserted into mpvpBattleUser during the await window
@@ -1422,7 +1418,7 @@ const rollbackStartRaidBattle = async ({
   await Promise.all([
     deleteMpvpBattleQueueForRollbackStartRaidBattle(client, teamId, claimId),
     updateUserDataForRollbackStartRaidBattle(client, attackerUserIds),
-    deleteMpvpBattleUserForRollbackStartRaidBattle(client, teamId),
+    deleteBattleQueueMembersForTeam(client, teamId),
     purgeRaidChatMembership(client, raidChatConversationId, attackerUserIds),
   ]);
 };
@@ -1446,11 +1442,7 @@ const ensureRaidChatConversation = async (
       raid,
       userId,
     ),
-    insertUser2conversationForEnsureRaidChatConversation(
-      client,
-      conversationId,
-      userId,
-    ),
+    insertConversationMember(client, conversationId, userId),
   ]);
 
   return conversationId;

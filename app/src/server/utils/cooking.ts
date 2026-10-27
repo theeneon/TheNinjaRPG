@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import type { Item, UserData, UserItem, UserRaidBuff } from "@/drizzle/schema";
 import {
-  deleteConsumedMeal,
+  deleteEmptyUserItem,
   deleteUserCookingJobForSettleCookingExperience,
   executeConsumedForConsumeMeal,
   executeRowsForSettleCookingExperience,
@@ -131,7 +131,7 @@ export const consumeMeal = async ({
     };
   if (expectedQuantity === 1) {
     try {
-      await retryOnDeadlock(() => deleteConsumedMeal(client, owned, user));
+      await retryOnDeadlock(() => deleteEmptyUserItem(client, owned.id, user.userId));
     } catch (error) {
       // Consumption already committed. Inventory reads hide zero stacks and reclaim
       // stale tombstones; report success so the player does not retry the same meal.

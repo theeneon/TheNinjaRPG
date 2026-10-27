@@ -103,16 +103,16 @@ export const updateUserDataForToggleAiProfile = (
     .set({ aiProfileId: null })
     .where(eq(userData.userId, target.userId));
 
-/** Build the `userData` update for `toggleAiProfile`, setting `aiProfileId`, using predicates on `userId`. */
-export const updateUserDataForToggleAiProfile2 = (
+/** Build an AI profile assignment for one user. */
+export const setUserAiProfile = (
   client: Pick<DrizzleClient, "update">,
-  profile: { id: string },
-  target: { userId: string },
+  profileId: string,
+  userId: string,
 ) =>
   client
     .update(userData)
-    .set({ aiProfileId: profile.id })
-    .where(eq(userData.userId, target.userId));
+    .set({ aiProfileId: profileId })
+    .where(eq(userData.userId, userId));
 
 /** Build the `aiProfile` insert for `toggleAiProfile`. */
 export const insertAiProfileForToggleAiProfile = (
@@ -120,17 +120,6 @@ export const insertAiProfileForToggleAiProfile = (
   id: string,
   target: { userId: string },
 ) => client.insert(aiProfile).values({ id, userId: target.userId, rules: [] });
-
-/** Build the `userData` update for `toggleAiProfile`, setting `aiProfileId`, using predicates on `userId`. */
-export const updateUserDataForToggleAiProfile3 = (
-  client: Pick<DrizzleClient, "update">,
-  id: string,
-  target: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ aiProfileId: id })
-    .where(eq(userData.userId, target.userId));
 
 /** Build the `quest` listing for `getAiRelations`, selecting only `id` and `name`, using predicates on `content`. */
 export const listQuestForGetAiRelations = (

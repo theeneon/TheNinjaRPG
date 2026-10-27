@@ -310,12 +310,6 @@ export const deleteTournamentForMaintainEventTournaments = (
     .delete(tournament)
     .where(and(eq(tournament.id, row.id), eq(tournament.version, row.version)));
 
-/** Build the `tournamentMatch` deletion for `maintainEventTournaments`, using predicates on `tournamentId`. */
-export const deleteTournamentMatchForMaintainEventTournaments = (
-  client: Pick<DrizzleClient, "delete">,
-  row: { id: string },
-) => client.delete(tournamentMatch).where(eq(tournamentMatch.tournamentId, row.id));
-
 /** Build the `tournamentRewardClaim` deletion for `maintainEventTournaments`, using predicates on `tournamentId`. */
 export const deleteTournamentRewardClaimForMaintainEventTournaments = (
   client: Pick<DrizzleClient, "delete">,

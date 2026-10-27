@@ -59,12 +59,12 @@ export const findHistoricalIpForSetReferralSource = (
     where: and(eq(historicalIp.ip, ip), eq(historicalIp.userId, ctx.userId)),
   });
 
-/** Build the `historicalIp` insert for `setReferralSource`. */
-export const insertHistoricalIpForSetReferralSource = (
+/** Build a historical IP insert with its matching IP hash. */
+export const insertUserHistoricalIp = (
   client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
+  userId: string,
   ip: string,
-) => client.insert(historicalIp).values({ userId: ctx.userId, ip, ipHash: hashIp(ip) });
+) => client.insert(historicalIp).values({ userId: userId, ip, ipHash: hashIp(ip) });
 
 /** Build the `referralSource` insert for `setReferralSource`. */
 export const insertReferralSourceForSetReferralSource = (
@@ -227,11 +227,11 @@ export const deleteStoreUserIdAliasForCreateCharacter = (
       ),
     );
 
-/** Build the `userItem` insert for `createCharacter`. */
-export const insertUserItemForCreateCharacter = (
+/** Build insertion of a user’s starter home inventory rows. */
+export const insertStarterHomeItems = (
   client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
-) => client.insert(userItem).values(createStarterHomeItems(ctx.userId));
+  userId: string,
+) => client.insert(userItem).values(createStarterHomeItems(userId));
 
 /** Build the `questHistory` insert for `createCharacter`, updating duplicate keys. */
 export const insertQuestHistoryForCreateCharacter = (
@@ -284,17 +284,6 @@ export const insertBloodlineRollsForCreateCharacter = (
     goal: selectedBloodline.rank,
     used: 1,
     pityRolls: 0,
-  });
-
-/** Build the `historicalIp` insert for `createCharacter`. */
-export const insertHistoricalIpForCreateCharacter = (
-  client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string; userIp: string },
-) =>
-  client.insert(historicalIp).values({
-    userId: ctx.userId,
-    ip: ctx.userIp,
-    ipHash: hashIp(ctx.userIp),
   });
 
 /** Build the `userData` update for `createCharacter`, setting `nRecruited`, using predicates on `userId`. */
@@ -456,12 +445,6 @@ export const insertUserDataForUpsertUserData = (
     isBanned,
     ...AGENT_FRIENDLY_SETTINGS,
   });
-
-/** Build the `userItem` insert for `upsertUserData`. */
-export const insertUserItemForUpsertUserData = (
-  client: Pick<DrizzleClient, "insert">,
-  userId: string,
-) => client.insert(userItem).values(createStarterHomeItems(userId));
 
 /** Build the `userData` update for `upsertUserData`, using predicates on `userId`. */
 export const updateUserDataForUpsertUserData = (

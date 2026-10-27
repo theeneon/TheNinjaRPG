@@ -612,16 +612,12 @@ export const updateClanForPromoteMember = (
   fetchedClan: { id: string },
 ) => client.update(clan).set(updateData).where(eq(clan.id, fetchedClan.id));
 
-/** Build the `village` update for `promoteMember`, setting `kageId`, using predicates on `id`. */
-export const updateVillageForPromoteMember = (
+/** Build the village leader assignment used by clan leadership changes. */
+export const setClanVillageKage = (
   client: Pick<DrizzleClient, "update">,
-  input: { memberId: string },
-  fetchedClan: { villageId: string },
-) =>
-  client
-    .update(village)
-    .set({ kageId: input.memberId })
-    .where(eq(village.id, fetchedClan.villageId));
+  userId: string,
+  villageId: string,
+) => client.update(village).set({ kageId: userId }).where(eq(village.id, villageId));
 
 /** Build the `clan` update for `demoteMember`, using predicates on `id`. */
 export const updateClanForDemoteMember = (
@@ -688,17 +684,6 @@ export const updateClanForConvertPointsToRyo = (
       ),
     );
 
-/** Build the `userData` update for `toBank`, setting `money`, using predicates on `userId` and `money`. */
-export const updateUserDataForToBank = (
-  client: Pick<DrizzleClient, "update">,
-  input: { amount: number },
-  ctx: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ money: sql`${userData.money} - ${input.amount}` })
-    .where(and(eq(userData.userId, ctx.userId), gte(userData.money, input.amount)));
-
 /** Build the `clan` update for `toBank`, setting `bank`, using predicates on `id`. */
 export const updateClanForToBank = (
   client: Pick<DrizzleClient, "update">,
@@ -708,17 +693,6 @@ export const updateClanForToBank = (
     .update(clan)
     .set({ bank: sql`${clan.bank} + ${input.amount}` })
     .where(eq(clan.id, input.clanId));
-
-/** Build the `userData` update for `toBank`, setting `money`, using predicates on `userId`. */
-export const updateUserDataForToBank2 = (
-  client: Pick<DrizzleClient, "update">,
-  input: { amount: number },
-  ctx: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ money: sql`${userData.money} + ${input.amount}` })
-    .where(eq(userData.userId, ctx.userId));
 
 /** Build the `clan` update for `purchaseBoost`, setting `` and `bank`, using predicates on `id` and `bank`. */
 export const updateClanForPurchaseBoost = (
@@ -976,17 +950,6 @@ export const updateClanForInstantJoinAndLead = (
     })
     .where(eq(clan.id, fetchedClan.id));
 
-/** Build the `village` update for `instantJoinAndLead`, setting `kageId`, using predicates on `id`. */
-export const updateVillageForInstantJoinAndLead = (
-  client: Pick<DrizzleClient, "update">,
-  user: { userId: string },
-  fetchedClan: { villageId: string },
-) =>
-  client
-    .update(village)
-    .set({ kageId: user.userId })
-    .where(eq(village.id, fetchedClan.villageId));
-
 /** Build the `clan` update for `clearLeadership`, using predicates on `id`. */
 export const updateClanForClearLeadership = (
   client: Pick<DrizzleClient, "update">,
@@ -1053,8 +1016,8 @@ export const findMpvpBattleQueueForHasClanBattleJoin = (
     ),
   });
 
-/** Build the `mpvpBattleUser` deletion, using predicates on `id`. */
-export const deleteClanBattleMemberById = (
+/** Build deletion of one multiplayer battle roster entry. */
+export const deleteBattleQueueMemberById = (
   client: Pick<DrizzleClient, "delete">,
   entryId: string,
 ) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.id, entryId));
@@ -1136,8 +1099,8 @@ export const deleteUserRequestForRemoveFromClan = (
       ),
     );
 
-/** Build the `mpvpBattleUser` deletion for `user`, using predicates on `userId`. */
-export const deleteClanBattleMembersForUser = (
+/** Build deletion of a user’s multiplayer battle roster entries. */
+export const deleteBattleQueueMembersForUser = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.userId, userId));
@@ -1233,12 +1196,6 @@ export const updateUserDataForRemoveFromClan2 = (
     // Exclude the leaver, whose row the primary-key update above already
     // covers; two overlapping updates on UserData deadlock InnoDB.
     .where(and(eq(userData.clanId, clanData.id), ne(userData.userId, userId)));
-
-/** Build the `mpvpBattleQueue` deletion for `removeFromClan`, using predicates on `id`. */
-export const deleteMpvpBattleQueueForRemoveFromClan = (
-  client: Pick<DrizzleClient, "delete">,
-  clanData: { id: string },
-) => client.delete(mpvpBattleQueue).where(eq(mpvpBattleQueue.id, clanData.id));
 
 /** Build the `clan` update for `removeFromClan`, using predicates on `id`. */
 export const updateClanForRemoveFromClan = (
@@ -1476,11 +1433,11 @@ export const updateUserDataForDeleteClanBattle = (
       ),
     );
 
-/** Build the `mpvpBattleUser` deletion for `deleteClanBattle`, using predicates on `clanBattleId`. */
-export const deleteMpvpBattleUserForDeleteClanBattle = (
+/** Build deletion of a multiplayer battle team’s roster entries. */
+export const deleteBattleQueueMembersForTeam = (
   client: Pick<DrizzleClient, "delete">,
-  snapshot: { id: string },
-) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.clanBattleId, snapshot.id));
+  teamId: string,
+) => client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.clanBattleId, teamId));
 
 /** Build the `battle` deletion for `clearClanCombat`, using predicates on `id` and `battleType`. */
 export const deleteBattleForClearClanCombat = (

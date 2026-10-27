@@ -16,12 +16,11 @@ import {
   questTypeConcurrentBlockMessage,
   questUiAccessBlockMessage,
 } from "@/libs/quest";
-import { leaveCoopChat } from "@/queries/combat";
+import { deleteConversationMembership } from "@/queries/comments";
 import {
+  deleteClaimedQuestParty,
   deleteQuestPartyForCreate,
-  deleteQuestPartyForDisband,
   deleteQuestPartyForRemoveMember,
-  deleteQuestPartyForRemoveMember2,
   deleteUser2conversationForDisband,
   findOverworldAiPlacementForOverview,
   findQuestPartyForDisband,
@@ -33,24 +32,21 @@ import {
   insertQuestPartyForCreate,
   listOverworldAiPlacementForStartQuestPartyEncounter,
   listQuestPartyForOverview,
+  releaseQuestPartyBattleClaim,
   releaseTeamSlot,
   updateQuestHistoryForAcceptTeamQuest,
   updateQuestPartyForDisband,
-  updateQuestPartyForDisband2,
   updateQuestPartyForInvite,
   updateQuestPartyForJoin,
   updateQuestPartyForPublish,
   updateQuestPartyForRecover,
   updateQuestPartyForRemoveMember,
-  updateQuestPartyForRemoveMember2,
 } from "@/queries/questParty";
 import { fetchQuest, fetchUserQuestByQuestId } from "@/queries/quests";
 import { fetchSectorVillage } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser, type UserWithRelations } from "@/routers/profile";
-
 import { assignQuestToUser } from "@/routers/quests";
-
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
@@ -104,15 +100,15 @@ export const questPartyRouter = createTRPCRouter({
           ),
         );
         if (detached.some((saved) => !saved)) {
-          await updateQuestPartyForDisband2(ctx.drizzle, party, claimId);
+          await releaseQuestPartyBattleClaim(ctx.drizzle, party.id, claimId);
           return errorResponse(
             "Finish all members' battles before disbanding the team",
           );
         }
-        await deleteQuestPartyForDisband(ctx.drizzle, party, claimId);
+        await deleteClaimedQuestParty(ctx.drizzle, party.id, claimId);
         await deleteUser2conversationForDisband(ctx.drizzle, party);
       } catch (error) {
-        await updateQuestPartyForDisband2(ctx.drizzle, party, claimId);
+        await releaseQuestPartyBattleClaim(ctx.drizzle, party.id, claimId);
         throw error;
       }
       // Notifications are best effort once personal progress and membership have saved.
@@ -381,7 +377,7 @@ export const questPartyRouter = createTRPCRouter({
             ctx.userId,
           ),
         ]);
-        await updateQuestPartyForDisband2(ctx.drizzle, party, joinClaimId);
+        await releaseQuestPartyBattleClaim(ctx.drizzle, party.id, joinClaimId);
         return {
           success: true,
           message: "Joined quest team. All objectives are shared",
@@ -618,7 +614,7 @@ const removeMember = async (
       // The roster CAS may have committed before the personal save failed.
       if (!(await saveQuestPartyMember(client, party, userId, true)))
         return errorResponse("Finish your battle before leaving the quest team");
-      await leaveCoopChat(client, partyId, userId);
+      await deleteConversationMembership(client, partyId, userId);
       if (!party.memberIds.length) {
         const deleted = await deleteQuestPartyForRemoveMember(client, partyId, party);
         if (deleted.rowsAffected !== 1) continue;
@@ -656,15 +652,15 @@ const removeMember = async (
       const detached = await saveQuestPartyMember(client, party, userId, true);
       if (!detached) {
         if (departureClaimId)
-          await updateQuestPartyForRemoveMember2(client, partyId, departureClaimId);
+          await releaseQuestPartyBattleClaim(client, partyId, departureClaimId);
         return errorResponse("Finish your battle before leaving the quest team");
       }
-      await leaveCoopChat(client, partyId, userId);
+      await deleteConversationMembership(client, partyId, userId);
       if (departureClaimId)
-        await deleteQuestPartyForRemoveMember2(client, partyId, departureClaimId);
+        await deleteClaimedQuestParty(client, partyId, departureClaimId);
     } catch (error) {
       if (departureClaimId)
-        await updateQuestPartyForRemoveMember2(client, partyId, departureClaimId);
+        await releaseQuestPartyBattleClaim(client, partyId, departureClaimId);
       throw error;
     }
     return {

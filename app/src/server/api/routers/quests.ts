@@ -126,6 +126,7 @@ import { getSageMasteryDisplayRank, sageRanksAtOrBelow } from "@/libs/sageMode";
 import { callDiscordContent } from "@/libs/socials";
 import { availableQuestLetterRanks, availableRanks } from "@/libs/train";
 import { villageMissionCompletionEvents } from "@/libs/villageMission";
+import { incrementAnbuPoints } from "@/queries/anbu";
 import { reduceActiveFarmPlotTimers } from "@/queries/farming";
 import { deleteUserItemsWithPositiveQuantity } from "@/queries/item";
 import {
@@ -149,6 +150,7 @@ import {
   executeResultForCommitQuestObjectiveRewards,
   fetchBoundPlacementStatus,
   fetchQuest,
+  fetchQuestDiscoveryCandidates,
   fetchQuestEntryInventory,
   fetchQuestsStartingQuest,
   fetchRestrictedNewQuestTargets,
@@ -214,7 +216,6 @@ import {
   selectTitleForUpdateRewards,
   selectUserDataForUpsertQuestEntries,
   selectVillageForUpdateRewards,
-  updateAnbuSquadForUpdateRewards,
   updateClanForUpdateRewards,
   updateQuestForUpdate,
   updateQuestHistoryForAbandon,
@@ -228,11 +229,11 @@ import {
   updateQuestHistoryForUpsertQuestEntry,
   updateUserDataForAbandon,
   updateUserDataForClaimDailyQuestSlot,
-  updateUserDataForDeleteUserQuest,
   updateUserDataForUpdateRewards,
   updateUserDataForUpdateRewards2,
   updateUserDataForUpsertQuestEntries,
   updateUserDataForUpsertQuestEntry,
+  updateUserQuestData,
   updateVillageForUpdateRewards,
   updateWarForUpdateRewards,
   updateWarForUpdateRewards2,
@@ -240,7 +241,6 @@ import {
   updateWarForUpdateRewards4,
 } from "@/queries/quests";
 import { deleteRequests } from "@/queries/sensei";
-
 import { fetchSectorVillage } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUserItems } from "@/routers/item";
@@ -250,9 +250,7 @@ import {
   getUserProgressionUpdate,
   type UserWithRelations,
 } from "@/routers/profile";
-
 import { startQuestPartyEncounter } from "@/routers/questParty";
-
 import { fetchActiveWars } from "@/routers/war";
 import { validateQuestRewardPackages } from "@/server/api/routers/rewardPackages";
 import {
@@ -266,7 +264,6 @@ import {
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot, getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { setEmptyStringsToNulls } from "@/server/utils/emptyStrings";
-
 import {
   fetchPublicQuestLocations,
   notifyMapLocationsChanged,
@@ -279,7 +276,6 @@ import {
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
 import { hydrateQuestCollections } from "@/server/utils/questCollections";
-import { fetchQuestDiscoveryCandidates } from "@/server/utils/questDiscovery";
 import { getQuestEntryCharges, payQuestEntryAtStart } from "@/server/utils/questEntry";
 import {
   publishQuestPartyProgress,
@@ -320,7 +316,6 @@ import {
   type QuestTrackerType,
   QuestValidator,
 } from "@/validators/objectives";
-
 import { petSelectionSchema } from "@/validators/pets";
 import {
   type PetTask,
@@ -343,7 +338,6 @@ import {
   getQuestCounterFieldName,
   type QuestCounterFieldName,
 } from "@/validators/user";
-
 import { type UserDelta, userDeltaResponseSchema } from "@/validators/userCache";
 
 export const questsRouter = createTRPCRouter({
@@ -1850,7 +1844,7 @@ export const questsRouter = createTRPCRouter({
       // Mutate
       await Promise.all([
         deleteQuestHistoryForDeleteUserQuest(ctx.drizzle, input),
-        updateUserDataForDeleteUserQuest(ctx.drizzle, questData, input),
+        updateUserQuestData(ctx.drizzle, questData, input.userId),
         insertActionLogForDeleteUserQuest(ctx.drizzle, ctx, input, user),
       ]);
       return { success: true, message: "Quest deleted successfully" };
@@ -2235,7 +2229,7 @@ export const updateRewards = async (info: {
         : undefined,
     () =>
       rewards.reward_anbupoints > 0 && user.anbuId
-        ? updateAnbuSquadForUpdateRewards(client, rewards, { anbuId: user.anbuId })
+        ? incrementAnbuPoints(client, rewards.reward_anbupoints, user.anbuId)
         : undefined,
     () => jutsus.length > 0 && insertUserJutsuForUpdateRewards(client, jutsus, user),
     () =>

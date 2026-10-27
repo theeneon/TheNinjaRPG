@@ -9,7 +9,7 @@ import { fetchClan } from "@/queries/clan";
 import { fetchUser } from "@/queries/profile";
 import {
   deleteTournamentForCleanupCompletedTournament,
-  deleteTournamentMatchForCleanupCompletedTournament,
+  deleteTournamentMatches,
   deleteTournamentRecordForFinalizeTournamentAndPayWinner,
   fetchMatch,
   fetchTournament,
@@ -28,9 +28,7 @@ import {
   updateTournamentRecordForFinalizeTournamentAndPayWinner,
   updateUserDataForJoinMatch,
 } from "@/queries/tournament";
-
 import { initiateBattle } from "@/routers/combat";
-
 import { updateRewards } from "@/routers/quests";
 import type { BaseServerResponse } from "@/server/api/trpc";
 import {
@@ -203,7 +201,7 @@ const cleanupCompletedTournament = async (
   tournamentId: string,
 ) => {
   await Promise.all([
-    deleteTournamentMatchForCleanupCompletedTournament(client, tournamentId),
+    deleteTournamentMatches(client, tournamentId),
     deleteTournamentForCleanupCompletedTournament(client, tournamentId),
   ]);
 };

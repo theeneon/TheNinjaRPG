@@ -11,8 +11,7 @@ import type { DmgConfig } from "@/libs/combat/constants";
 import {
   findGameSettingByName,
   findGameSettingForFetchPetArtProvider,
-  insertGameSettingForFetchDmgConfig,
-  insertGameSettingForGetGameSetting,
+  insertGameSettings,
   selectGameSettingForFetchDmgConfig,
   updateGameSettingForClaimGameTimer,
   updateGameSettingForUpdate,
@@ -38,7 +37,7 @@ export const getGameSetting = async (client: DrizzleClient, name: string) => {
   let setting = await findGameSettingByName(client, name);
   if (!setting) {
     setting = { id: nanoid(), name: name, time: addDays(new Date(), -30), value: 0 };
-    await insertGameSettingForGetGameSetting(client, setting);
+    await insertGameSettings(client, [setting]);
   }
   return setting;
 };
@@ -253,7 +252,7 @@ export const fetchDmgConfig = async (client: DrizzleClient): Promise<DmgConfig> 
       time: addDays(new Date(), -30),
       value: DMG_SETTING_DEFAULTS[name] ?? 0,
     }));
-    await insertGameSettingForFetchDmgConfig(client, newSettings);
+    await insertGameSettings(client, newSettings);
     settings.push(...newSettings);
   }
 

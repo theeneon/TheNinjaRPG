@@ -549,26 +549,16 @@ export const updateUserJutsuForEvolveJutsu = (
       ),
     );
 
-/** Build the `userData` update for `evolveJutsu`, setting `questData`, using predicates on `userId`. */
-export const updateUserDataForEvolveJutsu = (
+/** Build the jutsu order update for one loadout. */
+export const updateJutsuLoadoutIds = (
   client: Pick<DrizzleClient, "update">,
-  questDataForDb: import("@/validators/objectives").QuestTrackerType[],
-  ctx: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ questData: questDataForDb })
-    .where(eq(userData.userId, ctx.userId));
-
-/** Build the `jutsuLoadout` update for `evolveJutsu`, setting `jutsuIds`, using predicates on `id`. */
-export const updateJutsuLoadoutForEvolveJutsu = (
-  client: Pick<DrizzleClient, "update">,
-  loadout: { jutsuIds: string[]; id: string },
+  jutsuIds: string[],
+  loadoutId: string,
 ) =>
   client
     .update(jutsuLoadout)
-    .set({ jutsuIds: loadout.jutsuIds })
-    .where(eq(jutsuLoadout.id, loadout.id));
+    .set({ jutsuIds: jutsuIds })
+    .where(eq(jutsuLoadout.id, loadoutId));
 
 /**
  * Build the `jutsuReskin` update for `evolveJutsu`, setting `jutsuId` and `updatedAt`,
@@ -836,17 +826,6 @@ export const updateUserJutsuForToggleEquip = (
       ),
     );
 
-/** Build the `jutsuLoadout` update for `updateUserJutsuOrder`, setting `jutsuIds`, using predicates on `id`. */
-export const updateJutsuLoadoutForUpdateUserJutsuOrder = (
-  client: Pick<DrizzleClient, "update">,
-  newOrder: string[],
-  loadout: { id: string },
-) =>
-  client
-    .update(jutsuLoadout)
-    .set({ jutsuIds: newOrder })
-    .where(eq(jutsuLoadout.id, loadout.id));
-
 /** Build the `jutsuLoadout` update for `renameLoadout`, setting `name`, using predicates on `id` and `userId`. */
 export const updateJutsuLoadoutForRenameLoadout = (
   client: Pick<DrizzleClient, "update">,
@@ -892,33 +871,12 @@ export const updateJutsuReskinForCreateReskin = (
     })
     .where(eq(jutsuReskin.id, existingReskin.id));
 
-/**
- * Build the `userJutsu` update for `createReskin`, setting `reskinId` and `updatedAt`,
- * using predicates on `jutsuId` and `userId`.
- */
-export const updateUserJutsuForCreateReskin = (
-  client: Pick<DrizzleClient, "update">,
-  existingReskin: { id: string },
-  jutsuData: { id: string },
-  ctx: { userId: string },
-) =>
-  client
-    .update(userJutsu)
-    .set({
-      reskinId: existingReskin.id,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(userJutsu.jutsuId, jutsuData.id), eq(userJutsu.userId, ctx.userId)));
-
-/**
- * Build the `userJutsu` update for `createReskin`, setting `reskinId` and `updatedAt`,
- * using predicates on `jutsuId` and `userId`.
- */
-export const updateUserJutsuForCreateReskin2 = (
+/** Build a reskin update for one owned jutsu, refreshing its update timestamp. */
+export const setUserJutsuReskin = (
   client: Pick<DrizzleClient, "update">,
   reskinId: string,
-  jutsuData: { id: string },
-  ctx: { userId: string },
+  jutsuId: string,
+  userId: string,
 ) =>
   client
     .update(userJutsu)
@@ -926,7 +884,7 @@ export const updateUserJutsuForCreateReskin2 = (
       reskinId: reskinId,
       updatedAt: new Date(),
     })
-    .where(and(eq(userJutsu.jutsuId, jutsuData.id), eq(userJutsu.userId, ctx.userId)));
+    .where(and(eq(userJutsu.jutsuId, jutsuId), eq(userJutsu.userId, userId)));
 
 /** Build the `jutsuReskin` insert for `createReskin`. */
 export const insertJutsuReskinForCreateReskin = (
