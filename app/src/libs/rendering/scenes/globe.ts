@@ -314,8 +314,8 @@ export const createGlobeScene = async (options: {
       else if (!pointer && lastPickKey && !controls.isInteracting())
         highlightSector(null);
       lastPickKey = key;
-      recordRenderCounter("vertices", surface?.vertexCount ?? 0);
-      recordRenderCounter("triangles", surface?.triangleCount ?? 0);
+      recordRenderCounter("surfaceVertices", surface?.vertexCount ?? 0);
+      recordRenderCounter("surfaceTriangles", surface?.triangleCount ?? 0);
     });
     return { dispose: game.dispose, updateState, zoom: controls.zoom };
   } catch (error) {
