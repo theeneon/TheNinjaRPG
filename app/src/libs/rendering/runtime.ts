@@ -73,7 +73,7 @@ export const createGameRenderer = async (options: {
   let update: (frame: GameFrame) => void = () => {};
   let resize: (width: number, height: number) => void = () => {};
   const listeners = new AbortController();
-  const cleanups: (() => void)[] = [];
+  const cleanups = new Set<() => void>();
 
   const tick = (now: number) => {
     if (disposed) return;
@@ -159,7 +159,7 @@ export const createGameRenderer = async (options: {
     unregister();
     stage.destroy({ children: true, texture: false, textureSource: false });
     for (const cleanup of cleanups) cleanup();
-    cleanups.length = 0;
+    cleanups.clear();
     assets.dispose();
     renderer.destroy({ removeView: true });
   };
@@ -176,7 +176,10 @@ export const createGameRenderer = async (options: {
     dispose,
     own: (cleanup: () => void) => {
       if (disposed) cleanup();
-      else cleanups.push(cleanup);
+      else cleanups.add(cleanup);
+    },
+    disown: (cleanup: () => void) => {
+      cleanups.delete(cleanup);
     },
     isDisposed: () => disposed,
     setUpdate: (callback: typeof update) => {

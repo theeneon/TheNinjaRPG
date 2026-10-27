@@ -1,0 +1,52 @@
+import { describe, expect, it } from "bun:test";
+import { sectorSpriteDescriptions } from "@/libs/rendering/sectorSprites";
+import type { DecorationAsset } from "@/libs/sector-map/decorations";
+import type { NormalizedSectorMap } from "@/libs/sector-map/types";
+import type { MapLocation } from "@/validators/mapLocation";
+
+const grid = { getHex: ({ col, row }: { col: number; row: number }) => {
+  if (!Number.isFinite(col) || !Number.isFinite(row)) throw new Error("Invalid coordinates");
+  return { col, row, x: col * 20, y: row * 20, width: 20, height: 20 };
+} } as never;
+const location: MapLocation = { id: "tower", sector: 724, longitude: 3, latitude: 4, name: "Tower", description: "A tower.", assetId: "art", scale: 1 };
+const asset = { id: "art", imageUrl: "tower.png", renderScale: 2.4 };
+const objects = [{ id: "tree", type: "decoration", x: 3, y: 4, assetKey: "tree" }];
+const descriptions = (locations: MapLocation[], assets = [asset], mapObjects = objects) => sectorSpriteDescriptions({ grid, map: { objects: mapObjects } as NormalizedSectorMap,
+  structures: [], wall: null, lightLayout: false, locations, mapAssets: assets,
+  decorations: new Map([["tree", { filepath: "tree.png", renderScale: 2 } as DecorationAsset]]),
+});
+
+describe("sector scenery recipes", () => {
+  it("draws one building for co-located objectives with an independent pin", () => {
+    const sprites = descriptions([location, { ...location, id: "second" }]);
+    expect(sprites).toHaveLength(2);
+    expect(new Set(sprites.map((sprite) => sprite.locationId)).size).toBe(1);
+    expect(sprites[0]).toMatchObject({ preserveAspect: true, size: 48, anchorY: 0.85 });
+    expect(sprites[0]?.mask).toBeUndefined();
+  });
+  it("changes art without changing the authored entrance or mutating its source", () => {
+    const before = structuredClone(location);
+    const first = descriptions([location]), second = descriptions([location], [{ ...asset, imageUrl: "replacement.png" }]);
+    expect(first[0]?.image).toBe("tower.png");
+    expect(second[0]?.image).toBe("replacement.png");
+    expect(first[1]).toEqual(second[1]);
+    expect(location).toEqual(before);
+  });
+  it("keeps a usable arrival pin when the artwork is unavailable", () => {
+    const sprites = descriptions([location], []);
+    expect(sprites).toHaveLength(1);
+    expect(sprites[0]?.locationId).toBe("tower");
+  });
+  it("restores overlapping decoration after its private entrance ends", () => {
+    expect(descriptions([location]).some((sprite) => sprite.id === "tree")).toBe(false);
+    expect(descriptions([]).some((sprite) => sprite.id === "tree")).toBe(true);
+  });
+  it("skips drafts with invalid coordinates", () => {
+    const draft = { ...location, longitude: Number.NaN };
+    expect(descriptions([draft, location])).toEqual(descriptions([location]));
+  });
+  it("orders scenery by its ground contact", () => {
+    const sprites = descriptions([], [asset], [objects[0]!, { ...objects[0]!, id: "far-tree", y: 9 }]);
+    expect(sprites.map((sprite) => sprite.id)).toEqual(["far-tree", "tree"]);
+  });
+});

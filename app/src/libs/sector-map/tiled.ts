@@ -244,7 +244,7 @@ export const WYSIWYG_TILE_HEIGHT = Math.round(
  * Vertical distance (in tile heights) from a hex's centre DOWN to where the
  * game roots a decoration sprite's base: half a tile minus the renderer's
  * grounding lift of 0.1 x scale (see the sprite placement in
- * threejs/sector.ts). The exporter grounds tile-objects with this same
+ * rendering/sectorSprites.ts). The exporter grounds tile-objects with this same
  * formula and the importer inverts it, so Tiled shows sprites rooted exactly
  * where the game draws them. Clamped so extreme scales stay within the tile.
  */

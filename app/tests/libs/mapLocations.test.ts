@@ -1,11 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import { Group, Texture } from "three";
 import { getQuestMapLocations, groupMapLocations, publicQuestLocations } from "@/libs/mapLocations";
 import { findActionableBoundObjective, validateFriendlyPlacementBindings } from "@/libs/overworldAi";
 import { getBoundObjectiveCandidates, getNewTrackers, getPublicQuestUser, verifyQuestContentForSave } from "@/libs/quest";
-import { syncMapLocationSprites } from "@/libs/threejs/mapLocations";
-import { drawQuest } from "@/libs/threejs/sector";
+import { sectorSpriteDescriptions, type WorldSpriteDescription } from "@/libs/rendering/sectorSprites";
+import { travelActorRecipes } from "@/libs/rendering/scenes/travelActors";
 import type { UserWithRelations } from "@/routers/profile";
 import { updateUserCache } from "@/utils/userCache";
 import { type AllObjectivesType, DefeatOpponents, DeliverItem, DialogObjective, MoveToObjective, QuestValidator } from "@/validators/objectives";
@@ -173,7 +172,7 @@ describe("location chains reloaded from authored quests", () => {
         { id: "detail2", task: "dialog", overworldPlacementId: "keeper", structureAssetId: "shrine", locationName: "Tower shrine", locationDescription: "A small shrine inside the tower.", nextObjectiveId: [{ text: "Finish", nextObjectiveId: "end" }] },
         { id: "end", task: "win_quest" },
       ], { overworldPlacementId: "keeper", sector: undefined, longitude: undefined, latitude: undefined });
-      const group = new Group();
+      const group = { children: [] as WorldSpriteDescription[] };
       Object.assign(actor, tile);
       for (const id of ["STARTING", "detail", "detail2"]) {
         const snapshot = read(id === "STARTING" ? undefined : id, placements);
@@ -204,7 +203,7 @@ describe("location chains reloaded from authored quests", () => {
     read(undefined, placements);
     const snapshot = read("detail", placements);
     expect(getQuestMapLocations(snapshot, [])).toEqual([]);
-    expect(await renderThenMove(snapshot, new Group(), placements)).toMatchObject([
+    expect(await renderThenMove(snapshot, { children: [] as WorldSpriteDescription[] }, placements)).toMatchObject([
       { assetId: "shrine", objectiveId: "detail", sector: 724, longitude: 4, latitude: 5, name: "Tower shrine" },
     ]);
   });
@@ -227,7 +226,7 @@ describe("location chains reloaded from authored quests", () => {
         Object.assign(actor, placements[0]);
         const snapshot = read(undefined, placements, task === "defeat_opponents" ? [{ task, contentId: "guard", text: "Won" }] : [{ task: "any" }]);
         expect(actor.questData![0]!.goals[0]?.done).toBe(true);
-        expect(await renderThenMove(snapshot, new Group(), placements)).toMatchObject([{
+        expect(await renderThenMove(snapshot, { children: [] as WorldSpriteDescription[] }, placements)).toMatchObject([{
           assetId: destination === "inherited" ? "tower" : "shrine", objectiveId: "detail",
           ...(destination === "explicit-zero" ? { sector: 0, longitude: 0, latitude: 0 } : { sector: 17, longitude: 4, latitude: 5 }),
         }]);
@@ -250,7 +249,7 @@ describe("location chains reloaded from authored quests", () => {
       Object.assign(goal, { sector: 0, longitude: 0, latitude: 0, locationChecked: true });
     }
     const snapshot = read(undefined, placements);
-    expect(await renderThenMove(snapshot, new Group(), placements)).toMatchObject([
+    expect(await renderThenMove(snapshot, { children: [] as WorldSpriteDescription[] }, placements)).toMatchObject([
       { assetId: "tower", objectiveId: "detail2", ...tile },
     ]);
   });
@@ -281,7 +280,7 @@ describe("location chains reloaded from authored quests", () => {
       ], { overworldPlacementId: "keeper", sector: undefined, longitude: undefined, latitude: undefined });
       Object.assign(actor, { longitude: 4, latitude: 5 });
       read(undefined, placements);
-      const locations = await renderThenMove(read("detail", placements), new Group(), placements);
+      const locations = await renderThenMove(read("detail", placements), { children: [] as WorldSpriteDescription[] }, placements);
       expect(locations).toHaveLength(longitude === 4 ? 1 : 0);
       if (longitude === 4) expect(locations[0]).toMatchObject({ assetId: "tower", objectiveId: "detail", npcPlacementId: "guide" });
     });
@@ -290,7 +289,7 @@ describe("location chains reloaded from authored quests", () => {
   for (const start of ["dialog", "specific", "random", "zero"] as const) {
     it(`retains ${start} structure art through two implicit dialogs and removes it on completion`, async () => {
       const { actor, read } = locationChain(start);
-      const group = new Group();
+      const group = { children: [] as WorldSpriteDescription[] };
       const initial = await renderThenMove(read(), group);
       expect(initial).toHaveLength(1);
       const { sector, longitude, latitude } = initial[0]!;
@@ -315,7 +314,7 @@ describe("location chains reloaded from authored quests", () => {
       DialogObjective.parse({ id: "detail2", task: "dialog", structureAssetId: "shrine", locationName: "Tower shrine", locationDescription: "A small shrine inside the tower.", nextObjectiveId: [{ text: "Finish", nextObjectiveId: "end" }] }),
       { id: "end", task: "win_quest" },
     ]);
-    const group = new Group();
+    const group = { children: [] as WorldSpriteDescription[] };
     await renderThenMove(read(), group);
     Object.assign(actor, { longitude: 4, latitude: 5 });
     read("detail");
@@ -334,7 +333,7 @@ describe("location chains reloaded from authored quests", () => {
       MoveToObjective.parse({ id: "remote", task: "move_to_location", sector: 725, longitude: 8, latitude: 9, nextObjectiveId: "end" }),
       { id: "end", task: "win_quest" },
     ]);
-    const group = new Group();
+    const group = { children: [] as WorldSpriteDescription[] };
     read();
     Object.assign(actor, { longitude: 4, latitude: 5 });
     read("detail");
@@ -347,7 +346,7 @@ describe("location chains reloaded from authored quests", () => {
 
   it("preserves concealed coordinates outside and inside the target sector", async () => {
     const { actor, read } = locationChain("specific", undefined, { hideLocation: true });
-    const group = new Group();
+    const group = { children: [] as WorldSpriteDescription[] };
     for (const sector of [725, 724, 725]) {
       actor.sector = sector;
       const snapshot = read();
@@ -397,35 +396,30 @@ const locationChain = (
   };
 };
 
-const renderThenMove = async (actor: NonNullable<UserWithRelations>, group = new Group(), placements: NonNullable<Parameters<typeof getQuestMapLocations>[2]> = []) => {
+const renderThenMove = async (actor: NonNullable<UserWithRelations>, group = { children: [] as WorldSpriteDescription[] }, placements: NonNullable<Parameters<typeof getQuestMapLocations>[2]> = []) => {
   const original = structuredClone(actor);
   const locations = getQuestMapLocations(actor, [], placements);
-  const grid = { getHex: () => ({ x: 0, y: 0, width: 20, height: 20 }) } as never;
+  const grid = { getHex: ({ col, row }: { col: number; row: number }) => ({ col, row, x: 0, y: 0, center: { x: 0, y: 0 }, width: 20, height: 20 }) } as never;
   const assets = [{ id: "tower", imageUrl: "tower.png", renderScale: 2.4 }, { id: "shrine", imageUrl: "shrine.png", renderScale: 2.4 }];
-  const textureForPath = () => new Texture();
-  syncMapLocationSprites(group, grid, locations, assets, textureForPath);
+  const project = (entries: typeof locations) => sectorSpriteDescriptions({ grid, map: { objects: [] } as never, locations: entries, mapAssets: assets, structures: [], wall: null, decorations: new Map(), lightLayout: false });
+  group.children = project(locations);
   const sprites = [...group.children];
-  const group_quest = new Group();
-  for (let frame = 0; frame < 3; frame++) {
-    drawQuest({ group_quest, grid, user: actor, structureObjectiveIds: new Set(locations.map((location) => location.objectiveId)) });
-  }
+  const recipes = travelActorRecipes({ grid, viewer: actor, users: [], sector: actor.sector, minBracket: -1, showUsers: true, friendlyAttack: false, structureObjectiveIds: new Set(locations.map((location) => location.objectiveId)) });
+  expect(recipes.filter((recipe) => recipe.quest)).toEqual([]);
   const client = new QueryClient();
   const key = [["profile", "getUser"], { type: "query" }];
   client.setQueryData(key, { userData: actor });
   try {
-    // Sector's runJourneySegment applies this patch after ordinary same-sector walking.
     await updateUserCache(client, key, { location: "Tower trail", updatedAt: new Date(), longitude: 1, latitude: 1 });
     const moved = client.getQueryData<{ userData: typeof actor }>(key)!.userData;
     const refreshed = getQuestMapLocations(moved, [], placements);
-    syncMapLocationSprites(group, grid, refreshed, assets, textureForPath);
+    group.children = project(refreshed);
     expect(moved).not.toBe(actor);
     expect(moved.userQuests).toBe(actor.userQuests);
     expect(refreshed).toEqual(locations);
     expect(group.children).toEqual(sprites);
-    expect(group.children).toHaveLength(locations.length * 2);
+    expect(group.children).toHaveLength(groupMapLocations(locations).length * 2);
     expect(actor).toEqual(original);
     return refreshed;
-  } finally {
-    client.clear();
-  }
+  } finally { client.clear(); }
 };
