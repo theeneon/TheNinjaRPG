@@ -76,6 +76,14 @@ env file (`realpath app/.env`); do not paste secrets into command lines. A share
 symlink affects every linked worktree; replace its link with a real file for a separate
 configuration/database.
 
+A profile can include `resources` to prepare repeatable gameplay on that provisioned
+identity: pool maxima (which also fill their current pools), farming experience,
+farm currency, purchased plots and tower-defense points. These fields are bounded
+by the broker schema; arbitrary balance fields are rejected. Use `preferredUsername`
+when reconfiguring a scenario so the visible name stays stable. Production servers
+keep the broker disabled; prepare accounts through a development checkout when
+measuring a production build.
+
 Credentials and `loginUrl` values are saved with mode 0600 in gitignored
 `app/scripts/.artifacts/dev-users.json`. Only IDs/names and that path are printed.
 Never post passwords, tickets, tokens or the credentials file on a PR. `dev-call` resolves
