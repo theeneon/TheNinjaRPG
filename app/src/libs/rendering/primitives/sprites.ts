@@ -3,6 +3,11 @@ import { createSceneAssets } from "@/libs/rendering/assets";
 import { acquireMaskedTexture } from "@/libs/rendering/maskedTextures";
 import type { GameFrame, GameRenderer } from "@/libs/rendering/runtime";
 import type { WorldSpriteDescription } from "@/libs/rendering/sectorSprites";
+import {
+  boundsOverlap,
+  type WorldBounds,
+  worldSpriteBounds,
+} from "@/libs/rendering/visibility";
 
 /** Map coordinates grow upward; the camera flips Y and these sprites keep artwork upright. */
 export const createWorldSprites = async (
@@ -12,7 +17,11 @@ export const createWorldSprites = async (
   const assets = createSceneAssets();
   const masked: ReturnType<typeof acquireMaskedTexture>[] = [];
   const container = new Container();
-  const entries: { sprite: Sprite; description: WorldSpriteDescription }[] = [];
+  const entries: {
+    sprite: Sprite;
+    description: WorldSpriteDescription;
+    bounds: WorldBounds;
+  }[] = [];
   let disposed = false;
   const dispose = () => {
     if (disposed) return;
@@ -65,7 +74,19 @@ export const createWorldSprites = async (
       sprite.scale.y *= -1;
       sprite.tint = description.tint ?? 0xffffff;
       sprite.rotation = description.rotation ?? 0;
-      entries.push({ sprite, description });
+      entries.push({
+        sprite,
+        description,
+        bounds: worldSpriteBounds({
+          x: sprite.x,
+          y: sprite.y,
+          width: sprite.width,
+          height: sprite.height,
+          anchorX: sprite.anchor.x,
+          anchorY: sprite.anchor.y,
+          rotation: sprite.rotation,
+        }),
+      });
       container.addChild(sprite);
     } else if (result.status === "rejected") {
       missing++;
@@ -78,11 +99,27 @@ export const createWorldSprites = async (
         entry.description.wind !== null && entry.description.wind !== undefined,
     )
     .map((entry) => ({ ...entry, scaleY: entry.sprite.scale.y }));
+  let viewport: (WorldBounds & { padding: number }) | null = null;
   return {
     container,
     entries,
     missing,
     dispose,
+    setViewport: (bounds: WorldBounds, padding: number) => {
+      if (
+        viewport &&
+        viewport.minX === bounds.minX &&
+        viewport.minY === bounds.minY &&
+        viewport.maxX === bounds.maxX &&
+        viewport.maxY === bounds.maxY &&
+        viewport.padding === padding
+      )
+        return;
+      viewport = { ...bounds, padding };
+      // Offscreen sprites keep their decoded lease but do not upload or join a GPU batch.
+      for (const entry of entries)
+        entry.sprite.renderable = boundsOverlap(entry.bounds, bounds, padding);
+    },
     animate: (frame: GameFrame, zoom: number) => {
       const time = frame.reducedMotion ? 0 : frame.now / 1000;
       const phases = [0, 1, 2, 3].map((index) => {
@@ -91,6 +128,7 @@ export const createWorldSprites = async (
       });
       for (const entry of wind) {
         const { sprite, description } = entry;
+        if (!sprite.renderable) continue;
         const phase =
           phases[Math.round((description.wind ?? 0) / (Math.PI / 2)) % 4] ?? 0;
         const dx = (phase * 0.0025 * game.renderer.width) / zoom;

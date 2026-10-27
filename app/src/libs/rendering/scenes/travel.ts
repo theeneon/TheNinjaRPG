@@ -312,7 +312,19 @@ export const createTravelScene = async (options: {
             rendered.position.y + rendered.height + margin > camera.y - halfHeight);
         rendered.art.container.renderable = visible;
         rendered.terrain.container.renderable = visible;
-        if (visible) rendered.art.animate(frame, scale());
+        if (visible) {
+          if (camera)
+            rendered.art.setViewport(
+              {
+                minX: camera.x - halfWidth - rendered.position.x,
+                maxX: camera.x + halfWidth - rendered.position.x,
+                minY: camera.y - halfHeight - rendered.position.y,
+                maxY: camera.y + halfHeight - rendered.position.y,
+              },
+              Math.max(6, game.renderer.width * 0.0035) / scale(),
+            );
+          rendered.art.animate(frame, scale());
+        }
       }
       const pointer = controls.pointer();
       if (!pointer || !snapshot.enabled) {
