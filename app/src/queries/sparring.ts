@@ -91,8 +91,6 @@ export const updateUserRequestForUpdateRequestState = (
  * @param client - The DrizzleClient instance used to interact with the database.
  * @param senderId - The ID of the sender.
  * @param receiverId - The ID of the receiver.
- * @param senderVillageId - The ID of the sender's village.
- * @param receiverVillageId - The ID of the receiver's village.
  * @param type - The type of the user request.
  * @returns A Promise that resolves when the request is successfully inserted.
  */

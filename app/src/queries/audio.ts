@@ -27,11 +27,7 @@ export const selectHistoricalSoundEffectForGetHistorical = (
     .orderBy(desc(historicalSoundEffect.id))
     .limit(limit + 1);
 
-/**
- *
- * @param ctx - The database client
- * @param input - The input data
- */
+/** Record a successful, completed sound effect for the user, with optional generation settings. */
 export const insertHistoricalSoundEffect = async (
   client: DrizzleClient,
   userId: string,

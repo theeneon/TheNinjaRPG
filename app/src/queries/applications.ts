@@ -13,11 +13,8 @@ import { staffApplication } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
 /**
- * Fetch an application by user ID and status.
- * @param client - The DrizzleClient instance used for database operations.
- * @param userId - The ID of the user to fetch the application for.
- * @param status - The status of the application to fetch.
- * @returns The application if found, otherwise null.
+ * Load the first application matching the optional user ID, application ID and
+ * status filters, including applicant and approval details; no match yields undefined.
  */
 export const fetchApplication = async (info: {
   client: DrizzleClient;

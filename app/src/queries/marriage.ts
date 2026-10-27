@@ -7,10 +7,8 @@ import { userAssociation } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
 /**
- * Fetches associations from the database
- * @param client - The database client
- * @param idOne - The ID of the first user in the association
- * @param type - The type of association to fetch
+ * Load associations with both participant records present, ordered by creation.
+ * Optional filters match either participant ID and any supplied association types.
  */
 export const fetchAssociations = async (
   client: DrizzleClient,

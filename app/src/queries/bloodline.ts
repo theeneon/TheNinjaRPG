@@ -22,10 +22,7 @@ import { getUnique } from "@/utils/grouping";
 import { DAY_S, secondsFromDate } from "@/utils/time";
 import type { baseReskinSchema } from "@/validators/bloodline";
 
-/**
- * COMMON QUERIES WHICH ARE REUSED
- */
-
+/** Load a reskin and its bloodline by reskin ID; no match yields undefined. */
 export const fetchBloodlineReskin = async (client: DrizzleClient, reskinId: string) => {
   return await client.query.bloodlineReskin.findFirst({
     where: eq(bloodlineReskin.id, reskinId),
@@ -94,10 +91,8 @@ export const fetchUserHistoricBloodlines = async (
 };
 
 /**
- * Fetch a bloodline by ID
- * @param client Drizzle client
- * @param bloodlineId Bloodline ID
- * @returns Bloodline
+ * Load this user's bloodline-swap log IDs and timestamps since the rolling
+ * BLOODLINE_SWAP_FREE_DAYS cutoff; return an empty array when none match.
  */
 export const fetchMonthlyBloodlineSwaps = async (
   client: DrizzleClient,
@@ -124,11 +119,7 @@ export const fetchBloodline = async (client: DrizzleClient, bloodlineId: string)
   });
 };
 
-/**
- * Fetch all bloodlines
- * @param client Drizzle client
- * @returns All bloodlines
- */
+/** Load all non-hidden bloodline definitions. */
 export const fetchBloodlines = async (client: DrizzleClient) => {
   return await client.query.bloodline.findMany({ where: eq(bloodline.hidden, false) });
 };

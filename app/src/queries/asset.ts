@@ -7,10 +7,7 @@ import type { GameAssetType } from "@/drizzle/constants";
 import { gameAsset } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
-/**
- * COMMON QUERIES WHICH ARE REUSED
- */
-
+/** Load a game asset by ID; no match yields undefined. */
 export const fetchGameAsset = async (client: DrizzleClient, id: string) => {
   return await client.query.gameAsset.findFirst({
     where: eq(gameAsset.id, id),

@@ -5,10 +5,7 @@ import { eq } from "drizzle-orm";
 import { badge } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
-/**
- * COMMON QUERIES WHICH ARE REUSED
- */
-
+/** Load a badge definition by ID; no match yields undefined. */
 export const fetchBadge = async (client: DrizzleClient, id: string) => {
   return await client.query.badge.findFirst({
     where: eq(badge.id, id),
