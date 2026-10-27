@@ -7,7 +7,7 @@ const WebGlError: React.FC = () => {
       <Activity className="m-3 h-40 w-40 animate-pulse rounded-full bg-popover p-3" />
       <p>Error loading the game renderer.</p>
       <p className="font-bold text-red-500">
-        Please update your browser to play this game!
+        Refresh to reload the graphics and try again.
       </p>
       <button
         type="button"
