@@ -149,6 +149,7 @@ export const createGameRenderer = async (options: {
     dirty = true;
     updateSubscription();
   };
+  motion.addEventListener("change", invalidate, { signal: listeners.signal });
   document.addEventListener("visibilitychange", updateSubscription, {
     signal: listeners.signal,
   });

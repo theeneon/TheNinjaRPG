@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, type Ref, useImperativeHandle, useRef } from "react";
+import { memo, type Ref, useEffect, useImperativeHandle, useRef } from "react";
 import { FARM_PLOT_COLUMNS } from "@/drizzle/constants";
 import { useDayNightMapOverlays } from "@/hooks/day-night-overlay";
 import { useGameScene } from "@/hooks/game-scene";
@@ -34,20 +34,23 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
   current.current.timeDiff = timeDiff;
   current.current.showDayNightMapOverlays = showDayNightMapOverlays;
   current.current.onPlotClick = onPlotClick;
-  const { scene, error } = useGameScene(mountRef, async (mount, signal, onError) => {
-    const instance = await createFarmScene({
-      mount,
-      signal,
-      onError,
-      initialState: current.current.state,
-      getTimeDiff: () => current.current.timeDiff,
-      showDayNight: () => current.current.showDayNightMapOverlays,
-      onPlotClick: (slot, plot) => current.current.onPlotClick(slot, plot),
-    });
-    // Server state can arrive while the renderer and artwork are loading.
-    if (!signal.aborted) instance.updateState(current.current.state);
-    return instance;
-  });
+  const { scene, error, isReady } = useGameScene(
+    mountRef,
+    async (mount, signal, onError) => {
+      const instance = await createFarmScene({
+        mount,
+        signal,
+        onError,
+        initialState: current.current.state,
+        getTimeDiff: () => current.current.timeDiff,
+        showDayNight: () => current.current.showDayNightMapOverlays,
+        onPlotClick: (slot, plot) => current.current.onPlotClick(slot, plot),
+      });
+      // Server state can arrive while the renderer and artwork are loading.
+      if (!signal.aborted) instance.updateState(current.current.state);
+      return instance;
+    },
+  );
   useImperativeHandle(ref, () => ({
     updateState: (state) => {
       current.current.state = state;
@@ -59,6 +62,9 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
     },
     playEffect: (slot, effect) => scene.current?.playEffect(slot, effect),
   }));
+  useEffect(() => {
+    scene.current?.refresh();
+  }, [scene, isReady, timeDiff, showDayNightMapOverlays]);
   if (error) return <WebGlError />;
   return (
     <div

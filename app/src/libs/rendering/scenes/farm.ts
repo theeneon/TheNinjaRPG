@@ -3,12 +3,11 @@ import {
   FARM_GROWTH_STAGES,
   IMG_FARM_BACKGROUND,
   IMG_FARM_PLOT_SOIL,
-  WORLD_NIGHT_BRIGHTNESS,
 } from "@/drizzle/constants";
-import { getWorldCycleBrightness } from "@/libs/dayNight";
-import { getPlotGrowthStage, isPlotReady } from "@/libs/farming";
+import { canWaterPlot, getPlotGrowthStage, isPlotReady } from "@/libs/farming";
 import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { createGameRenderer } from "@/libs/rendering/runtime";
+import { farmLightingClock, nextFarmVisualAt } from "@/libs/rendering/scenes/farmClock";
 import {
   FARM_PLOT_SIZE,
   FARM_VIEW_HEIGHT,
@@ -32,6 +31,7 @@ export const createFarmScene = async (options: {
     background: 0x87ae73,
     height: (width) => Math.max(360, width * 0.55),
   });
+  game.setAnimating(false);
   try {
     const [backgroundTexture, soilTexture] = await Promise.all([
       game.assets.texture(IMG_FARM_BACKGROUND),
@@ -63,11 +63,24 @@ export const createFarmScene = async (options: {
     let reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const entries = new Map<number, PlotEntry>();
     const effects: { sprite: Graphics; age: number }[] = [];
-    let refreshElapsed = 0;
+    let wake: ReturnType<typeof setTimeout> | null = null;
     const effectPool: Graphics[] = [];
     const clock = () => new Date(Date.now() - options.getTimeDiff());
 
     const syncEntry = (entry: PlotEntry, plot: FarmPlotState | undefined) => {
+      const visualKey = JSON.stringify([
+        state.totalPlots,
+        !!plot?.seedItemId,
+        plot?.cropImage,
+        plot?.growthStage,
+        plot?.isReady,
+        plot?.canWater,
+        plot?.fertilizerApplied,
+        entry.slot === hovered,
+        entry.slot === selected,
+      ]);
+      if (visualKey === entry.visualKey) return false;
+      entry.visualKey = visualKey;
       const position = farmPlotPosition(entry.slot, state.totalPlots);
       entry.soil.position.set(position.x, position.y);
       entry.crop.position.copyFrom(entry.soil.position);
@@ -91,17 +104,19 @@ export const createFarmScene = async (options: {
         entry.image = path ?? null;
         if (path)
           void game.assets.texture(path).then((texture) => {
-            if (options.signal.aborted || entry.image !== path) return;
+            if (game.isDisposed() || entry.crop.destroyed || entry.image !== path)
+              return;
             entry.crop.texture = texture;
             entry.glow.texture = texture;
             entry.crop.width = entry.crop.height = entry.cropSize;
+            game.invalidate();
           }, options.onError);
       }
       const isHovered = entry.slot === hovered;
       entry.soil.tint = isHovered ? 0xe2f7d3 : 0xffffff;
       const ringColor =
         entry.slot === selected ? 0x4ade80 : isHovered ? 0xf8fafc : null;
-      if (ringColor === entry.ringColor) return;
+      if (ringColor === entry.ringColor) return true;
       entry.ringColor = ringColor;
       entry.ring.clear();
       if (ringColor !== null) {
@@ -111,9 +126,12 @@ export const createFarmScene = async (options: {
           width: 0.025,
         });
       }
+      return true;
     };
     const refresh = () => {
+      if (game.isDisposed()) return;
       const now = clock();
+      let changed = false;
       const plots = new Map(
         state.plots.map((plot) => [plot.slotIndex, livePlot(plot, now)]),
       );
@@ -145,6 +163,7 @@ export const createFarmScene = async (options: {
             image: null,
             cropSize: 1,
             expand: 1,
+            visualKey: null,
           };
           entries.set(slot, entry);
           soilLayer.addChild(soil);
@@ -153,7 +172,7 @@ export const createFarmScene = async (options: {
           statusLayer.addChild(water, fertilizer);
           ringLayer.addChild(ring);
         }
-        syncEntry(entry, plots.get(slot));
+        changed = syncEntry(entry, plots.get(slot)) || changed;
       }
       for (const [slot, entry] of entries) {
         if (slot < state.totalPlots) continue;
@@ -167,7 +186,24 @@ export const createFarmScene = async (options: {
         ])
           object.destroy();
         entries.delete(slot);
+        changed = true;
       }
+      const lighting = farmLightingClock(now, options.showDayNight());
+      changed ||= night.alpha !== lighting.alpha;
+      night.alpha = lighting.alpha;
+      game.setAnimating(
+        lighting.isTransitioning ||
+          (!reducedMotion &&
+            (effects.length > 0 ||
+              [...entries.values()].some((entry) => entry.ready || entry.expand < 1))),
+      );
+      if (changed) game.invalidate();
+      if (wake !== null) clearTimeout(wake);
+      const nextAt = nextFarmVisualAt(state.plots, now, options.showDayNight());
+      wake =
+        nextAt === null
+          ? null
+          : setTimeout(refresh, Math.max(1, nextAt - now.getTime()));
     };
     refresh();
     game.setResize((width, height) => {
@@ -206,7 +242,10 @@ export const createFarmScene = async (options: {
       options.onPlotClick(slot, plot ? livePlot(plot, clock()) : undefined);
     });
     game.setUpdate((frame) => {
-      reducedMotion = frame.reducedMotion;
+      if (reducedMotion !== frame.reducedMotion) {
+        reducedMotion = frame.reducedMotion;
+        refresh();
+      }
       let activeAnimations = effects.length;
       for (const entry of entries.values()) {
         if (entry.ready || entry.expand < 1) activeAnimations++;
@@ -230,23 +269,27 @@ export const createFarmScene = async (options: {
           effects.splice(index, 1);
         }
       }
-      refreshElapsed += frame.delta;
-      if (refreshElapsed >= 2) {
-        refreshElapsed = 0;
-        refresh();
-      }
-      const darkness = Math.max(0, Math.min(1, 1 - getWorldCycleBrightness(clock())));
-      night.alpha = options.showDayNight()
-        ? darkness * (1 - WORLD_NIGHT_BRIGHTNESS + 0.15)
-        : 0;
+      const lighting = farmLightingClock(clock(), options.showDayNight());
+      night.alpha = lighting.alpha;
+      game.setAnimating(
+        lighting.isTransitioning ||
+          (!reducedMotion && (activeAnimations > 0 || effects.length > 0)),
+      );
       recordRenderCounter("sprites", entries.size * 5 + 2);
       recordRenderCounter("activeAnimations", activeAnimations);
     });
     game.own(() => {
+      if (wake !== null) clearTimeout(wake);
       for (const effect of effectPool) effect.destroy();
     });
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    game.own(() => document.removeEventListener("visibilitychange", onVisibility));
     return {
       dispose: game.dispose,
+      refresh,
       updateState: (next: FarmVisualState) => {
         state = next;
         selected = next.selectedPlotIndex ?? null;
@@ -258,6 +301,7 @@ export const createFarmScene = async (options: {
         refresh();
         const entry = entries.get(slot);
         if (entry && !reducedMotion) entry.expand = 0.01;
+        refresh();
       },
       playEffect: (slot: number, effect: FarmEffect) => {
         const entry = entries.get(slot);
@@ -277,6 +321,7 @@ export const createFarmScene = async (options: {
         sprite.alpha = 0.8;
         effectLayer.addChild(sprite);
         effects.push({ sprite, age: 0 });
+        refresh();
       },
     };
   } catch (error) {
@@ -294,9 +339,11 @@ const squareSprite = (texture: Texture, size: number) => {
 
 const livePlot = (plot: FarmPlotState, now: Date) => {
   const active = !!plot.seedItemId && !!plot.plantedAt && !!plot.finishAt;
+  const ready = active && isPlotReady(plot.finishAt, now);
   return {
     ...plot,
-    isReady: active && isPlotReady(plot.finishAt, now),
+    isReady: ready,
+    canWater: active && !ready && canWaterPlot(plot.lastWateredAt, now),
     growthStage: active ? getPlotGrowthStage(plot.plantedAt, plot.finishAt, now) : 0,
   };
 };
@@ -323,4 +370,5 @@ type PlotEntry = {
   image: string | null;
   cropSize: number;
   expand: number;
+  visualKey: string | null;
 };

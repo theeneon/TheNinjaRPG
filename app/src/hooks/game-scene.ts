@@ -25,6 +25,10 @@ export const useGameScene = <T extends { dispose: () => void }>(
       if (controller.signal.aborted) return;
       console.error("Game renderer failed", cause);
       setError(true);
+      setIsReady(false);
+      controller.abort();
+      scene.current?.dispose();
+      scene.current = null;
     };
     void factory.current(mount.current, controller.signal, onError).then((instance) => {
       if (controller.signal.aborted) instance.dispose();
