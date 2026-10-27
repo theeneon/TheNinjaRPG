@@ -14,7 +14,11 @@ const comparisonKey = (run: RenderMeasurementResult) => {
     run.environment.viewport,
     run.environment.devicePixelRatio,
     run.environment.buildMode,
-    run.environment.canvas,
+    {
+      width: run.environment.canvas.width,
+      cssWidth: run.environment.canvas.cssWidth,
+      cssHeight: Math.round(run.environment.canvas.cssHeight),
+    },
   ]);
 };
 
@@ -68,6 +72,42 @@ export const compareRenderingBenchmarks = (
     const limitations = example.options.simulated
       ? ["Simulated environment; not physical old-phone evidence"]
       : [];
+    const canvasDimensions = {
+      before: baseline[0]?.environment.canvas ?? null,
+      after: replacement[0]?.environment.canvas ?? null,
+    };
+    for (const runs of [baseline, replacement]) {
+      if (new Set(runs.map((run) => JSON.stringify(run.environment.canvas))).size > 1)
+        issues.push("Canvas dimensions differ between runs of the same renderer");
+    }
+    const previousCanvas = canvasDimensions.before,
+      nextCanvas = canvasDimensions.after;
+    if (
+      previousCanvas &&
+      nextCanvas &&
+      JSON.stringify(previousCanvas) !== JSON.stringify(nextCanvas)
+    ) {
+      // Canvas drawing buffers are integral: R3F floors fractional CSS heights,
+      // whereas Pixi autoDensity rounds and snaps CSS to the backing height.
+      // Permit only that exact conversion, with no decrease in rendered pixels.
+      const roundsFractionalHeight =
+        baseline.every((run) => run.renderer === "three") &&
+        replacement.every((run) => run.renderer === "pixi") &&
+        previousCanvas.width === nextCanvas.width &&
+        previousCanvas.cssWidth === nextCanvas.cssWidth &&
+        previousCanvas.height === Math.floor(previousCanvas.cssHeight) &&
+        nextCanvas.height >= previousCanvas.height &&
+        nextCanvas.height === Math.round(previousCanvas.cssHeight) &&
+        nextCanvas.cssHeight === nextCanvas.height &&
+        Math.abs(nextCanvas.cssHeight - previousCanvas.cssHeight) < 1;
+      if (roundsFractionalHeight)
+        limitations.push(
+          `Fractional canvas height rounds from ${previousCanvas.height}px backing / ${previousCanvas.cssHeight}px CSS to ${nextCanvas.height}px backing / ${nextCanvas.cssHeight}px CSS; rendered pixel count is not reduced`,
+        );
+      else issues.push("Canvas dimensions differ beyond fractional-height rounding");
+    }
+    if (typeof example.options.scenario.dynamicState === "string")
+      limitations.push(example.options.scenario.dynamicState);
 
     const metric = (
       name: string,
@@ -185,6 +225,7 @@ export const compareRenderingBenchmarks = (
       fixture: example.options.fixture,
       options: example.options,
       environment: example.environment,
+      canvasDimensions,
       beforeRevisions: [...new Set(baseline.map((run) => run.options.revision))],
       afterRevisions: [...new Set(replacement.map((run) => run.options.revision))],
       beforeRuns: beforeRuns.length,

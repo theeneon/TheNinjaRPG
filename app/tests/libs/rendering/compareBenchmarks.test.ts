@@ -37,6 +37,25 @@ describe("renderer benchmark comparison", () => {
     expect(group.issues.some((issue) => issue.includes("duplicate"))).toBe(true);
   });
 
+  it("discloses Pixi's integral height rounding without allowing fewer rendered pixels", () => {
+    const before = runs("three", 4).map((run) => ({ ...run, environment: { ...run.environment, canvas: { width: 300, cssWidth: 300, height: 194, cssHeight: 194.59375 } } }));
+    const after = runs("pixi", 1).map((run) => ({ ...run, environment: { ...run.environment, canvas: { width: 300, cssWidth: 300, height: 195, cssHeight: 195 } } }));
+    const group = compareRenderingBenchmarks(before, after).groups[0]!;
+    expect(group.comparable).toBe(true);
+    expect(group.canvasDimensions).toEqual({ before: before[0]!.environment.canvas, after: after[0]!.environment.canvas });
+    expect(group.limitations.some((message) => message.includes("rendered pixel count is not reduced"))).toBe(true);
+    const smaller = after.map((run) => ({ ...run, environment: { ...run.environment, canvas: { ...run.environment.canvas, height: 193 } } }));
+    expect(compareRenderingBenchmarks(before, smaller).comparable).toBe(false);
+  });
+
+  it("rejects mixed backing sizes even when the CSS canvas size stays fixed", () => {
+    const after = runs("pixi", 1);
+    after[0]!.environment.canvas.height--;
+    const group = compareRenderingBenchmarks(runs("three", 4), after).groups[0]!;
+    expect(group.comparable).toBe(false);
+    expect(group.issues).toContain("Canvas dimensions differ between runs of the same renderer");
+  });
+
   it("does not hide a metric that the replacement stopped reporting", () => {
     const after = runs("pixi", 1).map((run) => ({ ...run, result: { ...run.result, raw: { ...run.result.raw, stagesMs: {} } } }));
     const report = compareRenderingBenchmarks(runs("three", 4), after);
