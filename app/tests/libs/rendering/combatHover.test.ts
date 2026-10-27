@@ -3,7 +3,7 @@ import { describe, expect, it } from "bun:test";
 import {
   getHighlightTilesCacheKey,
   nextCombatHoverCursor,
-} from "@/libs/threejs/highlightTilesCache";
+} from "@/libs/rendering/combatHover";
 
 const base = {
   actionId: "move",

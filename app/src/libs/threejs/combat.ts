@@ -46,6 +46,7 @@ import {
   COMBAT_BORDER_RIGHT,
   COMBAT_BORDER_TOP,
 } from "@/libs/combat/constants";
+import { validateActionTarget } from "@/libs/combat/targetValidation";
 import type {
   CombatAction,
   GroundEffect,
@@ -54,13 +55,18 @@ import type {
   UserEffect,
 } from "@/libs/combat/types";
 import {
-  getActionAffectedTiles,
   getBattleGrid,
   getClan,
   getEffectiveCurPool,
   getFacingDirection,
   getVillage,
 } from "@/libs/combat/util";
+import {
+  type CombatHoverCursor,
+  getHighlightTilesCacheKey,
+  nextCombatHoverCursor,
+} from "@/libs/rendering/combatHover";
+import { createCombatMaxPoolCache } from "@/libs/rendering/combatMaxPools";
 import {
   calculateHexUVCoordinates,
   calculateTileOffset,
@@ -70,7 +76,6 @@ import {
 import { builtinTerrainDepression } from "@/libs/sector-map/terrains";
 import { createAggroHalo, updateAggroHalo } from "@/libs/threejs/aggroHalo";
 import { getTileInfo } from "@/libs/threejs/biome";
-import { createCombatMaxPoolCache } from "@/libs/threejs/combatMaxPools";
 import type { HexagonalFaceMesh } from "@/libs/threejs/hexgrid";
 import {
   createGroundEdges,
@@ -97,11 +102,6 @@ import { playPreloadedAudio } from "@/utils/audio";
 import type { BarrierTagType } from "@/validators/combat";
 import type { TerrainHex } from "../hexgrid";
 import { findHex, getPossibleActionTiles, PathCalculator } from "../hexgrid";
-import {
-  type CombatHoverCursor,
-  getHighlightTilesCacheKey,
-  nextCombatHoverCursor,
-} from "./highlightTilesCache";
 
 // Queue for non-movement SFX that should play after movement completes
 type PendingSfx = { url: string; volume: number };
@@ -135,82 +135,6 @@ export const resetCombatCaches = () => {
  * Used by both click handlers (for mobile compatibility) and tile highlighting.
  * Returns validation result along with computed data for reuse.
  */
-export const validateActionTarget = (info: {
-  user: ReturnedUserState;
-  battle: ReturnedBattle;
-  action: CombatAction | undefined;
-  grid: Grid<TerrainHex>;
-  target: TerrainHex;
-  timeDiff: number;
-  precomputedUserId?: string;
-  precomputedActions?: CombatAction[];
-}): {
-  isValid: boolean;
-  origin?: TerrainHex;
-  possibleTiles?: Grid<TerrainHex>;
-  greenTiles?: Set<TerrainHex>;
-  redTiles?: Set<TerrainHex>;
-} => {
-  const { user, battle, action, grid, target, timeDiff } = info;
-
-  // No action selected
-  if (!action) return { isValid: false };
-
-  // Get user's current position
-  const origin = grid.getHex({ col: user.longitude, row: user.latitude });
-  if (!origin) return { isValid: false };
-
-  // Check if user is the active actor. `user` here is the actor the human
-  // controls (self, or piloted summon on its turn — callers pass the controlled
-  // actor), and precomputedUserId is keyed to that same actor, so this correctly
-  // permits a piloted summon to target on its own turn.
-  const { actor } = calcActiveUser(battle, user.userId, timeDiff, {
-    precomputedUserId: info.precomputedUserId,
-    precomputedActions: info.precomputedActions,
-  });
-  if (actor.userId !== user.userId) return { isValid: false };
-
-  // Check if user has enough action points
-  const { canAct } = actionPointsAfterAction(user, battle, action);
-  if (!canAct) return { isValid: false };
-
-  // Check action cooldown
-  const isAvailable =
-    !action.cooldown ||
-    !action.lastUsedRound ||
-    battle.round - action.lastUsedRound >= action.cooldown;
-  if (!isAvailable) return { isValid: false };
-
-  // Get possible tiles for the action
-  const possibleTiles = getPossibleActionTiles(action, origin, grid);
-  if (!possibleTiles) return { isValid: false };
-
-  // Check if target is in possible tiles
-  const targetInPossible = possibleTiles.filter((t) => t === target).size > 0;
-  if (!targetInPossible) return { isValid: false };
-
-  // Get affected tiles (green = valid, red = invalid)
-  const { green: greenTiles, red: redTiles } = getActionAffectedTiles({
-    preview: true,
-    a: origin,
-    b: target,
-    action,
-    grid,
-    restrictGrid: possibleTiles,
-    ground: battle.groundEffects,
-    userId: user.userId,
-    users: battle.usersState,
-  });
-
-  // Target must be in green set and not in red set
-  const hasCoordinatePattern =
-    action.method === "COORDINATES" ||
-    action.effects.some((tag) => tag.target === "COORDINATES");
-  const isValid =
-    greenTiles.size > 0 && (hasCoordinatePattern || !redTiles.has(target));
-
-  return { isValid, origin, possibleTiles, greenTiles, redTiles };
-};
 
 /**
  * Creates hexagonal grid & draw it using js. Return groups of objects drawn

@@ -6,25 +6,18 @@ import {
   Sprite,
   SpriteMaterial,
   Texture,
-  Vector3,
 } from "three";
 import type { CombatBiome } from "@/drizzle/constants";
-import { ASSETS_LAYER, COMBAT_BIOMES } from "@/drizzle/constants";
-import { DECORATION_ASSETS_BY_KEY } from "@/libs/sector-map/decorations";
+import { ASSETS_LAYER } from "@/drizzle/constants";
+import {
+  getProceduralTerrain,
+  proceduralDecoration,
+} from "@/libs/rendering/proceduralBiomes";
 import type { TerrainSpec } from "@/libs/sector-map/terrains";
-import { BUILTIN_TERRAINS_BY_KEY } from "@/libs/sector-map/terrains";
 import type { GlobalTile } from "@/libs/sector-map/world-types";
 import { applyWindShader } from "@/libs/threejs/shaders";
 import { createSpriteMaterial, loadTexture } from "@/libs/threejs/util";
-import { getBiomeFromGlobalTile } from "@/libs/travel";
 import type { TerrainHex } from "../hexgrid";
-
-/** Single source of truth for scenery sprite art: the decoration registry */
-const decorationFilepath = (key: string) => {
-  const asset = DECORATION_ASSETS_BY_KEY.get(key);
-  if (!asset) throw new Error(`Unknown decoration asset ${key}`);
-  return asset.filepath;
-};
 
 /** Parse a "#rrggbb" registry color into a three.js color int */
 const hexToInt = (hex: string) => {
@@ -163,14 +156,6 @@ export const getTerrainMaterials = (spec: TerrainSpec): TerrainMaterialSet => {
   return set;
 };
 
-/** Built-in terrain materials for the combat/tower-defense arena backgrounds */
-const builtinMaterials = (key: string, lightLayout: boolean) => {
-  const spec = BUILTIN_TERRAINS_BY_KEY.get(key);
-  if (!spec) throw new Error(`Unknown built-in terrain ${key}`);
-  const set = getTerrainMaterials(spec);
-  return lightLayout ? set.lightVariants : set.variants;
-};
-
 export const roadColors = [0xa98e62, 0x9d8156, 0x8f744c] as const;
 export const roadMats = createNoisedMaterials(roadColors);
 export const roadMatsLight = createLightMaterials(roadColors);
@@ -229,65 +214,20 @@ export const getTileInfo = (
  * arenas): sprite art derives from the asset set and the tile's cost band.
  */
 export const getMapSprites = (prng: () => number, asset: string, hex: TerrainHex) => {
-  const sprites: Sprite[] = [];
-  // Fetch tile sprite
-  let cost = hex.cost;
-  const rand = prng();
-  let sprite = null;
-  let assets = null;
-  if (asset === "ground") {
-    assets = GROUND_ASSETS_PROPS;
-    cost += 1;
-  } else if (asset === "dessert") {
-    assets = DESSERT_ASSET_PROPS;
-    cost += 1;
-  } else if (asset === "ice") {
-    assets = ICE_ASSET_PROPS;
-    cost += 1;
-  } else if (asset === "snow") {
-    assets = SNOW_ASSET_PROPS;
-    cost += 1;
-  } else {
-    assets = OCEAN_ASSET_PROPS;
-    cost += 5;
-  }
-  const posibleAssets = assets?.filter((asset) => {
-    return rand < asset.chance;
-  });
-  const sortedAssets = posibleAssets.sort((a, b) =>
-    Math.abs(b.scale / 2 - hex.assetStrength + prng() / 10) <
-    Math.abs(a.scale / 2 - hex.assetStrength + prng() / 10)
-      ? 1
-      : -1,
-  );
-  const selectedAsset = sortedAssets?.[0];
-  if (selectedAsset) {
-    const scale = selectedAsset?.scale || 1;
-    const sizeVariation = selectedAsset?.scaleVariation || 0;
-    const posVariation = selectedAsset?.posVariation || 0;
-    const size = scale + sizeVariation * (prng() - 0.5);
-    const { height: h, width: w } = hex;
-    const { x, y } = hex.center;
-    const posX = -x + w / 2 + w * posVariation * (prng() - 0.5);
-    const posY = -y + (size * h) / 2 + 0.1 * h * size;
-    sprite = loadSectorAsset(
-      selectedAsset.filepath,
-      rand,
-      selectedAsset.windAffected,
-      selectedAsset.randomRotation,
-    );
-    Object.assign(sprite.scale, new Vector3(size * h, size * h, 1));
-    Object.assign(sprite.position, new Vector3(posX, posY, ASSETS_LAYER));
-
-    // Mark sprite as small if asset is small
-    sprite.userData.small = selectedAsset.small === true;
-    sprites.push(sprite);
-  }
+  const { cost, description } = proceduralDecoration(prng, asset, hex);
   hex.cost = cost;
-  // Sort so the ones with the highest y's are last
-  sprites.sort((a, b) => a.position.y - b.position.y);
-  // Return sprite
-  return sprites;
+  if (!description) return [];
+  const sprite = loadSectorAsset(
+    description.image,
+    (description.wind ?? 0) / (Math.PI * 2),
+    description.wind !== null && description.wind !== undefined,
+    false,
+  );
+  sprite.scale.set(description.size, description.size, 1);
+  sprite.position.set(description.x, description.y, ASSETS_LAYER);
+  sprite.userData.small = description.small === true;
+  sprite.userData.rotation = description.rotation ?? 0;
+  return [sprite];
 };
 
 // Performance optimization: Cache materials for wind-affected assets to allow sharing
@@ -359,266 +299,10 @@ const getMaterial = (
   tile: GlobalTile | CombatBiome,
   lightLayout = false,
 ) => {
-  // Arena backgrounds always render from the built-in terrain looks (battle
-  // backgrounds are a closed enum; creator terrains map onto them via their
-  // battleBiome field)
-  const oceanMatsToUse = builtinMaterials("ocean", lightLayout);
-  const groundMatsToUse = builtinMaterials("ground", lightLayout);
-  const dessertMatsToUse = builtinMaterials("dessert", lightLayout);
-  const iceMatsToUse = builtinMaterials("ice", lightLayout);
-  const snowMatsToUse = builtinMaterials("snow", lightLayout);
-  const biome: CombatBiome =
-    typeof tile === "object"
-      ? getBiomeFromGlobalTile(tile)
-      : COMBAT_BIOMES.find((a) => a === tile)
-        ? (tile as CombatBiome)
-        : "default";
-
-  // Handle material choice based on levels
-  switch (biome) {
-    case "ocean":
-      if (hex.level < 0.3) {
-        return { material: oceanMatsToUse[0], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.6) {
-        return { material: oceanMatsToUse[1], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.8) {
-        return { material: oceanMatsToUse[2], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.85) {
-        return { material: dessertMatsToUse[0], asset: "dessert" } as TileInfo;
-      } else if (hex.level < 0.9) {
-        return { material: dessertMatsToUse[1], asset: "dessert" } as TileInfo;
-      } else if (hex.level < 0.95) {
-        return { material: dessertMatsToUse[2], asset: "dessert" } as TileInfo;
-      } else {
-        return { material: groundMatsToUse[2], asset: "ground" } as TileInfo;
-      }
-    case "ground":
-    case "default":
-    case "arena":
-      if (hex.level < 0.05) {
-        return { material: oceanMatsToUse[0], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.1) {
-        return { material: oceanMatsToUse[1], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.15) {
-        return { material: oceanMatsToUse[2], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.2) {
-        return { material: groundMatsToUse[2], asset: "ground" } as TileInfo;
-      } else if (hex.level < 0.5) {
-        return { material: groundMatsToUse[1], asset: "ground" } as TileInfo;
-      } else if (hex.level < 0.8) {
-        return { material: groundMatsToUse[0], asset: "ground" } as TileInfo;
-      } else if (hex.level < 0.9) {
-        return { material: dessertMatsToUse[0], asset: "dessert" } as TileInfo;
-      } else if (hex.level < 0.95) {
-        return { material: dessertMatsToUse[1], asset: "dessert" } as TileInfo;
-      } else {
-        return { material: dessertMatsToUse[2], asset: "dessert" } as TileInfo;
-      }
-    case "dessert":
-      if (hex.level < 0.05) {
-        return { material: oceanMatsToUse[2], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.1) {
-        return { material: groundMatsToUse[2], asset: "ground" } as TileInfo;
-      } else if (hex.level < 0.3) {
-        return { material: dessertMatsToUse[0], asset: "dessert" } as TileInfo;
-      } else if (hex.level < 0.6) {
-        return { material: dessertMatsToUse[1], asset: "dessert" } as TileInfo;
-      } else {
-        return { material: dessertMatsToUse[2], asset: "dessert" } as TileInfo;
-      }
-    case "ice":
-    case "snow":
-      if (hex.level < 0.05) {
-        return { material: oceanMatsToUse[2], asset: "ocean" } as TileInfo;
-      } else if (hex.level < 0.1) {
-        return { material: iceMatsToUse[0], asset: "ice" } as TileInfo;
-      } else if (hex.level < 0.2) {
-        return { material: iceMatsToUse[1], asset: "ice" } as TileInfo;
-      } else if (hex.level < 0.25) {
-        return { material: iceMatsToUse[2], asset: "ice" } as TileInfo;
-      } else if (hex.level < 0.3) {
-        return { material: snowMatsToUse[0], asset: "snow" } as TileInfo;
-      } else if (hex.level < 0.6) {
-        return { material: snowMatsToUse[1], asset: "snow" } as TileInfo;
-      } else {
-        return { material: snowMatsToUse[2], asset: "snow" } as TileInfo;
-      }
-  }
+  const { spec, variant } = getProceduralTerrain(hex, tile);
+  const materials = getTerrainMaterials(spec);
+  return {
+    material: (lightLayout ? materials.lightVariants : materials.variants)[variant],
+    asset: spec.key,
+  } as TileInfo;
 };
-
-export type AssetType = {
-  filepath: string;
-  chance: number;
-  scale: number;
-  scaleVariation?: number;
-  posVariation?: number;
-  windAffected?: boolean;
-  small?: true;
-  randomRotation?: boolean;
-};
-
-// Ground assets settings default
-export const GROUND_ASSETS_PROPS: AssetType[] = [
-  // Small assets
-  {
-    filepath: decorationFilepath("grass.tuft"),
-    chance: 0.5,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: true,
-    small: true,
-  },
-  {
-    filepath: decorationFilepath("grass.sprout"),
-    chance: 0.3,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: true,
-    small: true,
-  },
-  {
-    filepath: decorationFilepath("grass.flower"),
-    chance: 0.1,
-    scale: 0.7,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: true,
-    small: true,
-  },
-  {
-    filepath: decorationFilepath("grass.pebble"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: false,
-    small: true,
-  },
-  // Green Trees
-  {
-    filepath: decorationFilepath("tree.green.round"),
-    chance: 0.7,
-    scale: 2,
-    scaleVariation: 0.7,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-  {
-    filepath: decorationFilepath("tree.green.tall"),
-    chance: 0.7,
-    scale: 2,
-    scaleVariation: 0.7,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-  {
-    filepath: decorationFilepath("tree.green.wide"),
-    chance: 0.5,
-    scale: 2,
-    scaleVariation: 0.7,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-];
-
-// Dessert assets settings default
-export const DESSERT_ASSET_PROPS: AssetType[] = [
-  // Cactus
-  {
-    filepath: decorationFilepath("cactus.saguaro"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-  {
-    filepath: decorationFilepath("cactus.barrel"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-  {
-    filepath: decorationFilepath("cactus.cluster"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-  // Stones
-  {
-    filepath: decorationFilepath("rock.sand"),
-    chance: 0.2,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    small: true,
-  },
-  {
-    filepath: decorationFilepath("rock.grey"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    small: true,
-  },
-  {
-    filepath: decorationFilepath("rock.slate"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    small: true,
-  },
-];
-
-// Dessert assets settings default
-export const ICE_ASSET_PROPS: AssetType[] = [
-  {
-    filepath: decorationFilepath("ice.floe"),
-    chance: 0.1,
-    scale: 0.9,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    small: true,
-    randomRotation: true,
-  },
-];
-
-// Dessert assets settings default
-export const SNOW_ASSET_PROPS: AssetType[] = [
-  // Stones
-  {
-    filepath: decorationFilepath("rock.grey"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    small: true,
-  },
-  {
-    filepath: decorationFilepath("rock.slate"),
-    chance: 0.1,
-    scale: 1,
-    scaleVariation: 0.2,
-    posVariation: 0.25,
-    small: true,
-  },
-  // Green Trees
-  {
-    filepath: decorationFilepath("tree.snow.pine"),
-    chance: 0.4,
-    scale: 2,
-    scaleVariation: 0.7,
-    posVariation: 0.25,
-    windAffected: true,
-  },
-];
-
-// Ocean assets settings default
-export const OCEAN_ASSET_PROPS: AssetType[] = [];

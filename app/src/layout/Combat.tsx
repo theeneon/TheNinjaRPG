@@ -45,6 +45,7 @@ import {
 } from "@/libs/combat/actions";
 import { getAggroDisplay } from "@/libs/combat/aggroDisplay";
 import { COMBAT_LOBBY_SECONDS, COMBAT_SECONDS } from "@/libs/combat/constants";
+import { validateActionTarget } from "@/libs/combat/targetValidation";
 import type { BattleState, CombatAction, ReturnedBattle } from "@/libs/combat/types";
 import { combatProfilePatch } from "@/libs/combat/userCache";
 import {
@@ -67,7 +68,6 @@ import {
   highlightTooltips,
   highlightUsers,
   resetCombatCaches,
-  validateActionTarget,
 } from "@/libs/threejs/combat";
 import type { CachedIntersections } from "@/libs/threejs/input";
 import { OrbitControls } from "@/libs/threejs/OrbitControls";
