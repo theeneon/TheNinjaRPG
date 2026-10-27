@@ -4,7 +4,7 @@ import type { GameAsset } from "@/drizzle/schema";
 import { stillInBattle } from "@/libs/combat/actions";
 import type { GroundEffect, ReturnedBattle, UserEffect } from "@/libs/combat/types";
 import type { TerrainHex } from "@/libs/hexgrid";
-import { assetAnimationClip } from "@/libs/rendering/animation";
+import { assetAnimationClip, EFFECT_ANIMATION_SIZE } from "@/libs/rendering/animation";
 import { createSpriteClip } from "@/libs/rendering/primitives/animation";
 import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
 import { createStatusMeter } from "@/libs/rendering/primitives/statusMeter";
@@ -107,7 +107,7 @@ export const createCombatEffects = (
             animationScope,
             assetAnimationClip(asset, loop),
             {
-              size: 50,
+              size: EFFECT_ANIMATION_SIZE,
             },
           );
           if (scope.isDisposed()) return;

@@ -311,6 +311,15 @@ export const createCombatActors = (
     animate,
     hit,
     ready: () => Promise.all([...pending]),
+    snap: () => {
+      for (const record of records.values()) {
+        record.tile = record.target;
+        record.path = [];
+        record.pathIndex = 0;
+        record.root.position.set(-record.target.center.x, -record.target.center.y);
+      }
+      needsSort = true;
+    },
     count: () => records.size,
     position: (id: string) => records.get(id)?.root.position,
   };

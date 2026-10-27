@@ -23,6 +23,7 @@ export const createGameRenderer = async (options: {
   scene: RenderScene;
   signal: AbortSignal;
   height: (width: number) => number;
+  width?: number;
   background?: number;
   backgroundAlpha?: number;
   onError: (error: unknown) => void;
@@ -30,7 +31,7 @@ export const createGameRenderer = async (options: {
   const { mount, signal, scene } = options;
   const renderer = new WebGLRenderer();
   try {
-    const width = Math.max(1, mount.clientWidth);
+    const width = Math.max(1, options.width ?? mount.clientWidth);
     await renderer.init({
       width,
       height: options.height(width),
@@ -120,7 +121,7 @@ export const createGameRenderer = async (options: {
   });
   observer.observe(canvas);
   const resizeObserver = new ResizeObserver(() => {
-    const width = Math.max(1, mount.clientWidth);
+    const width = Math.max(1, options.width ?? mount.clientWidth);
     const height = options.height(width);
     if (width === renderer.width && height === renderer.height) return;
     renderer.resize(width, height);

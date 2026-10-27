@@ -11,18 +11,24 @@ import { getBattlefieldHeightRatio } from "@/libs/combat/util";
 import { getPossibleActionTiles, type TerrainHex } from "@/libs/hexgrid";
 import { getBackgroundColor } from "@/libs/rendering/biomes";
 import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
+import {
+  type CombatHoverCursor,
+  getHighlightTilesCacheKey,
+  nextCombatHoverCursor,
+} from "@/libs/rendering/combatHover";
 import { createMapControls } from "@/libs/rendering/mapControls";
 import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
 import {
   createHexTerrain,
   type TerrainTint,
 } from "@/libs/rendering/primitives/terrain";
-import { createGameRenderer } from "@/libs/rendering/runtime";
+import { createGameRenderer, type GameFrame } from "@/libs/rendering/runtime";
 import { createCombatActors } from "@/libs/rendering/scenes/combatActors";
 import { createCombatEffects } from "@/libs/rendering/scenes/combatEffects";
 import { prepareCombatTerrain } from "@/libs/rendering/scenes/combatTerrain";
 import { createRenderScope } from "@/libs/rendering/scope";
 import { hexTerrainAt } from "@/libs/rendering/terrainData";
+import type { RenderScene } from "@/validators/renderingBenchmark";
 
 /** Renders the active battle through shared terrain, fighter, effect and targeting primitives. */
 export const createCombatScene = async (options: {
@@ -37,12 +43,21 @@ export const createCombatScene = async (options: {
   initialZoom: number;
   lightLayout: boolean;
   seed?: string;
+  scene?: RenderScene;
+  viewport?: { width: number; magnify?: number };
+  focus?: { x: number; y: number };
+  showInitialAppearance?: boolean;
+  staticActors?: boolean;
+  advance?: (deltaMs: number) => number;
 }) => {
   const initial = options.getSnapshot(),
     ratio = getBattlefieldHeightRatio(initial.battle.width, initial.battle.height);
   const game = await createGameRenderer({
     ...options,
-    scene: "combat",
+    scene: options.scene ?? "combat",
+    width: options.viewport
+      ? options.viewport.width * (options.viewport.magnify ?? 1)
+      : undefined,
     height: (width) => width * ratio,
     background: getBackgroundColor(initial.battle.background).color,
     backgroundAlpha: 0.5,
@@ -56,7 +71,7 @@ export const createCombatScene = async (options: {
         .filter((asset) => textureIds.has(asset.id) && asset.image)
         .map((asset) => preloads.assets.texture(asset.image)),
     ).then(() => preloads.dispose());
-    const width = game.renderer.width;
+    const width = options.viewport?.width ?? game.renderer.width;
     const data = prepareCombatTerrain(
       width,
       initial.battle,
@@ -101,7 +116,7 @@ export const createCombatScene = async (options: {
     );
     game.stage.addChild(world);
     let zoom = Math.max(1, Math.min(3, options.initialZoom));
-    let camera = { x: width / 2, y: (width * ratio) / 2 };
+    let camera = options.focus ?? { x: width / 2, y: (width * ratio) / 2 };
     let clock = 0,
       dirty = true,
       initialized = false,
@@ -110,6 +125,7 @@ export const createCombatScene = async (options: {
     let previous: CombatSceneSnapshot | null = null,
       highlightKey = "",
       hoverKey = "";
+    let desiredCursor: CombatHoverCursor = "default";
     let zoomTimer: ReturnType<typeof setTimeout> | null = null;
     const scale = () => (game.renderer.width / width) * zoom;
     const transform = () => {
@@ -178,7 +194,7 @@ export const createCombatScene = async (options: {
       if (known)
         effectsReady = effects.sync(
           { ...snapshot, sound: snapshot.active && snapshot.sound },
-          isInitial,
+          isInitial && !options.showInitialAppearance,
         );
       dirty = false;
       previous = snapshot;
@@ -208,7 +224,20 @@ export const createCombatScene = async (options: {
         !!user &&
         active?.userId === user.userId &&
         actionPointsAfterAction(user, snapshot.battle, action).canAct;
-      const key = `${snapshot.battle.version}:${snapshot.userId}:${action?.id}:${canUse}:${hovered?.col},${hovered?.row}:${scale()}`;
+      const key =
+        getHighlightTilesCacheKey({
+          actionId: action?.id,
+          battleVersion: snapshot.battle.version,
+          userId: snapshot.userId,
+          longitude: user?.longitude ?? 0,
+          latitude: user?.latitude ?? 0,
+          canUseTile: canUse,
+          hoverTileName: hovered?.name ?? "",
+        }) + JSON.stringify([snapshot.revision ?? 0, scale()]);
+      game.canvas.style.cursor = nextCombatHoverCursor(
+        desiredCursor,
+        document.body.style.cursor,
+      );
       if (key === highlightKey) return;
       highlightKey = key;
       outlines.clear();
@@ -219,6 +248,12 @@ export const createCombatScene = async (options: {
           .poly(tile.corners.flatMap((corner) => [corner.x, corner.y + offset]))
           .stroke({ color, width: 1 / scale() });
       };
+      if (snapshot.targetTiles) {
+        for (const tile of snapshot.targetTiles)
+          tints.set(`${tile.col},${tile.row}`, { color: "#00ff64", strength: 0.8 });
+        terrain.setTints(tints);
+        return;
+      }
       const origin =
         user && data.grid.getHex({ col: user.longitude, row: user.latitude });
       if (canUse && origin)
@@ -254,12 +289,23 @@ export const createCombatScene = async (options: {
         }
       }
       terrain.setTints(tints);
-      game.canvas.style.cursor = valid ? "pointer" : "default";
+      desiredCursor = valid ? "pointer" : "default";
+      game.canvas.style.cursor = nextCombatHoverCursor(
+        desiredCursor,
+        document.body.style.cursor,
+      );
     };
-    game.setUpdate((frame) => {
+    const updateFrame = (frame: GameFrame, capture = false) => {
       if (!initialized) return;
       const snapshot = options.getSnapshot();
-      clock += frame.delta * 1000;
+      clock =
+        !capture && options.advance
+          ? options.advance(frame.delta * 1000)
+          : clock + frame.delta * 1000;
+      if (options.advance || capture) {
+        game.animation.uniforms.uTime = frame.reducedMotion ? 0 : clock / 1000;
+        game.animation.update();
+      }
       if (
         dirty ||
         !previous ||
@@ -288,9 +334,10 @@ export const createCombatScene = async (options: {
             user.curHealth > 0 &&
             !user.fledBattle,
         )?.userId;
+      if (options.staticActors) actors.snap();
       const moving = actors.animate(frame, snapshot.userId, hoverUser);
       effects.animate(clock, frame.reducedMotion, moving, effect?.id ?? null);
-      if (zoom > 1.5) {
+      if (zoom > 1.5 && !options.focus) {
         const user = snapshot.battle.usersState.find(
           (user) => user.userId === snapshot.userId,
         );
@@ -337,13 +384,23 @@ export const createCombatScene = async (options: {
       recordRenderCounter("combat_users", actors.count());
       recordRenderCounter("combat_effects", effects.count());
       game.setAnimating(snapshot.active);
-    });
+    };
+    game.setUpdate(updateFrame);
     game.setAnimating(initial.active);
     game.invalidate();
     return {
       dispose: game.dispose,
       grid: data.grid,
       canvas: game.canvas,
+      renderAt: async (timeMs: number) => {
+        if (game.isDisposed()) return;
+        clock = Math.max(0, timeMs);
+        sync(options.getSnapshot(), !rendered);
+        await Promise.all([actors.ready(), effectsReady]);
+        if (game.isDisposed()) return;
+        updateFrame({ now: clock, delta: 0, reducedMotion: false }, true);
+        game.renderer.render({ container: game.stage });
+      },
       refresh: () => {
         dirty = true;
         game.invalidate();
@@ -376,4 +433,5 @@ export type CombatSceneSnapshot = {
   showGridNumbers: boolean;
   inspect: boolean;
   revision?: number;
+  targetTiles?: TerrainHex[];
 };

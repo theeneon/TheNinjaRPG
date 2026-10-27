@@ -5,6 +5,7 @@ export const renderSceneSchema = z.enum([
   "sector",
   "sectorPreview",
   "combat",
+  "battlefieldPreview",
   "farm",
   "towerDefense",
 ]);

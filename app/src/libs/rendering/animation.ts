@@ -69,3 +69,6 @@ export type AnimationClip = {
   frameDurationMs: number;
   loop: boolean;
 };
+
+/** Effect sheets keep their authored battlefield size independently of hex dimensions. */
+export const EFFECT_ANIMATION_SIZE = 50;

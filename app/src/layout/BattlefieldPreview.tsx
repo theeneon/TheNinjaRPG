@@ -22,12 +22,12 @@ import {
   sceneAssetIds,
   sceneSoundIds,
 } from "@/libs/contentReview/battlefield";
+import { EFFECT_ANIMATION_SIZE } from "@/libs/rendering/animation";
 import {
   createBattlefieldPreview,
   type BattlefieldPreview as FieldPreview,
   previewHexWidth,
-} from "@/libs/threejs/battlefieldPreview";
-import { EFFECT_ANIMATION_SIZE } from "@/libs/threejs/combat";
+} from "@/libs/rendering/scenes/battlefieldPreview";
 
 interface BattlefieldPreviewProps {
   entityType: ContentProposalEntityType;
@@ -71,34 +71,53 @@ export const BattlefieldPreview: React.FC<BattlefieldPreviewProps> = (props) => 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount || !isReady) return;
-    const preview = createBattlefieldPreview({
+    const controller = new AbortController();
+    let disposed = false;
+    let preview: FieldPreview | null = null;
+    let observer: IntersectionObserver | null = null;
+    setIsUnsupported(false);
+    void createBattlefieldPreview({
+      signal: controller.signal,
       scene: JSON.parse(signature),
       assets: assets ?? [],
       viewport,
       background,
       zoom,
       sounds: JSON.parse(soundSignature),
-    });
-    if (!preview) {
-      setIsUnsupported(true);
-      return;
-    }
-    // Never wider than a player's screen shows it, and narrower only when the panel is.
-    preview.canvas.style.width = "100%";
-    preview.canvas.style.height = "auto";
-    preview.canvas.style.maxWidth = `${preview.width}px`;
-    mount.appendChild(preview.canvas);
-    previewRef.current = preview;
-    if (isSoundOnRef.current) preview.setSound(true);
-    // Animate only while the field is on screen.
-    const observer = new IntersectionObserver(([entry]) =>
-      entry?.isIntersecting ? preview.play() : preview.pause(),
-    );
-    observer.observe(mount);
+    })
+      .then((instance) => {
+        if (disposed) {
+          instance?.dispose();
+          return;
+        }
+        if (!instance) {
+          setIsUnsupported(true);
+          return;
+        }
+        preview = instance;
+        preview.canvas.style.width = "100%";
+        preview.canvas.style.height = "auto";
+        preview.canvas.style.maxWidth = `${preview.width}px`;
+        mount.appendChild(preview.canvas);
+        previewRef.current = preview;
+        if (isSoundOnRef.current) preview.setSound(true);
+        observer = new IntersectionObserver(([entry]) =>
+          entry?.isIntersecting ? instance.play() : instance.pause(),
+        );
+        observer.observe(mount);
+      })
+      .catch((error: unknown) => {
+        if (!disposed) {
+          console.error("Battlefield preview failed", error);
+          setIsUnsupported(true);
+        }
+      });
     return () => {
-      observer.disconnect();
-      previewRef.current = null;
-      preview.dispose();
+      disposed = true;
+      controller.abort();
+      observer?.disconnect();
+      if (previewRef.current === preview) previewRef.current = null;
+      preview?.dispose();
     };
   }, [signature, soundSignature, isReady, assets, viewport, background, zoom]);
 
