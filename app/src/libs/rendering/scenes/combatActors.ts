@@ -25,6 +25,7 @@ import { createStatusMeter } from "@/libs/rendering/primitives/statusMeter";
 import type { GameFrame, GameRenderer } from "@/libs/rendering/runtime";
 import { createRenderScope } from "@/libs/rendering/scope";
 import type { WorldSpriteDescription } from "@/libs/rendering/sectorSprites";
+import { isObjectChainVisible } from "@/libs/rendering/visibility";
 
 /** Scene-owned fighters keep art, interpolation and display values outside battle state. */
 export const createCombatActors = (
@@ -293,7 +294,7 @@ export const createCombatActors = (
       const record = root ? records.get(root.label) : undefined;
       if (!record) continue;
       for (const entry of record.art?.entries ?? []) {
-        if (!entry.sprite.visible) continue;
+        if (!isObjectChainVisible(entry.sprite)) continue;
         const bounds = entry.sprite.getBounds();
         if (
           x >= bounds.minX &&

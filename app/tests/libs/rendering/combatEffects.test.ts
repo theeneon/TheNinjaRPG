@@ -5,7 +5,8 @@ import type { GroundEffect, ReturnedBattle } from "@/libs/combat/types";
 import { getBattleGrid } from "@/libs/combat/util";
 import type { GameRenderer } from "@/libs/rendering/runtime";
 import { createCombatEffects } from "@/libs/rendering/scenes/combatEffects";
-import { makeCompleteBattle } from "../combat/helpers/battleScenario";
+import { applyEffects, expireGroundEffects } from "@/libs/combat/process";
+import { makeBattleUser, makeDamageEffect, makeEffect, makeCompleteBattle } from "../combat/helpers/battleScenario";
 
 let sequence = 0;
 const scopes: (() => void)[] = [];
@@ -90,5 +91,37 @@ describe("Pixi combat effects", () => {
     await scene.effects.sync(scene.snapshot);
     scene.effects.animate(100, false, false, null);
     expect(scene.play).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("authoritative combat effect transitions", () => {
+  it("plays one disappearance when actual combat damage depletes a retained shield", async () => {
+    const scene = setup();
+    const shield = makeEffect("shield", { power: 1, health: 1, rounds: 5, staticAnimation: "animation", disappearSfx: "disappear" }, { id: "shield", creatorId: "defender", targetId: "defender", targetType: "user", isNew: false, createdRound: 0 });
+    const battle = makeCompleteBattle({ round: 2, usersState: [makeBattleUser("attacker", { longitude: 3, latitude: 1 }), makeBattleUser("defender", { longitude: 4, latitude: 1 })], usersEffects: [shield, makeDamageEffect({ power: 100, calculation: "static", creatorId: "attacker", targetId: "defender", targetType: "user", isNew: true, createdRound: 2, rounds: 0 })] });
+    scene.snapshot.battle = battle as unknown as ReturnedBattle;
+    await scene.effects.sync(scene.snapshot, true); scene.effects.animate(0, false, false, null);
+    const root = scene.effects.container.children[0];
+    if (!root) throw new Error("Shield was not rendered");
+    const { newBattle } = applyEffects(battle, "attacker");
+    expect(newBattle.usersEffects.find((effect) => effect.id === shield.id)).toMatchObject({ power: 0, rounds: 5, disappearSfx: "disappear" });
+    scene.snapshot.battle = newBattle as unknown as ReturnedBattle;
+    await scene.effects.sync(scene.snapshot);
+    for (let frame = 1; frame <= 60; frame++) scene.effects.animate(frame, false, false, null);
+    expect(scene.effects.container.children).toEqual([root]); expect(root?.visible).toBe(false);
+    expect(scene.play.mock.calls).toEqual([["disappear.wav", 0.4]]);
+  });
+  it("renders the disappearance visual created by authoritative ground-effect expiry once", async () => {
+    const scene = setup();
+    const battle = makeCompleteBattle({ round: 2, groundEffects: [makeEffect("shield", { power: 1, health: 1, rounds: 1, disappearAnimation: "animation", disappearSfx: "disappear" }, { longitude: 3, latitude: 1, targetType: "barrier", isNew: false })] });
+    battle.groundEffects[0]!.rounds = 0;
+    expireGroundEffects(battle, []);
+    scene.snapshot.battle = battle as unknown as ReturnedBattle;
+    await scene.effects.sync(scene.snapshot); scene.effects.animate(0, false, false, null);
+    expect(scene.effects.container.children).toHaveLength(1);
+    expect(scene.effects.container.children[0]?.visible).toBe(true);
+    for (let frame = 1; frame <= 60; frame++) scene.effects.animate(frame, false, false, null);
+    expect(scene.play.mock.calls).toEqual([["disappear.wav", 0.4]]);
   });
 });

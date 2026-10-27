@@ -34,14 +34,6 @@ export type ActivityStreakType = (typeof ActivityStreakTypes)[number];
 export const TRADEABLE_CURRENCY_TYPES = ["MONEY", "REPUTATION"] as const;
 export type TradeableCurrencyType = (typeof TRADEABLE_CURRENCY_TYPES)[number];
 
-// Threejs drawing layers
-export const STATUS_LAYER = -3;
-export const USER_LAYER = -4;
-export const ASSETS_LAYER = -5;
-export const EFFECTS_LAYER = -6;
-export const TILES_LAYER = -9;
-export const DIRT_LAYER = -10;
-
 // Occupation config
 export const OCCUPATION_CHANGE_COOLDOWN_DAYS = 3;
 

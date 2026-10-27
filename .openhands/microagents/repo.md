@@ -14,7 +14,7 @@ This project is **TheNinja-RPG**, a browser-based RPG game built with Next.js 15
 - **API**: tRPC for type-safe API endpoints
 - **Authentication**: Clerk
 - **State Management**: Jotai for client state
-- **3D Graphics**: Three.js with React Three Fiber
+- **Game Graphics**: PixiJS with shared rendering and scene controllers
 - **Package Manager**: Bun
 
 # Setup Instructions
@@ -82,7 +82,7 @@ The combat system is the most complex feature with dedicated organization:
 - `/app/src/libs/combat/util.ts` - Utility functions for combat
 - `/app/src/libs/combat/database.ts` - Database operations for combat
 - `/app/src/libs/combat/ai_v2.ts` - AI behavior logic (rule-based system)
-- `/app/src/libs/combat/drawing.ts` - Three.js rendering for combat visuals
+- `/app/src/libs/rendering/scenes/combat.ts` - PixiJS rendering for combat visuals
 
 # Development Guidelines
 

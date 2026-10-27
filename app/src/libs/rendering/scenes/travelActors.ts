@@ -21,6 +21,7 @@ import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
 import type { GameFrame, GameRenderer } from "@/libs/rendering/runtime";
 import { createRenderScope } from "@/libs/rendering/scope";
 import type { WorldSpriteDescription } from "@/libs/rendering/sectorSprites";
+import { isObjectChainVisible } from "@/libs/rendering/visibility";
 import type { SectorUser } from "@/libs/sector-map/world-types";
 import { hasRequiredRank } from "@/libs/train";
 import type { UserWithRelations } from "@/routers/profile";
@@ -144,7 +145,7 @@ export const createTravelActors = (game: GameRenderer) => {
       if (!record?.art) continue;
       for (let j = record.art.entries.length - 1; j >= 0; j--) {
         const entry = record.art.entries[j];
-        if (!entry?.sprite.visible) continue;
+        if (!entry || !isObjectChainVisible(entry.sprite)) continue;
         const bounds = entry.sprite.getBounds();
         if (x < bounds.minX || x > bounds.maxX || y < bounds.minY || y > bounds.maxY)
           continue;

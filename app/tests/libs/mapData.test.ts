@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { fetchMap } from "@/libs/sector-map/topology";
 import type { GlobalMapData } from "@/libs/sector-map/world-types";
-import { ensureDom } from "../../setup/dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const cacheKey = "hexasphere_map_cache";
 const cacheVersion = "v21-horizon-near-wake";

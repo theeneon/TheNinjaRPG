@@ -12,7 +12,7 @@ const sceneCanvases = new Map<
 export const registerRenderCanvas = (
   scene: string,
   canvas: HTMLCanvasElement,
-  renderer: "three" | "pixi" = "three",
+  renderer: "three" | "pixi" = "pixi",
 ) => {
   sceneCanvases.set(scene, { canvas, renderer });
   return () => {

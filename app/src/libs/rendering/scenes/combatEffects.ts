@@ -10,6 +10,7 @@ import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
 import { createStatusMeter } from "@/libs/rendering/primitives/statusMeter";
 import type { GameRenderer } from "@/libs/rendering/runtime";
 import { createRenderScope } from "@/libs/rendering/scope";
+import { isObjectChainVisible } from "@/libs/rendering/visibility";
 import type { BarrierTagType } from "@/validators/combat";
 
 /** Effects keep identity through hidden/depleted states and retire their animation leases on expiry. */
@@ -211,7 +212,7 @@ export const createCombatEffects = (
     for (let index = container.children.length - 1; index >= 0; index--) {
       const root = container.children[index],
         record = root && records.get(root.label);
-      if (!record?.root.visible) continue;
+      if (!record || !isObjectChainVisible(record.root)) continue;
       const bounds = record.root.getBounds();
       if (x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY)
         return { id: record.effect.id, tile: record.tile };

@@ -120,11 +120,7 @@ export const calculateTileOffset = (
 
   if (!lightLayout && depression > 0) {
     offsetLength = -length * depression;
-    // Keep depressed faces strictly in FRONT of the dirt "ground below"
-    // (DIRT_LAYER is one unit behind TILES_LAYER). At -1 the face sat exactly
-    // on the dirt plane, so across sector wrappers a neighbour's edge dirt
-    // could draw over adjacent water - a tan band at every water-water border.
-    // This is a draw-order/z tweak only; the visual recess is offsetLength.
+    // Sort recessed faces above the underlying dirt; the Y offset creates depth.
     offsetLayer = -0.5;
   }
 

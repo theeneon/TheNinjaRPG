@@ -5,12 +5,12 @@ import { ID_SFX_MOVE } from "@/drizzle/constants";
 import type { GameAsset, UserData } from "@/drizzle/schema";
 import { actionPointsAfterAction, calcActiveUser } from "@/libs/combat/actions";
 import type { AggroDisplay } from "@/libs/combat/aggroDisplay";
-import { validateActionTarget } from "@/libs/combat/targetValidation";
 import type { CombatAction, ReturnedBattle } from "@/libs/combat/types";
 import { getBattlefieldHeightRatio } from "@/libs/combat/util";
-import { getPossibleActionTiles, type TerrainHex } from "@/libs/hexgrid";
+import type { TerrainHex } from "@/libs/hexgrid";
 import { getBackgroundColor } from "@/libs/rendering/biomes";
 import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
+import { combatHighlightPlan } from "@/libs/rendering/combatHighlights";
 import {
   type CombatHoverCursor,
   getHighlightTilesCacheKey,
@@ -18,10 +18,7 @@ import {
 } from "@/libs/rendering/combatHover";
 import { createMapControls } from "@/libs/rendering/mapControls";
 import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
-import {
-  createHexTerrain,
-  type TerrainTint,
-} from "@/libs/rendering/primitives/terrain";
+import { createHexTerrain } from "@/libs/rendering/primitives/terrain";
 import { createGameRenderer, type GameFrame } from "@/libs/rendering/runtime";
 import { createCombatActors } from "@/libs/rendering/scenes/combatActors";
 import { createCombatEffects } from "@/libs/rendering/scenes/combatEffects";
@@ -241,55 +238,25 @@ export const createCombatScene = async (options: {
       if (key === highlightKey) return;
       highlightKey = key;
       outlines.clear();
-      const tints = new Map<string, TerrainTint>();
-      const edge = (tile: TerrainHex, color: number) => {
+      const plan = combatHighlightPlan({
+        grid: data.grid,
+        battle: snapshot.battle,
+        user,
+        action,
+        actions: snapshot.actions,
+        hovered,
+        canUse,
+        timeDiff: snapshot.timeDiff,
+        targetTiles: snapshot.targetTiles,
+      });
+      for (const { tile, color } of plan.edges) {
         const offset = data.terrain.faceOffsets.get(`${tile.col},${tile.row}`) ?? 0;
         outlines
           .poly(tile.corners.flatMap((corner) => [corner.x, corner.y + offset]))
           .stroke({ color, width: 1 / scale() });
-      };
-      if (snapshot.targetTiles) {
-        for (const tile of snapshot.targetTiles)
-          tints.set(`${tile.col},${tile.row}`, { color: "#00ff64", strength: 0.8 });
-        terrain.setTints(tints);
-        return;
       }
-      const origin =
-        user && data.grid.getHex({ col: user.longitude, row: user.latitude });
-      if (canUse && origin)
-        for (const tile of getPossibleActionTiles(action, origin, data.grid) ?? []) {
-          tints.set(`${tile.col},${tile.row}`, { color: "#505050", strength: 0.7 });
-          edge(tile, 0x64b4ff);
-        }
-      let valid = false;
-      if (canUse && user && hovered && action) {
-        const result = validateActionTarget({
-          user,
-          battle: snapshot.battle,
-          action,
-          target: hovered,
-          grid: data.grid,
-          timeDiff: snapshot.timeDiff,
-          precomputedUserId: user.userId,
-          precomputedActions: snapshot.actions,
-        });
-        valid = result.isValid;
-        for (const tile of result.greenTiles ?? []) {
-          const move =
-            action.effects.some((effect) => effect.type === "move") && tile === hovered;
-          tints.set(`${tile.col},${tile.row}`, {
-            color: move ? "#0096ff" : "#00ff64",
-            strength: 0.8,
-          });
-          edge(tile, move ? 0x0096ff : 0x00ff64);
-        }
-        for (const tile of result.redTiles ?? []) {
-          tints.set(`${tile.col},${tile.row}`, { color: "#ff3232", strength: 0.2 });
-          edge(tile, 0xff5050);
-        }
-      }
-      terrain.setTints(tints);
-      desiredCursor = valid ? "pointer" : "default";
+      terrain.setTints(plan.tints);
+      desiredCursor = plan.valid ? "pointer" : "default";
       game.canvas.style.cursor = nextCombatHoverCursor(
         desiredCursor,
         document.body.style.cursor,

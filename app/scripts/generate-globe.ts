@@ -204,7 +204,7 @@ const visualColorAt = (point: Vec3, landScore: number): number => {
   const water: Rgb = [63, 158, 217];
   const grass: Rgb = [60, 193, 100];
   const desert: Rgb = [231, 205, 137];
-  // Keep snow below display-white so relief survives three.js' linear-to-sRGB
+  // Keep snow below display-white so relief survives the linear-to-sRGB
   // conversion instead of clipping into a featureless white surface.
   const ice: Rgb = [218, 235, 240];
   const desertWeight =

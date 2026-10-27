@@ -47,7 +47,7 @@ import TowerDefenseUpgrades from "@/layout/TowerDefenseUpgrades";
 import { getFirstOfNextMonth } from "@/utils/time";
 import { useUserData } from "@/utils/UserContext";
 
-// Dynamically import the ThreeJS component
+// Load the game renderer only when the tower-defense page is opened
 const TowerDefenseCanvas = dynamic(() => import("@/layout/TowerDefense"), {
   ssr: false,
   loading: () => (

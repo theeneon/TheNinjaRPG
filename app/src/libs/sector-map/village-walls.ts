@@ -171,7 +171,7 @@ const buildConvexInterior = (
 };
 
 /**
- * Asset axes are named in screen space. The Three.js camera renders increasing
+ * Asset axes are named in screen space. The map camera renders increasing
  * world Y upward, so the two diagonal groups are the inverse of their odd-q
  * world-coordinate slopes.
  */

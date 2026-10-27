@@ -19,7 +19,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     ///
     /// JavaScript errors already reach Sentry through `@sentry/nextjs` running in the
     /// WebView; this covers what that cannot see — Swift crashes, and the memory
-    /// terminations the three.js scenes are the likeliest cause of.
+    /// terminations caused by WebView memory pressure.
     ///
     /// Guarded on `canImport` so a project whose Sentry package has not been resolved
     /// still builds. The DSN is public by design: it identifies the project and nothing
