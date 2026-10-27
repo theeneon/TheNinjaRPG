@@ -4,7 +4,12 @@ import { textureImageUrl } from "@/utils/image";
 
 const IDLE_TEXTURE_BUDGET = 16 * 1024 * 1024;
 const textures = createLeaseCache<Texture>({
-  load: (url) => Assets.load<Texture>({ src: url, parser: "loadTextures" }),
+  load: (url) =>
+    Assets.load<Texture>({
+      src: url,
+      parser: "loadTextures",
+      data: { scaleMode: url.endsWith("#tnr-nearest") ? "nearest" : "linear" },
+    }),
   unload: (url) => Assets.unload(url),
   bytes: (texture) => texture.source.pixelWidth * texture.source.pixelHeight * 4,
   idleBudget: IDLE_TEXTURE_BUDGET,
@@ -15,9 +20,12 @@ export const createSceneAssets = () => {
   const owned = new Map<string, ReturnType<typeof textures.acquire>>();
   let disposed = false;
   return {
-    texture: (path: string, width = 50) => {
+    texture: (path: string, width = 50, sampling: "linear" | "nearest" = "linear") => {
       if (disposed) return Promise.reject(new Error("Scene assets are disposed"));
-      const url = textureImageUrl(path, width);
+      const source = textureImageUrl(path, width);
+      // Sampling is immutable for a shared source; nearest art owns a separate decoded source.
+      const url =
+        sampling === "nearest" ? `${source.split("#")[0]}#tnr-nearest` : source;
       const existing = owned.get(url);
       if (existing) return existing.resource;
       const entry = textures.acquire(url);

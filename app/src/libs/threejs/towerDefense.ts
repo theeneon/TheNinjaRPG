@@ -29,6 +29,12 @@ import {
   TILES_LAYER,
   USER_LAYER,
 } from "@/drizzle/constants";
+import {
+  calculateHexUVCoordinates,
+  calculateTileOffset,
+  createGroundCorners,
+  getHexPoints,
+} from "@/libs/rendering/hexGeometry";
 import { builtinTerrainDepression } from "@/libs/sector-map/terrains";
 import { getTileInfo } from "@/libs/threejs/biome";
 import {
@@ -40,13 +46,9 @@ import {
   PLAYER_ASSET_CONFIG,
 } from "@/libs/threejs/FrameAnimator";
 import {
-  calculateHexUVCoordinates,
-  calculateTileOffset,
-  createGroundCorners,
   createGroundEdges,
   createGroundGeometry,
   createTileGeometry,
-  getHexPoints,
   mergeBufferGeometries,
 } from "@/libs/threejs/hexgrid";
 import { applyWaveShader, applyWindShader } from "@/libs/threejs/shaders";

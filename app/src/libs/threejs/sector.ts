@@ -1,6 +1,5 @@
-import { Grid, Orientation, rectangle } from "honeycomb-grid";
+import type { Grid } from "honeycomb-grid";
 import { nanoid } from "nanoid";
-import { createNoise2D } from "simplex-noise";
 import {
   BufferGeometry,
   EdgesGeometry,
@@ -20,8 +19,6 @@ import {
 import {
   ASSETS_LAYER,
   DIRT_LAYER,
-  HEX_ASPECT_RATIO,
-  HEX_STACKING_DISPLACEMENT,
   IMG_AVATAR_DEFAULT,
   IMG_ICON_HEAL,
   IMG_MAP_QUEST_ICON,
@@ -35,7 +32,6 @@ import {
   MEDNIN_MIN_RANK,
   RANKS_RESTRICTED_FROM_PVP,
   STATUS_LAYER,
-  STRUCTURE_ADJACENTS,
   TILES_LAYER,
   USER_LAYER,
 } from "@/drizzle/constants";
@@ -43,18 +39,19 @@ import type { VillageStructure } from "@/drizzle/schema";
 import { passesBracketFilter } from "@/libs/profile";
 import { getActiveObjectives } from "@/libs/quest";
 import {
+  calculateHexUVCoordinates,
+  calculateTileOffset,
+  createGroundCorners,
+  getHexPoints,
+} from "@/libs/rendering/hexGeometry";
+import {
   type DecorationAsset,
   resolveDecorationAsset,
 } from "@/libs/sector-map/decorations";
-import {
-  resolveStructureTerrainSpec,
-  resolveTerrainSpec,
-  type TerrainSpec,
-} from "@/libs/sector-map/terrains";
-import type {
-  NormalizedSectorMap,
-  NormalizedSectorTile,
-} from "@/libs/sector-map/types";
+import type { WindowNav } from "@/libs/sector-map/navigation";
+import { prepareSectorGrid } from "@/libs/sector-map/sector-grid";
+import { resolveTerrainSpec, type TerrainSpec } from "@/libs/sector-map/terrains";
+import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import {
   getVillageWallSpriteSpec,
   STONE_VILLAGE_WALL_KIT,
@@ -63,7 +60,6 @@ import {
 } from "@/libs/sector-map/village-wall-assets";
 import {
   getVillageWallDecorationClearanceKeys,
-  getVillageWallFoundationKeys,
   planVillageWalls,
   selectVillageWallTowerVertices,
   usesVillageWalls,
@@ -80,13 +76,9 @@ import {
   shoreMatsLight,
 } from "@/libs/threejs/biome";
 import {
-  calculateHexUVCoordinates,
-  calculateTileOffset,
-  createGroundCorners,
   createGroundEdges,
   createGroundGeometry,
   createTileGeometry,
-  getHexPoints,
   mergeBufferGeometries,
 } from "@/libs/threejs/hexgrid";
 import { applyWaveShader } from "@/libs/threejs/shaders";
@@ -98,120 +90,18 @@ import {
   profiler,
 } from "@/libs/threejs/util";
 import { hasRequiredRank } from "@/libs/train";
-import { getBiomeFromTileType } from "@/libs/travel";
 import type { UserWithRelations } from "@/routers/profile";
 import { findVillageUserRelationship } from "@/utils/alliance";
 import { groupBy } from "@/utils/grouping";
 import type { ComplexObjectiveFields } from "@/validators/objectives";
 import type { TerrainHex } from "../hexgrid";
-import { defineHex, findHex, PathCalculator } from "../hexgrid";
+import { findHex } from "../hexgrid";
 
 // Cache for meshes to avoid getObjectByName every frame
 const meshCache = new Map<string, Group>();
 
 /** Canonical "x,y" key for authored-map tile lookups within one sector */
 const getSectorMapTileKey = (x: number, y: number) => `${x},${y}`;
-
-export interface WindowNavEntry {
-  dx: number;
-  dy: number;
-  map: NormalizedSectorMap;
-}
-
-/**
- * A single logical hex grid spanning the whole 3x3 sector window, so paths,
- * hover highlights and continuous walks cross sector borders as if the world
- * were one map. Walkability/cost are composed from the 9 authored maps; the
- * center sector sits at unified offset (W, H). This grid is used for
- * PATHFINDING and adjacency only - rendering still uses the per-sector grids,
- * so the returned tiles are mapped back to (dx, dy, local col/row).
- */
-export interface WindowNav {
-  pathFinder: PathCalculator;
-  toUnified: (
-    dx: number,
-    dy: number,
-    col: number,
-    row: number,
-  ) => TerrainHex | undefined;
-  fromUnified: (tile: TerrainHex) => {
-    dx: number;
-    dy: number;
-    col: number;
-    row: number;
-  };
-}
-
-/**
- * Composes up to 9 authored sector maps into one unified 3W x 3H hex grid for
- * cross-border pathfinding (rendering stays per-sector); the center sector
- * occupies unified offset (W, H). Rotated cube-edge-seam neighbors and missing
- * (polar) neighbors are marked impassable (blocked, cost 9999) so paths stop
- * cleanly at those borders. Each authored tile's normalized walk cost remains
- * authoritative, including equal standard costs for water and ground. Returns
- * null when no center map is provided.
- */
-export const buildWindowNav = (
-  entries: WindowNavEntry[],
-  hexsize: number,
-): WindowNav | null => {
-  const first = entries[0]?.map;
-  if (!first) return null;
-  const W = first.width;
-  const H = first.height;
-  // Per-window-offset tile lookups for O(1) walkability composition
-  const tilesByOffset = new Map<string, Map<string, NormalizedSectorTile>>();
-  for (const entry of entries) {
-    const lookup = new Map<string, NormalizedSectorTile>();
-    for (const tile of entry.map.tiles) {
-      lookup.set(getSectorMapTileKey(tile.x, tile.y), tile);
-    }
-    tilesByOffset.set(`${entry.dx},${entry.dy}`, lookup);
-  }
-  const Tile = defineHex({
-    dimensions: { width: hexsize, height: hexsize * HEX_ASPECT_RATIO },
-    origin: { x: -hexsize * 0.5, y: -hexsize * 0.5 },
-    orientation: Orientation.FLAT,
-  });
-  const grid = new Grid(Tile, rectangle({ width: 3 * W, height: 3 * H }))
-    .filter((tile) => {
-      try {
-        return tile.width !== 0;
-      } catch (_e) {
-        return false;
-      }
-    })
-    .map((tile) => {
-      const dx = Math.floor(tile.col / W) - 1;
-      const dy = Math.floor(tile.row / H) - 1;
-      const localCol = tile.col - (dx + 1) * W;
-      const localRow = tile.row - (dy + 1) * H;
-      const offsetKey = `${dx},${dy}`;
-      const lookup = tilesByOffset.get(offsetKey);
-      const mapTile = lookup?.get(getSectorMapTileKey(localCol, localRow));
-      if (!mapTile) {
-        // Sector missing from the window (polar edge) is an impassable wall
-        tile.blocked = true;
-        tile.cost = 9999;
-        return tile;
-      }
-      tile.blocked = mapTile.blocked || mapTile.walkCost <= 0;
-      // The authored walk cost is authoritative. Standard water has the same
-      // cost as ground because ninja can traverse it with chakra.
-      tile.cost = mapTile.walkCost + 1;
-      return tile;
-    });
-  return {
-    pathFinder: new PathCalculator(grid),
-    toUnified: (dx, dy, col, row) =>
-      grid.getHex({ col: (dx + 1) * W + col, row: (dy + 1) * H + row }),
-    fromUnified: (tile) => {
-      const dx = Math.floor(tile.col / W) - 1;
-      const dy = Math.floor(tile.row / H) - 1;
-      return { dx, dy, col: tile.col - (dx + 1) * W, row: tile.row - (dy + 1) * H };
-    },
-  };
-};
 
 /**
  * Renders the authored map objects onto the sector's asset group. Decoration
@@ -419,108 +309,15 @@ export const drawSector = (
   villageType: string | null,
 ) => {
   const endMark = profiler.mark("drawSector");
-  const { width: sectorWidth, height: sectorHeight } = sectorMap;
-  const authoredTiles = new Map(
-    sectorMap.tiles.map((tile) => [getSectorMapTileKey(tile.x, tile.y), tile]),
+  const { grid, baseBiome, villageWallPlan } = prepareSectorGrid(
+    width,
+    prng,
+    globalTileType,
+    structures,
+    sectorMap,
+    terrainRegistry,
+    villageType,
   );
-  // Calculate hex size
-  const hexsize = width / (sectorWidth - HEX_STACKING_DISPLACEMENT * (sectorWidth - 1));
-
-  // Noise drives color variation within terrain bands
-  const noiseGen = createNoise2D(prng);
-
-  const allStructures = structures ?? [];
-  // The sector's own biome on the globe: drives the fallback material for
-  // un-authored tiles and the flattened ground level under structures, so a
-  // sector renders identically no matter which window it is viewed from
-  const baseBiome = getBiomeFromTileType(globalTileType);
-
-  // Create the grid first
-  const Tile = defineHex({
-    dimensions: { width: hexsize, height: hexsize * HEX_ASPECT_RATIO },
-    origin: { x: -hexsize * 0.5, y: -hexsize * 0.5 },
-    orientation: Orientation.FLAT,
-  });
-  // Precompute the tiles occupied by (or adjacent to) a structure once, so the
-  // per-tile check below is an O(1) Set lookup rather than scanning every
-  // structure x 12 adjacents for all 676 tiles (a village sector redraw is
-  // otherwise O(tiles x structures x 12)).
-  const structureTileKeys = new Set<string>();
-  for (const s of allStructures) {
-    structureTileKeys.add(getSectorMapTileKey(s.longitude, s.latitude));
-    for (const { dCol, dRow } of STRUCTURE_ADJACENTS) {
-      structureTileKeys.add(getSectorMapTileKey(s.longitude + dCol, s.latitude + dRow));
-    }
-  }
-  const villageWallPlan = usesVillageWalls(villageType)
-    ? planVillageWalls(sectorMap, allStructures)
-    : null;
-  const wallFoundationKeys = villageWallPlan
-    ? getVillageWallFoundationKeys(villageWallPlan)
-    : new Set<string>();
-  const grid = new Grid(Tile, rectangle({ width: sectorWidth, height: sectorHeight }))
-    .filter((tile) => {
-      try {
-        return tile.width !== 0;
-      } catch (_e) {
-        return false;
-      }
-    })
-    .map((tile) => {
-      const tileKey = getSectorMapTileKey(tile.col, tile.row);
-      const authoredTile = authoredTiles.get(tileKey);
-      // Noise drives which of the terrain's shades a tile gets
-      const nx = tile.col / sectorWidth - 0.5;
-      const ny = tile.row / sectorHeight - 0.5;
-      tile.level = noiseGen(nx, ny) / 2 + 0.5;
-      tile.assetStrength = 0;
-      // Effective path cost comes from the authored map. Standard water uses
-      // the same walk cost as ground; explicit obstacles remain blocked below.
-      const spec = resolveTerrainSpec(
-        authoredTile?.terrain ?? baseBiome,
-        terrainRegistry,
-      );
-      // Stash the resolved spec + authored tile so the geometry pass below reads
-      // them off the hex instead of re-doing the lookup + resolve for all 676 tiles
-      tile.spec = spec;
-      tile.authored = authoredTile;
-      tile.cost = (authoredTile ? authoredTile.walkCost : 1) + 1;
-      tile.blocked = authoredTile?.blocked || authoredTile?.walkCost === 0;
-      tile.zone = authoredTile?.zone;
-      // Combat arena for battles on this tile: the authored per-tile override
-      // wins, else the terrain's configured arena
-      tile.battleBiome = authoredTile?.battleBiome ?? spec.battleBiome;
-
-      const hasStructureFoundation = structureTileKeys.has(tileKey);
-      // Structures and the village-facing tile below each wall segment use a
-      // flat, biome-appropriate foundation. This keeps walls from floating on
-      // recessed water/ice while leaving the exterior terrain untouched.
-      if (hasStructureFoundation || wallFoundationKeys.has(tileKey)) {
-        // Preserve authored land beneath structures. Water becomes a small
-        // land island and blue ice becomes snow; repainting every footprint
-        // from the globe's centre biome caused white patches on Horizon's
-        // legacy desert map when the topology and published map disagreed.
-        const groundSpec = resolveStructureTerrainSpec({
-          authoredTerrain: authoredTile?.terrain,
-          authoredBattleBiome: authoredTile?.battleBiome,
-          baseBiome,
-          registry: terrainRegistry,
-        });
-        tile.spec = groundSpec;
-        tile.battleBiome = authoredTile?.battleBiome ?? groundSpec.battleBiome;
-        tile.cost = 2;
-        if (groundSpec.key !== spec.key) {
-          // A consistent mid shade makes replacement terrain read as one
-          // intentional foundation instead of noisy fragments.
-          tile.level = 0.5;
-        }
-        if (hasStructureFoundation) {
-          tile.hasStructure = true;
-          tile.blocked = false;
-        }
-      }
-      return tile;
-    });
 
   // Groups for organizing objects
   const group_dirt = new Group();

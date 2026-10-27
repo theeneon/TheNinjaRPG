@@ -49,7 +49,7 @@ import { useOpenRewardChoice } from "@/layout/RewardChoice";
 import SliderField from "@/layout/SliderField";
 import WebGlError from "@/layout/WebGLError";
 import { getWorldCycleBrightness } from "@/libs/dayNight";
-import type { HexagonalFaceMesh, TerrainHex } from "@/libs/hexgrid";
+import type { TerrainHex } from "@/libs/hexgrid";
 import { findHex, PathCalculator } from "@/libs/hexgrid";
 import { LIGHT_LAYOUT_STORAGE_KEY } from "@/libs/layoutPreference";
 import { getQuestMapLocations, groupMapLocations } from "@/libs/mapLocations";
@@ -66,7 +66,9 @@ import {
   getBoundObjectiveCandidates,
   isLocationObjective,
 } from "@/libs/quest";
+import { getBackgroundColor } from "@/libs/rendering/biomes";
 import { mergeDecorationAssets } from "@/libs/sector-map/decorations";
+import { buildWindowNav, type WindowNav } from "@/libs/sector-map/navigation";
 import { mergeTerrainSpecs } from "@/libs/sector-map/terrains";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { sectorGridNeighbors } from "@/libs/sector-map/world-grid";
@@ -76,12 +78,11 @@ import type {
   SectorUser,
 } from "@/libs/sector-map/world-types";
 import { isUserCurrentlyStealthed } from "@/libs/stealth";
-import { getBackgroundColor } from "@/libs/threejs/biome";
 import { applyCanvasDayNightBrightness } from "@/libs/threejs/dayNight";
+import type { HexagonalFaceMesh } from "@/libs/threejs/hexgrid";
 import { syncMapLocationSprites } from "@/libs/threejs/mapLocations";
 import { OrbitControls } from "@/libs/threejs/OrbitControls";
 import {
-  buildWindowNav,
   createGenericStructure,
   drawQuest,
   drawSector,
@@ -91,7 +92,6 @@ import {
   intersectUsers,
   intersectWindowTiles,
   sortSectorAssetsByGroundContact,
-  type WindowNav,
 } from "@/libs/threejs/sector";
 import {
   type SectorRenderEntry,

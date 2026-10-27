@@ -18,12 +18,6 @@ vec4 globeProject(vec3 point) {
 }
 `;
 
-export const globeColorShader = `
-vec3 displayColor(vec3 linear) {
-  return mix(12.92 * linear, 1.055 * pow(max(linear, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), linear));
-}
-`;
-
 /** Per-fragment visibility clips billboards correctly while crossing the sphere's limb. */
 export const globeOcclusionShader = `
 uniform float uRadius;

@@ -8,7 +8,6 @@ import {
 } from "@/drizzle/constants";
 import type { GameAsset, UserData } from "@/drizzle/schema";
 import type {
-  CachedIntersections,
   GroundEffect,
   ReturnedBattle,
   ReturnedUserState,
@@ -25,14 +24,16 @@ import {
   sceneAssetIds,
   sceneSoundIds,
 } from "@/libs/contentReview/battlefield";
-import type { HexagonalFaceMesh, TerrainHex } from "@/libs/hexgrid";
-import { getBackgroundColor } from "@/libs/threejs/biome";
+import type { TerrainHex } from "@/libs/hexgrid";
+import { getBackgroundColor } from "@/libs/rendering/biomes";
 import {
   drawCombatBackground,
   drawCombatEffects,
   drawCombatUsers,
   highlightUsers,
 } from "@/libs/threejs/combat";
+import type { HexagonalFaceMesh } from "@/libs/threejs/hexgrid";
+import type { CachedIntersections } from "@/libs/threejs/input";
 import { SpriteMixer } from "@/libs/threejs/SpriteMixer";
 import { cleanUp, loadTexture, setupScene } from "@/libs/threejs/util";
 import { preloadAudioBuffers, savedSfxVolume } from "@/utils/audio";

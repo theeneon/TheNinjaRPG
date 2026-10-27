@@ -47,7 +47,6 @@ import {
   COMBAT_BORDER_TOP,
 } from "@/libs/combat/constants";
 import type {
-  CachedIntersections,
   CombatAction,
   GroundEffect,
   ReturnedBattle,
@@ -62,20 +61,24 @@ import {
   getFacingDirection,
   getVillage,
 } from "@/libs/combat/util";
-import { builtinTerrainDepression } from "@/libs/sector-map/terrains";
-import { createAggroHalo, updateAggroHalo } from "@/libs/threejs/aggroHalo";
-import { getTileInfo } from "@/libs/threejs/biome";
-import { createCombatMaxPoolCache } from "@/libs/threejs/combatMaxPools";
 import {
   calculateHexUVCoordinates,
   calculateTileOffset,
   createGroundCorners,
+  getHexPoints,
+} from "@/libs/rendering/hexGeometry";
+import { builtinTerrainDepression } from "@/libs/sector-map/terrains";
+import { createAggroHalo, updateAggroHalo } from "@/libs/threejs/aggroHalo";
+import { getTileInfo } from "@/libs/threejs/biome";
+import { createCombatMaxPoolCache } from "@/libs/threejs/combatMaxPools";
+import type { HexagonalFaceMesh } from "@/libs/threejs/hexgrid";
+import {
   createGroundEdges,
   createGroundGeometry,
   createTileGeometry,
-  getHexPoints,
   mergeBufferGeometries,
 } from "@/libs/threejs/hexgrid";
+import type { CachedIntersections } from "@/libs/threejs/input";
 import type { SpriteMixer } from "@/libs/threejs/SpriteMixer";
 import { applyWaveShader } from "@/libs/threejs/shaders";
 import {
@@ -92,7 +95,7 @@ import {
 } from "@/libs/threejs/util";
 import { playPreloadedAudio } from "@/utils/audio";
 import type { BarrierTagType } from "@/validators/combat";
-import type { HexagonalFaceMesh, TerrainHex } from "../hexgrid";
+import type { TerrainHex } from "../hexgrid";
 import { findHex, getPossibleActionTiles, PathCalculator } from "../hexgrid";
 import {
   type CombatHoverCursor,

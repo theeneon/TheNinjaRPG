@@ -4,7 +4,7 @@ import type {
   NormalizedSectorMap,
   NormalizedSectorTile,
 } from "@/libs/sector-map/types";
-import { buildWindowNav, type WindowNavEntry } from "@/libs/threejs/sector";
+import { buildWindowNav, type WindowNavEntry } from "@/libs/sector-map/navigation";
 
 const makeMap = (
   width: number,

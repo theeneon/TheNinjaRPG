@@ -94,15 +94,4 @@ export const globeDistanceLimits = (radius: number) => {
   return { min: compensate(16), max: compensate(22) };
 };
 
-export const linearGlobeColor = (hex: string): { r: number; g: number; b: number } => {
-  const packed = Number.parseInt(hex.replace("#", ""), 16);
-  const channel = (value: number) =>
-    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  return {
-    r: channel(((packed >> 16) & 255) / 255),
-    g: channel(((packed >> 8) & 255) / 255),
-    b: channel((packed & 255) / 255),
-  };
-};
-
 const dot = (a: GlobalPoint, b: GlobalPoint) => a.x * b.x + a.y * b.y + a.z * b.z;

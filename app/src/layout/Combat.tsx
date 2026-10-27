@@ -45,12 +45,7 @@ import {
 } from "@/libs/combat/actions";
 import { getAggroDisplay } from "@/libs/combat/aggroDisplay";
 import { COMBAT_LOBBY_SECONDS, COMBAT_SECONDS } from "@/libs/combat/constants";
-import type {
-  BattleState,
-  CachedIntersections,
-  CombatAction,
-  ReturnedBattle,
-} from "@/libs/combat/types";
+import type { BattleState, CombatAction, ReturnedBattle } from "@/libs/combat/types";
 import { combatProfilePatch } from "@/libs/combat/userCache";
 import {
   getBattlefieldHeightRatio,
@@ -62,7 +57,7 @@ import type { TerrainHex } from "@/libs/hexgrid";
 import { LIGHT_LAYOUT_STORAGE_KEY } from "@/libs/layoutPreference";
 import { haptics } from "@/libs/native";
 import { getIsolatedPyramid } from "@/libs/questRun";
-import { getBackgroundColor } from "@/libs/threejs/biome";
+import { getBackgroundColor } from "@/libs/rendering/biomes";
 import {
   drawCombatBackground,
   drawCombatEffects,
@@ -74,6 +69,7 @@ import {
   resetCombatCaches,
   validateActionTarget,
 } from "@/libs/threejs/combat";
+import type { CachedIntersections } from "@/libs/threejs/input";
 import { OrbitControls } from "@/libs/threejs/OrbitControls";
 import { SpriteMixer } from "@/libs/threejs/SpriteMixer";
 import { updateWaveAnimation, updateWindAnimation } from "@/libs/threejs/shaders";

@@ -171,13 +171,6 @@ const builtinMaterials = (key: string, lightLayout: boolean) => {
   return lightLayout ? set.lightVariants : set.variants;
 };
 
-/** Built-in spec colors as ints, for background-color lookups */
-const builtinColors = (key: string) => {
-  const spec = BUILTIN_TERRAINS_BY_KEY.get(key);
-  if (!spec) throw new Error(`Unknown built-in terrain ${key}`);
-  return spec.colors.map(hexToInt) as [number, number, number];
-};
-
 export const roadColors = [0xa98e62, 0x9d8156, 0x8f744c] as const;
 export const roadMats = createNoisedMaterials(roadColors);
 export const roadMatsLight = createLightMaterials(roadColors);
@@ -451,32 +444,6 @@ const getMaterial = (
         return { material: snowMatsToUse[2], asset: "snow" } as TileInfo;
       }
   }
-};
-
-/**
- * Returns the background color for a given tile
- * @param tile - The tile to get the background color for
- * @returns The background color for the given tile
- */
-export const getBackgroundColor = (tile: GlobalTile | CombatBiome) => {
-  const biome: CombatBiome =
-    typeof tile === "object"
-      ? getBiomeFromGlobalTile(tile)
-      : COMBAT_BIOMES.find((a) => a === tile)
-        ? (tile as CombatBiome)
-        : "default";
-  switch (biome) {
-    case "ocean":
-      return { color: builtinColors("ocean")[0] };
-    case "dessert":
-      return { color: builtinColors("dessert")[2] };
-    case "ice":
-    case "snow":
-      return { color: builtinColors("ice")[2] };
-    case "ground":
-      return { color: builtinColors("ground")[1] };
-  }
-  return { color: builtinColors("ground")[1] };
 };
 
 export type AssetType = {

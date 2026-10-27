@@ -7,16 +7,14 @@ import {
   State,
   UniformGroup,
 } from "pixi.js";
+import type { LinearColor } from "@/libs/rendering/color";
 import type { GameRenderer } from "@/libs/rendering/runtime";
-import {
-  globeCameraShader,
-  globeColorShader,
-} from "@/libs/rendering/scenes/globeShaders";
+import { globeCameraShader } from "@/libs/rendering/scenes/globeShaders";
 import {
   buildGlobeSurfaceData,
-  type LinearColor,
   samplePolarCapColor,
 } from "@/libs/rendering/scenes/globeSurface";
+import { displayColorShader } from "@/libs/rendering/shaders";
 import type { GlobalMapData } from "@/libs/sector-map/world-types";
 
 /** Static spherical vertices are projected on the GPU; no CPU vertex rewrite per frame. */
@@ -58,7 +56,7 @@ varying vec2 vSector;
 uniform sampler2D uHighlights;
 uniform float uPhase;
 uniform vec3 uWar;
-${globeColorShader}
+${displayColorShader}
 void main() {
   float kind = vSector.x < 0.0 ? 0.0 : texture2D(uHighlights, vSector).r;
   vec3 tint = vec3(1.0);
@@ -174,7 +172,7 @@ export const createGlobeLines = (
   const shader = Shader.from({
     gl: {
       vertex: `precision highp float; attribute vec3 aPosition; ${globeCameraShader} void main() { gl_Position = globeProject(aPosition); }`,
-      fragment: `precision mediump float; uniform vec4 uLineColor; ${globeColorShader} void main() { gl_FragColor = vec4(displayColor(uLineColor.rgb) * uLineColor.a, uLineColor.a); }`,
+      fragment: `precision mediump float; uniform vec4 uLineColor; ${displayColorShader} void main() { gl_FragColor = vec4(displayColor(uLineColor.rgb) * uLineColor.a, uLineColor.a); }`,
     },
     resources: {
       camera,

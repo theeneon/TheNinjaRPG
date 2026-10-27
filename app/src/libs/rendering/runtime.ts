@@ -1,4 +1,4 @@
-import { Container, WebGLRenderer } from "pixi.js";
+import { Container, UniformGroup, WebGLRenderer } from "pixi.js";
 import { createSceneAssets } from "@/libs/rendering/assets";
 import {
   beginRenderMeasurement,
@@ -24,6 +24,7 @@ export const createGameRenderer = async (options: {
   signal: AbortSignal;
   height: (width: number) => number;
   background?: number;
+  backgroundAlpha?: number;
   onError: (error: unknown) => void;
 }) => {
   const { mount, signal, scene } = options;
@@ -38,7 +39,8 @@ export const createGameRenderer = async (options: {
       autoDensity: true,
       antialias: false,
       background: options.background ?? 0x000000,
-      backgroundAlpha: options.background === undefined ? 0 : 1,
+      backgroundAlpha:
+        options.backgroundAlpha ?? (options.background === undefined ? 0 : 1),
       powerPreference: "low-power",
       preserveDrawingBuffer: false,
     });
@@ -52,6 +54,7 @@ export const createGameRenderer = async (options: {
     throw new DOMException("Scene initialization cancelled", "AbortError");
   }
   const stage = new Container();
+  const animation = new UniformGroup({ uTime: { value: 0, type: "f32" } });
   stage.eventMode = "none";
   const assets = createSceneAssets();
   const canvas = renderer.canvas as HTMLCanvasElement;
@@ -76,6 +79,8 @@ export const createGameRenderer = async (options: {
     if (disposed) return;
     beginRenderMeasurement(scene);
     try {
+      animation.uniforms.uTime = motion.matches ? 0 : now / 1000;
+      animation.update();
       const endUpdate = markRenderStage("update");
       update({
         now,
@@ -162,6 +167,7 @@ export const createGameRenderer = async (options: {
   updateSubscription();
   return {
     stage,
+    animation,
     renderer,
     canvas,
     assets,
@@ -169,8 +175,10 @@ export const createGameRenderer = async (options: {
     listen,
     dispose,
     own: (cleanup: () => void) => {
-      cleanups.push(cleanup);
+      if (disposed) cleanup();
+      else cleanups.push(cleanup);
     },
+    isDisposed: () => disposed,
     setUpdate: (callback: typeof update) => {
       update = callback;
     },

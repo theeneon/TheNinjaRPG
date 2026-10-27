@@ -257,7 +257,8 @@ const drawLabel = (
   context.strokeStyle = "black";
   context.lineWidth = 4;
   context.beginPath();
-  context.roundRect(2, 2, 96, 36, 4);
+  if (context.roundRect) context.roundRect(2, 2, 96, 36, 4);
+  else context.rect(2, 2, 96, 36);
   context.stroke();
   context.fill();
   context.globalAlpha = 1;

@@ -1,0 +1,189 @@
+import alea from "alea";
+import { Container, Graphics } from "pixi.js";
+import type { MapAsset, VillageStructure } from "@/drizzle/schema";
+import { getBackgroundColor } from "@/libs/rendering/biomes";
+import { calculateWidth2Height } from "@/libs/rendering/hexGeometry";
+import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
+import { createHexTerrain } from "@/libs/rendering/primitives/terrain";
+import { createGameRenderer } from "@/libs/rendering/runtime";
+import { buildSectorTerrainData } from "@/libs/rendering/sectorData";
+import { sectorSpriteDescriptions } from "@/libs/rendering/sectorSprites";
+import { hexTerrainAt } from "@/libs/rendering/terrainData";
+import type { DecorationAsset } from "@/libs/sector-map/decorations";
+import { prepareSectorGrid } from "@/libs/sector-map/sector-grid";
+import type { TerrainSpec } from "@/libs/sector-map/terrains";
+import type { NormalizedSectorMap } from "@/libs/sector-map/types";
+import {
+  isVillageStructurePlacementAllowed,
+  usesVillageWalls,
+} from "@/libs/sector-map/village-walls";
+import type { MapLocation } from "@/validators/mapLocation";
+
+export const createSectorPreview = async (options: {
+  mount: HTMLElement;
+  signal: AbortSignal;
+  data: SectorPreviewData;
+  onError: (error: unknown) => void;
+  canMove: () => boolean;
+  onMove: (
+    structure: { id: string; name: string },
+    target: { x: number; y: number },
+  ) => void;
+}) => {
+  const { map, sector, decorationAssets, terrainRegistry, villageType } = options.data;
+  const structures = options.data.structures ?? [];
+  const ratio = calculateWidth2Height(map.width, map.height + 2);
+  const game = await createGameRenderer({
+    ...options,
+    scene: "sectorPreview",
+    height: (width) => width * ratio,
+    background: getBackgroundColor(
+      map.tiles.find((tile) => !tile.blocked)?.battleBiome ?? "ground",
+    ).color,
+    backgroundAlpha: 0.5,
+  });
+  try {
+    const logicalWidth = 1024;
+    const prng = alea(sector + 1);
+    const { grid, villageWallPlan } = prepareSectorGrid(
+      logicalWidth,
+      prng,
+      1,
+      structures,
+      map,
+      terrainRegistry,
+      villageType ?? null,
+    );
+    const data = buildSectorTerrainData(grid, prng, false);
+    const descriptions = sectorSpriteDescriptions({
+      map,
+      grid,
+      structures,
+      decorations: decorationAssets,
+      wall: villageWallPlan,
+      lightLayout: false,
+      locations: options.data.locations,
+      mapAssets: options.data.mapAssets,
+    });
+    const [terrain, art] = await Promise.all([
+      createHexTerrain(game, data),
+      createWorldSprites(game, descriptions),
+    ]);
+    if (game.signal.aborted || game.isDisposed())
+      throw new DOMException("Preview cancelled", "AbortError");
+    const world = new Container();
+    const highlight = new Graphics();
+    world.addChild(terrain.container, highlight, art.container);
+    game.stage.addChild(world);
+    let scale = 1;
+    game.setResize((width, height) => {
+      scale = width / logicalWidth;
+      world.scale.set(scale, -scale);
+      world.position.set(0, height);
+    });
+    let dragging: (typeof art.entries)[number] | null = null;
+    let target: { x: number; y: number } | null = null;
+    const point = (event: PointerEvent) => {
+      const rect = game.canvas.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) * game.renderer.width) / rect.width;
+      const y = ((event.clientY - rect.top) * game.renderer.height) / rect.height;
+      return { x, y, worldX: x / scale, worldY: (game.renderer.height - y) / scale };
+    };
+    const structureAt = (event: PointerEvent) => {
+      const { x, y } = point(event);
+      for (let index = art.entries.length - 1; index >= 0; index--) {
+        const entry = art.entries[index];
+        if (!entry?.description.structureId) continue;
+        const bounds = entry.sprite.getBounds();
+        if (
+          x >= bounds.minX &&
+          x <= bounds.maxX &&
+          y >= bounds.minY &&
+          y <= bounds.maxY
+        )
+          return entry;
+      }
+      return null;
+    };
+    const cancelDrag = () => {
+      if (dragging)
+        dragging.sprite.position.set(dragging.description.x, dragging.description.y);
+      dragging = null;
+      target = null;
+      highlight.clear();
+      game.canvas.style.cursor = "default";
+    };
+    game.listen("pointerdown", (event) => {
+      if (!options.canMove() || event.button !== 0) return;
+      dragging = structureAt(event);
+      if (!dragging) return;
+      target = null;
+      game.canvas.style.cursor = "grabbing";
+      if (event.isTrusted) game.canvas.setPointerCapture(event.pointerId);
+    });
+    game.listen("pointermove", (event) => {
+      if (!options.canMove()) return;
+      if (!dragging) {
+        game.canvas.style.cursor = structureAt(event) ? "grab" : "default";
+        return;
+      }
+      const p = point(event),
+        tile = hexTerrainAt(grid, data.faceOffsets, p.worldX, p.worldY);
+      highlight.clear();
+      target = null;
+      if (!tile) return;
+      const occupied = structures.some(
+        (structure) =>
+          structure.id !== dragging?.description.structureId &&
+          structure.longitude === tile.col &&
+          structure.latitude === tile.row,
+      );
+      const allowed =
+        !occupied &&
+        (!usesVillageWalls(villageType) ||
+          isVillageStructurePlacementAllowed(map, { x: tile.col, y: tile.row }));
+      dragging.sprite.position.set(tile.x, tile.y + tile.height / 10);
+      const offset = data.faceOffsets.get(`${tile.col},${tile.row}`) ?? 0;
+      highlight
+        .poly(tile.corners.flatMap((corner) => [corner.x, corner.y + offset]))
+        .fill({ color: allowed ? 0xffc23e : 0xef4444, alpha: 0.4 });
+      if (allowed) target = { x: tile.col, y: tile.row };
+    });
+    game.listen("pointerup", () => {
+      const entry = dragging,
+        destination = target;
+      cancelDrag();
+      if (!entry || !destination) return;
+      const structure = structures.find(
+        (candidate) => candidate.id === entry.description.structureId,
+      );
+      if (
+        !structure ||
+        (structure.longitude === destination.x && structure.latitude === destination.y)
+      )
+        return;
+      options.onMove({ id: structure.id, name: structure.name }, destination);
+    });
+    game.listen("pointercancel", cancelDrag);
+    game.listen("lostpointercapture", cancelDrag);
+    game.listen("pointerleave", () => {
+      if (!dragging) game.canvas.style.cursor = "default";
+    });
+    game.setUpdate((frame) => art.animate(frame, scale));
+    return { dispose: game.dispose, missingAssets: art.missing };
+  } catch (error) {
+    game.dispose();
+    throw error;
+  }
+};
+
+export type SectorPreviewData = {
+  map: NormalizedSectorMap;
+  locations?: MapLocation[];
+  mapAssets?: Pick<MapAsset, "id" | "imageUrl" | "renderScale">[];
+  sector: number;
+  decorationAssets: Map<string, DecorationAsset>;
+  terrainRegistry: Map<string, TerrainSpec>;
+  structures?: VillageStructure[];
+  villageType?: string | null;
+};

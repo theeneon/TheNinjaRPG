@@ -10,6 +10,7 @@ import {
 } from "@/drizzle/constants";
 import type { Village } from "@/drizzle/schema";
 import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
+import { linearRenderColor } from "@/libs/rendering/color";
 import { createGameRenderer } from "@/libs/rendering/runtime";
 import {
   createGlobeControls,
@@ -26,7 +27,6 @@ import {
   globeCameraBasis,
   globeDistanceLimits,
   globeSectorAt,
-  linearGlobeColor,
 } from "@/libs/rendering/scenes/globeProjection";
 import type { GlobalMapData, GlobalPoint } from "@/libs/sector-map/world-types";
 import { getReadableVillageHexColor } from "@/utils/color";
@@ -78,12 +78,12 @@ export const createGlobeScene = async (options: {
       uPhase: { value: 0, type: "f32" },
     });
     const surfaceLayer = new Container();
-    const grid = createGlobeLines(game, uniforms, linearGlobeColor("#4b5563"), 0.2);
+    const grid = createGlobeLines(game, uniforms, linearRenderColor("#4b5563"), 0.2);
     const stems = createGlobeLines(game, uniforms, { r: 0, g: 0, b: 0 });
     const outline = createGlobeLines(
       game,
       uniforms,
-      linearGlobeColor("#ffd24a"),
+      linearRenderColor("#ffd24a"),
       0.95,
       false,
     );
@@ -172,7 +172,7 @@ export const createGlobeScene = async (options: {
         const colors = new Map(
           state.ownership?.colors.map((entry) => [
             entry.id,
-            linearGlobeColor(getReadableVillageHexColor(entry.hexColor)),
+            linearRenderColor(getReadableVillageHexColor(entry.hexColor)),
           ]),
         );
         surface = createGlobeMesh(game, map, uniforms, (sector) => {
@@ -180,7 +180,9 @@ export const createGlobeScene = async (options: {
           const owner = ownerBySector.get(sector);
           return (
             (owner ? colors.get(owner) : null) ??
-            (MAP_RESERVED_SECTORS.includes(sector) ? linearGlobeColor("#b3afae") : null)
+            (MAP_RESERVED_SECTORS.includes(sector)
+              ? linearRenderColor("#b3afae")
+              : null)
           );
         });
         surfaceLayer.addChild(surface.container);
@@ -278,7 +280,7 @@ export const createGlobeScene = async (options: {
       camera.height = height;
       uniforms.uniforms.uViewport.set([width, height]);
     });
-    const war = linearGlobeColor(MAP_WAR_TORN_BATTLEGROUND_COLOR);
+    const war = linearRenderColor(MAP_WAR_TORN_BATTLEGROUND_COLOR);
     let lastPickKey = "";
     game.setUpdate((frame) => {
       if (

@@ -1,10 +1,9 @@
+import type { LinearColor } from "@/libs/rendering/color";
 import type {
   GlobalMapData,
   GlobalPoint,
   GlobalTile,
 } from "@/libs/sector-map/world-types";
-
-export type LinearColor = { r: number; g: number; b: number };
 
 type Point3 = { x: number; y: number; z: number };
 

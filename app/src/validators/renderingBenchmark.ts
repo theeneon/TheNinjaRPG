@@ -3,6 +3,7 @@ import { z } from "zod";
 export const renderSceneSchema = z.enum([
   "globe",
   "sector",
+  "sectorPreview",
   "combat",
   "farm",
   "towerDefense",

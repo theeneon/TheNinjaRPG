@@ -1,0 +1,158 @@
+import { HEX_ASPECT_RATIO, HEX_STACKING_DISPLACEMENT } from "@/drizzle/constants";
+import type { TerrainHex } from "@/libs/hexgrid";
+
+/**
+ * Calculates the width to height ratio for a hex grid based on its dimensions.
+ * Used for maintaining proper aspect ratio in orthographic views.
+ */
+export const calculateWidth2Height = (width: number, height: number): number => {
+  return (
+    (height * HEX_ASPECT_RATIO) / (width - HEX_STACKING_DISPLACEMENT * (width - 1))
+  );
+};
+
+/**
+ * Returns the standard hex point indices used for tile face and ground geometry
+ */
+export const getHexPoints = () => {
+  const points = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5];
+  const groundPoints = [0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 7, 7, 4, 5, 7, 5, 6];
+  const groundEdges = [
+    [1, 2],
+    [0, 3],
+    [7, 4],
+    [5, 6],
+    [0, 1],
+    [0, 7],
+    [6, 7],
+  ];
+  return { points, groundPoints, groundEdges };
+};
+
+/**
+ * Calculates UV coordinates for tile and ground geometries based on the first tile's corners
+ */
+export const calculateHexUVCoordinates = (
+  firstTile: TerrainHex | undefined,
+  points: number[],
+  groundPoints: number[],
+) => {
+  let groundUVArray: Float32Array | null = null;
+  let tileUVArray: Float32Array | null = null;
+
+  if (!firstTile) {
+    return { groundUVArray, tileUVArray };
+  }
+
+  const corners = firstTile.corners;
+  const length = Math.abs((corners?.[5]?.x || 0) - (corners?.[0]?.x || 0)) / 3;
+
+  // Ground UV coordinates
+  const canonicalGroundCorners = [
+    { x: corners?.[0]?.x ?? 0, y: (corners?.[0]?.y ?? 0) - length },
+    { x: corners?.[1]?.x ?? 0, y: (corners?.[1]?.y ?? 0) - length },
+    { x: corners?.[1]?.x ?? 0, y: corners?.[1]?.y ?? 0 },
+    { x: corners?.[0]?.x ?? 0, y: corners?.[0]?.y ?? 0 },
+    { x: corners?.[5]?.x ?? 0, y: corners?.[5]?.y ?? 0 },
+    { x: corners?.[4]?.x ?? 0, y: corners?.[4]?.y ?? 0 },
+    { x: corners?.[4]?.x ?? 0, y: (corners?.[4]?.y ?? 0) - length },
+    { x: corners?.[5]?.x ?? 0, y: (corners?.[5]?.y ?? 0) - length },
+  ];
+  const minX = Math.min(...canonicalGroundCorners.map((c) => c.x));
+  const maxX = Math.max(...canonicalGroundCorners.map((c) => c.x));
+  const minY = Math.min(...canonicalGroundCorners.map((c) => c.y));
+  const maxY = Math.max(...canonicalGroundCorners.map((c) => c.y));
+  const uvWidth = maxX - minX;
+  const uvHeight = maxY - minY;
+  const canonicalGroundUVs = canonicalGroundCorners.map(
+    (corner) =>
+      [(corner.x - minX) / uvWidth, (corner.y - minY) / uvHeight] as [number, number],
+  );
+  const uvNumbers: number[] = [];
+  groundPoints.forEach((p) => {
+    const uv = canonicalGroundUVs[p];
+    if (uv) {
+      uvNumbers.push(uv[0], uv[1]);
+    }
+  });
+  groundUVArray = new Float32Array(uvNumbers);
+
+  // Tile (top face) UV coordinates
+  const canonicalTileCorners = corners.map((c) => ({ x: c.x, y: c.y }));
+  const tileMinX = Math.min(...canonicalTileCorners.map((c) => c.x));
+  const tileMaxX = Math.max(...canonicalTileCorners.map((c) => c.x));
+  const tileMinY = Math.min(...canonicalTileCorners.map((c) => c.y));
+  const tileMaxY = Math.max(...canonicalTileCorners.map((c) => c.y));
+  const tileUVWidth = tileMaxX - tileMinX;
+  const tileUVHeight = tileMaxY - tileMinY;
+  const canonicalTileUVs = canonicalTileCorners.map(
+    (corner) =>
+      [(corner.x - tileMinX) / tileUVWidth, (corner.y - tileMinY) / tileUVHeight] as [
+        number,
+        number,
+      ],
+  );
+  const tileUVNumbers: number[] = [];
+  points.forEach((p) => {
+    const uv = canonicalTileUVs[p];
+    if (uv) {
+      tileUVNumbers.push(uv[0], uv[1]);
+    }
+  });
+  tileUVArray = new Float32Array(tileUVNumbers);
+
+  return { groundUVArray, tileUVArray };
+};
+
+/**
+ * Calculates the offset values for a tile from its terrain's depression (the
+ * fraction of the tile edge the face is sunk below ground level - water 0.5,
+ * ice sheets 0.25, solid ground 0), producing the depth effect.
+ */
+export const calculateTileOffset = (
+  corners: Array<{ x: number; y: number }>,
+  depression: number,
+  lightLayout?: boolean,
+) => {
+  const length = Math.abs((corners?.[5]?.x || 0) - (corners?.[0]?.x || 0)) / 3;
+  let offsetLength = 0;
+  let offsetLayer = 0;
+
+  if (!lightLayout && depression > 0) {
+    offsetLength = -length * depression;
+    // Keep depressed faces strictly in FRONT of the dirt "ground below"
+    // (DIRT_LAYER is one unit behind TILES_LAYER). At -1 the face sat exactly
+    // on the dirt plane, so across sector wrappers a neighbour's edge dirt
+    // could draw over adjacent water - a tan band at every water-water border.
+    // This is a draw-order/z tweak only; the visual recess is offsetLength.
+    offsetLayer = -0.5;
+  }
+
+  return {
+    length,
+    offsetLength,
+    offsetLayer,
+  };
+};
+
+/**
+ * Creates the 8 corners for the ground geometry below a tile
+ */
+export const createGroundCorners = (
+  corners: Array<{ x: number; y: number }>,
+  offsetLength: number,
+  length?: number,
+) => {
+  const tileLength =
+    length ?? Math.abs((corners?.[5]?.x || 0) - (corners?.[0]?.x || 0)) / 3;
+  return [
+    { x: corners?.[0]?.x ?? 0, y: (corners?.[0]?.y ?? 0) - tileLength },
+    { x: corners?.[1]?.x ?? 0, y: (corners?.[1]?.y ?? 0) - tileLength },
+    { x: corners?.[1]?.x ?? 0, y: (corners?.[1]?.y ?? 0) + offsetLength },
+    { x: corners?.[0]?.x ?? 0, y: (corners?.[0]?.y ?? 0) + offsetLength },
+    { x: corners?.[5]?.x ?? 0, y: (corners?.[5]?.y ?? 0) + offsetLength },
+    { x: corners?.[4]?.x ?? 0, y: (corners?.[4]?.y ?? 0) + offsetLength },
+    { x: corners?.[4]?.x ?? 0, y: (corners?.[4]?.y ?? 0) - tileLength },
+    { x: corners?.[5]?.x ?? 0, y: (corners?.[5]?.y ?? 0) - tileLength },
+  ] as const;
+};

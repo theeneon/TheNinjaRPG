@@ -14,9 +14,12 @@ export const useGameScene = <T extends { dispose: () => void }>(
   factory.current = create;
   const scene = useRef<T | null>(null);
   const [error, setError] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   useEffect(() => {
     if (!mount.current) return;
     const controller = new AbortController();
+    setError(false);
+    setIsReady(false);
     const onError = (cause: unknown) => {
       if (controller.signal.aborted) return;
       console.error("Game renderer failed", cause);
@@ -24,7 +27,10 @@ export const useGameScene = <T extends { dispose: () => void }>(
     };
     void factory.current(mount.current, controller.signal, onError).then((instance) => {
       if (controller.signal.aborted) instance.dispose();
-      else scene.current = instance;
+      else {
+        scene.current = instance;
+        setIsReady(true);
+      }
     }, onError);
     return () => {
       controller.abort();
@@ -32,5 +38,5 @@ export const useGameScene = <T extends { dispose: () => void }>(
       scene.current = null;
     };
   }, [mount, resetKey]);
-  return { scene, error };
+  return { scene, error, isReady };
 };
