@@ -82,18 +82,15 @@ export const updateUserDataForUseSensory = (
 ) =>
   client.update(userData).set({ lastSensoryAt }).where(eq(userData.userId, ctx.userId));
 
-/**
- * Build the `userData` update for `useSensory`, setting `stealthActive` and
- * `stealthActivatedAt`, using predicates on `userId`.
- */
-export const updateUserDataForUseSensory2 = (
+/** Build the update that clears active stealth and its activation time for the selected users. */
+export const clearStealthForUsers = (
   client: Pick<DrizzleClient, "update">,
-  detectedUserIds: string[],
+  userIds: string[],
 ) =>
   client
     .update(userData)
     .set({ stealthActive: false, stealthActivatedAt: null })
-    .where(inArray(userData.userId, detectedUserIds));
+    .where(inArray(userData.userId, userIds));
 
 /** Build the `userData` update for `trainCovert`, using predicates on `userId`, `covertTrainingType`, `status`. */
 export const updateUserDataForTrainCovert = (
@@ -154,16 +151,3 @@ export const updateUserDataForCancelCovertTraining = (
     .where(
       and(eq(userData.userId, ctx.userId), isNotNull(userData.covertTrainingType)),
     );
-
-/**
- * Build the `userData` update for `breakStealth`, setting `stealthActive` and
- * `stealthActivatedAt`, using predicates on `userId`.
- */
-export const updateUserDataForBreakStealth = (
-  client: Pick<DrizzleClient, "update">,
-  userId: string,
-) =>
-  client
-    .update(userData)
-    .set({ stealthActive: false, stealthActivatedAt: null })
-    .where(eq(userData.userId, userId));

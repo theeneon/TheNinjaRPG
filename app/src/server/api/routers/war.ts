@@ -85,7 +85,6 @@ import {
   findWarForGetObjectiveWarInfo,
   findWarForInviteMercenary,
   findWarForStartWarMission,
-  incrementWarInitiatorNotifications,
   incrementWarNotifications,
   insertActionLogForAdminEndWar,
   insertGameSettingForSetRules,
@@ -1918,7 +1917,7 @@ export const warRouter = createTRPCRouter({
               voteRecord,
               defenderVillage,
             ),
-            incrementWarInitiatorNotifications(ctx.drizzle, voteRecord),
+            incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
           ]);
           return errorResponse("A village is already involved in an active war");
         }
@@ -1932,7 +1931,7 @@ export const warRouter = createTRPCRouter({
               voteRecord,
               defenderVillage,
             ),
-            incrementWarInitiatorNotifications(ctx.drizzle, voteRecord),
+            incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
           ]);
           return errorResponse("Village no longer has enough tokens to declare war");
         }
@@ -1954,7 +1953,7 @@ export const warRouter = createTRPCRouter({
               voteRecord,
               defenderVillage,
             ),
-            incrementWarInitiatorNotifications(ctx.drizzle, voteRecord),
+            incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
           ]);
           return errorResponse(
             "War could not start: a village is already involved in a war or your village no longer has enough tokens.",
@@ -1985,7 +1984,7 @@ export const warRouter = createTRPCRouter({
             voteRecord,
             targetVillage,
           ),
-          incrementWarInitiatorNotifications(ctx.drizzle, voteRecord),
+          incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
         ]);
         return {
           success: true,

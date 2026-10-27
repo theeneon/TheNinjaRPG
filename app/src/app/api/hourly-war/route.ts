@@ -27,7 +27,7 @@ import { updateVillageStructureForClearExpiredStructureBonuses } from "@/queries
 import {
   approvePendingWarDeclaration,
   expireWarPoints,
-  incrementWarInitiatorNotifications,
+  incrementWarNotifications,
   listActiveWarsWithRules,
   updateWarForGET,
   updateWarForGET2,
@@ -350,7 +350,7 @@ async function handleExpiredWarDeclaration(
     await Promise.all([
       updateVillageElderVoteForRejectWithNotification(drizzleDB, vote),
       insertNotificationForRejectWithNotification(drizzleDB, vote, content),
-      incrementWarInitiatorNotifications(drizzleDB, vote),
+      incrementWarNotifications(drizzleDB, [vote.initiatedByUserId]),
     ]);
   };
 

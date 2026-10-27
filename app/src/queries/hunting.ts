@@ -224,20 +224,14 @@ export const findHuntingProgressForAccept = (
     ),
   });
 
-/**
- * Build the `sectorMap` listing for `accept`, selecting only `sector` and
- * `normalizedJson`, using predicates on `sector` and `status`.
- */
-export const listSectorMapForAccept = (
+/** Build published hunting maps for the selected sectors, loading only the sector and normalized map. */
+export const listPublishedHuntingMaps = (
   client: Pick<DrizzleClient, "query">,
-  contract: { sectors: number[] },
+  sectors: number[],
 ) =>
   client.query.sectorMap.findMany({
     columns: { sector: true, normalizedJson: true },
-    where: and(
-      inArray(sectorMap.sector, contract.sectors),
-      eq(sectorMap.status, "PUBLISHED"),
-    ),
+    where: and(inArray(sectorMap.sector, sectors), eq(sectorMap.status, "PUBLISHED")),
   });
 
 /** Build the `huntingProgress` insert for `accept`, updating duplicate keys. */
@@ -335,19 +329,6 @@ export const listItemForStart = (client: Pick<DrizzleClient, "query">) =>
   client.query.item.findMany({
     where: eq(item.canBeHunted, true),
     columns: { id: true, name: true, canStack: true, stackSize: true },
-  });
-
-/**
- * Build the `sectorMap` listing for `start`, selecting only `sector` and
- * `normalizedJson`, using predicates on `sector` and `status`.
- */
-export const listSectorMapForStart = (
-  client: Pick<DrizzleClient, "query">,
-  session: { sector: number },
-) =>
-  client.query.sectorMap.findMany({
-    columns: { sector: true, normalizedJson: true },
-    where: and(eq(sectorMap.sector, session.sector), eq(sectorMap.status, "PUBLISHED")),
   });
 
 /** Build the `huntingHabitat` lookup for `reconcileInactiveAllowance`, using predicates on `id`. */

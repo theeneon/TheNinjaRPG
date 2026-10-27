@@ -1969,16 +1969,6 @@ export const insertNotificationForVoteOnWarDeclaration = (
     content: `War declaration against ${defenderVillage?.name ?? "another village"} was cancelled — a village is already involved in an active war.`,
   });
 
-/** Build the `userData` update, setting `unreadNotifications`, using predicates on `userId`. */
-export const incrementWarInitiatorNotifications = (
-  client: Pick<DrizzleClient, "update">,
-  voteRecord: { initiatedByUserId: string },
-) =>
-  client
-    .update(userData)
-    .set({ unreadNotifications: sql`unreadNotifications + 1` })
-    .where(eq(userData.userId, voteRecord.initiatedByUserId));
-
 /** Build the `notification` insert for `voteOnWarDeclaration`. */
 export const insertNotificationForVoteOnWarDeclaration2 = (
   client: Pick<DrizzleClient, "insert">,

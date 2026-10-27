@@ -22,9 +22,8 @@ import {
   listItemForGetBoard,
   listItemForSave,
   listItemForStart,
-  listSectorMapForAccept,
+  listPublishedHuntingMaps,
   listSectorMapForSave,
-  listSectorMapForStart,
   listUserDataForGetBoard,
   selectHuntingSessionForGetSession,
   updateHuntingHabitatForSave,
@@ -249,7 +248,7 @@ export const huntingRouter = createTRPCRouter({
         return { success: true, message: "Your existing encounter is still assigned." };
       // Maps carry large JSON payloads; load only the contract's sectors after
       // eligibility and session guards pass.
-      const maps = await listSectorMapForAccept(ctx.drizzle, contract);
+      const maps = await listPublishedHuntingMaps(ctx.drizzle, contract.sectors);
       const locations = contract.sectors.filter(
         (s) =>
           habitat.content.sectors.includes(s) &&
@@ -419,7 +418,7 @@ export const huntingRouter = createTRPCRouter({
         return errorResponse("This contract is on cooldown.");
       // Maps carry large JSON payloads; load only the assigned sector after
       // eligibility and session guards pass.
-      const maps = await listSectorMapForStart(ctx.drizzle, session);
+      const maps = await listPublishedHuntingMaps(ctx.drizzle, [session.sector]);
       if (
         !contract.sectors.includes(session.sector) ||
         !maps.some(

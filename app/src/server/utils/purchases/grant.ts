@@ -65,10 +65,9 @@ import {
   listStorePurchaseTransferForTransferPredecessorUserIds,
   listStorePurchaseTransferForTransferredUserId,
   selectStorePurchaseForReconcileStorePurchaseOwner,
+  selectStoreUserIds,
   selectUserDataForApplyStorePurchase2,
-  selectUserDataForApplyStoreTransfer,
   selectUserDataForReconcileFederalStatuses,
-  selectUserDataForReconcileStorePurchaseOwner,
   updateStoreEntitlementRevocationForMigrateStoreEntitlementRevocations,
   updateStoreEntitlementRevocationForMigrateStoreEntitlementRevocations2,
   updateStoreEntitlementStateForMigrateStoreEntitlementStates,
@@ -349,10 +348,7 @@ export const reconcileStorePurchaseOwner = async (
       return receipt;
     }
 
-    const [owner] = await selectUserDataForReconcileStorePurchaseOwner(
-      client,
-      resolvedUserId,
-    );
+    const [owner] = await selectStoreUserIds(client, [resolvedUserId]);
     // A retired owner has no row to find, but the ledger is still theirs to hold.
     if (!owner && !(await isRetiredStoreUserId(client, resolvedUserId))) {
       throw new Error(`No store receipt owner ${resolvedUserId} for ${receiptId}`);
@@ -443,10 +439,7 @@ const applyStorePurchase = async (
     return true;
   };
 
-  const [recipient] = await selectUserDataForReconcileStorePurchaseOwner(
-    client,
-    recipientUserId,
-  );
+  const [recipient] = await selectStoreUserIds(client, [recipientUserId]);
   // A purchase can precede the character it is for, since the store SDK is signed in
   // before registration, so a missing recipient is retried. A retired one is different:
   // the receipt is still recorded, so a returning identity finds the coverage it paid for,
@@ -1070,7 +1063,7 @@ const applyStoreTransfer = async (
   }
   const toIds = [...new Set(canonicalToIds)];
   if (toIds.length === 0) throw new Error("RevenueCat transfer has no destination");
-  const destinations = await selectUserDataForApplyStoreTransfer(client, toIds);
+  const destinations = await selectStoreUserIds(client, toIds);
   // The destination may have deleted its character. The receipts move all the same, so
   // the source stops vouching now and the identity finds them if it comes back.
   const retiredDestination =
@@ -1158,9 +1151,7 @@ const applyStoreTransfer = async (
   }
 
   const knownSources =
-    sourceIds.length > 0
-      ? await selectUserDataForApplyStoreTransfer(client, sourceIds)
-      : [];
+    sourceIds.length > 0 ? await selectStoreUserIds(client, sourceIds) : [];
   for (const userId of new Set([
     ...knownSources.map((row) => row.userId),
     ...effectiveDestinations,

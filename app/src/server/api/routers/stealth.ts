@@ -2,16 +2,15 @@ import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { getPvpBoost } from "@/libs/pvpExperience";
 import { getTerritoryWarPeriodBoost } from "@/libs/territoryWar";
 import {
+  clearStealthForUsers,
   listUserDataForUseSensory,
   selectVillageAllianceForUseSensory,
   updateUserDataForActivateStealth,
-  updateUserDataForBreakStealth,
   updateUserDataForCancelCovertTraining,
   updateUserDataForDeactivateStealth,
   updateUserDataForStopCovertTraining,
   updateUserDataForTrainCovert,
   updateUserDataForUseSensory,
-  updateUserDataForUseSensory2,
 } from "@/queries/stealth";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
@@ -232,7 +231,7 @@ export const stealthRouter = createTRPCRouter({
       ];
 
       if (detectedUserIds.length > 0) {
-        updates.push(updateUserDataForUseSensory2(ctx.drizzle, detectedUserIds));
+        updates.push(clearStealthForUsers(ctx.drizzle, detectedUserIds));
       }
 
       await Promise.all(updates);
@@ -461,6 +460,6 @@ export const breakStealth = async (
   }
 
   // Break stealth
-  await updateUserDataForBreakStealth(drizzle, userId);
+  await clearStealthForUsers(drizzle, [userId]);
   return true;
 };

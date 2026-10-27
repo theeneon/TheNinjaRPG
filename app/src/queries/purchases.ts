@@ -225,16 +225,6 @@ export const selectStorePurchaseForReconcileStorePurchaseOwner = (
     .from(storePurchase)
     .where(eq(storePurchase.id, receiptId));
 
-/** Build the `userData` selection for `reconcileStorePurchaseOwner`, using predicates on `userId`. */
-export const selectUserDataForReconcileStorePurchaseOwner = (
-  client: Pick<DrizzleClient, "select">,
-  resolvedUserId: string,
-) =>
-  client
-    .select({ userId: userData.userId })
-    .from(userData)
-    .where(eq(userData.userId, resolvedUserId));
-
 /**
  * Build the `storePurchase` update for `reconcileStorePurchaseOwner`, including
  * predicates on `id`, `userId`, `originalUserId`.
@@ -995,15 +985,15 @@ export const updateStoreEntitlementRevocationForMigrateStoreEntitlementRevocatio
     .set({ userId: newUserId })
     .where(eq(storeEntitlementRevocation.id, revocation.id));
 
-/** Build the `userData` selection for `applyStoreTransfer`, using predicates on `userId`. */
-export const selectUserDataForApplyStoreTransfer = (
+/** Build existing user ID rows for store receipt ownership and transfers. */
+export const selectStoreUserIds = (
   client: Pick<DrizzleClient, "select">,
-  toIds: string[],
+  userIds: string[],
 ) =>
   client
     .select({ userId: userData.userId })
     .from(userData)
-    .where(inArray(userData.userId, toIds));
+    .where(inArray(userData.userId, userIds));
 
 /** Build the `storePurchaseTransfer` insert for `applyStoreTransfer`, updating duplicate keys. */
 export const insertStorePurchaseTransferForApplyStoreTransfer = (
