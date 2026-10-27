@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, notExists, or, type SQL, sql } from "drizzle-orm";
+import { notExists, type SQL } from "drizzle-orm";
 import type { AnyMySqlColumn, MySqlTable } from "drizzle-orm/mysql-core";
 import {
   bankTransfers,
@@ -18,6 +18,11 @@ import {
   userJutsu,
   userPet,
 } from "@/drizzle/schema";
+import {
+  executeStatementForDeleteCleanupCandidates,
+  selectDistinctKeyForDeleteCleanupCandidates,
+  selectParentForMissing,
+} from "@/queries/cleaner";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
@@ -34,87 +39,35 @@ export const deleteCleanupCandidates = async (
   const columns = Object.entries(key);
   const firstColumn = columns[0];
   if (!firstColumn) throw new Error("Cleanup requires an indexed key");
-  const [firstName, firstKey] = firstColumn;
   let cursor: Record<string, string | number> | undefined;
   while (true) {
     const previous = cursor;
-    const candidates = await client
-      .selectDistinct(key)
-      .from(table)
-      .where(
-        and(
-          predicate,
-          previous &&
-            or(
-              ...columns.map(([name, column], index) =>
-                and(
-                  ...columns
-                    .slice(0, index)
-                    .map(([prefix, prefixColumn]) =>
-                      eq(prefixColumn, cleanupKeyValue(previous, prefix)),
-                    ),
-                  gt(column, cleanupKeyValue(previous, name)),
-                ),
-              ),
-            ),
-        ),
-      )
-      .orderBy(...columns.map(([, column]) => column))
-      .limit(batchSize);
+    const candidates = await selectDistinctKeyForDeleteCleanupCandidates(
+      client,
+      key,
+      table,
+      predicate,
+      previous,
+      columns,
+      batchSize,
+    );
     if (!candidates.length) return;
 
-    // Drizzle's DELETE builder cannot force an index. Scanned rows are locked
-    // under REPEATABLE READ, including rows the predicate excludes.
-    const selected =
-      columns.length === 1
-        ? inArray(
-            firstKey,
-            candidates.map((row) => cleanupKeyValue(row, firstName)),
-          )
-        : or(
-            ...candidates.map((row) =>
-              and(
-                ...columns.map(([name, column]) =>
-                  eq(column, cleanupKeyValue(row, name)),
-                ),
-              ),
-            ),
-          );
-    // FORCE INDEX still permits a full scan for a dense composite-key batch.
-    // Drive those deletes from literal keys so each target access is a point lookup.
-    const statement =
-      columns.length > 1 && indexName === "PRIMARY"
-        ? sql`DELETE /*+ SET_VAR(optimizer_switch='semijoin=off') */ ${table}
-          FROM (${sql.join(
-            candidates.map(
-              (row) =>
-                sql`SELECT ${sql.join(
-                  columns.map(
-                    ([name]) =>
-                      sql`${cleanupKeyValue(row, name)} AS ${sql.identifier(name)}`,
-                  ),
-                  sql`, `,
-                )}`,
-            ),
-            sql` UNION ALL `,
-          )}) cleanup_keys
-          STRAIGHT_JOIN ${table} FORCE INDEX (PRIMARY)
-            ON ${and(...columns.map(([name, column]) => eq(column, sql`cleanup_keys.${sql.identifier(name)}`)))}
-          WHERE ${predicate}`
-        : sql`DELETE /*+ SET_VAR(optimizer_switch='semijoin=off') */ ${table}
-          FROM ${table} FORCE INDEX (${sql.identifier(indexName)})
-          WHERE ${and(selected, predicate)}`;
-    await retryOnDeadlock(() => client.execute(statement));
+    await retryOnDeadlock(() =>
+      executeStatementForDeleteCleanupCandidates(
+        client,
+        table,
+        columns,
+        firstColumn,
+        candidates,
+        predicate,
+        indexName,
+      ),
+    );
     // Keyset progress also skips candidates rescued between the read and write.
     cursor = candidates[candidates.length - 1];
     if (candidates.length < batchSize) return;
   }
-};
-
-const cleanupKeyValue = (row: Record<string, string | number>, name: string) => {
-  const value = row[name];
-  if (value === undefined) throw new Error(`Missing cleanup key ${name}`);
-  return value;
 };
 
 /** Relational leftovers can wait for the daily timer; active queue repair cannot. */
@@ -125,14 +78,7 @@ export const cleanupOrphanRows = async (
     parent: MySqlTable,
     parentKey: AnyMySqlColumn,
     childKey: AnyMySqlColumn,
-  ) =>
-    notExists(
-      client
-        .select({ id: parentKey })
-        .from(parent)
-        .where(eq(parentKey, childKey))
-        .limit(1),
-    );
+  ) => notExists(selectParentForMissing(client, parentKey, parent, childKey));
   // DELETE disables antijoin materialization to avoid locking unrelated parents;
   // candidate SELECTs retain the optimizer's non-locking materialization choices.
   const withoutUser = (childKey: AnyMySqlColumn) =>

@@ -1,13 +1,7 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   abEvent,
-  anbuSquad,
-  auctionBid,
-  auctionListing,
   battleAction,
-  clan,
   dailyBankInterest,
-  emailReminder,
   historicalSoundEffect,
   itemLoadout,
   jutsuReskin,
@@ -16,17 +10,31 @@ import {
   recruitmentRewards,
   referralSource,
   sageModeRolls,
-  supportTicket,
-  supportTicketActivity,
   towerDefenseRun,
-  userData,
   userItemVariant,
   userStreakProgress,
   userTowerDefenseUpgrade,
-  village,
   villageElderVoteEntry,
 } from "@/drizzle/schema";
-import { fetchClan, removeFromClan } from "@/server/api/routers/clan";
+import {
+  deleteEmailReminderForRemoveAccountGameData,
+  deleteRowsForUser,
+  deleteSupportTicketActivityForRemoveAccountGameData,
+  deleteSupportTicketActivityForRemoveAccountGameData2,
+  deleteSupportTicketForRemoveAccountGameData,
+  findAuctionListingForRemoveAccountGameData,
+  listSupportTicketForRemoveAccountGameData,
+  selectAuctionBidForRemoveAccountGameData,
+  updateAnbuSquadForRemoveAccountGameData,
+  updateClanForRemoveAccountGameData,
+  updateClanForRemoveAccountGameData2,
+  updateClanForRemoveAccountGameData3,
+  updateSupportTicketForRemoveAccountGameData,
+  updateVillageForRemoveAccountGameData,
+} from "@/queries/accountDeletion";
+import { fetchClan } from "@/queries/clan";
+import { findUserById } from "@/queries/profile";
+import { removeFromClan } from "@/server/api/routers/clan";
 import { deleteUser } from "@/server/api/routers/staff";
 import { drizzleDB } from "@/server/db";
 import { retireStoreUserId } from "@/server/utils/purchases/grant";
@@ -36,19 +44,8 @@ export const removeAccountGameData = async (userId: string) => {
   // Let the normal auction settlement path release escrow; deleting bids or the
   // character first could strand another player's payment or reward.
   const [selling, bidding] = await Promise.all([
-    drizzleDB.query.auctionListing.findFirst({
-      columns: { id: true },
-      where: and(
-        eq(auctionListing.sellerId, userId),
-        eq(auctionListing.status, "ACTIVE"),
-      ),
-    }),
-    drizzleDB
-      .select({ id: auctionBid.id })
-      .from(auctionBid)
-      .innerJoin(auctionListing, eq(auctionBid.auctionId, auctionListing.id))
-      .where(and(eq(auctionBid.bidderId, userId), eq(auctionListing.status, "ACTIVE")))
-      .limit(1),
+    findAuctionListingForRemoveAccountGameData(drizzleDB, userId),
+    selectAuctionBidForRemoveAccountGameData(drizzleDB, userId),
   ]);
   if (selling || bidding.length)
     throw new Error("Account deletion awaits auction escrow settlement");
@@ -57,9 +54,7 @@ export const removeAccountGameData = async (userId: string) => {
   // Membership is the retry marker: keep departure, leadership transfer and faction
   // teardown atomic so a failed sibling write cannot make the next attempt skip them.
   await drizzleDB.transaction(async (tx) => {
-    const user = await tx.query.userData.findFirst({
-      where: eq(userData.userId, userId),
-    });
+    const user = await findUserById(tx, userId);
     if (user?.clanId) {
       const membership = await fetchClan(tx, user.clanId);
       if (membership)
@@ -69,15 +64,10 @@ export const removeAccountGameData = async (userId: string) => {
   // Only clear roles still owned by this identity. Repeated cleanup must never remove
   // a replacement leader or decrement shared counters a second time.
   await Promise.all([
-    drizzleDB
-      .update(anbuSquad)
-      .set({
-        leaderId: sql`(SELECT u.userId FROM UserData u WHERE u.anbuId = ${anbuSquad.id} AND u.userId <> ${userId} ORDER BY u.createdAt LIMIT 1)`,
-      })
-      .where(eq(anbuSquad.leaderId, userId)),
-    drizzleDB.update(village).set({ kageId: "" }).where(eq(village.kageId, userId)),
-    drizzleDB.update(clan).set({ leaderId: "" }).where(eq(clan.leaderId, userId)),
-    drizzleDB.update(clan).set({ founderId: "" }).where(eq(clan.founderId, userId)),
+    updateAnbuSquadForRemoveAccountGameData(drizzleDB, userId),
+    updateVillageForRemoveAccountGameData(drizzleDB, userId),
+    updateClanForRemoveAccountGameData(drizzleDB, userId),
+    updateClanForRemoveAccountGameData2(drizzleDB, userId),
     ...(
       [
         "coLeader1",
@@ -94,13 +84,8 @@ export const removeAccountGameData = async (userId: string) => {
         "assassin9",
         "assassin10",
       ] as const
-    ).map((column) =>
-      drizzleDB
-        .update(clan)
-        .set({ [column]: null })
-        .where(eq(clan[column], userId)),
-    ),
-    drizzleDB.delete(emailReminder).where(eq(emailReminder.userId, userId)),
+    ).map((column) => updateClanForRemoveAccountGameData3(drizzleDB, column, userId)),
+    deleteEmailReminderForRemoveAccountGameData(drizzleDB, userId),
   ]);
   await Promise.all(
     [
@@ -120,7 +105,7 @@ export const removeAccountGameData = async (userId: string) => {
       towerDefenseRun,
       userStreakProgress,
       battleAction,
-    ].map((table) => drizzleDB.delete(table).where(eq(table.userId, userId))),
+    ].map((table) => deleteRowsForUser(drizzleDB, table, userId)),
   );
   // This is the existing account-scoped cleanup, including the permanent receipt
   // tombstone, push tokens, conversations, inventory and character. It intentionally
@@ -129,25 +114,12 @@ export const removeAccountGameData = async (userId: string) => {
   if (rejected) throw new Error(rejected.message);
   // The old character-reset flow does not remove support records. Permanent account
   // deletion also removes authored support content and releases assigned tickets.
-  const tickets = await drizzleDB.query.supportTicket.findMany({
-    columns: { id: true },
-    where: eq(supportTicket.createdByUserId, userId),
-  });
+  const tickets = await listSupportTicketForRemoveAccountGameData(drizzleDB, userId);
   if (tickets.length)
-    await drizzleDB.delete(supportTicketActivity).where(
-      inArray(
-        supportTicketActivity.ticketId,
-        tickets.map((ticket) => ticket.id),
-      ),
-    );
+    await deleteSupportTicketActivityForRemoveAccountGameData(drizzleDB, tickets);
   await Promise.all([
-    drizzleDB
-      .delete(supportTicketActivity)
-      .where(eq(supportTicketActivity.authorId, userId)),
-    drizzleDB.delete(supportTicket).where(eq(supportTicket.createdByUserId, userId)),
-    drizzleDB
-      .update(supportTicket)
-      .set({ assignedToUserId: null })
-      .where(eq(supportTicket.assignedToUserId, userId)),
+    deleteSupportTicketActivityForRemoveAccountGameData2(drizzleDB, userId),
+    deleteSupportTicketForRemoveAccountGameData(drizzleDB, userId),
+    updateSupportTicketForRemoveAccountGameData(drizzleDB, userId),
   ]);
 };

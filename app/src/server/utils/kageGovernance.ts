@@ -1,11 +1,20 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   ELDER_MIN_VOTING_COUNT,
   KAGE_ELDER_REMOVAL_LOCK_SECS,
-  TERR_BOT_ID,
 } from "@/drizzle/constants";
-import { notification, userData, village, villageElderVote } from "@/drizzle/schema";
 import { resolveElderVote } from "@/libs/elder";
+import {
+  findVillageElderVoteForSettleKageRemoval,
+  findVillageElderVoteForSettleKageRemoval2,
+  incrementKageRemovalNotifications,
+  insertNotificationForSettleKageRemoval,
+  listEligibleKageRemovalElders,
+  updateVillageElderVoteForSettleKageRemoval,
+  updateVillageForSettleKageRemoval,
+  updateVillageForSettleKageRemoval2,
+} from "@/queries/kage";
+
+import { findVillageById } from "@/queries/village";
 import type { DrizzleClient } from "@/server/db";
 import { queryInTransaction } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -21,34 +30,18 @@ export const settleKageRemoval = async (
   voteId: string,
   expired = false,
 ) => {
-  const initial = await client.query.villageElderVote.findFirst({
-    where: eq(villageElderVote.id, voteId),
-  });
+  const initial = await findVillageElderVoteForSettleKageRemoval(client, voteId);
   if (initial?.type !== "KAGE_REMOVAL")
     return { success: false, message: "Removal vote not found" };
   return retryOnDeadlock(() =>
     client.transaction(async (transaction) => {
       const tx = transaction as unknown as DrizzleClient;
       // Use the same first lock as defense assignments and successor appointments.
-      await tx
-        .update(village)
-        .set({ kageScheduleVersion: sql`${village.kageScheduleVersion} + 1` })
-        .where(eq(village.id, initial.villageId));
+      await updateVillageForSettleKageRemoval(tx, initial);
       const [motion, v, elders] = await queryInTransaction([
-        tx.query.villageElderVote.findFirst({
-          where: eq(villageElderVote.id, voteId),
-          with: { entries: true },
-        }),
-        tx.query.village.findFirst({ where: eq(village.id, initial.villageId) }),
-        tx.query.userData.findMany({
-          columns: { userId: true },
-          where: and(
-            eq(userData.villageId, initial.villageId),
-            eq(userData.rank, "ELDER"),
-            eq(userData.isAi, false),
-            eq(userData.isBanned, false),
-          ),
-        }),
+        findVillageElderVoteForSettleKageRemoval2(tx, voteId),
+        findVillageById(tx, initial),
+        listEligibleKageRemovalElders(tx, initial),
       ]);
       if (motion?.status !== "PENDING")
         return { success: true, message: "Removal vote already resolved" };
@@ -81,49 +74,21 @@ export const settleKageRemoval = async (
           message: `Vote recorded. Current tally: ${yes} YES, ${no} NO`,
         };
       const now = new Date();
-      const claim = await tx
-        .update(villageElderVote)
-        .set({ status: outcome, resolvedAt: now })
-        .where(
-          and(eq(villageElderVote.id, voteId), eq(villageElderVote.status, "PENDING")),
-        );
+      const claim = await updateVillageElderVoteForSettleKageRemoval(
+        tx,
+        outcome,
+        now,
+        voteId,
+      );
       if (!claim.rowsAffected)
         return { success: true, message: "Removal vote already resolved" };
       if (outcome === "APPROVED" && v) {
-        await tx
-          .update(village)
-          .set({
-            kageId: "",
-            leaderUpdatedAt: now,
-            kageSchedule: {
-              kageId: "",
-              tenure: now.toISOString(),
-              windows: [],
-              publishedAt: null,
-              missedStarts: 0,
-              paused: false,
-              observedAt: now.toISOString(),
-              vacancy: {
-                removedUserId: motion.targetId,
-                reason: motion.reason || "Removed by elder majority vote",
-              },
-            },
-          })
-          .where(eq(village.id, v.id));
+        await updateVillageForSettleKageRemoval2(tx, now, motion, v);
       }
       const recipients = [...new Set([motion.targetId, ...electorate])];
       // Publish one system announcement; unread counters determine who receives it.
-      await tx.insert(notification).values({
-        userId: TERR_BOT_ID,
-        content:
-          outcome === "APPROVED"
-            ? `The ${v?.name ?? "village"} Elder Council removed the Kage. Village prestige is retained. Elders may nominate an eligible villager at Town Hall.`
-            : `The ${v?.name ?? "village"} Kage removal vote did not pass. The result and reason are published at Town Hall.`,
-      });
-      await tx
-        .update(userData)
-        .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-        .where(inArray(userData.userId, recipients));
+      await insertNotificationForSettleKageRemoval(tx, outcome, v);
+      await incrementKageRemovalNotifications(tx, recipients);
       return {
         success: isValid,
         message: !isValid

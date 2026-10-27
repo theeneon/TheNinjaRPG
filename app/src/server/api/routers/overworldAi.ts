@@ -1,16 +1,8 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { OVERWORLD_QUEST_ROLLS_PER_DAY } from "@/drizzle/constants";
-import type { UserQuest } from "@/drizzle/schema";
-import {
-  overworldAiPlacement,
-  overworldAiPlacementQuest,
-  quest,
-  questHistory,
-  userData,
-  userQuestAttempt,
-} from "@/drizzle/schema";
+import { overworldAiPlacement, quest, type UserQuest } from "@/drizzle/schema";
+
 import {
   findActionableBoundObjective,
   hasFriendlyBindingToPlacement,
@@ -32,9 +24,32 @@ import {
   REWARD_CHOICE_READY_MESSAGE,
 } from "@/libs/rewardChoice";
 import { availableQuestLetterRanks } from "@/libs/train";
+import { clearActiveNpcQuest } from "@/queries/concurrency";
+import {
+  deleteOverworldAiPlacementForDeletePlacement,
+  deleteOverworldAiPlacementQuestForDeletePlacement,
+  deleteOverworldAiPlacementQuestForUpsertPlacement,
+  fetchPlacement,
+  findOverworldAiPlacementForUpsertPlacement,
+  findUserDataForUpsertPlacement,
+  insertOverworldAiPlacementForUpsertPlacement,
+  insertOverworldAiPlacementQuestForUpsertPlacement,
+  insertUserQuestAttemptForInteractWithOverworldAi,
+  listOverworldAiPlacementForGetAllPlacementNames,
+  listOverworldAiPlacementForGetPlacementsForAi,
+  listQuestForFetchQuestNamesBindingPlacement,
+  listQuestForFetchQuestsBindingPlacement,
+  listQuestForUpsertPlacement,
+  listQuestHistoryForInteractWithOverworldAi,
+  selectUserQuestAttemptForInteractWithOverworldAi,
+  updateOverworldAiPlacementForUpsertPlacement,
+  updateUserDataForInteractWithOverworldAi,
+} from "@/queries/overworldAi";
+import { fetchUser } from "@/queries/profile";
+import { listQuestForGetAllNames, listQuestsByIds } from "@/queries/quests";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUserItems } from "@/routers/item";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
+import { fetchUpdatedUser } from "@/routers/profile";
 import { startQuestPartyEncounter } from "@/routers/questParty";
 import {
   assignQuestToUser,
@@ -50,7 +65,7 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { claimActiveNpcQuest, clearActiveNpcQuest } from "@/server/utils/concurrency";
+import { claimActiveNpcQuest } from "@/server/utils/concurrency";
 import { fetchPublishedSectorMap } from "@/server/utils/sectorMap";
 import { canChangeContent } from "@/utils/permissions";
 import type { ZodAllTags } from "@/validators/combat";
@@ -71,10 +86,7 @@ export const overworldAiRouter = createTRPCRouter({
       if (!canChangeContent(user.role)) {
         throw serverError("UNAUTHORIZED", "Not allowed");
       }
-      return ctx.drizzle.query.overworldAiPlacement.findMany({
-        where: eq(overworldAiPlacement.aiTemplateUserId, input.aiTemplateUserId),
-        with: { questPool: true },
-      });
+      return listOverworldAiPlacementForGetPlacementsForAi(ctx.drizzle, input);
     }),
 
   getAllPlacementNames: protectedProcedure.query(async ({ ctx }) => {
@@ -83,16 +95,7 @@ export const overworldAiRouter = createTRPCRouter({
     if (!canChangeContent(user.role)) {
       throw serverError("UNAUTHORIZED", "Not allowed");
     }
-    const rows = await ctx.drizzle.query.overworldAiPlacement.findMany({
-      columns: {
-        id: true,
-        aiTemplateUserId: true,
-        interactionType: true,
-        sector: true,
-        isActive: true,
-      },
-      with: { aiTemplate: { columns: { username: true } } },
-    });
+    const rows = await listOverworldAiPlacementForGetAllPlacementNames(ctx.drizzle);
     return rows.map((r) => ({
       id: r.id,
       aiTemplateUserId: r.aiTemplateUserId,
@@ -111,10 +114,7 @@ export const overworldAiRouter = createTRPCRouter({
     if (!canChangeContent(user.role)) {
       throw serverError("UNAUTHORIZED", "Not allowed");
     }
-    const quests = await ctx.drizzle.query.quest.findMany({
-      columns: { id: true, name: true, questType: true },
-      orderBy: (table, { asc }) => [asc(table.name)],
-    });
+    const quests = await listQuestForGetAllNames(ctx.drizzle);
     return quests.map((q) => ({
       ...q,
       assignable: OVERWORLD_ASSIGNABLE_QUEST_TYPES.includes(q.questType),
@@ -132,24 +132,12 @@ export const overworldAiRouter = createTRPCRouter({
       const { quests, ...cfg } = input.data;
       const placementId = input.id;
       const [targetAi, existingPlacement, poolQuests] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          columns: { userId: true, isAi: true },
-          where: eq(userData.userId, cfg.aiTemplateUserId),
-        }),
+        findUserDataForUpsertPlacement(ctx.drizzle, cfg),
         placementId
-          ? ctx.drizzle.query.overworldAiPlacement.findFirst({
-              columns: { id: true, aiTemplateUserId: true },
-              where: eq(overworldAiPlacement.id, placementId),
-            })
+          ? findOverworldAiPlacementForUpsertPlacement(ctx.drizzle, placementId)
           : Promise.resolve(undefined),
         quests.length > 0
-          ? ctx.drizzle.query.quest.findMany({
-              columns: { id: true, name: true, questType: true },
-              where: inArray(
-                quest.id,
-                quests.map((q) => q.questId),
-              ),
-            })
+          ? listQuestForUpsertPlacement(ctx.drizzle, quests)
           : Promise.resolve([]),
       ]);
       if (!targetAi?.isAi) return errorResponse("AI template does not exist");
@@ -281,29 +269,26 @@ export const overworldAiRouter = createTRPCRouter({
       };
       // Mutate
       if (input.id) {
-        const updated = await ctx.drizzle
-          .update(overworldAiPlacement)
-          .set(row)
-          .where(eq(overworldAiPlacement.id, input.id));
+        const updated = await updateOverworldAiPlacementForUpsertPlacement(
+          ctx.drizzle,
+          row,
+          { id: input.id },
+        );
         // Stale id (placement concurrently deleted): abort before writing child rows, which
         // would otherwise orphan (no FK cascade on PlanetScale). The positionVersion bump
         // above guarantees an existing row always changes, so rowsAffected reflects existence.
         if (updated.rowsAffected === 0) {
           return errorResponse("Placement no longer exists");
         }
-        await ctx.drizzle
-          .delete(overworldAiPlacementQuest)
-          .where(eq(overworldAiPlacementQuest.placementId, id));
+        await deleteOverworldAiPlacementQuestForUpsertPlacement(ctx.drizzle, id);
       } else {
-        await ctx.drizzle.insert(overworldAiPlacement).values(row);
+        await insertOverworldAiPlacementForUpsertPlacement(ctx.drizzle, row);
       }
       if (quests.length > 0) {
-        await ctx.drizzle.insert(overworldAiPlacementQuest).values(
-          quests.map((q) => ({
-            placementId: id,
-            questId: q.questId,
-            chance: q.chance,
-          })),
+        await insertOverworldAiPlacementQuestForUpsertPlacement(
+          ctx.drizzle,
+          quests,
+          id,
         );
       }
       // Return
@@ -327,12 +312,8 @@ export const overworldAiRouter = createTRPCRouter({
       }
       // No foreign keys link these tables in PlanetScale, so both deletes are independent.
       await Promise.all([
-        ctx.drizzle
-          .delete(overworldAiPlacementQuest)
-          .where(eq(overworldAiPlacementQuest.placementId, input.id)),
-        ctx.drizzle
-          .delete(overworldAiPlacement)
-          .where(eq(overworldAiPlacement.id, input.id)),
+        deleteOverworldAiPlacementQuestForDeletePlacement(ctx.drizzle, input),
+        deleteOverworldAiPlacementForDeletePlacement(ctx.drizzle, input),
       ]);
       // Return
       return { success: true, message: "Placement deleted" };
@@ -639,9 +620,7 @@ export const overworldAiRouter = createTRPCRouter({
         return { success: true, message: "The NPC has nothing for you." };
       }
       const now = new Date();
-      const poolPromise = ctx.drizzle.query.quest.findMany({
-        where: inArray(quest.id, poolQuestIds),
-      });
+      const poolPromise = listQuestsByIds(ctx.drizzle, poolQuestIds);
       // War lookup depends on the pool contents, but chaining it from the pool promise lets it
       // overlap the independent history and cooldown reads instead of adding another DB round-trip.
       const activeWarsPromise = poolPromise.then((pool) =>
@@ -651,21 +630,12 @@ export const overworldAiRouter = createTRPCRouter({
       );
       const [pool, prevByQuest, attemptRows, activeWars] = await Promise.all([
         poolPromise,
-        ctx.drizzle.query.questHistory.findMany({
-          where: and(
-            eq(questHistory.userId, ctx.userId),
-            inArray(questHistory.questId, poolQuestIds),
-          ),
-        }),
-        ctx.drizzle
-          .select()
-          .from(userQuestAttempt)
-          .where(
-            and(
-              eq(userQuestAttempt.userId, ctx.userId),
-              inArray(userQuestAttempt.questId, poolQuestIds),
-            ),
-          ),
+        listQuestHistoryForInteractWithOverworldAi(ctx.drizzle, ctx, poolQuestIds),
+        selectUserQuestAttemptForInteractWithOverworldAi(
+          ctx.drizzle,
+          ctx,
+          poolQuestIds,
+        ),
         activeWarsPromise,
       ]);
       const attemptByQuest = new Map(
@@ -736,17 +706,7 @@ export const overworldAiRouter = createTRPCRouter({
         : Promise.resolve();
       const [, claim] = await Promise.all([
         clearStale,
-        ctx.drizzle
-          .update(userData)
-          .set({
-            dailyOverworldQuestRolls: sql`${userData.dailyOverworldQuestRolls} + 1`,
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              sql`${userData.dailyOverworldQuestRolls} < ${OVERWORLD_QUEST_ROLLS_PER_DAY}`,
-            ),
-          ),
+        updateUserDataForInteractWithOverworldAi(ctx.drizzle, ctx),
       ]);
       if (claim.rowsAffected === 0) {
         return errorResponse("You've reached your daily mission allowance.");
@@ -763,10 +723,11 @@ export const overworldAiRouter = createTRPCRouter({
       // This write is independent of the selected quest and may run alongside the slot claim.
       const attemptPromise =
         attemptRowsToInsert.length > 0
-          ? ctx.drizzle
-              .insert(userQuestAttempt)
-              .values(attemptRowsToInsert)
-              .onDuplicateKeyUpdate({ set: { lastAttemptAt: now } })
+          ? insertUserQuestAttemptForInteractWithOverworldAi(
+              ctx.drizzle,
+              attemptRowsToInsert,
+              now,
+            )
           : Promise.resolve();
 
       // Each quest owns [acc, acc+chance); a roll past the total grants nothing.
@@ -842,40 +803,22 @@ const fetchQuestNamesBindingPlacement = async (
   client: DrizzleClient,
   placementId: string,
 ) =>
-  client.query.quest.findMany({
-    columns: { id: true, name: true },
-    where: questBindsPlacementWhere(placementId),
-  });
+  listQuestForFetchQuestNamesBindingPlacement(
+    client,
+    questBindsPlacementWhere,
+    placementId,
+  );
 
 /** Same binding set, plus objective content for friendly interaction and fixed structure guards. */
 const fetchQuestsBindingPlacement = async (
   client: DrizzleClient,
   placementId: string,
 ) =>
-  client.query.quest.findMany({
-    columns: { id: true, name: true, content: true },
-    where: questBindsPlacementWhere(placementId),
-  });
-
-/** Load a placement with its quest pool and the AI template identity/isAi flag. */
-const fetchPlacement = async (client: DrizzleClient, placementId: string) =>
-  client.query.overworldAiPlacement.findFirst({
-    where: eq(overworldAiPlacement.id, placementId),
-    columns: {
-      id: true,
-      isActive: true,
-      aiTemplateUserId: true,
-      interactionType: true,
-      sector: true,
-      longitude: true,
-      latitude: true,
-      positionVersion: true,
-    },
-    with: {
-      questPool: { columns: { questId: true, chance: true } },
-      aiTemplate: { columns: { isAi: true } },
-    },
-  });
+  listQuestForFetchQuestsBindingPlacement(
+    client,
+    questBindsPlacementWhere,
+    placementId,
+  );
 
 /**
  * Start an OVERWORLD PvE battle against a placement's AI for a HOSTILE interaction

@@ -14,6 +14,12 @@ import {
 import { isValidSectorId } from "@/libs/sector-map/sector-ids";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import type { GlobalMapData } from "@/libs/threejs/types";
+import {
+  findSectorMapForFetchUncachedPublishedMaps,
+  listSectorMapForFetchPublishedSectorMaps,
+  listSectorMapForFetchUncachedPublishedMaps,
+  listVillagesForSectorWindow,
+} from "@/queries/worldMap";
 import type { DrizzleClient } from "@/server/db";
 
 const globalMap = globalMapData as unknown as GlobalMapData;
@@ -277,13 +283,7 @@ export const fetchPublishedSectorMaps = async (
   const [loaded, versions] = await Promise.all([
     fetchUncachedPublishedMaps(client, missing, generation),
     expired.size > 0
-      ? client.query.sectorMap.findMany({
-          columns: { sector: true, version: true },
-          where: and(
-            inArray(sectorMap.sector, [...expired.keys()]),
-            eq(sectorMap.status, "PUBLISHED"),
-          ),
-        })
+      ? listSectorMapForFetchPublishedSectorMaps(client, expired)
       : Promise.resolve([]),
   ]);
   const latestVersions = new Map<number, number>();
@@ -329,13 +329,9 @@ const fetchUncachedPublishedMaps = async (
   const rows =
     sectors.length === 1
       ? [
-          await client.query.sectorMap.findFirst({
-            columns,
-            where,
-            orderBy: (table, { desc }) => [desc(table.version)],
-          }),
+          await findSectorMapForFetchUncachedPublishedMaps(client, columns, where),
         ].filter((row) => row !== undefined)
-      : await client.query.sectorMap.findMany({ columns, where });
+      : await listSectorMapForFetchUncachedPublishedMaps(client, columns, where);
   const bySector = new Map<number, { version: number; map: NormalizedSectorMap }>();
   rows.forEach((row) => {
     const existing = bySector.get(row.sector);
@@ -374,4 +370,43 @@ export const fetchPublishedSectorMap = async (
   }
 
   return published;
+};
+
+/**
+ * The per-sector window data (published map, global tile type, village
+ * structures/type) for a set of sectors in one parallel fetch. Sectors without
+ * a published map are simply absent from the returned Map — callers decide
+ * whether that is fatal (window center) or ignorable (neighbors).
+ */
+export const fetchSectorWindowEntries = async (
+  client: DrizzleClient,
+  sectors: number[],
+) => {
+  const [maps, villages] = await Promise.all([
+    fetchPublishedSectorMaps(client, sectors),
+    listVillagesForSectorWindow(client, sectors),
+  ]);
+  const entries = new Map<
+    number,
+    {
+      sector: number;
+      map: NonNullable<ReturnType<(typeof maps)["get"]>>;
+      globalTileType: number;
+      structures: (typeof villages)[number]["structures"];
+      villageType: (typeof villages)[number]["type"] | null;
+    }
+  >();
+  for (const sector of new Set(sectors)) {
+    const map = maps.get(sector);
+    if (!map) continue;
+    const village = villages.find((v) => v.sector === sector);
+    entries.set(sector, {
+      sector,
+      map,
+      globalTileType: getSectorTileType(sector),
+      structures: village?.structures ?? [],
+      villageType: village?.type ?? null,
+    });
+  }
+  return entries;
 };

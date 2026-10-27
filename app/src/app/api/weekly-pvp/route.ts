@@ -1,7 +1,7 @@
-import { lt } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { anbuSquad, userData } from "@/drizzle/schema";
 import { handleEndpointError, lockWithWeeklyTimer } from "@/libs/gamesettings";
+import { updateAnbuSquadForGET } from "@/queries/anbu";
+import { updateUserDataForWeeklyPvpReset as updateUserDataForGET } from "@/queries/pvprank";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { periodStart } from "@/utils/time";
@@ -26,16 +26,8 @@ export async function GET(request: Request) {
       // Kills earned after the week boundary survive a delayed reset or job retry.
       // Leave updatedAt alone: it doubles as last activity (online counts, cleanup,
       // sector lists), and no snapshot claim writes these columns as absolute values.
-      drizzleDB
-        .update(userData)
-        .set({
-          weeklyPvpKills: 0,
-          weeklyPvpKillsAt: weekStart,
-        })
-        .where(lt(userData.weeklyPvpKillsAt, weekStart)),
-      drizzleDB.update(anbuSquad).set({
-        pvpActivity: 0,
-      }),
+      updateUserDataForGET(drizzleDB, weekStart),
+      updateAnbuSquadForGET(drizzleDB),
     ]);
     return Response.json(`OK`);
   } catch (cause) {

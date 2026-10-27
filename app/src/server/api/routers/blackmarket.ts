@@ -1,6 +1,4 @@
-import { and, asc, desc, eq, gt, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
-import { nanoid } from "nanoid";
+import { eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { ElementName } from "@/drizzle/constants";
 import {
@@ -20,11 +18,8 @@ import {
   RYO_FOR_REP_MIN_REPS,
   repTradeLevelMessage,
 } from "@/drizzle/constants";
-import { actionLog, ryoTrade, userData } from "@/drizzle/schema";
-import {
-  getJutsuSlotIncreaseError,
-  getJutsuSlotIncreaseLimit,
-} from "@/libs/jutsuSlots";
+import { userData } from "@/drizzle/schema";
+import { getJutsuSlotIncreaseError } from "@/libs/jutsuSlots";
 import {
   getAssignedCombatStatTotal,
   getRedistributableStatTotal,
@@ -32,7 +27,37 @@ import {
 import { hasEnergyQueue } from "@/libs/queue";
 import { filterValidElementsTypeguard } from "@/libs/train";
 import { getBloodlineElements } from "@/libs/userElements";
-import { fetchVillages } from "@/routers/village";
+import {
+  addElementRoll,
+  deleteRyoTradeForDelistOffer,
+  fetchActiveUserOffers,
+  fetchOffer,
+  findUserDataForTakeOffer,
+  insertActionLogForBuyItemSlot,
+  insertActionLogForBuyJutsuSlot,
+  insertActionLogForRerollElement,
+  insertActionLogForTakeOffer,
+  insertActionLogForTakeOffer2,
+  insertActionLogForUpdateStats,
+  insertRyoTradeForCreateOffer,
+  selectActionLogForGetRolledElements,
+  selectRyoTradeForGetGraph,
+  selectRyoTradeForGetRyoOffers,
+  updateRyoTradeForTakeOffer,
+  updateRyoTradeForTakeOffer2,
+  updateUserDataForBuyItemSlot,
+  updateUserDataForBuyJutsuSlot,
+  updateUserDataForChangeUserGender,
+  updateUserDataForCreateOffer,
+  updateUserDataForDelistOffer,
+  updateUserDataForRerollElement,
+  updateUserDataForTakeOffer,
+  updateUserDataForTakeOffer2,
+  updateUserDataForTakeOffer3,
+  updateUserDataForTakeOffer4,
+} from "@/queries/blackmarket";
+import { fetchUser, findUserWithBloodline } from "@/queries/profile";
+
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
@@ -49,7 +74,6 @@ import { rerollElementSchema } from "@/validators/blackmarket";
 import { statSchema } from "@/validators/combat";
 import { genders } from "@/validators/register";
 import { userDeltaResponseSchema } from "@/validators/userCache";
-import { fetchUser } from "./profile";
 
 export const blackMarketRouter = createTRPCRouter({
   getRyoOffers: protectedProcedure
@@ -67,66 +91,20 @@ export const blackMarketRouter = createTRPCRouter({
       const currentCursor = input?.cursor ? input.cursor : 0;
       const limit = input?.limit ? input.limit : 100;
       const skip = currentCursor * limit;
-      const creator = alias(userData, "creator");
-      const buyer = alias(userData, "buyer");
-      const allowed = alias(userData, "allowed");
-      const results = await ctx.drizzle
-        .select({
-          id: ryoTrade.id,
-          creatorUserId: ryoTrade.creatorUserId,
-          repsForSale: ryoTrade.repsForSale,
-          requestedRyo: ryoTrade.requestedRyo,
-          createdAt: ryoTrade.createdAt,
-          ryoPerRep: ryoTrade.ryoPerRep,
-          creatorUsername: creator.username,
-          creatorAvatar: creator.avatar,
-          purchaserUsername: buyer.username,
-          purchaserAvatar: buyer.avatar,
-          allowedUsername: allowed.username,
-          allowedAvatar: allowed.avatar,
-        })
-        .from(ryoTrade)
-        .innerJoin(creator, eq(ryoTrade.creatorUserId, creator.userId))
-        .leftJoin(buyer, eq(ryoTrade.purchaserUserId, buyer.userId))
-        .leftJoin(allowed, eq(ryoTrade.allowedPurchaserId, allowed.userId))
-        .where(
-          and(
-            input.activeToggle
-              ? isNull(ryoTrade.purchaserUserId)
-              : isNotNull(ryoTrade.purchaserUserId),
-            ...(input.creator ? [eq(creator.username, input.creator)] : []),
-            ...(input.buyer ? [eq(buyer.username, input.buyer)] : []),
-          ),
-        )
-        .orderBy((table) => [
-          input.activeToggle ? asc(table.ryoPerRep) : desc(table.createdAt),
-        ])
-        .limit(limit)
-        .offset(skip);
+
+      const results = await selectRyoTradeForGetRyoOffers(
+        ctx.drizzle,
+        input,
+        limit,
+        skip,
+      );
       const nextCursor = results.length < limit ? null : currentCursor + 1;
       return { data: results, nextCursor };
     }),
   getGraph: protectedProcedure
     .meta({ mcp: { description: "Get ryo trade graph data" } })
     .query(async ({ ctx }) => {
-      const sender = alias(userData, "sender");
-      const receiver = alias(userData, "receiver");
-      const transfers = await ctx.drizzle
-        .select({
-          senderId: sender.userId,
-          receiverId: receiver.userId,
-          senderUsername: sender.username,
-          receiverUsername: receiver.username,
-          senderAvatar: sender.avatar,
-          receiverAvatar: receiver.avatar,
-          totalReps: sql<number>`SUM(${ryoTrade.repsForSale})`,
-          totalRyo: sql<number>`SUM(${ryoTrade.requestedRyo})`,
-        })
-        .from(ryoTrade)
-        .innerJoin(sender, eq(ryoTrade.creatorUserId, sender.userId))
-        .innerJoin(receiver, eq(ryoTrade.purchaserUserId, receiver.userId))
-        .where(isNotNull(ryoTrade.purchaserUserId))
-        .groupBy(ryoTrade.creatorUserId, ryoTrade.purchaserUserId);
+      const transfers = await selectRyoTradeForGetGraph(ctx.drizzle);
       return transfers;
     }),
   createOffer: protectedProcedure
@@ -166,27 +144,12 @@ export const blackMarketRouter = createTRPCRouter({
       if (input.ryo <= 0) return errorResponse("Ryo must be greater than 0");
       if (input.ryo < input.reps) return errorResponse("Ryo must be greater than reps");
       // Deduce reputation points first
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ reputationPoints: sql`${userData.reputationPoints} - ${input.reps}` })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gt(userData.reputationPoints, input.reps),
-          ),
-        );
+      const result = await updateUserDataForCreateOffer(ctx.drizzle, input, ctx);
       if (result.rowsAffected === 0) {
         return errorResponse("Not enough reputation points");
       }
       // Add in the offer
-      await ctx.drizzle.insert(ryoTrade).values({
-        id: nanoid(),
-        creatorUserId: ctx.userId,
-        repsForSale: input.reps,
-        requestedRyo: input.ryo,
-        ryoPerRep: input.ryo / input.reps,
-        allowedPurchaserId: input.allowedUser,
-      });
+      await insertRyoTradeForCreateOffer(ctx.drizzle, ctx, input);
       // Response
       return {
         success: true,
@@ -217,13 +180,8 @@ export const blackMarketRouter = createTRPCRouter({
       if (!canDelist) return errorResponse("Offer is frozen");
       // Mutate
       await Promise.all([
-        ctx.drizzle.delete(ryoTrade).where(eq(ryoTrade.id, input.offerId)),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            reputationPoints: sql`${userData.reputationPoints} + ${offer.repsForSale}`,
-          })
-          .where(eq(userData.userId, creatorId)),
+        deleteRyoTradeForDelistOffer(ctx.drizzle, input),
+        updateUserDataForDelistOffer(ctx.drizzle, offer, creatorId),
       ]);
       // Response
       return {
@@ -264,10 +222,7 @@ export const blackMarketRouter = createTRPCRouter({
       }
 
       // Verify seller still exists and can receive payment
-      const seller = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, offer.creatorUserId),
-        columns: { userId: true, bank: true },
-      });
+      const seller = await findUserDataForTakeOffer(ctx.drizzle, offer);
       if (!seller) {
         return errorResponse("Seller account no longer exists");
       }
@@ -277,10 +232,7 @@ export const blackMarketRouter = createTRPCRouter({
       }
 
       // Mark the offer as taken first - this will fail if someone else has taken it
-      const offerResult = await ctx.drizzle
-        .update(ryoTrade)
-        .set({ purchaserUserId: ctx.userId })
-        .where(and(eq(ryoTrade.id, input.offerId), isNull(ryoTrade.purchaserUserId)));
+      const offerResult = await updateRyoTradeForTakeOffer(ctx.drizzle, ctx, input);
       if (offerResult.rowsAffected === 0) {
         return errorResponse("Offer no longer available");
       }
@@ -288,28 +240,9 @@ export const blackMarketRouter = createTRPCRouter({
       // Perform both updates simultaneously
       const [buyerResult, sellerResult] = await Promise.all([
         // Update buyer's money and reputation points
-        ctx.drizzle
-          .update(userData)
-          .set({
-            money: sql`${userData.money} - ${offer.requestedRyo}`,
-            reputationPoints: sql`${userData.reputationPoints} + ${offer.repsForSale}`,
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              gte(userData.money, offer.requestedRyo),
-            ),
-          ),
+        updateUserDataForTakeOffer(ctx.drizzle, offer, ctx),
         // Update seller's bank - add the full requested ryo (validated to fit under RYO_CAP)
-        ctx.drizzle
-          .update(userData)
-          .set({ bank: sql`${userData.bank} + ${offer.requestedRyo}` })
-          .where(
-            and(
-              eq(userData.userId, offer.creatorUserId),
-              sql`${userData.bank} + ${offer.requestedRyo} <= ${RYO_CAP}`,
-            ),
-          ),
+        updateUserDataForTakeOffer2(ctx.drizzle, offer),
       ]);
 
       // Verify BOTH buyer and seller updates succeeded
@@ -320,44 +253,23 @@ export const blackMarketRouter = createTRPCRouter({
         // Rollback: reset offer status and any successful updates
         await Promise.all([
           // Always reset the offer status
-          ctx.drizzle
-            .update(ryoTrade)
-            .set({ purchaserUserId: null })
-            .where(eq(ryoTrade.id, input.offerId)),
+          updateRyoTradeForTakeOffer2(ctx.drizzle, input),
           // Roll back seller's bank if only buyer failed (seller succeeded)
           ...(sellerFailed === false && buyerFailed
-            ? [
-                ctx.drizzle
-                  .update(userData)
-                  .set({ bank: sql`${userData.bank} - ${offer.requestedRyo}` })
-                  .where(eq(userData.userId, offer.creatorUserId)),
-              ]
+            ? [updateUserDataForTakeOffer3(ctx.drizzle, offer)]
             : []),
           // Roll back buyer if only seller failed (buyer succeeded)
           ...(buyerFailed === false && sellerFailed
-            ? [
-                ctx.drizzle
-                  .update(userData)
-                  .set({
-                    money: sql`${userData.money} + ${offer.requestedRyo}`,
-                    reputationPoints: sql`${userData.reputationPoints} - ${offer.repsForSale}`,
-                  })
-                  .where(eq(userData.userId, ctx.userId)),
-              ]
+            ? [updateUserDataForTakeOffer4(ctx.drizzle, offer, ctx)]
             : []),
           // Log the failure for debugging
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "ryoTrade",
-            changes: [
-              `Rollback of offer ${input.offerId}`,
-              `Buyer update: ${buyerFailed ? "failed" : "success"}`,
-              `Seller update: ${sellerFailed ? "failed" : "success"}`,
-            ],
-            relatedId: input.offerId,
-            relatedMsg: `Rollback: buyer=${buyerFailed ? "fail" : "ok"}, seller=${sellerFailed ? "fail" : "ok"}`,
-          }),
+          insertActionLogForTakeOffer(
+            ctx.drizzle,
+            ctx,
+            input,
+            buyerFailed,
+            sellerFailed,
+          ),
         ]);
 
         return errorResponse(
@@ -368,17 +280,7 @@ export const blackMarketRouter = createTRPCRouter({
       }
 
       // Log successful trade for audit trail
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "ryoTrade",
-        changes: [
-          `Purchased ${offer.repsForSale} reputation for ${offer.requestedRyo} ryo`,
-          `Seller: ${offer.creatorUserId}`,
-        ],
-        relatedId: input.offerId,
-        relatedMsg: `Trade completed: ${offer.requestedRyo} ryo`,
-      });
+      await insertActionLogForTakeOffer2(ctx.drizzle, ctx, offer, input);
 
       return {
         success: true,
@@ -400,20 +302,12 @@ export const blackMarketRouter = createTRPCRouter({
         return errorResponse("Not enough reputation points");
       }
       // Mutate
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          gender: input.gender,
-          reputationPoints: sql`reputationPoints - ${COST_CHANGE_GENDER}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.gender, user.gender),
-            eq(userData.reputationPoints, user.reputationPoints),
-            gte(userData.reputationPoints, COST_CHANGE_GENDER),
-          ),
-        );
+      const result = await updateUserDataForChangeUserGender(
+        ctx.drizzle,
+        input,
+        ctx,
+        user,
+      );
       // Return message
       if (result.rowsAffected === 0) {
         return errorResponse("Your profile or reputation changed. Please try again");
@@ -440,30 +334,11 @@ export const blackMarketRouter = createTRPCRouter({
         return errorResponse("Not enough reputation points");
       }
       // Mutate
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          extraItemSlots: sql`extraItemSlots + 1`,
-          reputationPoints: sql`reputationPoints - ${COST_EXTRA_ITEM_SLOT}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.reputationPoints, COST_EXTRA_ITEM_SLOT),
-          ),
-        );
+      const result = await updateUserDataForBuyItemSlot(ctx.drizzle, ctx);
       if (result.rowsAffected === 0) {
         return { success: false, message: "Could not update user" };
       } else {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: ["Item slot purchased"],
-          relatedId: ctx.userId,
-          relatedMsg: "Update: Item slot purchased",
-          relatedImage: user.avatarLight,
-        });
+        await insertActionLogForBuyItemSlot(ctx.drizzle, ctx, user);
         return {
           success: true,
           message: "Item slot purchased",
@@ -486,31 +361,11 @@ export const blackMarketRouter = createTRPCRouter({
       const slotError = getJutsuSlotIncreaseError(user.extraJutsuSlots);
       if (slotError) return errorResponse(slotError);
       // Mutate
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          extraJutsuSlots: sql`${userData.extraJutsuSlots} + 1`,
-          reputationPoints: sql`reputationPoints - ${COST_EXTRA_JUTSU_SLOT}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.reputationPoints, COST_EXTRA_JUTSU_SLOT),
-            lte(userData.extraJutsuSlots, getJutsuSlotIncreaseLimit()),
-          ),
-        );
+      const result = await updateUserDataForBuyJutsuSlot(ctx.drizzle, ctx);
       if (result.rowsAffected === 0) {
         return { success: false, message: "Could not update user" };
       } else {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: ["Jutsu slot purchased"],
-          relatedId: ctx.userId,
-          relatedMsg: "Update: Jutsu slot purchased",
-          relatedImage: user.avatarLight,
-        });
+        await insertActionLogForBuyJutsuSlot(ctx.drizzle, ctx, user);
         return {
           success: true,
           message: "Jutsu slot purchased",
@@ -529,10 +384,7 @@ export const blackMarketRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Load bloodline eligibility and roll history together before any writes.
       const [user, rollHistory] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          with: { bloodline: true },
-        }),
+        findUserWithBloodline(ctx.drizzle, ctx),
         getRolledElements(ctx.drizzle, ctx.userId),
       ]);
 
@@ -591,15 +443,7 @@ export const blackMarketRouter = createTRPCRouter({
 
       // Add promises to the mutations
       if (result.reset) {
-        mutations.push(
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "elementRoll",
-            changes: [`${input.elementType} element tracking reset`],
-            relatedMsg: `RESET: ${input.elementType}`,
-          }),
-        );
+        mutations.push(insertActionLogForRerollElement(ctx.drizzle, ctx, input));
       }
 
       // Charge and replace the roll atomically; balance, bloodline and innate-slot
@@ -612,24 +456,12 @@ export const blackMarketRouter = createTRPCRouter({
       } else {
         updateData.secondaryElement = result.element;
       }
-      const update = await ctx.drizzle
-        .update(userData)
-        .set(updateData)
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.reputationPoints, COST_REROLL_ELEMENT),
-            user.bloodlineId === null
-              ? isNull(userData.bloodlineId)
-              : eq(userData.bloodlineId, user.bloodlineId),
-            user.primaryElement === null
-              ? isNull(userData.primaryElement)
-              : eq(userData.primaryElement, user.primaryElement),
-            user.secondaryElement === null
-              ? isNull(userData.secondaryElement)
-              : eq(userData.secondaryElement, user.secondaryElement),
-          ),
-        );
+      const update = await updateUserDataForRerollElement(
+        ctx.drizzle,
+        updateData,
+        ctx,
+        user,
+      );
       if (update.rowsAffected === 0)
         return errorResponse("Your balance or elements changed. Please try again.");
 
@@ -719,15 +551,7 @@ export const blackMarketRouter = createTRPCRouter({
           "Stats or balance changed while resetting. Please try again",
         );
       } else {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`User stats distribution changed`],
-          relatedId: ctx.userId,
-          relatedMsg: `Update: ${user.username} stats redistribution`,
-          relatedImage: user.avatarLight,
-        });
+        await insertActionLogForUpdateStats(ctx.drizzle, ctx, user);
         return {
           success: true,
           message: `User stats updated for ${cost} reputation points`,
@@ -736,31 +560,6 @@ export const blackMarketRouter = createTRPCRouter({
       }
     }),
 });
-
-/**
- * Fetches a ryo offer from the black market.
- *
- * @param {DrizzleClient} client - The Drizzle client used to make the query.
- * @param {string} offerId - The ID of the offer to fetch.
- */
-export const fetchOffer = async (client: DrizzleClient, offerId: string) => {
-  return await client.query.ryoTrade.findFirst({
-    where: eq(ryoTrade.id, offerId),
-  });
-};
-
-/**
- * Fetches all offers created by a specific user.
- *
- * @param {DrizzleClient} client - The database client used to perform the query.
- * @param {string} userId - The ID of the user whose offers are to be fetched.
- * @returns {Promise<Array>} A promise that resolves to an array of offers created by the user.
- */
-export const fetchActiveUserOffers = async (client: DrizzleClient, userId: string) => {
-  return await client.query.ryoTrade.findMany({
-    where: and(eq(ryoTrade.creatorUserId, userId), isNull(ryoTrade.purchaserUserId)),
-  });
-};
 
 /**
  * Gets the rolled elements from actionLog.
@@ -772,14 +571,7 @@ export const fetchActiveUserOffers = async (client: DrizzleClient, userId: strin
  */
 export const getRolledElements = async (client: DrizzleClient, userId: string) => {
   // Get all relevant logs (resets and element rolls) in a single query
-  const allLogs = await client
-    .select({
-      relatedMsg: actionLog.relatedMsg,
-      createdAt: actionLog.createdAt,
-    })
-    .from(actionLog)
-    .where(and(eq(actionLog.userId, userId), eq(actionLog.tableName, "elementRoll")))
-    .orderBy(asc(actionLog.createdAt));
+  const allLogs = await selectActionLogForGetRolledElements(client, userId);
 
   // Find the latest reset times
   const resetLogs = allLogs.filter((log) => log.relatedMsg?.startsWith("RESET:"));
@@ -843,29 +635,6 @@ export const getRolledElements = async (client: DrizzleClient, userId: string) =
     primary: filterValidElementsTypeguard(primaryElements),
     secondary: filterValidElementsTypeguard(secondaryElements),
   };
-};
-
-/**
- * Adds a new element roll to actionLog.
- *
- * @param {DrizzleClient} client - The Drizzle client used to make the query.
- * @param {string} userId - The ID of the user who rolled the element.
- * @param {string} elementType - The type of element rolled (primary or secondary).
- * @param {string} element - The name of the element rolled.
- */
-const addElementRoll = (
-  client: DrizzleClient,
-  userId: string,
-  elementType: "primary" | "secondary",
-  element: ElementName,
-) => {
-  return client.insert(actionLog).values({
-    id: nanoid(),
-    userId: userId,
-    tableName: "elementRoll",
-    changes: [`${elementType} element rolled`],
-    relatedMsg: `${elementType === "primary" ? "Primary" : "Secondary"}: ${element}`,
-  });
 };
 
 /**

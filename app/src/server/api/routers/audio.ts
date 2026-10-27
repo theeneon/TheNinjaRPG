@@ -1,16 +1,17 @@
-import { and, desc, eq, isNotNull, lte } from "drizzle-orm";
 import { z } from "zod";
-import { historicalSoundEffect, userData } from "@/drizzle/schema";
 import { generateAndUploadAudio } from "@/libs/replicate";
+import {
+  insertHistoricalSoundEffect,
+  selectHistoricalSoundEffectForGetHistorical,
+} from "@/queries/audio";
+import { findUserById } from "@/queries/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { canChangeContent } from "@/utils/permissions";
-import type { GenerateAudioInput } from "@/validators/audio";
 import { generateAudioSchema } from "@/validators/audio";
 import { mediaHistoryQuerySchema } from "@/validators/mediaHistory";
 
@@ -20,9 +21,7 @@ export const audioRouter = createTRPCRouter({
     .output(baseServerResponse.extend({ url: z.string().nullish() }))
     .mutation(async ({ ctx, input }) => {
       // Query
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-      });
+      const user = await findUserById(ctx.drizzle, ctx.userId);
       // Guard
       if (!user) return errorResponse("User not found");
       if (user.isBanned) return errorResponse("You are banned");
@@ -43,19 +42,12 @@ export const audioRouter = createTRPCRouter({
       const relationId = input.relationId ?? ctx.userId;
       const limit = input.limit ?? 50;
       const { cursor } = input;
-      const rows = await ctx.drizzle
-        .select()
-        .from(historicalSoundEffect)
-        .where(
-          and(
-            eq(historicalSoundEffect.relationId, relationId),
-            eq(historicalSoundEffect.done, true),
-            isNotNull(historicalSoundEffect.url),
-            cursor != null ? lte(historicalSoundEffect.id, cursor) : undefined,
-          ),
-        )
-        .orderBy(desc(historicalSoundEffect.id))
-        .limit(limit + 1);
+      const rows = await selectHistoricalSoundEffectForGetHistorical(
+        ctx.drizzle,
+        relationId,
+        cursor,
+        limit,
+      );
 
       let nextCursor: number | undefined;
       if (rows.length > limit) {
@@ -65,23 +57,3 @@ export const audioRouter = createTRPCRouter({
       return { data: rows, nextCursor };
     }),
 });
-
-/**
- *
- * @param ctx - The database client
- * @param input - The input data
- */
-export const insertHistoricalSoundEffect = async (
-  client: DrizzleClient,
-  userId: string,
-  url: string,
-  config?: GenerateAudioInput,
-) => {
-  await client.insert(historicalSoundEffect).values({
-    ...(config ?? {}),
-    userId,
-    url,
-    status: "success",
-    done: true,
-  });
-};

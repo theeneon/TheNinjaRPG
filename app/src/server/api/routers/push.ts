@@ -1,19 +1,23 @@
-import { and, desc, eq, gte, inArray, ne } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
   PUSH_CATEGORIES,
   PUSH_MAX_DEVICES_PER_USER,
-  PUSH_TOKEN_STALE_DAYS,
   type PushCategory,
 } from "@/drizzle/constants";
+import { findUserIdentityById } from "@/queries/profile";
 import {
-  storeUserIdAlias,
-  userData,
-  userDevice,
-  userLiveActivity,
-  userPushPreference,
-} from "@/drizzle/schema";
+  deleteUserDeviceForEvictExcessDevices,
+  deleteUserDeviceForUnregisterDevice,
+  deleteUserLiveActivityForEndActivity,
+  findStoreUserIdAliasForIsLivePushUser,
+  insertUserDeviceForRegisterDevice,
+  insertUserLiveActivityForRegisterActivity,
+  insertUserPushPreferenceForSetPreference,
+  selectUserDeviceForGetPreferences,
+  selectUserDeviceForRegisterDevice,
+  selectUserPushPreferenceForGetPreferences,
+} from "@/queries/push";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -23,7 +27,6 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { deliveryTest, isPushEnabled, sendPushToUsers } from "@/server/utils/push";
-import { secondsFromNow } from "@/utils/time";
 import {
   endActivitySchema,
   registerActivitySchema,
@@ -53,37 +56,15 @@ export const pushRouter = createTRPCRouter({
       // Rotated on every registration, so a device that changes hands cannot keep reading
       // the previous account's status.
       const widgetToken = nanoid(32);
-      await ctx.drizzle
-        .insert(userDevice)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          token: input.token,
-          platform: input.platform,
-          appVersion: input.appVersion ?? null,
-          locale: input.locale ?? null,
-          widgetToken,
-          createdAt: now,
-          lastSeenAt: now,
-        })
-        .onDuplicateKeyUpdate({
-          set: {
-            userId: ctx.userId,
-            platform: input.platform,
-            appVersion: input.appVersion ?? null,
-            locale: input.locale ?? null,
-            widgetToken,
-            lastSeenAt: now,
-          },
-        });
+      await insertUserDeviceForRegisterDevice(
+        ctx.drizzle,
+        ctx,
+        input,
+        widgetToken,
+        now,
+      );
       // The row this would evict is one the account owns, and a retirement purges the lot.
-      const others = await ctx.drizzle
-        .select({ id: userDevice.id })
-        .from(userDevice)
-        .where(
-          and(eq(userDevice.userId, ctx.userId), ne(userDevice.token, input.token)),
-        )
-        .orderBy(desc(userDevice.lastSeenAt));
+      const others = await selectUserDeviceForRegisterDevice(ctx.drizzle, ctx, input);
       // One slot is spoken for by the device above, hence the cap less one.
       await evictExcessDevices(ctx.drizzle, others);
       return {
@@ -108,14 +89,7 @@ export const pushRouter = createTRPCRouter({
     .input(unregisterDeviceSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      await ctx.drizzle
-        .delete(userDevice)
-        .where(
-          and(
-            eq(userDevice.token, input.token),
-            eq(userDevice.widgetToken, input.widgetToken),
-          ),
-        );
+      await deleteUserDeviceForUnregisterDevice(ctx.drizzle, input);
       return { success: true, message: "Device unregistered" };
     }),
 
@@ -135,27 +109,8 @@ export const pushRouter = createTRPCRouter({
     )
     .query(async ({ ctx }) => {
       const [preferences, devices] = await Promise.all([
-        ctx.drizzle
-          .select({
-            category: userPushPreference.category,
-            enabled: userPushPreference.enabled,
-          })
-          .from(userPushPreference)
-          .where(eq(userPushPreference.userId, ctx.userId)),
-        ctx.drizzle
-          .select({ id: userDevice.id })
-          .from(userDevice)
-          .where(
-            and(
-              eq(userDevice.userId, ctx.userId),
-              // Same window sendPushToUsers uses, so the count cannot promise a delivery
-              // the fan-out would skip.
-              gte(
-                userDevice.lastSeenAt,
-                secondsFromNow(-PUSH_TOKEN_STALE_DAYS * 86400),
-              ),
-            ),
-          ),
+        selectUserPushPreferenceForGetPreferences(ctx.drizzle, ctx),
+        selectUserDeviceForGetPreferences(ctx.drizzle, ctx),
       ]);
       const stored = new Map<PushCategory, boolean>(
         preferences.map((row) => [row.category, row.enabled]),
@@ -178,16 +133,12 @@ export const pushRouter = createTRPCRouter({
         return errorResponse("Character no longer exists");
       }
       const updatedAt = new Date();
-      await ctx.drizzle
-        .insert(userPushPreference)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          category: input.category,
-          enabled: input.enabled,
-          updatedAt,
-        })
-        .onDuplicateKeyUpdate({ set: { enabled: input.enabled, updatedAt } });
+      await insertUserPushPreferenceForSetPreference(
+        ctx.drizzle,
+        ctx,
+        input,
+        updatedAt,
+      );
       return {
         success: true,
         message: `${input.category} notifications ${input.enabled ? "enabled" : "disabled"}`,
@@ -207,25 +158,12 @@ export const pushRouter = createTRPCRouter({
         return errorResponse("Character no longer exists");
       }
       const createdAt = new Date();
-      await ctx.drizzle
-        .insert(userLiveActivity)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          activityId: input.activityId,
-          kind: input.kind,
-          pushToken: input.pushToken,
-          endsAt: input.endsAt,
-          createdAt,
-        })
-        .onDuplicateKeyUpdate({
-          set: {
-            activityId: input.activityId,
-            pushToken: input.pushToken,
-            endsAt: input.endsAt,
-            createdAt,
-          },
-        });
+      await insertUserLiveActivityForRegisterActivity(
+        ctx.drizzle,
+        ctx,
+        input,
+        createdAt,
+      );
       return { success: true, message: "Activity registered" };
     }),
 
@@ -239,14 +177,7 @@ export const pushRouter = createTRPCRouter({
       }
       // A rename moves this row to the new id before the old one stops resolving, so an
       // end arriving under the old id matches nothing and the countdown keeps its row.
-      await ctx.drizzle
-        .delete(userLiveActivity)
-        .where(
-          and(
-            eq(userLiveActivity.userId, ctx.userId),
-            eq(userLiveActivity.activityId, input.activityId),
-          ),
-        );
+      await deleteUserLiveActivityForEndActivity(ctx.drizzle, ctx, input);
       return { success: true, message: "Activity ended" };
     }),
 
@@ -278,14 +209,8 @@ const isLivePushUser = async (
   userId: string,
 ): Promise<boolean> => {
   const [liveUser, retiredIdentity] = await Promise.all([
-    client.query.userData.findFirst({
-      columns: { userId: true },
-      where: eq(userData.userId, userId),
-    }),
-    client.query.storeUserIdAlias.findFirst({
-      columns: { oldUserId: true },
-      where: eq(storeUserIdAlias.oldUserId, userId),
-    }),
+    findUserIdentityById(client, userId),
+    findStoreUserIdAliasForIsLivePushUser(client, userId),
   ]);
   return !!liveUser && !retiredIdentity;
 };
@@ -299,5 +224,5 @@ const evictExcessDevices = async (client: DrizzleClient, others: { id: string }[
   // is one lower: that device holds the first slot and is never a candidate here.
   const excess = others.slice(PUSH_MAX_DEVICES_PER_USER - 1).map((device) => device.id);
   if (excess.length === 0) return;
-  await client.delete(userDevice).where(inArray(userDevice.id, excess));
+  await deleteUserDeviceForEvictExcessDevices(client, excess);
 };

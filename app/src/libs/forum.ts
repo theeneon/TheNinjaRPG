@@ -1,6 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
-import { asc, desc, eq } from "drizzle-orm";
-import { forumBoard, forumPost, forumThread, userData } from "@/drizzle/schema";
+import {
+  findForumBoardForFetchBoard,
+  findUserDataForFetchForumPageData,
+  listForumThreadForGetInfiniteThreads,
+} from "@/queries/forum";
 import type { DrizzleClient } from "@/server/db";
 import { canCreateNews } from "@/utils/permissions";
 
@@ -18,30 +21,14 @@ export const getInfiniteThreads = async (props: {
   const skip = currentCursor * limit;
   const [board, threads] = await Promise.all([
     fetchBoard(client, boardId, boardName),
-    client.query.forumThread.findMany({
-      offset: skip,
-      limit: limit,
-      where: eq(
-        forumThread.boardId,
-        boardId ||
-          client
-            .select({ id: forumBoard.id })
-            .from(forumBoard)
-            .where(eq(forumBoard.name, boardName ?? "")),
-      ),
-      with: {
-        user: {
-          columns: { username: true },
-        },
-        posts: {
-          limit: 1,
-          orderBy: asc(forumPost.createdAt),
-        },
-      },
-      orderBy: highlightPinned
-        ? [desc(forumThread.isPinned), desc(forumThread.createdAt)]
-        : desc(forumThread.createdAt),
-    }),
+    listForumThreadForGetInfiniteThreads(
+      client,
+      skip,
+      limit,
+      boardId,
+      boardName,
+      highlightPinned,
+    ),
   ]);
   if (!board) return { board: null, threads: [], nextCursor: null };
   const nextCursor = threads.length < limit ? null : currentCursor + 1;
@@ -55,19 +42,8 @@ export const fetchBoard = async (
   boardName?: string,
 ) => {
   if (!boardId && !boardName) return null;
-  const entry = await client.query.forumBoard.findFirst({
-    where: boardId
-      ? eq(forumBoard.id, boardId ?? "")
-      : eq(forumBoard.name, boardName ?? ""),
-  });
+  const entry = await findForumBoardForFetchBoard(client, boardId, boardName);
   return entry ?? null;
-};
-
-export const readNews = async (client: DrizzleClient, userId: string) => {
-  await client
-    .update(userData)
-    .set({ unreadNews: 0 })
-    .where(eq(userData.userId, userId));
 };
 
 export const fetchForumPageData = async (
@@ -82,21 +58,16 @@ export const fetchForumPageData = async (
   });
 
   const userDataPromise = userId
-    ? client.query.userData
-        .findFirst({
-          where: eq(userData.userId, userId),
-          columns: { userId: true, role: true, unreadNews: true },
-        })
-        .catch((error) => {
-          if (error.message?.includes("not found")) {
-            return null;
-          }
-          console.error("Failed to fetch user:", error);
-          Sentry.captureException(error, {
-            tags: { source: "forum-fetch-user" },
-          });
+    ? findUserDataForFetchForumPageData(client, userId).catch((error) => {
+        if (error.message?.includes("not found")) {
           return null;
-        })
+        }
+        console.error("Failed to fetch user:", error);
+        Sentry.captureException(error, {
+          tags: { source: "forum-fetch-user" },
+        });
+        return null;
+      })
     : Promise.resolve(null);
 
   const [initialThreads, userRow] = await Promise.all([

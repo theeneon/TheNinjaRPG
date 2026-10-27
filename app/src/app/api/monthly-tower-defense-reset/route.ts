@@ -1,7 +1,6 @@
-import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { towerDefenseRun } from "@/drizzle/schema";
 import { handleEndpointError, lockWithMonthlyTimer } from "@/libs/gamesettings";
+import { deleteTowerDefenseRunForGET } from "@/queries/towerDefense";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 
@@ -20,9 +19,7 @@ export async function GET(request: Request) {
 
   try {
     // Delete all completed tower defense runs (reset leaderboard)
-    const result = await drizzleDB
-      .delete(towerDefenseRun)
-      .where(eq(towerDefenseRun.status, "COMPLETED"));
+    const result = await deleteTowerDefenseRunForGET(drizzleDB);
 
     return Response.json(
       `OK - Tower defense leaderboard reset. Deleted ${result.rowsAffected} completed runs.`,

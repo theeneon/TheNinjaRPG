@@ -1,6 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { and, count, eq, exists, gt, gte, isNull, lt, ne, or, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { and, eq, exists, gte, isNull, lt, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   CombatStatNames,
@@ -20,18 +19,7 @@ import {
   PET_SEICHI_SILVER_COST,
   type PetPaymentCurrency,
 } from "@/drizzle/constants";
-import {
-  item,
-  jutsu,
-  petSpecies,
-  type UserData,
-  type UserPet,
-  userData,
-  userItem,
-  userPet,
-  userSkill,
-  userUpload,
-} from "@/drizzle/schema";
+import { type UserData, type UserPet, userData, userPet } from "@/drizzle/schema";
 import { fetchPetArtProvider } from "@/libs/gamesettings";
 import {
   getPetAbilityCapacity,
@@ -54,6 +42,29 @@ import {
   petRankUpBlockMessage,
 } from "@/libs/pets/progression";
 import { getAssignedCombatStatTotal } from "@/libs/profile";
+import { deleteConsumedMeal } from "@/queries/item";
+import {
+  deleteUserPetForReleasePet,
+  executeActivatedForActivatePet,
+  executeAssignedForAssignExperience,
+  executeFedForFeedPet,
+  executeRemovedForReleasePet,
+  executeResultForUpdateOwnedPet,
+  fetchPetAbilities,
+  fetchPetOwner,
+  findUserItemForFeedPet,
+  insertUserPet,
+  insertUserUploadForGenerateAppearance,
+  listPetSpeciesForGetPet,
+  listUserItemForGetPet,
+  listVisiblePetJutsu,
+  selectPetSpeciesForWhere,
+  selectUserDataForActivatePet,
+  selectUserPetForWhere,
+  updateUserPetForGenerateAppearance,
+  updateUserPetForGenerateAppearance2,
+  updateUserPetForGenerateAppearance3,
+} from "@/queries/pets";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -62,7 +73,7 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { claimUserSnapshot, getNextUserSnapshotAt } from "@/server/utils/concurrency";
+import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { logError } from "@/server/utils/sentry";
 import { getUserFederalStatus } from "@/utils/paypal";
@@ -145,32 +156,26 @@ export const petsRouter = createTRPCRouter({
       const previous = pets.find((entry) => entry.id === user.activePetId);
       if (user.activePetId && !previous) return changedResponse();
       const now = new Date();
-      const previousPet = alias(userPet, "previous_pet");
+
       // LIMIT materializes the locking snapshot, preserving XP earned before this
       // statement independently of MySQL's unspecified multi-table assignment order.
-      const ownerSnapshot = ctx.drizzle
-        .select({ userId: userData.userId, petExperience: userData.petExperience })
-        .from(userData)
-        .where(ownerSnapshotWhere(user))
-        .limit(1)
-        .for("update")
-        .as("owner_snapshot");
+      const ownerSnapshot = selectUserDataForActivatePet(
+        ctx.drizzle,
+        ownerSnapshotWhere,
+        user,
+      );
       // Drizzle's MySQL UPDATE builder cannot update the owner and both pets together.
       const activated = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${userData}
-          INNER JOIN ${ownerSnapshot} ON ${eq(userData.userId, ownerSnapshot.userId)}
-          INNER JOIN ${userPet} ON ${eq(userPet.userId, userData.userId)}
-          ${previous ? sql`INNER JOIN ${userPet} previous_pet ON ${and(eq(previousPet.id, previous.id), eq(previousPet.userId, userData.userId), eq(previousPet.revision, previous.revision))}` : sql``}
-          SET ${userData.activePetId} = ${pet.id},
-              ${userData.petExperience} = ${pet.storedExperience},
-              ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt, now)},
-              ${userPet.storedExperience} = 0,
-              ${userPet.revision} = ${userPet.revision} + 1,
-              ${userPet.updatedAt} = ${now}
-              ${previous ? sql`, ${previousPet.storedExperience} = ${ownerSnapshot.petExperience}, ${previousPet.revision} = ${previousPet.revision} + 1, ${previousPet.updatedAt} = ${now}` : sql``}
-          WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet))}
-        `),
+        executeActivatedForActivatePet(
+          ctx.drizzle,
+          ownerSnapshot,
+          previous,
+          pet,
+          user,
+          now,
+          ownerSnapshotWhere,
+          petSnapshotWhere,
+        ),
       );
       return activated.rowsAffected > 0
         ? { success: true, message: `${pet.name} is now your active companion.` }
@@ -211,13 +216,7 @@ export const petsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [{ user, pet }, meal] = await Promise.all([
         fetchPetOwner(ctx.drizzle, ctx.userId, input.petId),
-        ctx.drizzle.query.userItem.findFirst({
-          where: and(
-            eq(userItem.id, input.userItemId),
-            eq(userItem.userId, ctx.userId),
-          ),
-          with: { item: true },
-        }),
+        findUserItemForFeedPet(ctx.drizzle, input, ctx),
       ]);
       const restriction = petMutationBlockMessage(user, pet);
       if (restriction || !user || !pet)
@@ -249,44 +248,23 @@ export const petsRouter = createTRPCRouter({
       // One joined UPDATE guards the account, pet and exact meal stack before any
       // debit or XP grant. Zero quantities are harmless tombstones until cleanup.
       const fed = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${userData}
-          INNER JOIN ${userPet} ON ${eq(userPet.userId, userData.userId)}
-          INNER JOIN ${userItem} ON ${eq(userItem.userId, userData.userId)}
-          SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt, now)},
-              ${userItem.quantity} = ${meal.quantity - 1},
-              ${userPet.lastFedAt} = ${now},
-              ${userPet.revision} = ${userPet.revision} + 1,
-              ${userPet.updatedAt} = ${now},
-              ${isActive ? sql`${userData.petExperience} = ${userData.petExperience} + ${experience}` : sql`${userPet.storedExperience} = ${userPet.storedExperience} + ${experience}`}
-          WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet))}
-            AND ${userItem.id} = ${meal.id}
-            AND ${userItem.userId} = ${ctx.userId}
-            AND ${userItem.itemId} = ${meal.itemId}
-            AND ${userItem.quantity} = ${meal.quantity}
-            AND ${userItem.quantity} > 0
-            AND ${userItem.isInAuction} = FALSE
-            AND ${userItem.storedAtHome} = FALSE
-            AND ${userItem.equipped} = 'NONE'
-            AND (${userItem.craftingFinishedAt} IS NULL OR ${userItem.craftingFinishedAt} <= ${now})
-            AND EXISTS (SELECT 1 FROM ${item} WHERE ${item.id} = ${meal.itemId}
-              AND ${item.itemType} = 'MEAL' AND ${item.rarity} = ${meal.item.rarity})
-        `),
+        executeFedForFeedPet(
+          ctx.drizzle,
+          user,
+          now,
+          meal,
+          isActive,
+          experience,
+          ownerSnapshotWhere,
+          petSnapshotWhere,
+          pet,
+          ctx,
+        ),
       );
       if (fed.rowsAffected === 0) return changedResponse();
       if (meal.quantity === 1) {
         try {
-          await retryOnDeadlock(() =>
-            ctx.drizzle
-              .delete(userItem)
-              .where(
-                and(
-                  eq(userItem.id, meal.id),
-                  eq(userItem.userId, ctx.userId),
-                  eq(userItem.quantity, 0),
-                ),
-              ),
-          );
+          await retryOnDeadlock(() => deleteConsumedMeal(ctx.drizzle, meal, ctx));
         } catch (error) {
           // The feed already committed; inventory hides zero stacks and its cleaner
           // reclaims them. Report success so a cleanup failure cannot repeat the grant.
@@ -316,21 +294,8 @@ export const petsRouter = createTRPCRouter({
       const [{ user, pet, pets }, abilities, species, meals] = await Promise.all([
         fetchPetOwner(ctx.drizzle, ctx.userId, input?.petId),
         fetchPetAbilities(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.petSpecies.findMany(),
-        ctx.drizzle.query.userItem.findMany({
-          where: and(
-            eq(userItem.userId, ctx.userId),
-            gt(userItem.quantity, 0),
-            eq(userItem.storedAtHome, false),
-            eq(userItem.isInAuction, false),
-            eq(userItem.equipped, "NONE"),
-            or(
-              isNull(userItem.craftingFinishedAt),
-              lt(userItem.craftingFinishedAt, new Date()),
-            ),
-          ),
-          with: { item: true },
-        }),
+        listPetSpeciesForGetPet(ctx.drizzle),
+        listUserItemForGetPet(ctx.drizzle, ctx),
       ]);
       if (!user) throw serverError("NOT_FOUND", "User not found");
       const now = new Date();
@@ -431,10 +396,8 @@ export const petsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [{ user, pets }, species, jutsus] = await Promise.all([
         fetchPetOwner(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.petSpecies.findMany(),
-        ctx.drizzle.query.jutsu.findMany({
-          where: and(eq(jutsu.jutsuType, "PETS"), eq(jutsu.hidden, false)),
-        }),
+        listPetSpeciesForGetPet(ctx.drizzle),
+        listVisiblePetJutsu(ctx.drizzle),
       ]);
       if (!user) return errorResponse("User not found");
       const restriction = acquisitionBlockMessage(user);
@@ -506,26 +469,10 @@ export const petsRouter = createTRPCRouter({
                 eq(userData.staffAccount, user.staffAccount),
                 eq(userData.petAcquisitions, user.petAcquisitions),
                 eq(userData.petSlots, user.petSlots),
-                lt(
-                  tx
-                    .select({ count: count() })
-                    .from(userPet)
-                    .where(eq(userPet.userId, user.userId)),
-                  capacity.slots,
-                ),
+                lt(selectUserPetForWhere(tx, user), capacity.slots),
                 gte(payment.column, payment.cost),
                 // Retirement must win before a claim charges either balance or grants a pet.
-                exists(
-                  tx
-                    .select({ id: petSpecies.id })
-                    .from(petSpecies)
-                    .where(
-                      and(
-                        eq(petSpecies.id, input.speciesId),
-                        eq(petSpecies.isActive, true),
-                      ),
-                    ),
-                ),
+                exists(selectPetSpeciesForWhere(tx, input)),
               ],
               set: {
                 ...(!user.activePetId ? { activePetId: petId, petExperience: 0 } : {}),
@@ -538,7 +485,7 @@ export const petsRouter = createTRPCRouter({
               },
             });
             if (!claim.success) return false;
-            await tx.insert(userPet).values(created);
+            await insertUserPet(tx, created);
             return true;
           }),
         );
@@ -575,12 +522,13 @@ export const petsRouter = createTRPCRouter({
         // snapshots without updating or serializing an unrelated active XP bank.
         if (user.activePetId !== pet.id) {
           const removed = await retryOnDeadlock(() =>
-            ctx.drizzle.execute(sql`
-              DELETE ${userPet}
-              FROM ${userPet}
-              INNER JOIN ${userData} ON ${eq(userData.userId, userPet.userId)}
-              WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet))}
-            `),
+            executeRemovedForReleasePet(
+              ctx.drizzle,
+              ownerSnapshotWhere,
+              user,
+              petSnapshotWhere,
+              pet,
+            ),
           );
           return removed.rowsAffected === 1
             ? {
@@ -602,7 +550,7 @@ export const petsRouter = createTRPCRouter({
               set: { petExperience: 0, activePetId: null },
             });
             if (!claim.success) return false;
-            const removed = await tx.delete(userPet).where(petSnapshotWhere(pet));
+            const removed = await deleteUserPetForReleasePet(tx, petSnapshotWhere, pet);
             if (removed.rowsAffected !== 1) throw petMutationConflict();
             return true;
           }),
@@ -706,20 +654,17 @@ export const petsRouter = createTRPCRouter({
       // The bank debit and revision-guarded gains share one match, so a concurrent
       // swap or allocation cannot spend XP without delivering its stat increases.
       const assigned = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${userData}
-          INNER JOIN ${userPet} ON ${eq(userPet.userId, userData.userId)}
-          SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt, now)},
-              ${bank} = ${bank} - ${spent},
-              ${sql.join(
-                CombatStatNames.map((stat) => sql`${userPet[stat]} = ${stats[stat]}`),
-                sql`, `,
-              )},
-              ${userPet.experience} = ${userPet.experience} + ${spent},
-              ${userPet.revision} = ${userPet.revision} + 1,
-              ${userPet.updatedAt} = ${now}
-          WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet), gte(bank, spent))}
-        `),
+        executeAssignedForAssignExperience(
+          ctx.drizzle,
+          user,
+          now,
+          bank,
+          spent,
+          stats,
+          ownerSnapshotWhere,
+          petSnapshotWhere,
+          pet,
+        ),
       );
       return assigned.rowsAffected > 0
         ? {
@@ -840,25 +785,16 @@ export const petsRouter = createTRPCRouter({
       // Claim before spending on the provider; retain accepted cosmetics until replacement succeeds.
       const token = nanoid();
       const claim = await retryOnDeadlock(() =>
-        ctx.drizzle
-          .update(userPet)
-          .set({
-            generationStatus: "GENERATING",
-            generationToken: token,
-            generationStartedAt: now,
-            generationAttempts: attempts + 1,
-            revision: sql`${userPet.revision} + 1`,
-            updatedAt: now,
-          })
-          .where(
-            and(
-              petSnapshotWhere(pet),
-              sql`EXISTS (SELECT 1 FROM ${userData}
-                WHERE ${ownerSnapshotWhere(user)}
-                AND ${userData.federalStatus} = ${user.federalStatus}
-                AND ${userData.staffAccount} = ${user.staffAccount})`,
-            ),
-          ),
+        updateUserPetForGenerateAppearance(
+          ctx.drizzle,
+          token,
+          now,
+          attempts,
+          petSnapshotWhere,
+          pet,
+          ownerSnapshotWhere,
+          user,
+        ),
       );
       if (claim.rowsAffected !== 1) return changedResponse();
       try {
@@ -866,33 +802,19 @@ export const petsRouter = createTRPCRouter({
           { ...pet, ...appearance },
           provider,
           async (imageUrl) => {
-            await ctx.drizzle
-              .insert(userUpload)
-              .values({ id: nanoid(), userId: ctx.userId, imageUrl });
+            await insertUserUploadForGenerateAppearance(ctx.drizzle, ctx, imageUrl);
           },
         );
         const accepted = await retryOnDeadlock(() =>
-          ctx.drizzle
-            .update(userPet)
-            .set({
-              ...appearance,
-              avatar,
-              avatarFacing,
-              artRank: pet.rank,
-              generationStatus: "READY",
-              generationToken: null,
-              revision: sql`${userPet.revision} + 1`,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(userPet.id, pet.id),
-                eq(userPet.userId, ctx.userId),
-                eq(userPet.rank, pet.rank),
-                eq(userPet.generationToken, token),
-                eq(userPet.generationStatus, "GENERATING"),
-              ),
-            ),
+          updateUserPetForGenerateAppearance2(
+            ctx.drizzle,
+            appearance,
+            avatar,
+            avatarFacing,
+            pet,
+            ctx,
+            token,
+          ),
         );
         if (accepted.rowsAffected !== 1)
           return errorResponse(
@@ -914,28 +836,13 @@ export const petsRouter = createTRPCRouter({
           pet.artRank < pet.rank &&
           (pet.generationStatus === "FAILED" || isAbandonedGeneration(pet, now));
         const settled = await retryOnDeadlock(() =>
-          ctx.drizzle
-            .update(userPet)
-            .set({
-              ...(keepsPreviousLook && { artRank: pet.rank }),
-              // Staff can reset the counter mid-generation; never underflow the unsigned column.
-              generationAttempts: sql`GREATEST(${userPet.generationAttempts}, 1) - 1`,
-              generationStatus:
-                pet.avatar && (pet.artRank === pet.rank || keepsPreviousLook)
-                  ? "READY"
-                  : "FAILED",
-              generationToken: null,
-              revision: sql`${userPet.revision} + 1`,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(userPet.id, pet.id),
-                eq(userPet.userId, ctx.userId),
-                eq(userPet.generationToken, token),
-                eq(userPet.generationStatus, "GENERATING"),
-              ),
-            ),
+          updateUserPetForGenerateAppearance3(
+            ctx.drizzle,
+            keepsPreviousLook,
+            pet,
+            ctx,
+            token,
+          ),
         );
         if (keepsPreviousLook && settled.rowsAffected === 1)
           return errorResponse(
@@ -960,39 +867,6 @@ const getPetPayment = (
     label: isSilver ? "Seichi Silver" : "reputation points",
     balance: isSilver ? user.seichiSilver : user.reputationPoints,
     column: isSilver ? userData.seichiSilver : userData.reputationPoints,
-  };
-};
-
-/** Load independent owner and collection snapshots in parallel. */
-const fetchPetOwner = async (client: DrizzleClient, userId: string, petId?: string) => {
-  const [user, pets] = await Promise.all([
-    client.query.userData.findFirst({ where: eq(userData.userId, userId) }),
-    client.query.userPet.findMany({
-      where: eq(userPet.userId, userId),
-      orderBy: userPet.createdAt,
-      with: { species: true },
-    }),
-  ]);
-  const pet =
-    pets.find((entry) => entry.id === (petId ?? user?.activePetId)) ??
-    (!petId ? pets[0] : undefined);
-  return { user, pet, pets };
-};
-
-/** Published pet jutsus are shared; passive skills still require an activated owner copy. */
-const fetchPetAbilities = async (client: DrizzleClient, userId: string) => {
-  const [jutsus, skills] = await Promise.all([
-    client.query.jutsu.findMany({
-      where: and(eq(jutsu.jutsuType, "PETS"), eq(jutsu.hidden, false)),
-    }),
-    client.query.userSkill.findMany({
-      where: and(eq(userSkill.userId, userId), eq(userSkill.activated, true)),
-      with: { skill: true },
-    }),
-  ]);
-  return {
-    jutsus,
-    skills: skills.map((owned) => owned.skill),
   };
 };
 
@@ -1089,16 +963,16 @@ const updateOwnedPet = async (
   // Drizzle cannot build a multi-table UPDATE. Both snapshot guards gate the
   // patch and any debit together; free edits have no balance precondition.
   const result = await retryOnDeadlock(() =>
-    client.execute(sql`
-      UPDATE ${userData}
-      INNER JOIN ${userPet} ON ${eq(userPet.userId, userData.userId)}
-      SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt, now)},
-          ${cost ? sql`${userData.reputationPoints} = ${userData.reputationPoints} - ${cost},` : sql``}
-          ${sql.join(assignments, sql`, `)}${assignments.length ? sql`,` : sql``}
-          ${userPet.revision} = ${userPet.revision} + 1,
-          ${userPet.updatedAt} = ${now}
-      WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet), cost ? gte(userData.reputationPoints, cost) : undefined)}
-    `),
+    executeResultForUpdateOwnedPet(
+      client,
+      user,
+      now,
+      cost,
+      assignments,
+      ownerSnapshotWhere,
+      petSnapshotWhere,
+      pet,
+    ),
   );
   return result.rowsAffected > 0;
 };

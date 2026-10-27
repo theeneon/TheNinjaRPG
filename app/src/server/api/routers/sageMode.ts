@@ -1,16 +1,29 @@
-import { and, eq, gte, isNull, like, sql } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import {
-  IMG_AVATAR_DEFAULT,
-  REMOVAL_COST,
-  SAGE_MODE_DEFAULT_ACTIVATION_MESSAGE,
-} from "@/drizzle/constants";
+import { REMOVAL_COST } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
-import { actionLog, sageMode, userData } from "@/drizzle/schema";
+import { sageMode } from "@/drizzle/schema";
 import { hasEnergyQueue } from "@/libs/queue";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import { fetchUser, findUserRoleById } from "@/queries/profile";
+import {
+  deleteSageModeForDelete,
+  fetchSageMode,
+  findSageModeForUpdate,
+  insertActionLogForDelete,
+  insertActionLogForUpdate,
+  insertActionLogForUpdateSageMode,
+  insertSageModeForCreate,
+  listSageModeForGetAll,
+  listSageModeForGetAllNames,
+  listSageModeForGetAllNamesForEdit,
+  listUserDataForDelete,
+  updateSageModeForUpdate,
+  updateUserDataForDelete,
+  updateUserDataForUpdateSageMode,
+} from "@/queries/sageMode";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -52,18 +65,9 @@ export const sageModeRouter = createTRPCRouter({
    * only for content staff (`canChangeContent`); everyone else sees visible rows.
    */
   getAllNames: publicProcedure.query(async ({ ctx }) => {
-    const user = ctx.userId
-      ? await ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { role: true },
-        })
-      : null;
+    const user = ctx.userId ? await findUserRoleById(ctx.drizzle, ctx.userId) : null;
     const allowHidden = user ? canChangeContent(user.role) : false;
-    return await ctx.drizzle.query.sageMode.findMany({
-      columns: { id: true, name: true, image: true },
-      where: allowHidden ? undefined : eq(sageMode.hidden, false),
-      orderBy: (table, { asc }) => [asc(table.name)],
-    });
+    return await listSageModeForGetAllNames(ctx.drizzle, allowHidden);
   }),
 
   /**
@@ -73,10 +77,7 @@ export const sageModeRouter = createTRPCRouter({
   getAllNamesForEdit: protectedProcedure.query(async ({ ctx }) => {
     const [user, results] = await Promise.all([
       fetchUser(ctx.drizzle, ctx.userId),
-      ctx.drizzle.query.sageMode.findMany({
-        columns: { id: true, name: true, image: true },
-        orderBy: (table, { asc }) => [asc(table.name)],
-      }),
+      listSageModeForGetAllNamesForEdit(ctx.drizzle),
     ]);
     if (!user || !canEditBloodline(user.role)) {
       throw serverError("FORBIDDEN", "Not allowed to list sage modes for editing");
@@ -98,21 +99,15 @@ export const sageModeRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
-      const user = ctx.userId
-        ? await ctx.drizzle.query.userData.findFirst({
-            where: eq(userData.userId, ctx.userId),
-            columns: { role: true },
-          })
-        : null;
+      const user = ctx.userId ? await findUserRoleById(ctx.drizzle, ctx.userId) : null;
       const allowHiddenFilter = user ? canChangeContent(user.role) : false;
       const baseFilters = sageModeDatabaseFilter(input, allowHiddenFilter);
-      const results = await ctx.drizzle.query.sageMode.findMany({
-        with: { village: { columns: { name: true } } },
-        where: and(...baseFilters),
-        orderBy: (table, { asc }) => [asc(table.name)],
-        offset: skip,
-        limit: input.limit,
-      });
+      const results = await listSageModeForGetAll(
+        ctx.drizzle,
+        baseFilters,
+        skip,
+        input,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return {
         data: results,
@@ -146,17 +141,7 @@ export const sageModeRouter = createTRPCRouter({
       return errorResponse("You are banned and cannot perform this action");
     if (canChangeContent(user.role)) {
       const id = nanoid();
-      await ctx.drizzle.insert(sageMode).values({
-        id: id,
-        name: `New Sage Mode - ${id}`,
-        image: IMG_AVATAR_DEFAULT,
-        description: "New sage mode description",
-        battleDescription: SAGE_MODE_DEFAULT_ACTIVATION_MESSAGE,
-        effects: [],
-        afterEffects: [],
-        level: 1,
-        hidden: true,
-      });
+      await insertSageModeForCreate(ctx.drizzle, id);
       return { success: true, message: id };
     } else {
       return { success: false, message: `Not allowed to create sage mode` };
@@ -174,11 +159,7 @@ export const sageModeRouter = createTRPCRouter({
       const [user, entry, usersWithSageMode] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchSageMode(ctx.drizzle, input.id),
-        ctx.drizzle.query.userData.findMany({
-          columns: { username: true },
-          where: and(eq(userData.sageModeId, input.id), eq(userData.isAi, false)),
-          limit: 10,
-        }),
+        listUserDataForDelete(ctx.drizzle, input),
       ]);
       const usernames = usersWithSageMode.map((u) => u.username).join(", ");
       if (user.isBanned)
@@ -192,20 +173,9 @@ export const sageModeRouter = createTRPCRouter({
         return errorResponse(`Sage Mode used by users: ${usernames}, cannot delete`);
       }
       await Promise.all([
-        ctx.drizzle.delete(sageMode).where(eq(sageMode.id, input.id)),
-        ctx.drizzle
-          .update(userData)
-          .set({ sageModeId: null })
-          .where(eq(userData.sageModeId, input.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "sageMode",
-          changes: [`Deleted: ${entry.name}`],
-          relatedId: entry.id,
-          relatedMsg: `Delete: ${entry.name}`,
-          relatedImage: entry.image,
-        }),
+        deleteSageModeForDelete(ctx.drizzle, input),
+        updateUserDataForDelete(ctx.drizzle, input),
+        insertActionLogForDelete(ctx.drizzle, ctx, entry),
       ]);
       return { success: true, message: `Sage Mode deleted` };
     }),
@@ -222,10 +192,7 @@ export const sageModeRouter = createTRPCRouter({
       const [user, entry, sageModeWithName] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchSageMode(ctx.drizzle, input.id),
-        ctx.drizzle.query.sageMode.findFirst({
-          columns: { name: true, id: true },
-          where: eq(sageMode.name, input.data.name),
-        }),
+        findSageModeForUpdate(ctx.drizzle, input),
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -250,16 +217,8 @@ export const sageModeRouter = createTRPCRouter({
           ...newData,
         });
         await Promise.all([
-          ctx.drizzle.update(sageMode).set(newData).where(eq(sageMode.id, input.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "sageMode",
-            changes: diff,
-            relatedId: entry.id,
-            relatedMsg: `Update: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          updateSageModeForUpdate(ctx.drizzle, newData, input),
+          insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
         ]);
         if (process.env.NODE_ENV !== "development") {
           await callDiscordContent(user.username, entry.name, diff, entry.image);
@@ -316,52 +275,13 @@ export const updateSageMode = async (
   repCost: number,
   logMsg: string,
 ) => {
-  const updateResult = await client
-    .update(userData)
-    .set({
-      sageModeId: null,
-      reputationPoints: sql`${userData.reputationPoints} - ${repCost}`,
-      // Advance the whole-user version so a concurrent claimUserSnapshot CAS detects this write.
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(userData.userId, user.userId),
-        eq(userData.status, "AWAKE"),
-        gte(userData.reputationPoints, repCost),
-        // Compare-and-swap on the current mode: if another request already changed
-        // it, rowsAffected is 0 and we abort rather than double-debit reputation.
-        user.sageModeId
-          ? eq(userData.sageModeId, user.sageModeId)
-          : isNull(userData.sageModeId),
-      ),
-    );
+  const updateResult = await updateUserDataForUpdateSageMode(client, repCost, user);
 
   if (!updateResult.rowsAffected) {
     throw serverError("BAD_REQUEST", "Unable to update sage mode");
   }
 
-  await client.insert(actionLog).values({
-    id: nanoid(),
-    userId: user.userId,
-    tableName: "user",
-    changes: [logMsg],
-    relatedId: user.userId,
-    relatedMsg: "SageMode Changed",
-    relatedImage: user.avatarLight || user.avatar || IMG_AVATAR_DEFAULT,
-  });
-};
-
-/**
- * Load one catalog row by id, including hidden. Used by `get` / `update` / `delete`.
- *
- * @param client - Drizzle client.
- * @param sageModeId - `SageMode.id`.
- */
-export const fetchSageMode = async (client: DrizzleClient, sageModeId: string) => {
-  return await client.query.sageMode.findFirst({
-    where: eq(sageMode.id, sageModeId),
-  });
+  await insertActionLogForUpdateSageMode(client, user, logMsg);
 };
 
 /**

@@ -1,51 +1,23 @@
-import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
-import type { BattleDataEntryType, BattleTypes } from "@/drizzle/constants";
 import {
   ELITE_JONIN_JUTSU_ADVANCED_XP_TO_LEVEL,
   ELITE_JONIN_JUTSU_LEVEL_CAP,
   ELITE_JONIN_JUTSU_XP_TO_LEVEL,
   ENERGY_PVP_LOSS_REWARD,
   ENERGY_PVP_WIN_REWARD,
-  HOSPITAL_LAT,
-  HOSPITAL_LONG,
-  ITEM_LEVEL_CAP,
   ITEM_XP_TO_LEVEL,
   JUTSU_TRAIN_LEVEL_CAP,
   JUTSU_XP_TO_LEVEL,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
   REGEN_SECONDS,
   STEALTH_POST_COMBAT_COOLDOWN_SECONDS,
-  VILLAGE_SYNDICATE_ID,
-  WAR_RECAPTURE_THRESHOLD,
   WAR_SHRINE_CAPTURE_WARHEALTH_DMG,
   WAR_SHRINE_RECAPTURE_WARHEALTH_HEAL,
 } from "@/drizzle/constants";
-import type { Battle } from "@/drizzle/schema";
-import {
-  anbuSquad,
-  battle,
-  battleAction,
-  bounty,
-  clan,
-  dataBattleAction,
-  kageDefendedChallenges,
-  logBattleLengths,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  notification,
-  quest,
-  raidParticipation,
-  tournamentMatch,
-  userData,
-  userItem,
-  userItemImbuement,
-  userJutsu,
-  village,
-  war,
-  warKill,
-} from "@/drizzle/schema";
+import { type Battle, userData, userJutsu, war } from "@/drizzle/schema";
+
 import { stillInBattle } from "@/libs/combat/actions";
 import { settleObjectiveWarCombat } from "@/libs/combat/objectiveWar";
 import { areBattleAllies } from "@/libs/combat/participants";
@@ -73,7 +45,6 @@ import {
   getJutsu,
   getKageChallengeParticipants,
   getOpposingBattleWars,
-  getVillage,
   hydrateUserForQuests,
   isPvpEnergyRewardBattle,
 } from "@/libs/combat/util";
@@ -81,9 +52,12 @@ import { claimVillageMissionCombatEvents } from "@/libs/combat/villageMission";
 import { getPvpFarmActivityReductionSeconds } from "@/libs/farming";
 import { getJutsuMaxLevel } from "@/libs/jutsuProgression";
 import { allocateMasteryGains } from "@/libs/masteryProgression";
-import { petExperienceGainSql } from "@/libs/pets/experience";
-import type { PusherClient } from "@/libs/pusher";
-import { broadcastRaidAvailability, updateUserOnMap } from "@/libs/pusher";
+import {
+  broadcastRaidAvailability,
+  type PusherClient,
+  updateUserOnMap,
+} from "@/libs/pusher";
+
 import { boostPvpGain } from "@/libs/pvpExperience";
 import {
   filterQuestTrackersForDbPersist,
@@ -96,15 +70,62 @@ import {
   prepareExclusiveRaidActivation,
 } from "@/libs/raids";
 import { battleItemExp, battleJutsuExp } from "@/libs/train";
+import {
+  type DataBattleAction,
+  deleteBattleIfVersionMatches,
+  deleteMpvpBattleQueueForFinishBattle,
+  deleteMpvpBattleUserForFinishBattle,
+  deleteUserItemImbuementForUpdateKage,
+  executeRowsForUpdateUser,
+  findQuestForUpdateRaidProgress,
+  insertBattleActionForCreateAction,
+  insertBattleActionForCreateAction2,
+  insertDataBattleActionForSaveUsage,
+  insertKageDefendedChallengesForUpdateKage,
+  insertLogBattleLengthsForFinishBattle,
+  insertNotificationForUpdateRaidProgress,
+  insertRaidParticipationForUpdateRaidProgress,
+  insertUserItemForUpdateUser,
+  insertWarKillForUpdateWars,
+  selectMpvpBattleQueueForCreateAction,
+  updateAnbuSquadForUpdateVillageAnbuClan,
+  updateAnbuSquadForUpdateVillageAnbuClan2,
+  updateBattleForUpdateBattleState,
+  updateBountyForUpdateUser,
+  updateClanForUpdateClanLeaders,
+  updateClanForUpdateVillageAnbuClan,
+  updateKageDefendedChallengesForCompleteKageDefense,
+  updateQuestForUpdateRaidProgress,
+  updateQuestForUpdateWars,
+  updateRaidParticipationForUpdateRaidProgress,
+  updateTournamentMatchForUpdateTournament,
+  updateTournamentMatchForUpdateTournament2,
+  updateUserDataForFinishBattle,
+  updateUserDataForUpdateRaidProgress,
+  updateUserDataForUpdateUser,
+  updateUserDataForUpdateUser2,
+  updateUserItemForUpdateKage,
+  updateUserItemForUpdateUser,
+  updateUserItemForUpdateUser2,
+  updateVillageForUpdateClanLeaders,
+  updateVillageForUpdateKage,
+  updateVillageForUpdateVillageAnbuClan,
+  updateWarForRecoverWarShrine,
+  updateWarForRecoverWarShrine2,
+  updateWarForRecoverWarShrine3,
+  updateWarForUpdateWars,
+  updateWarForUpdateWars2,
+  updateWarForUpdateWars3,
+} from "@/queries/combat";
+import { reduceActiveFarmPlotTimers } from "@/queries/farming";
+import { deleteUserItemsWithPositiveQuantity } from "@/queries/item";
+import { warRaidCombatGuard } from "@/queries/war";
 import type { UserWithRelations } from "@/routers/profile";
 import type { DrizzleClient } from "@/server/db";
 import { rewardClanBattleVictory } from "@/server/utils/clanBattle";
 import { settleDungeonBattle } from "@/server/utils/dungeon";
-import { reduceActiveFarmPlotTimers } from "@/server/utils/farming";
 import { settleHuntingBattle } from "@/server/utils/hunting";
-import { masteryGainUpdates } from "@/server/utils/masteryProgression";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 import { purgeRaidChatMembership } from "@/server/utils/raidChat";
 import {
   settleTerritoryWarCombat,
@@ -114,16 +135,6 @@ import {
   applyVillageMissionShrineDamage,
   recordVillageMissionProgress,
 } from "@/server/utils/villageMission";
-import { warRaidCombatGuard } from "@/server/utils/war";
-import { periodStart } from "@/utils/time";
-
-type DataBattleAction = {
-  type: (typeof BattleDataEntryType)[number];
-  contentId: string;
-  battleType: (typeof BattleTypes)[number];
-  battleWon: number;
-  relatedBloodlineId?: string;
-};
 
 /**
  * A raid is "boss defeated" when the boss AI exists in the battle and no
@@ -238,9 +249,7 @@ export const updateBattle = async (
   // Ordinary settlement writes are not atomic with this claim; failures can leave partial settlement.
   if (battleOver) {
     const deleteBattle = (database: DrizzleClient) =>
-      database
-        .delete(battle)
-        .where(and(eq(battle.id, newBattle.id), eq(battle.version, fetchedVersion)));
+      deleteBattleIfVersionMatches(database, newBattle, fetchedVersion);
     const deleted = await retryOnDeadlock(() =>
       newBattle.extraState.tournamentGameId ||
       newBattle.extraState.kageMatch ||
@@ -272,28 +281,7 @@ export const updateBattle = async (
   } else {
     newBattle.version = Math.max(newBattle.version, fetchedVersion + 1);
     const updateBattleState = (database: DrizzleClient) =>
-      database
-        .update(battle)
-        .set({
-          version: newBattle.version,
-          createdAt: newBattle.createdAt,
-          updatedAt: newBattle.updatedAt,
-          usersState: newBattle.usersState,
-          usersEffects: newBattle.usersEffects,
-          groundEffects: newBattle.groundEffects,
-          // Keep revealed action definitions available after a summon despawns.
-          // Update only this subtree within the same version-guarded write.
-          ...(newBattle.extraState.revealedActions
-            ? {
-                extraState: sql`JSON_SET(${battle.extraState}, '$.revealedActions', CAST(${JSON.stringify(newBattle.extraState.revealedActions)} AS JSON))`,
-              }
-            : {}),
-          ...(newBattle.extraState.dungeon ? { extraState: newBattle.extraState } : {}),
-          activeUserId: newBattle.activeUserId,
-          roundStartAt: newBattle.roundStartAt,
-          round: newBattle.round,
-        })
-        .where(and(eq(battle.id, newBattle.id), eq(battle.version, fetchedVersion)));
+      updateBattleForUpdateBattleState(database, newBattle, fetchedVersion);
     const updated = await retryOnDeadlock(() =>
       result && territoryWarAwards(newBattle).length > 0
         ? client.transaction(async (tx) => {
@@ -317,36 +305,11 @@ export const updateBattle = async (
     if (battleOver) {
       await Promise.all([
         ...(user && other
-          ? [
-              client
-                .insert(logBattleLengths)
-                .values({
-                  battleType: newBattle.battleType,
-                  winnerLevel: user?.level ?? 0,
-                  loserLevel: other?.level ?? 0,
-                  rounds: newBattle.round,
-                  count: 1,
-                })
-                .onDuplicateKeyUpdate({
-                  set: { count: sql`${logBattleLengths.count} + 1` },
-                }),
-            ]
+          ? [insertLogBattleLengthsForFinishBattle(client, newBattle, user, other)]
           : []),
         // Clean up battle users in parallel - safe since they only read from mpvpBattleQueue
         ...(["RAID", "SHRINE_WAR", "TERRITORY_WAR"].includes(newBattle.battleType)
-          ? [
-              client
-                .delete(mpvpBattleUser)
-                .where(
-                  inArray(
-                    mpvpBattleUser.clanBattleId,
-                    client
-                      .select({ id: mpvpBattleQueue.id })
-                      .from(mpvpBattleQueue)
-                      .where(eq(mpvpBattleQueue.battleId, newBattle.id)),
-                  ),
-                ),
-            ]
+          ? [deleteMpvpBattleUserForFinishBattle(client, newBattle)]
           : []),
         // Purge raid-chat memberships on any raid battle-over (boss kill OR team
         // wipe). The conversation ID is stable across raid resets, so stale
@@ -376,39 +339,13 @@ export const updateBattle = async (
           .filter((u) => u.userId !== userId)
           .map(async (teammate) => {
             const sendToHospital = !newBattle.forceKeepPools && teammate.curHealth <= 0;
-            const released = await client
-              .update(userData)
-              .set({
-                bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-                bracketImmunityPausedAt: null,
-                battleId: null,
-                updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-                curEnergy: combatEnergyRecoverySql(newBattle, teammate.userId),
-                // Only Energy recovers in combat; reset the shared clock for other pools.
-                regenAt: sql`NOW(3)`,
-                curHealth: teammate.curHealth,
-                curStamina: teammate.curStamina,
-                curChakra: teammate.curChakra,
-                stealthActive: false,
-                stealthActivatedAt: null,
-                stealthCooldownAt: sql`NOW() + INTERVAL ${STEALTH_POST_COMBAT_COOLDOWN_SECONDS} SECOND`,
-                ...(sendToHospital
-                  ? {
-                      status: "HOSPITALIZED",
-                      longitude: HOSPITAL_LONG,
-                      latitude: HOSPITAL_LAT,
-                      sector: teammate.allyVillage
-                        ? teammate.sector
-                        : getVillage(newBattle, teammate.villageId)?.sector,
-                    }
-                  : { status: "AWAKE" }),
-              })
-              .where(
-                and(
-                  eq(userData.userId, teammate.userId),
-                  eq(userData.battleId, newBattle.id),
-                ),
-              );
+            const released = await updateUserDataForFinishBattle(
+              client,
+              combatEnergyRecoverySql,
+              newBattle,
+              teammate,
+              sendToHospital,
+            );
             // Raid deletion prevents teammates from polling their own settlement.
             // The battle claim and guarded release exclude stale or prior claims.
             if (raidBossDefeated && released.rowsAffected > 0) {
@@ -431,9 +368,7 @@ export const updateBattle = async (
       // Delete queue entries AFTER the Promise.all to ensure mpvpBattleUser
       // subquery has completed (it references mpvpBattleQueue)
       if (["RAID", "SHRINE_WAR", "TERRITORY_WAR"].includes(newBattle.battleType)) {
-        await client
-          .delete(mpvpBattleQueue)
-          .where(eq(mpvpBattleQueue.battleId, newBattle.id));
+        await deleteMpvpBattleQueueForFinishBattle(client, newBattle);
       }
 
       // Notify the sector that surviving raid teammates are back on the map.
@@ -551,23 +486,7 @@ export const saveUsage = async (
     }, [] as DataBattleAction[]);
     // Upsert dataBattleActions
     if (uniqueData.length > 0) {
-      await client
-        .insert(dataBattleAction)
-        // MySQL UNIQUE indexes treat NULL values as distinct. Normalize the
-        // absent bloodline dimension so repeated AI/bloodline aggregates hit
-        // the existing row and increment it atomically.
-        .values(
-          uniqueData.map((entry) => ({
-            ...entry,
-            relatedBloodlineId: entry.relatedBloodlineId ?? "",
-          })),
-        )
-        .onDuplicateKeyUpdate({
-          set: {
-            count: sql`${dataBattleAction.count} + 1`,
-            updatedAt: new Date(),
-          },
-        });
+      await insertDataBattleActionForSaveUsage(client, uniqueData);
     }
   }
 };
@@ -613,40 +532,12 @@ export const createAction = async (
     // the statement. A delayed action cannot recreate a deleted combat log;
     // UNION ALL batches every guarded selection into the same round trip.
     const selections = actions.map((entry) =>
-      client
-        .select({
-          id: sql<string>`${entry.id}`.as("id"),
-          createdAt: sql<Date>`${entry.createdAt}`.as("createdAt"),
-          updatedAt: sql<Date>`${entry.updatedAt}`.as("updatedAt"),
-          battleId: sql<string>`${entry.battleId}`.as("battleId"),
-          battleVersion: sql<number>`${entry.battleVersion}`.as("battleVersion"),
-          battleRound: sql<number>`${entry.battleRound}`.as("battleRound"),
-          actionId: sql<string>`${entry.actionId}`.as("actionId"),
-          userId: sql<string>`${entry.userId}`.as("userId"),
-          description: sql<string>`${entry.description}`.as("description"),
-          appliedEffects: sql<
-            ActionEffect[]
-          >`CAST(${JSON.stringify(entry.appliedEffects)} AS JSON)`.as("appliedEffects"),
-        })
-        .from(mpvpBattleQueue)
-        .where(
-          and(
-            eq(mpvpBattleQueue.battleId, newBattle.id),
-            eq(mpvpBattleQueue.battleType, "CLAN_BATTLE"),
-          ),
-        )
-        .$dynamic(),
+      selectMpvpBattleQueueForCreateAction(client, entry, newBattle),
     );
-    await client
-      .insert(battleAction)
-      .select(selections.reduce((combined, next) => combined.unionAll(next)))
-      .onDuplicateKeyUpdate({ set: { id: sql`${battleAction.id}` } });
+    await insertBattleActionForCreateAction(client, selections);
     return actions;
   }
-  await client
-    .insert(battleAction)
-    .values(actions)
-    .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+  await insertBattleActionForCreateAction2(client, actions);
   return actions;
 };
 
@@ -663,22 +554,12 @@ const completeKageDefense = async (
     participants.kage,
     curBattle.usersEffects,
   );
-  await client
-    .update(kageDefendedChallenges)
-    .set({
-      status: "COMPLETED",
-      didWin: won ? 1 : 0,
-      rounds: curBattle.round,
-      resolvedAt: new Date(),
-      outcome: won ? "Challenger won the title fight" : "Kage defended the title",
-    })
-    .where(
-      and(
-        eq(kageDefendedChallenges.id, match.id),
-        eq(kageDefendedChallenges.status, "BATTLE"),
-        eq(kageDefendedChallenges.battleId, curBattle.id),
-      ),
-    );
+  await updateKageDefendedChallengesForCompleteKageDefense(
+    client,
+    won,
+    curBattle,
+    match,
+  );
 };
 
 /**
@@ -720,25 +601,13 @@ export const updateKage = async (
     // makes those retries idempotent without recreating a scheduled queue entry.
     ...(!curBattle.extraState.kageMatch
       ? [
-          client
-            .insert(kageDefendedChallenges)
-            .values({
-              id: nanoid(),
-              battleId: curBattle.id,
-              villageId: challenger.villageId,
-              userId: challenger.userId,
-              kageId: defenderId,
-              status: "COMPLETED",
-              notBefore: curBattle.createdAt,
-              startedAt: curBattle.createdAt,
-              resolvedAt: new Date(),
-              outcome: challengerDidWin
-                ? "Challenger won the title fight"
-                : "Kage defended the title",
-              didWin: challengerDidWin ? 1 : 0,
-              rounds: curBattle.round,
-            })
-            .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
+          insertKageDefendedChallengesForUpdateKage(
+            client,
+            curBattle,
+            challenger,
+            defenderId,
+            challengerDidWin,
+          ),
         ]
       : []),
 
@@ -746,51 +615,20 @@ export const updateKage = async (
     // battle defeated: a delayed second finalization of an old battle must not
     // re-seat its challenger over a kage legitimately installed in the meantime.
     ...(challengerDidWin
-      ? [
-          client
-            .update(village)
-            .set({
-              kageId: challenger.userId,
-              leaderUpdatedAt: new Date(),
-              kageSchedule: null,
-            })
-            .where(
-              and(
-                eq(village.id, challenger.villageId),
-                eq(village.kageId, defenderId),
-                ...(curBattle.extraState.kageMatch
-                  ? [
-                      eq(
-                        village.leaderUpdatedAt,
-                        new Date(curBattle.extraState.kageMatch.tenure),
-                      ),
-                    ]
-                  : []),
-              ),
-            ),
-        ]
+      ? [updateVillageForUpdateKage(client, challenger, defenderId, curBattle)]
       : []),
 
     ...(deleteItems.length > 0
       ? [
-          client
-            .delete(userItem)
-            .where(and(inArray(userItem.id, deleteItems), gt(userItem.quantity, 0))),
-          client
-            .delete(userItemImbuement)
-            .where(inArray(userItemImbuement.userItemId, deleteItems)),
+          deleteUserItemsWithPositiveQuantity(client, deleteItems),
+          deleteUserItemImbuementForUpdateKage(client, deleteItems),
         ]
       : []),
 
     // The quantity guard skips rows a stack merge has claimed or already folded away, so this
     // absolute snapshot write can never resurrect a merge tombstone or stomp a claim.
     ...(updateItems.length > 0
-      ? updateItems.map((ui) =>
-          client
-            .update(userItem)
-            .set({ quantity: ui.quantity })
-            .where(and(eq(userItem.id, ui.id), gt(userItem.quantity, 0))),
-        )
+      ? updateItems.map((ui) => updateUserItemForUpdateKage(client, ui))
       : []),
   ]);
 };
@@ -813,24 +651,11 @@ export const updateClanLeaders = async (
   if (!result.didWin) return;
   // Apply
   await Promise.all([
-    client
-      .update(clan)
-      .set({
-        leaderId: user.userId,
-        coLeader1: sql`CASE WHEN ${clan.coLeader1} = ${user.userId} THEN NULL ELSE ${clan.coLeader1} END`,
-        coLeader2: sql`CASE WHEN ${clan.coLeader2} = ${user.userId} THEN NULL ELSE ${clan.coLeader2} END`,
-        coLeader3: sql`CASE WHEN ${clan.coLeader3} = ${user.userId} THEN NULL ELSE ${clan.coLeader3} END`,
-      })
-      .where(eq(clan.id, user.clanId)),
-    client
-      .update(village)
-      .set({ kageId: user.userId })
-      .where(
-        and(
-          eq(village.id, user.villageId ?? VILLAGE_SYNDICATE_ID),
-          or(eq(village.type, "HIDEOUT"), eq(village.type, "STRONGHOLD")),
-        ),
-      ),
+    updateClanForUpdateClanLeaders(client, {
+      userId: user.userId,
+      clanId: user.clanId,
+    }),
+    updateVillageForUpdateClanLeaders(client, user),
   ]);
 };
 
@@ -904,18 +729,14 @@ export const updateWars = async (
       }
       if (result.didWin) {
         otherPromises.push(
-          client.insert(warKill).values({
-            id: nanoid(),
-            warId: w.id,
-            killerId: user.userId,
-            victimId: warResult.target.userId,
-            killerVillageId: user.villageId || "unknown",
-            victimVillageId: warResult.target.villageId || "unknown",
-            sector: user.sector,
-            shrineHpChange: logShrineHpChange,
-            townhallHpChange: result.warHealthChange,
-            killedAt: new Date(),
-          }),
+          insertWarKillForUpdateWars(
+            client,
+            w,
+            user,
+            warResult,
+            logShrineHpChange,
+            result,
+          ),
         );
       }
 
@@ -951,14 +772,7 @@ export const updateWars = async (
                 -result.shrineChangeHp,
               );
             } else {
-              await client
-                .update(war)
-                .set({
-                  defenderShrineHp: sql`GREATEST(LEAST(defenderShrineHp + ${result.shrineChangeHp}, defenderShrineMaxHp), 0)`,
-                })
-                .where(
-                  and(eq(war.id, w.id), isNull(war.endedAt), warRaidCombatGuard()),
-                );
+              await updateWarForUpdateWars(client, result, w);
             }
           }),
         );
@@ -1045,23 +859,9 @@ export const updateWars = async (
       ) {
         processedWarHealthIds.add(w.id);
         if (killerSideVillageId === w.attackerVillageId) {
-          otherPromises.push(
-            client
-              .update(war)
-              .set({
-                attackerWarHealth: sql`GREATEST(LEAST(attackerWarHealth + ${result.warHealthChange}, attackerWarHealthMax), 0)`,
-              })
-              .where(and(eq(war.id, w.id), isNull(war.endedAt), warRaidCombatGuard())),
-          );
+          otherPromises.push(updateWarForUpdateWars2(client, result, w));
         } else {
-          otherPromises.push(
-            client
-              .update(war)
-              .set({
-                defenderWarHealth: sql`GREATEST(LEAST(defenderWarHealth + ${result.warHealthChange}, defenderWarHealthMax), 0)`,
-              })
-              .where(and(eq(war.id, w.id), isNull(war.endedAt), warRaidCombatGuard())),
-          );
+          otherPromises.push(updateWarForUpdateWars3(client, result, w));
         }
       }
     });
@@ -1121,17 +921,7 @@ export const updateWars = async (
       sectorsToNotify.push(sector);
       // Add mutation promises to otherPromises
       for (const m of activation.mutations) {
-        otherPromises.push(
-          client
-            .update(quest)
-            .set({
-              raidEndsAt: m.raidEndsAt,
-              raidCaptureDeadline: m.raidCaptureDeadline,
-              raidGracePeriodEnd: null,
-              raidBossCurrentHealth: m.raidBossCurrentHealth,
-            })
-            .where(eq(quest.id, m.raidId)),
-        );
+        otherPromises.push(updateQuestForUpdateWars(client, m));
       }
     }
   }
@@ -1184,24 +974,19 @@ const recoverWarShrine = async (
   const activeWar = and(eq(war.id, w.id), isNull(war.endedAt), warRaidCombatGuard());
 
   // Claim CAPTURED -> ACTIVE atomically using current HP, rather than the battle snapshot.
-  const recaptureResult = await client
-    .update(war)
-    .set({ [columns.hp]: recoveredHp, [columns.status]: "ACTIVE" })
-    .where(
-      and(
-        activeWar,
-        eq(status, "CAPTURED"),
-        sql`${hp} + ${change} > ${maxHp} * ${WAR_RECAPTURE_THRESHOLD}`,
-      ),
-    );
+  const recaptureResult = await updateWarForRecoverWarShrine(
+    client,
+    columns,
+    recoveredHp,
+    activeWar,
+    status,
+    hp,
+    change,
+    maxHp,
+  );
 
   if (recaptureResult.rowsAffected > 0) {
-    await client
-      .update(war)
-      .set({
-        [columns.warHealth]: sql`LEAST(${war[columns.warHealth]} + ${WAR_SHRINE_RECAPTURE_WARHEALTH_HEAL}, ${war[columns.warHealthMax]})`,
-      })
-      .where(activeWar);
+    await updateWarForRecoverWarShrine2(client, columns, activeWar);
     const villageName =
       side === "attacker"
         ? (w.attackerVillage?.name ?? "Attacker")
@@ -1211,10 +996,7 @@ const recoverWarShrine = async (
     );
   } else {
     // Active shrines and recovery below the threshold still receive HP, without a reward.
-    await client
-      .update(war)
-      .set({ [columns.hp]: recoveredHp })
-      .where(activeWar);
+    await updateWarForRecoverWarShrine3(client, columns, recoveredHp, activeWar);
   }
 };
 
@@ -1234,24 +1016,10 @@ export const updateTournament = async (
   const target = curBattle.usersState.find((u) => u.userId !== userId && !u.isSummon);
   // Event games use sparring rules and record one durable outcome, including draws.
   if (curBattle.extraState.tournamentGameId && user && target && result) {
-    await client
-      .update(tournamentMatch)
-      .set({
-        state: "PLAYED",
-        winnerId:
-          result.outcome === "Draw"
-            ? null
-            : result.didWin
-              ? user.userId
-              : target.userId,
-      })
-      .where(
-        and(
-          eq(tournamentMatch.id, curBattle.extraState.tournamentGameId),
-          eq(tournamentMatch.battleId, curBattle.id),
-          eq(tournamentMatch.state, "WAITING"),
-        ),
-      );
+    await updateTournamentMatchForUpdateTournament(client, result, user, target, {
+      extraState: { tournamentGameId: curBattle.extraState.tournamentGameId },
+      id: curBattle.id,
+    });
     return;
   }
   // Guards
@@ -1259,10 +1027,13 @@ export const updateTournament = async (
   if (!target) return;
   if (!result) return;
   if (curBattle.battleType !== "TOURNAMENT") return;
-  await client
-    .update(tournamentMatch)
-    .set({ winnerId: result.didWin ? user.userId : target.userId })
-    .where(eq(tournamentMatch.battleId, curBattle.id));
+  await updateTournamentMatchForUpdateTournament2(
+    client,
+    result,
+    user,
+    target,
+    curBattle,
+  );
 };
 
 /**
@@ -1287,39 +1058,23 @@ export const updateVillageAnbuClan = async (
   await Promise.all([
     ...(result.villageTokens > 0
       ? [
-          client
-            .update(village)
-            .set({ tokens: sql`tokens + ${result.villageTokens}` })
-            .where(eq(village.id, user.villageId)),
+          updateVillageForUpdateVillageAnbuClan(client, result, {
+            villageId: user.villageId,
+          }),
         ]
       : []),
     ...(user.anbuId && result.pvpStreak > 0
-      ? [
-          client
-            .update(anbuSquad)
-            .set({ pvpActivity: sql`${anbuSquad.pvpActivity} + 1` })
-            .where(eq(anbuSquad.id, user.anbuId)),
-        ]
+      ? [updateAnbuSquadForUpdateVillageAnbuClan(client, { anbuId: user.anbuId })]
       : []),
     ...(user.anbuId && result.anbuPoints > 0
       ? [
-          client
-            .update(anbuSquad)
-            .set({ points: sql`${anbuSquad.points} + ${result.anbuPoints}` })
-            .where(eq(anbuSquad.id, user.anbuId)),
+          updateAnbuSquadForUpdateVillageAnbuClan2(client, result, {
+            anbuId: user.anbuId,
+          }),
         ]
       : []),
     ...(user.clanId && result.clanPoints > 0
-      ? [
-          client
-            .update(clan)
-            .set({
-              pvpActivity: sql`${clan.pvpActivity} + 1`,
-              points: sql`${clan.points} + ${result.clanPoints}`,
-              activityPoints: sql`${clan.activityPoints} + ${result.clanPoints}`,
-            })
-            .where(eq(clan.id, user.clanId)),
-        ]
+      ? [updateClanForUpdateVillageAnbuClan(client, result, { clanId: user.clanId })]
       : []),
   ]);
 };
@@ -1390,33 +1145,24 @@ export const updateRaidProgress = async (
   let claimed = false;
   if (startBattleCount === 0) {
     try {
-      await client.insert(raidParticipation).values({
-        id: nanoid(),
-        questId: raidQuestId,
-        userId: userId,
-        damageDealt: userDamage,
-        battleCount: 1,
-        rewardsClaimed: [],
-      });
+      await insertRaidParticipationForUpdateRaidProgress(
+        client,
+        raidQuestId,
+        userId,
+        userDamage,
+      );
       claimed = true;
     } catch (error) {
       if (!isMysqlDuplicateKeyError(error)) throw error;
     }
   } else {
-    const updateResult = await client
-      .update(raidParticipation)
-      .set({
-        damageDealt: sql`${raidParticipation.damageDealt} + ${userDamage}`,
-        battleCount: sql`${raidParticipation.battleCount} + 1`,
-        updatedAt: sql`NOW()`,
-      })
-      .where(
-        and(
-          eq(raidParticipation.questId, raidQuestId),
-          eq(raidParticipation.userId, userId),
-          eq(raidParticipation.battleCount, startBattleCount),
-        ),
-      );
+    const updateResult = await updateRaidParticipationForUpdateRaidProgress(
+      client,
+      userDamage,
+      raidQuestId,
+      userId,
+      startBattleCount,
+    );
     claimed = updateResult.rowsAffected === 1;
   }
 
@@ -1426,19 +1172,11 @@ export const updateRaidProgress = async (
 
   // Shared raid HP is not itself idempotent, so it runs only after the claim.
   // Parallelizing this with the claim would double-decrement on a duplicate call.
-  await client
-    .update(quest)
-    .set({
-      raidBossCurrentHealth: sql`GREATEST(0, ${quest.raidBossCurrentHealth} - ${userDamage})`,
-    })
-    .where(and(eq(quest.id, raidQuestId), eq(quest.questType, "raid")));
+  await updateQuestForUpdateRaidProgress(client, userDamage, raidQuestId);
 
   // Read committed global HP. A successful claim already means this user is a
   // participant, so we do not scan RaidParticipation.
-  const updatedQuest = await client.query.quest.findFirst({
-    where: eq(quest.id, raidQuestId),
-    columns: { raidBossCurrentHealth: true, name: true },
-  });
+  const updatedQuest = await findQuestForUpdateRaidProgress(client, raidQuestId);
 
   const bossDefeated = (updatedQuest?.raidBossCurrentHealth ?? 0) <= 0;
   if (!bossDefeated) {
@@ -1450,16 +1188,8 @@ export const updateRaidProgress = async (
   // snapshot, or insert a second inbox row if the claim gate were skipped.
   const raidName = updatedQuest?.name ?? "the raid";
   await Promise.all([
-    client.insert(notification).values([
-      {
-        userId,
-        content: `The boss in ${raidName} has been defeated! Check if you've earned any rewards.`,
-      },
-    ]),
-    client
-      .update(userData)
-      .set({ unreadNotifications: sql`unreadNotifications + 1` })
-      .where(eq(userData.userId, userId)),
+    insertNotificationForUpdateRaidProgress(client, userId, raidName),
+    updateUserDataForUpdateRaidProgress(client, userId),
   ]);
 };
 
@@ -1505,18 +1235,13 @@ export const updateUser = async (
     // Event battles are exhibition matches: preserve inventory, pools, progression,
     // immunity and every ordinary combat statistic. Only release this battle's claim.
     const settledAt = new Date();
-    await client
-      .update(userData)
-      .set({
-        status: "AWAKE",
-        bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-        bracketImmunityPausedAt: null,
-        battleId: null,
-        regenAt: settledAt,
-        curEnergy: combatEnergyRecoverySql(curBattle, userId, 0, settledAt),
-        updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-      })
-      .where(and(eq(userData.userId, userId), eq(userData.battleId, curBattle.id)));
+    await updateUserDataForUpdateUser(
+      client,
+      settledAt,
+      combatEnergyRecoverySql,
+      curBattle,
+      userId,
+    );
     void updateUserOnMap(pusher, user.sector, {
       ...user,
       longitude: user.originalLongitude,
@@ -1840,41 +1565,17 @@ export const updateUser = async (
         : []),
       // Update bounties
       ...(result.bountiesClaimed.length > 0
-        ? [
-            () =>
-              client
-                .update(bounty)
-                .set({
-                  status: "CLAIMED",
-                  claimedAt: new Date(),
-                  claimedByUserId: userId,
-                })
-                .where(
-                  and(
-                    inArray(
-                      bounty.id,
-                      result.bountiesClaimed.map((b) => b.bountyId),
-                    ),
-                    eq(bounty.status, "OPEN"),
-                  ),
-                ),
-          ]
+        ? [() => updateBountyForUpdateUser(client, userId, result)]
         : []),
       // Delete items
       ...(deleteItems.length > 0
         ? [
             () =>
-              client
-                .delete(userItem)
-                .where(and(inArray(userItem.id, deleteItems), gt(userItem.quantity, 0)))
-                .then((saved) => {
-                  if (saved.rowsAffected !== deleteItems.length)
-                    itemSettlementCommitted = false;
-                }),
-            () =>
-              client
-                .delete(userItemImbuement)
-                .where(inArray(userItemImbuement.userItemId, deleteItems)),
+              deleteUserItemsWithPositiveQuantity(client, deleteItems).then((saved) => {
+                if (saved.rowsAffected !== deleteItems.length)
+                  itemSettlementCommitted = false;
+              }),
+            () => deleteUserItemImbuementForUpdateKage(client, deleteItems),
           ]
         : []),
       // Persist all surviving items in one request. The owner and quantity guards skip
@@ -1882,40 +1583,17 @@ export const updateUser = async (
       ...(updateItems.length > 0
         ? [
             () =>
-              client
-                .update(userItem)
-                .set({
-                  quantity: sql`CASE ${userItem.id} ${sql.join(
-                    updateItems.map((ui) => sql`WHEN ${ui.id} THEN ${ui.quantity}`),
-                    sql` `,
-                  )} ELSE ${userItem.quantity} END`,
-                  durability: sql`CASE ${userItem.id} ${sql.join(
-                    updateItems.map((ui) => sql`WHEN ${ui.id} THEN ${ui.durability}`),
-                    sql` `,
-                  )} ELSE ${userItem.durability} END`,
-                  // Hunting requires a changed-row acknowledgement even for unchanged carried items.
-                  ...(settlingHunt
-                    ? {
-                        updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userItem.updatedAt}))`,
-                      }
-                    : {}),
-                })
-                .where(
-                  and(
-                    eq(userItem.userId, userId),
-                    inArray(
-                      userItem.id,
-                      updateItems.map((ui) => ui.id),
-                    ),
-                    gt(userItem.quantity, 0),
-                  ),
-                )
-                .then((saved) => {
-                  // Every expected row must acknowledge before hunting rewards can commit
-                  // or the completion response can safely replace the profile cache.
-                  if (saved.rowsAffected !== updateItems.length)
-                    itemSettlementCommitted = false;
-                }),
+              updateUserItemForUpdateUser(
+                client,
+                updateItems,
+                settlingHunt,
+                userId,
+              ).then((saved) => {
+                // Every expected row must acknowledge before hunting rewards can commit
+                // or the completion response can safely replace the profile cache.
+                if (saved.rowsAffected !== updateItems.length)
+                  itemSettlementCommitted = false;
+              }),
           ]
         : []),
       // Jutsu experience & level from experience
@@ -1929,14 +1607,7 @@ export const updateUser = async (
             // statement must reset XP using the old level before changing that level.
             // With a positive gain, only a level-up leaves experience at zero.
             return () =>
-              client.execute(sql`
-              UPDATE ${userJutsu}
-              SET ${userJutsu.experience} = IF(${userJutsu.experience} + ${jExp} >= ${xpToLevel}, 0, ${userJutsu.experience} + ${jExp}),
-                  ${userJutsu.level} = ${userJutsu.level} + (${userJutsu.experience} = 0)
-              WHERE ${userJutsu.userId} = ${user.userId}
-                AND ${userJutsu.level} < ${cap}
-                AND ${inArray(userJutsu.jutsuId, ids)}
-            `);
+              executeRowsForUpdateUser(client, jExp, xpToLevel, user, cap, ids);
           })
         : []),
       // Item experience & level from PvP (equipped items only; per-item xpToLevel)
@@ -1944,145 +1615,36 @@ export const updateUser = async (
         ? [...equippedXpGroups.entries()].map(
             ([xpToLevel, ids]) =>
               () =>
-                client
-                  .update(userItem)
-                  .set(xpGainOrLevelUpSet(userItem, xpToLevel, iExp))
-                  .where(
-                    and(
-                      eq(userItem.userId, user.userId),
-                      lt(userItem.level, ITEM_LEVEL_CAP),
-                      inArray(userItem.id, [...ids]),
-                    ),
-                  ),
+                updateUserItemForUpdateUser2(
+                  client,
+                  xpGainOrLevelUpSet,
+                  xpToLevel,
+                  iExp,
+                  user,
+                  ids,
+                ),
           )
         : []),
       // Update user data
       () =>
-        client
-          .update(userData)
-          .set({
-            // Settlement invalidates delayed passive-regeneration snapshots.
-            updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-            curEnergy: combatEnergyRecoverySql(
-              curBattle,
-              userId,
-              result.energyReward,
-              settledAt,
-            ),
-            experience: sql`experience + ${result.experience}`,
-            earnedExperience: sql`earnedExperience + ${result.earnedExperience}`,
-            petExperience: petExperienceGainSql(
-              Math.round(result.experience) + Math.round(result.earnedExperience),
-              curBattle.extraState.petIdsByOwner?.[userId] ?? null,
-            ),
-            ...(curBattle.extraState.hunting && result.outcome === "Won"
-              ? {
-                  huntingExperience: sql`${userData.huntingExperience} + ${curBattle.extraState.hunting.contract.experience}`,
-                }
-              : {}),
-            pvpStreak: result.pvpStreak,
-            ...(curBattle.battleType === "COMBAT" && hasHumanOpponent
-              ? {
-                  pvpWins: sql`${userData.pvpWins} + ${result.outcome === "Won" ? 1 : 0}`,
-                  pvpLosses: sql`${userData.pvpLosses} + ${result.outcome === "Lost" || result.outcome === "Fled" ? 1 : 0}`,
-                }
-              : {}),
-            pvpExperience: sql`${userData.pvpExperience} + ${result.pvpExperience ?? 0}`,
-            ...((result.weeklyPvpKills ?? 0) > 0
-              ? {
-                  weeklyPvpKills: sql`CASE WHEN ${userData.weeklyPvpKillsAt} >= ${periodStart("weekly", settledAt)} THEN ${userData.weeklyPvpKills} ELSE 0 END + ${result.weeklyPvpKills ?? 0}`,
-                  weeklyPvpKillsAt: settledAt,
-                }
-              : {}),
-            ...(curBattle.battleType !== "RANKED_PVP" &&
-            curBattle.battleType !== "SPARRING" &&
-            curBattle.battleType !== "RANKED_SPARRING"
-              ? {
-                  curHealth: result.curHealth,
-                  curStamina: result.curStamina,
-                  curChakra: result.curChakra,
-                }
-              : {}),
-            strength: sql`strength + ${result.strength}`,
-            intelligence: sql`intelligence + ${result.intelligence}`,
-            willpower: sql`willpower + ${result.willpower}`,
-            speed: sql`speed + ${result.speed}`,
-            money: result.money ? sql`money + ${result.money}` : sql`money`,
-            seichiSilver: result.seichiSilver
-              ? sql`seichiSilver + ${result.seichiSilver}`
-              : sql`seichiSilver`,
-            // Preserve stored over-cap entitlement; concurrent gains cannot exceed the cap.
-            ...masteryGainUpdates(result.masteryGains ?? {}),
-            offence: sql`offence + ${result.offence}`,
-            defence: sql`defence + ${result.defence}`,
-            villagePrestige: sql`villagePrestige + ${result.villagePrestige}`,
-            dailyArenaFights: sql`dailyArenaFights + ${curBattle.battleType === "ARENA" ? 1 : 0}`,
-            dailySageActivations: sql`dailySageActivations + ${user.sageModeUsedThisBattle ? 1 : 0}`,
-            questData: updatedQuestData,
-            bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-            bracketImmunityPausedAt: null,
-            battleId: null,
-            // Only Energy recovers in combat; reset the shared clock for other pools.
-            regenAt: settledAt,
-            // War participation is stamped when starting a war action; winning an unrelated
-            // battle or defending against an attack must not start or extend that window.
-            ...(curBattle.battleType === "RANKED_PVP"
-              ? {
-                  rankedLp: sql`GREATEST(rankedLp + ${result.lpDiff}, 0)`,
-                  rankedStreak: result.didWin ? sql`${userData.rankedStreak} + 1` : 0,
-                  rankedWins: sql`rankedWins + ${result.didWin ? 1 : 0}`,
-                  rankedBattles: sql`rankedBattles + 1`,
-                }
-              : {}),
-            ...(tookKageSeat
-              ? {
-                  rank: sql`CASE WHEN ${userData.rank} = 'ELDER' THEN 'JONIN' ELSE ${userData.rank} END`,
-                }
-              : {}),
-            ...(!getIsolatedPyramid(hydratedUser) &&
-            !curBattle.forceKeepPools &&
-            result.curHealth <= 0 &&
-            !["SPARRING", "RANKED_PVP", "RANKED_SPARRING"].includes(
-              curBattle.battleType,
-            )
-              ? {
-                  status: "HOSPITALIZED",
-                  longitude: HOSPITAL_LONG,
-                  latitude: HOSPITAL_LAT,
-                  sector: user.allyVillage
-                    ? user.sector
-                    : getVillage(curBattle, user.villageId)?.sector,
-                  immunityUntil:
-                    curBattle.battleType === "COMBAT"
-                      ? sql`NOW() + INTERVAL 1 MINUTE`
-                      : sql`immunityUntil`,
-                }
-              : { status: getIsolatedPyramid(hydratedUser) ? "BATTLE" : "AWAKE" }),
-            // Deactivate stealth and set cooldown after leaving combat (20 seconds)
-            stealthActive: false,
-            stealthActivatedAt: null,
-            stealthCooldownAt: new Date(
-              Math.floor(settledAt.getTime() / 1000) * 1000 +
-                STEALTH_POST_COMBAT_COOLDOWN_SECONDS * 1000,
-            ),
-          })
-          .where(and(eq(userData.userId, userId), eq(userData.battleId, curBattle.id)))
-          .then((saved) => {
-            userSettlementCommitted = saved.rowsAffected === 1;
-          }),
+        updateUserDataForUpdateUser2(
+          client,
+          combatEnergyRecoverySql,
+          curBattle,
+          userId,
+          result,
+          settledAt,
+          hasHumanOpponent,
+          user,
+          updatedQuestData,
+          tookKageSeat,
+          hydratedUser,
+        ).then((saved) => {
+          userSettlementCommitted = saved.rowsAffected === 1;
+        }),
       // Handle dropped items transfer if present on result. Currently only AI have droppable items, so no need to delete from loser
       ...(result.droppedItems.length > 0
-        ? [
-            () =>
-              client.insert(userItem).values(
-                result.droppedItems.map((d) => ({
-                  id: nanoid(),
-                  userId: user.userId,
-                  itemId: d.itemId,
-                  equipped: "NONE" as const,
-                })),
-              ),
-          ]
+        ? [() => insertUserItemForUpdateUser(client, result, user)]
         : []),
     ];
     if (settlingHunt) {

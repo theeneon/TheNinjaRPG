@@ -1,4 +1,3 @@
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -8,13 +7,36 @@ import {
   VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
 import {
-  actionLog,
-  bounty,
-  bountyContribution,
-  bountySignup,
-  userData,
-} from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
+  deleteBountyContributionForRetract,
+  deleteBountySignupForCollect,
+  deleteBountySignupForResign,
+  deleteBountySignupForRetract,
+  findBountyForCreate,
+  findBountyForRemoveAllTrackers,
+  findBountyForResign,
+  findBountyForSignup,
+  findBountySignupForCollect,
+  findBountySignupForResign,
+  findBountySignupForSignup,
+  findBountySignupForStopTracking,
+  insertActionLogForRemoveAllTrackers,
+  insertBountyContributionForAddMoney,
+  insertBountyContributionForCreate,
+  insertBountyForCreate,
+  insertBountySignupForSignup,
+  listBountyContributionForRetract,
+  listBountyForBoard,
+  listBountySignupForGetTrackedBounties,
+  listBountySignupForSignup,
+  refundBountyContribution,
+  updateBountyForAddMoney,
+  updateBountyForCollect,
+  updateBountyForRetract,
+  updateUserDataForAddMoney,
+  updateUserDataForCollect,
+} from "@/queries/bounty";
+import { debitUserMoney, fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -45,84 +67,7 @@ export const bountyRouter = createTRPCRouter({
       // Fetch user and bounties in parallel for efficiency
       const [currentUser, results] = await Promise.all([
         fetchUser(ctx.drizzle, userId),
-        ctx.drizzle.query.bounty.findMany({
-          where:
-            input.status === "all"
-              ? undefined
-              : input.status === "OPEN"
-                ? and(
-                    inArray(bounty.status, ["OPEN", "CLAIMED"]),
-                    // Hide completed bounties (CLAIMED and collected)
-                    or(
-                      eq(bounty.status, "OPEN"),
-                      and(eq(bounty.status, "CLAIMED"), isNull(bounty.collectedAt)),
-                    ),
-                  )
-                : eq(bounty.status, input.status),
-          columns: {
-            id: true,
-            amountRyo: true,
-            createdAt: true,
-            status: true,
-            collectedAt: true,
-            claimedAt: true,
-            targetUserId: true,
-            claimedByUserId: true,
-            creatorUserId: true,
-          },
-          with: {
-            target: {
-              columns: {
-                username: true,
-                avatar: true,
-                level: true,
-                rank: true,
-                isOutlaw: true,
-                villageId: true,
-              },
-            },
-            hunters: {
-              columns: {
-                hunterUserId: true,
-              },
-              with: {
-                hunter: {
-                  columns: {
-                    username: true,
-                    avatar: true,
-                    level: true,
-                    rank: true,
-                    isOutlaw: true,
-                    villageId: true,
-                  },
-                },
-              },
-            },
-            creator: {
-              columns: {
-                username: true,
-                avatar: true,
-                level: true,
-                rank: true,
-                isOutlaw: true,
-                villageId: true,
-              },
-            },
-            claimedBy: {
-              columns: {
-                username: true,
-                avatar: true,
-                level: true,
-                rank: true,
-                isOutlaw: true,
-                villageId: true,
-              },
-            },
-          },
-          orderBy: desc(bounty.createdAt),
-          limit,
-          offset,
-        }),
+        listBountyForBoard(ctx.drizzle, input, limit, offset),
       ]);
 
       const canSeeHiddenInfo = currentUser
@@ -189,39 +134,20 @@ export const bountyRouter = createTRPCRouter({
       if (creator.money < amountRyo) return errorResponse("Not enough ryo");
 
       // Check if target already has an active bounty
-      const existingBounty = await ctx.drizzle.query.bounty.findFirst({
-        where: and(eq(bounty.targetUserId, targetUserId), eq(bounty.status, "OPEN")),
-      });
+      const existingBounty = await findBountyForCreate(ctx.drizzle, targetUserId);
       if (existingBounty) {
         return errorResponse(
           "Target already has an active bounty. You can add money to it instead.",
         );
       }
       // Mutation 1
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ money: sql`${userData.money} - ${amountRyo}` })
-        .where(and(eq(userData.userId, ctx.userId), gte(userData.money, amountRyo)));
+      const result = await debitUserMoney(ctx.drizzle, amountRyo, ctx);
       if (result?.rowsAffected === 0) return errorResponse("Not enough ryo");
       // Mutation 2
       const bountyId = nanoid();
       await Promise.all([
-        ctx.drizzle.insert(bounty).values({
-          id: bountyId,
-          targetUserId,
-          creatorUserId: ctx.userId,
-          amountRyo,
-          originalAmountRyo: amountRyo,
-          status: "OPEN",
-          createdAt: new Date(),
-        }),
-        ctx.drizzle.insert(bountyContribution).values({
-          id: nanoid(),
-          bountyId,
-          contributorUserId: ctx.userId,
-          amountRyo,
-          createdAt: new Date(),
-        }),
+        insertBountyForCreate(ctx.drizzle, bountyId, targetUserId, ctx, amountRyo),
+        insertBountyContributionForCreate(ctx.drizzle, bountyId, ctx, amountRyo),
       ]);
       return { success: true, message: "Bounty created" };
     }),
@@ -234,15 +160,9 @@ export const bountyRouter = createTRPCRouter({
       // Query
       const { bountyId } = input;
       const [curBounty, curSignups, userSignups, target] = await Promise.all([
-        ctx.drizzle.query.bounty.findFirst({
-          where: eq(bounty.id, bountyId),
-        }),
-        ctx.drizzle.query.bountySignup.findMany({
-          where: eq(bountySignup.bountyId, bountyId),
-        }),
-        ctx.drizzle.query.bountySignup.findFirst({
-          where: eq(bountySignup.hunterUserId, ctx.userId),
-        }),
+        findBountyForSignup(ctx.drizzle, bountyId),
+        listBountySignupForSignup(ctx.drizzle, bountyId),
+        findBountySignupForSignup(ctx.drizzle, ctx),
         fetchUser(ctx.drizzle, input.targetUserId),
       ]);
       // Guards
@@ -272,12 +192,7 @@ export const bountyRouter = createTRPCRouter({
       }
 
       // Sign up for the bounty hunt
-      await ctx.drizzle.insert(bountySignup).values({
-        id: nanoid(),
-        bountyId,
-        hunterUserId: ctx.userId,
-        createdAt: new Date(),
-      });
+      await insertBountySignupForSignup(ctx.drizzle, bountyId, ctx);
       return { success: true, message: "Tracking this bounty" };
     }),
 
@@ -287,17 +202,13 @@ export const bountyRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Query
-      const claim = await ctx.drizzle.query.bountySignup.findFirst({
-        where: eq(bountySignup.id, input.claimId),
-      });
+      const claim = await findBountySignupForResign(ctx.drizzle, input);
       if (!claim) return errorResponse("Claim not found");
       if (claim.hunterUserId !== ctx.userId) return errorResponse("Not your claim");
-      const curBounty = await ctx.drizzle.query.bounty.findFirst({
-        where: eq(bounty.id, claim.bountyId),
-      });
+      const curBounty = await findBountyForResign(ctx.drizzle, claim);
       if (!curBounty || curBounty.status !== "OPEN")
         return errorResponse("Bounty closed");
-      await ctx.drizzle.delete(bountySignup).where(eq(bountySignup.id, claim.id));
+      await deleteBountySignupForResign(ctx.drizzle, claim);
       return { success: true, message: "Claim withdrawn" };
     }),
 
@@ -308,15 +219,8 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [curBounty, userSignup] = await Promise.all([
-        ctx.drizzle.query.bounty.findFirst({
-          where: eq(bounty.id, input.bountyId),
-        }),
-        ctx.drizzle.query.bountySignup.findFirst({
-          where: and(
-            eq(bountySignup.bountyId, input.bountyId),
-            eq(bountySignup.hunterUserId, ctx.userId),
-          ),
-        }),
+        findBountyForResign(ctx.drizzle, input),
+        findBountySignupForStopTracking(ctx.drizzle, input, ctx),
       ]);
 
       // Guards
@@ -325,7 +229,7 @@ export const bountyRouter = createTRPCRouter({
       if (curBounty.status !== "OPEN") return errorResponse("Bounty closed");
 
       // Stop tracking the bounty
-      await ctx.drizzle.delete(bountySignup).where(eq(bountySignup.id, userSignup.id));
+      await deleteBountySignupForResign(ctx.drizzle, userSignup);
       return { success: true, message: "Stopped tracking bounty" };
     }),
 
@@ -338,15 +242,8 @@ export const bountyRouter = createTRPCRouter({
 
       // Find the bounty and hunter signup
       const [curBounty, hunterSignup] = await Promise.all([
-        ctx.drizzle.query.bounty.findFirst({
-          where: eq(bounty.id, bountyId),
-        }),
-        ctx.drizzle.query.bountySignup.findFirst({
-          where: and(
-            eq(bountySignup.bountyId, bountyId),
-            eq(bountySignup.hunterUserId, ctx.userId),
-          ),
-        }),
+        findBountyForSignup(ctx.drizzle, bountyId),
+        findBountySignupForCollect(ctx.drizzle, bountyId, ctx),
       ]);
 
       // Guards
@@ -359,17 +256,11 @@ export const bountyRouter = createTRPCRouter({
       // Execute all mutations in parallel
       await Promise.all([
         // Update bounty as claimed
-        ctx.drizzle
-          .update(bounty)
-          .set({ collectedAt: new Date() })
-          .where(eq(bounty.id, bountyId)),
+        updateBountyForCollect(ctx.drizzle, bountyId),
         // Update hunter signup as fulfilled
-        ctx.drizzle.delete(bountySignup).where(eq(bountySignup.bountyId, bountyId)),
+        deleteBountySignupForCollect(ctx.drizzle, bountyId),
         // Award the bounty money to the hunter
-        ctx.drizzle
-          .update(userData)
-          .set({ money: sql`${userData.money} + ${curBounty.amountRyo}` })
-          .where(eq(userData.userId, ctx.userId)),
+        updateUserDataForCollect(ctx.drizzle, curBounty, ctx),
       ]);
 
       return { success: true, message: "Bounty claimed successfully" };
@@ -382,9 +273,7 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [curBounty, user] = await Promise.all([
-        ctx.drizzle.query.bounty.findFirst({
-          where: eq(bounty.id, input.bountyId),
-        }),
+        findBountyForResign(ctx.drizzle, input),
         fetchUser(ctx.drizzle, ctx.userId),
       ]);
       // Guards
@@ -396,23 +285,11 @@ export const bountyRouter = createTRPCRouter({
       // Execute mutations in parallel
       await Promise.all([
         // Add money to the bounty
-        ctx.drizzle
-          .update(bounty)
-          .set({ amountRyo: sql`${bounty.amountRyo} + ${input.amountRyo}` })
-          .where(eq(bounty.id, input.bountyId)),
+        updateBountyForAddMoney(ctx.drizzle, input),
         // Deduct money from the user
-        ctx.drizzle
-          .update(userData)
-          .set({ money: sql`${userData.money} - ${input.amountRyo}` })
-          .where(eq(userData.userId, ctx.userId)),
+        updateUserDataForAddMoney(ctx.drizzle, input, ctx),
         // Track the contribution
-        ctx.drizzle.insert(bountyContribution).values({
-          id: nanoid(),
-          bountyId: input.bountyId,
-          contributorUserId: ctx.userId,
-          amountRyo: input.amountRyo,
-          createdAt: new Date(),
-        }),
+        insertBountyContributionForAddMoney(ctx.drizzle, input, ctx),
       ]);
 
       return {
@@ -428,12 +305,8 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [curBounty, contributions] = await Promise.all([
-        ctx.drizzle.query.bounty.findFirst({
-          where: eq(bounty.id, input.bountyId),
-        }),
-        ctx.drizzle.query.bountyContribution.findMany({
-          where: eq(bountyContribution.bountyId, input.bountyId),
-        }),
+        findBountyForResign(ctx.drizzle, input),
+        listBountyContributionForRetract(ctx.drizzle, input),
       ]);
       // Guards
       if (!curBounty) return errorResponse("Bounty not found");
@@ -441,33 +314,17 @@ export const bountyRouter = createTRPCRouter({
         return errorResponse("Not your bounty");
       if (curBounty.status !== "OPEN") return errorResponse("Bounty not open");
       // First disable the bounty and check the result
-      const result = await ctx.drizzle
-        .update(bounty)
-        .set({ status: "CANCELLED" })
-        .where(
-          and(
-            eq(bounty.id, input.bountyId),
-            eq(bounty.creatorUserId, ctx.userId),
-            eq(bounty.status, "OPEN"),
-          ),
-        );
+      const result = await updateBountyForRetract(ctx.drizzle, input, ctx);
       if (result?.rowsAffected === 0) return errorResponse("Bounty not found");
       // Execute mutations in parallel
       await Promise.all([
         // Remove all hunter signups for this bounty
-        ctx.drizzle
-          .delete(bountySignup)
-          .where(eq(bountySignup.bountyId, input.bountyId)),
+        deleteBountySignupForRetract(ctx.drizzle, input),
         // Remove all contributions for this bounty
-        ctx.drizzle
-          .delete(bountyContribution)
-          .where(eq(bountyContribution.bountyId, input.bountyId)),
+        deleteBountyContributionForRetract(ctx.drizzle, input),
         // Refund all contributors their money
         ...contributions.map((contribution) =>
-          ctx.drizzle
-            .update(userData)
-            .set({ money: sql`${userData.money} + ${contribution.amountRyo}` })
-            .where(eq(userData.userId, contribution.contributorUserId)),
+          refundBountyContribution(ctx.drizzle, contribution),
         ),
       ]);
       return { success: true, message: "Bounty retracted successfully" };
@@ -479,21 +336,7 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query - fetch bounty with hunters and user in parallel
       const [curBountyWithHunters, user] = await Promise.all([
-        ctx.drizzle.query.bounty.findFirst({
-          where: eq(bounty.id, input.bountyId),
-          with: {
-            hunters: {
-              with: {
-                hunter: {
-                  columns: {
-                    userId: true,
-                    username: true,
-                  },
-                },
-              },
-            },
-          },
-        }),
+        findBountyForRemoveAllTrackers(ctx.drizzle, input),
         fetchUser(ctx.drizzle, ctx.userId),
       ]);
 
@@ -513,19 +356,10 @@ export const bountyRouter = createTRPCRouter({
       // Execute deletion and logging in parallel (no transaction to avoid PlanetScale deadlocks)
       await Promise.all([
         // Remove all hunter signups for this bounty
-        ctx.drizzle
-          .delete(bountySignup)
-          .where(eq(bountySignup.bountyId, input.bountyId)),
+        deleteBountySignupForRetract(ctx.drizzle, input),
 
         // Log the action
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bounty",
-          changes: [`Removed ${hunters.length} hunters from bounty tracking`],
-          relatedId: input.bountyId,
-          relatedMsg: `Staff removed all trackers from bounty: ${hunters.length} hunters removed`,
-        }),
+        insertActionLogForRemoveAllTrackers(ctx.drizzle, ctx, hunters, input),
       ]);
 
       return {
@@ -539,31 +373,10 @@ export const bountyRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get bounties you are tracking" } })
     .query(async ({ ctx }) => {
       // Get bounties the user is tracking
-      const trackedBounties = await ctx.drizzle.query.bountySignup.findMany({
-        where: eq(bountySignup.hunterUserId, ctx.userId),
-        with: {
-          bounty: {
-            columns: {
-              id: true,
-              status: true,
-              amountRyo: true,
-              collectedAt: true,
-              claimedAt: true,
-            },
-            with: {
-              target: {
-                columns: {
-                  userId: true,
-                  username: true,
-                  avatar: true,
-                  avatarLight: true,
-                  sector: true,
-                },
-              },
-            },
-          },
-        },
-      });
+      const trackedBounties = await listBountySignupForGetTrackedBounties(
+        ctx.drizzle,
+        ctx,
+      );
 
       // Transform to map format
       const bountyHighlights = trackedBounties

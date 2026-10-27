@@ -1,26 +1,26 @@
-import {
-  and,
-  count,
-  eq,
-  gt,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { STORE_ORDER_RESERVATION_MINUTES } from "@/drizzle/constants";
+import type { userData, userItem } from "@/drizzle/schema";
+import { insertUserItems } from "@/queries/item";
 import {
-  item,
-  paypalTransaction,
-  storeUserIdAlias,
-  userData,
-  userItem,
-  webStoreBundle,
-  webStoreOrder,
-} from "@/drizzle/schema";
+  findUserDataForAuthorize,
+  findWebStoreBundleForCheckBundlePurchaseLimit,
+  findWebStoreOrderById,
+  findWebStoreOrderForDeliverStoreOrder,
+  findWebStoreOrderForDeliverStoreOrder2,
+  insertPaypalTransactionForDeliverStoreOrder,
+  insertWebStoreOrderForReserve,
+  listItemForAuthorize,
+  listItemForDeliverStoreOrder,
+  listStoreUserIdAliasForAuthorize,
+  lockStoreBuyer,
+  selectUserDataForDeliverStoreOrder,
+  selectUserDataForReserve,
+  selectWebStoreOrderForCheckBundlePurchaseLimit,
+  updateUserDataForDeliverStoreOrder,
+  updateWebStoreOrderForAuthorize,
+  updateWebStoreOrderForDeliverStoreOrder,
+} from "@/queries/paypal";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { reputationAllowanceUsed } from "@/server/utils/purchases/allowance";
@@ -49,8 +49,8 @@ export const reserveStoreOrder = async (
 ) => {
   const needsBuyerLock = offer.contents.reputationPoints > 0 || !!offer.bundleId;
   const reserve = async (db: DrizzleClient) => {
-    const buyerQuery = db.select().from(userData).where(eq(userData.userId, buyerId));
-    const [buyer] = await (needsBuyerLock ? buyerQuery.for("update") : buyerQuery);
+    const buyerQuery = selectUserDataForReserve(db, buyerId);
+    const [buyer] = await (needsBuyerLock ? lockStoreBuyer(buyerQuery) : buyerQuery);
     if (!buyer || buyer.isBanned)
       return {
         success: false as const,
@@ -76,7 +76,7 @@ export const reserveStoreOrder = async (
       contents: offer.contents,
       expiresAt: new Date(Date.now() + STORE_ORDER_RESERVATION_MINUTES * 60_000),
     };
-    await db.insert(webStoreOrder).values(order);
+    await insertWebStoreOrderForReserve(db, order);
     return { success: true as const, message: "Checkout ready", order };
   };
   // Capacity is a SUM/COUNT over other orders, not a remaining-balance row that a
@@ -106,9 +106,7 @@ export const deliverStoreOrder = async (
     raw: unknown;
   },
 ) => {
-  const order = await client.query.webStoreOrder.findFirst({
-    where: eq(webStoreOrder.id, input.snapshotId),
-  });
+  const order = await findWebStoreOrderForDeliverStoreOrder(client, input);
   if (!order)
     throw new Error(
       "Checkout snapshot not found. Contact support with your payment receipt.",
@@ -125,13 +123,7 @@ export const deliverStoreOrder = async (
   if (order.grantedAt) return { success: true, message: "Purchase already delivered" };
   const contents = storeContentsSchema.parse(order.contents);
   const items = contents.items.length
-    ? await client.query.item.findMany({
-        columns: { id: true, canStack: true, stackSize: true },
-        where: inArray(
-          item.id,
-          contents.items.map((i) => i.id),
-        ),
-      })
+    ? await listItemForDeliverStoreOrder(client, contents)
     : [];
   const grants: (typeof userItem.$inferInsert)[] = [];
   for (const reward of contents.items) {
@@ -154,21 +146,9 @@ export const deliverStoreOrder = async (
   // A guarded multi-table UPDATE cannot also INSERT the new receipt/inventory rows.
   return retryOnDeadlock(() =>
     client.transaction(async (tx) => {
-      const claim = await tx
-        .update(webStoreOrder)
-        .set({ grantedAt: new Date(), captureId: input.captureId })
-        .where(
-          and(
-            eq(webStoreOrder.id, order.id),
-            eq(webStoreOrder.recipientId, order.recipientId),
-            eq(webStoreOrder.buyerId, order.buyerId),
-            isNull(webStoreOrder.grantedAt),
-          ),
-        );
+      const claim = await updateWebStoreOrderForDeliverStoreOrder(tx, input, order);
       if (claim.rowsAffected !== 1) {
-        const current = await tx.query.webStoreOrder.findFirst({
-          where: eq(webStoreOrder.id, order.id),
-        });
+        const current = await findWebStoreOrderForDeliverStoreOrder2(tx, order);
         return current?.grantedAt
           ? { success: true, message: "Purchase already delivered" }
           : {
@@ -179,45 +159,20 @@ export const deliverStoreOrder = async (
       }
       // Item-only offers still require a recipient, but must not interpret a no-op +0 as absence.
       if (contents.reputationPoints === 0 && contents.money === 0) {
-        const [recipient] = await tx
-          .select({ id: userData.userId })
-          .from(userData)
-          .where(eq(userData.userId, order.recipientId))
-          .for("update");
+        const [recipient] = await selectUserDataForDeliverStoreOrder(tx, order);
         if (!recipient)
           throw new Error(
             "Recipient unavailable. Contact support with your payment receipt.",
           );
       } else {
-        const credited = await tx
-          .update(userData)
-          .set({
-            reputationPoints: sql`${userData.reputationPoints} + ${contents.reputationPoints}`,
-            reputationPointsTotal: sql`${userData.reputationPointsTotal} + ${contents.reputationPoints}`,
-            money: sql`${userData.money} + ${contents.money}`,
-          })
-          .where(eq(userData.userId, order.recipientId));
+        const credited = await updateUserDataForDeliverStoreOrder(tx, contents, order);
         if (credited.rowsAffected !== 1)
           throw new Error(
             "Recipient unavailable. Contact support with your payment receipt.",
           );
       }
-      if (grants.length) await tx.insert(userItem).values(grants);
-      await tx.insert(paypalTransaction).values({
-        id: nanoid(),
-        createdById: order.buyerId,
-        affectedUserId: order.recipientId,
-        transactionId: input.captureId,
-        orderId: input.orderId,
-        invoiceId: order.id,
-        transactionUpdatedDate: new Date().toISOString(),
-        amount: order.priceCents / 100,
-        reputationPoints: contents.reputationPoints,
-        currency: "USD",
-        status: "COMPLETED",
-        type: "REP_PURCHASE",
-        rawData: input.raw,
-      });
+      if (grants.length) await insertUserItems(tx, grants);
+      await insertPaypalTransactionForDeliverStoreOrder(tx, order, input, contents);
       return {
         success: true,
         message: `${order.name} delivered`,
@@ -244,15 +199,13 @@ export const authorizeStoreCapture = async (
   buyerId: string,
   captureAttemptId = nanoid(),
 ) => {
-  const snapshot = await client.query.webStoreOrder.findFirst({
-    where: eq(webStoreOrder.id, snapshotId),
-  });
+  const snapshot = await findWebStoreOrderById(client, snapshotId);
   if (!snapshot) return "This checkout is not available for your account";
   const needsBuyerLock = snapshot.contents.reputationPoints > 0 || !!snapshot.bundleId;
   const authorize = async (db: DrizzleClient) => {
-    const buyerQuery = db.select().from(userData).where(eq(userData.userId, buyerId));
+    const buyerQuery = selectUserDataForReserve(db, buyerId);
     // Acquire the lock before consistent reads so queued captures see prior refreshes.
-    const [buyer] = await (needsBuyerLock ? buyerQuery.for("update") : buyerQuery);
+    const [buyer] = await (needsBuyerLock ? lockStoreBuyer(buyerQuery) : buyerQuery);
     const order = snapshot;
     if (!buyer || buyer.isBanned || order.buyerId !== buyerId)
       return "This checkout is not available for your account";
@@ -263,24 +216,10 @@ export const authorizeStoreCapture = async (
     if (bundleError) return bundleError;
     if (isDeletedStoreUserId(order.recipientId))
       return "The recipient account was deleted. No payment was captured.";
-    const recipientQuery = db.query.userData.findFirst({
-      columns: { userId: true, isBanned: true, isAi: true },
-      where: eq(userData.userId, order.recipientId),
-    });
-    const aliasesQuery = db.query.storeUserIdAlias.findMany({
-      where: inArray(storeUserIdAlias.oldUserId, [buyerId, order.recipientId]),
-    });
+    const recipientQuery = findUserDataForAuthorize(db, order);
+    const aliasesQuery = listStoreUserIdAliasForAuthorize(db, buyerId, order);
     const itemsQuery = order.contents.items.length
-      ? db.query.item.findMany({
-          columns: { id: true, repsCost: true },
-          where: and(
-            eq(item.hidden, false),
-            inArray(
-              item.id,
-              order.contents.items.map((reward) => reward.id),
-            ),
-          ),
-        })
+      ? listItemForAuthorize(db, order)
       : [];
     // PlanetScale transactions share one session and reject overlapping statements.
     const [recipient, aliases, items] = needsBuyerLock
@@ -306,24 +245,14 @@ export const authorizeStoreCapture = async (
     );
     if (error) return error;
     // Snapshot contents stay fixed; guard identities changed by account repair/deletion.
-    const refreshed = await db
-      .update(webStoreOrder)
-      .set({
-        expiresAt: new Date(Date.now() + STORE_ORDER_RESERVATION_MINUTES * 60_000),
-        captureAttemptId,
-      })
-      .where(
-        and(
-          eq(webStoreOrder.id, order.id),
-          eq(webStoreOrder.buyerId, buyerId),
-          eq(webStoreOrder.recipientId, order.recipientId),
-          isNull(webStoreOrder.grantedAt),
-        ),
-      );
+    const refreshed = await updateWebStoreOrderForAuthorize(
+      db,
+      captureAttemptId,
+      order,
+      buyerId,
+    );
     if (refreshed.rowsAffected !== 1) {
-      const current = await db.query.webStoreOrder.findFirst({
-        where: eq(webStoreOrder.id, order.id),
-      });
+      const current = await findWebStoreOrderForDeliverStoreOrder2(db, order);
       return current?.buyerId === buyerId && current.grantedAt
         ? null
         : "The checkout account changed. Retry checkout. No payment was captured.";
@@ -340,30 +269,6 @@ export const authorizeStoreCapture = async (
 };
 
 /**
- * Release only the matching unpaid attempt after a verified terminal decline.
- * One guarded UPDATE is sufficient: the token CAS preserves newer attempts and
- * the delivery guard preserves paid purchases. Pending/unknown outcomes must not call this.
- * @returns The write result; zero affected rows means this attempt no longer owns the slot.
- */
-export const releaseDeclinedStoreCapture = async (
-  client: DrizzleClient,
-  snapshotId: string,
-  buyerId: string,
-  captureAttemptId: string,
-) =>
-  client
-    .update(webStoreOrder)
-    .set({ captureAttemptId: null, expiresAt: new Date(0) })
-    .where(
-      and(
-        eq(webStoreOrder.id, snapshotId),
-        eq(webStoreOrder.buyerId, buyerId),
-        eq(webStoreOrder.captureAttemptId, captureAttemptId),
-        isNull(webStoreOrder.grantedAt),
-      ),
-    );
-
-/**
  * Reject unavailable offers or exhausted lifetime usage on the buyer's account.
  * The caller must hold the buyer lock until its reservation INSERT/refresh finishes.
  * Exclude the current quote when refreshing its own slot; paid or in-flight captures
@@ -375,30 +280,16 @@ const checkBundlePurchaseLimit = async (
   bundleId: string,
   excludeOrderId?: string,
 ) => {
-  const bundle = await client.query.webStoreBundle.findFirst({
-    columns: { purchaseLimit: true, isActive: true },
-    where: eq(webStoreBundle.id, bundleId),
-  });
+  const bundle = await findWebStoreBundleForCheckBundlePurchaseLimit(client, bundleId);
   if (!bundle?.isActive)
     return "This bundle is no longer available. No payment was captured.";
   if (bundle.purchaseLimit === 0) return null;
-  const [usage] = await client
-    .select({ count: count() })
-    .from(webStoreOrder)
-    .where(
-      and(
-        eq(webStoreOrder.buyerId, buyerId),
-        eq(webStoreOrder.bundleId, bundleId),
-        excludeOrderId ? ne(webStoreOrder.id, excludeOrderId) : undefined,
-        // A provider capture can stay pending or need delivery recovery beyond quote expiry.
-        // Keep its slot until delivery; only never-authorized checkouts may expire.
-        or(
-          isNotNull(webStoreOrder.grantedAt),
-          isNotNull(webStoreOrder.captureAttemptId),
-          gt(webStoreOrder.expiresAt, new Date()),
-        ),
-      ),
-    );
+  const [usage] = await selectWebStoreOrderForCheckBundlePurchaseLimit(
+    client,
+    buyerId,
+    bundleId,
+    excludeOrderId,
+  );
   return (usage?.count ?? 0) >= bundle.purchaseLimit
     ? "This account has reached this bundle's purchase limit, including other open checkouts. No payment was captured."
     : null;

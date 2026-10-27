@@ -36,6 +36,7 @@
       "@/utils/*": ["./src/utils/*"],
       "@/validators/*": ["./src/validators/*"],
       "@/libs/*": ["./src/libs/*"],
+      "@/queries/*": ["./src/queries/*"],
       "@/drizzle/*": ["./drizzle/*"],
       "@/server/*": ["./src/server/*"],
       "@/api/*": ["./src/server/api/*"],

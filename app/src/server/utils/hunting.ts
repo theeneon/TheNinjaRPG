@@ -1,15 +1,13 @@
-import { and, eq, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
-import {
-  battle,
-  huntingProgress,
-  huntingReceipt,
-  huntingSession,
-  userItem,
-} from "@/drizzle/schema";
 import type { CombatResult, CompleteBattle } from "@/libs/combat/types";
 import { huntingVictoryReceipt } from "@/libs/hunting/contracts";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
+import { deleteBattleIfVersionMatches } from "@/queries/combat";
+import {
+  insertHuntingReceiptForSettleHuntingBattle,
+  insertUserItemForSettleHuntingBattle,
+  updateHuntingProgressForSettleHuntingBattle,
+  updateHuntingSessionForSettleHuntingBattle,
+} from "@/queries/hunting";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
@@ -62,73 +60,28 @@ export const settleHuntingBattle = async (
       const playerBattle = structuredClone(current);
       playerBattle.extraState.hunting = structuredClone(boostedMeta);
       const playerResult = structuredClone(result);
-      const claim = await tx
-        .delete(battle)
-        .where(and(eq(battle.id, current.id), eq(battle.version, fetchedVersion)));
+      const claim = await deleteBattleIfVersionMatches(tx, current, fetchedVersion);
       if (claim.rowsAffected !== 1) return false;
-      const session = await tx
-        .update(huntingSession)
-        .set({
-          battleId: null,
-          lastResult: receipt,
-          version: sql`${huntingSession.version} + 1`,
-        })
-        .where(
-          and(
-            eq(huntingSession.userId, meta.userId),
-            eq(huntingSession.id, meta.sessionId),
-            eq(huntingSession.version, meta.sessionVersion + 1),
-            eq(huntingSession.battleId, current.id),
-          ),
-        );
+      const session = await updateHuntingSessionForSettleHuntingBattle(
+        tx,
+        receipt,
+        meta,
+        current,
+      );
       if (session.rowsAffected !== 1)
         throw new Error("Hunting session changed during settlement");
       if (result.outcome === "Won") {
-        const progress = await tx
-          .update(huntingProgress)
-          .set({
-            used: meta.used + 1,
-            cooldownUntil: receipt.cooldownUntil
-              ? new Date(receipt.cooldownUntil)
-              : null,
-            version: sql`${huntingProgress.version} + 1`,
-          })
-          .where(
-            and(
-              eq(huntingProgress.userId, meta.userId),
-              eq(huntingProgress.contractId, meta.contract.id),
-              eq(huntingProgress.version, meta.progressVersion),
-            ),
-          );
+        const progress = await updateHuntingProgressForSettleHuntingBattle(
+          tx,
+          meta,
+          receipt,
+        );
         if (progress.rowsAffected !== 1)
           throw new Error("Hunting allowance changed during settlement");
         if (receipt.materials.length)
-          await tx.insert(userItem).values(
-            receipt.materials.flatMap((m) =>
-              Array.from(
-                {
-                  length: Math.ceil(m.quantity / (meta.materialStacks[m.itemId] ?? 1)),
-                },
-                (_, index) => ({
-                  id: nanoid(),
-                  userId: meta.userId,
-                  itemId: m.itemId,
-                  quantity: Math.min(
-                    meta.materialStacks[m.itemId] ?? 1,
-                    m.quantity - index * (meta.materialStacks[m.itemId] ?? 1),
-                  ),
-                }),
-              ),
-            ),
-          );
+          await insertUserItemForSettleHuntingBattle(tx, receipt, meta);
       }
-      await tx.insert(huntingReceipt).values({
-        battleId: current.id,
-        userId: meta.userId,
-        contractId: meta.contract.id,
-        result: receipt,
-        createdAt: new Date(),
-      });
+      await insertHuntingReceiptForSettleHuntingBattle(tx, current, meta, receipt);
       await settlePlayer(tx as unknown as DrizzleClient, playerBattle, playerResult);
       return playerResult;
     }),

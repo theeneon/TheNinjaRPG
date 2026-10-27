@@ -1,7 +1,6 @@
-import { sql } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { userData } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
+import { updateUserDataForGET } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 
@@ -21,19 +20,7 @@ export async function GET(request: Request) {
 
   try {
     // For all users, increment villagePrestige by 1
-    await drizzleDB.update(userData).set({
-      villagePrestige: sql`${userData.villagePrestige} + 1`,
-      dailyArenaFights: 0,
-      dailyMissions: 0,
-      dailyErrands: 0,
-      dailyMedicalMissions: 0,
-      dailyPvpMissions: 0,
-      dailyWarMissions: 0,
-      dailyTrainings: 0,
-      dailyOverworldQuestRolls: 0,
-      dailySageActivations: 0,
-      aiCalls: 0,
-    });
+    await updateUserDataForGET(drizzleDB);
 
     return Response.json(`OK`);
   } catch (cause) {

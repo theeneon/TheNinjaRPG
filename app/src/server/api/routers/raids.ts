@@ -1,18 +1,3 @@
-import {
-  and,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNull,
-  like,
-  lt,
-  lte,
-  notExists,
-  or,
-  sql,
-} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -21,21 +6,6 @@ import {
   RAID_CLAIMING_TIMEOUT_MS,
   RAID_MAX_CONCURRENT_TEAMS,
 } from "@/drizzle/constants";
-import {
-  conversation,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  quest,
-  raidDamageThreshold,
-  raidParticipation,
-  rankedPvpQueue,
-  sector,
-  user2conversation,
-  userData,
-  userRaidBuff,
-  userRequest,
-  war,
-} from "@/drizzle/schema";
 import { getServerPusher, updateRaidTeamsOnSector } from "@/libs/pusher";
 import { postProcessRewards } from "@/libs/quest";
 import { hasEnergyQueue } from "@/libs/queue";
@@ -46,9 +16,78 @@ import {
   raidRewardBlockMessage,
   validateRaidIsActive,
 } from "@/libs/raids";
-import { fetchActiveUserMpvpBattles } from "@/routers/clan";
+import { fetchActiveUserMpvpBattles } from "@/queries/clan";
+import { fetchUser, queueAwakeUser, wakeQueuedUser } from "@/queries/profile";
+import { deleteRankedQueueForUser } from "@/queries/pvprank";
+import {
+  clearQueueBattleId,
+  deleteMpvpBattleQueueForCheckAndCleanupExpiredRaid,
+  deleteMpvpBattleQueueForJoinRaidQueue,
+  deleteMpvpBattleQueueForReadyToQueue,
+  deleteMpvpBattleQueueForRollbackStartRaidBattle,
+  deleteMpvpBattleUserForCheckAndCleanupExpiredRaid,
+  deleteMpvpBattleUserForLeaveRaidQueue,
+  deleteMpvpBattleUserForReadyToQueue,
+  deleteMpvpBattleUserForRollbackJoinRaidQueue,
+  deleteMpvpBattleUserForRollbackStartRaidBattle,
+  deleteQueueById,
+  deleteRaidDamageThresholdForDeleteDamageThreshold,
+  deleteSectorForCleanupExpiredExclusiveRaids,
+  executeInsertResultForJoinRaidQueue,
+  fetchRaidJoinUser,
+  fetchRaidListUser,
+  findMpvpBattleQueueForJoinRaidQueue,
+  findMpvpBattleQueueForJoinRaidQueue2,
+  findMpvpBattleQueueForStartRaidBattle,
+  findMpvpBattleUserForGetUserRaidQueue,
+  findMpvpBattleUserForLeaveRaidQueue,
+  findMpvpBattleUserForReadyToQueue,
+  findMpvpBattleUserForRollbackJoinRaidQueue,
+  findQuestForCheckAndCleanupExpiredRaid,
+  findQuestForGetRaidDetails,
+  findQuestForGetUserRaidQueue,
+  findQuestForStartRaidBattle,
+  findRaidDamageThresholdForClaimDamageReward,
+  findRaidParticipationForGetRaidDetails,
+  findSectorForJoinRaidQueue,
+  findUser2conversationForGetRaidDetails,
+  findWarForJoinRaidQueue,
+  insertConversationForEnsureRaidChatConversation,
+  insertMpvpBattleUserForJoinRaidQueue,
+  insertRaidDamageThresholdForCreateDamageThreshold,
+  insertUser2conversationForEnsureRaidChatConversation,
+  insertUserRaidBuffForClaimDamageReward,
+  listMpvpBattleQueueForCheckAndCleanupExpiredRaid,
+  listMpvpBattleQueueForGetActiveRaidTeams,
+  listMpvpBattleUserForStartRaidBattle,
+  listQuestForCleanupExpiredExclusiveRaids,
+  listQuestForGetAvailableRaids,
+  listQuestForGetCompletedRaids,
+  listQueueMembers,
+  listRaidDamageThresholdForGetRaidDetails,
+  listRaidParticipationForGetRaidLeaderboard,
+  listUserRaidBuffForGetUserRaidBuffs,
+  listWarForGetAvailableRaids,
+  purgeAllRaidChatMembershipsForUser,
+  updateMpvpBattleQueueForReadyToQueue,
+  updateMpvpBattleQueueForStartRaidBattle,
+  updateMpvpBattleQueueForStartRaidBattle2,
+  updateMpvpBattleQueueForStartRaidBattle3,
+  updateMpvpBattleQueueForStartRaidBattle4,
+  updateMpvpBattleQueueForStartRaidBattle5,
+  updateRaidDamageThresholdForUpdateDamageThreshold,
+  updateRaidParticipationForClaimDamageReward,
+  updateUserDataForCheckAndCleanupExpiredRaid,
+  updateUserDataForReadyToQueue,
+  updateUserDataForReadyToQueue2,
+  updateUserDataForRollbackJoinRaidQueue,
+  updateUserDataForRollbackStartRaidBattle,
+  updateUserRequestForReadyToQueue,
+  updateUserRequestForReadyToQueue2,
+} from "@/queries/raids";
+
 import { initiateBattle } from "@/routers/combat";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
+import { fetchUpdatedUser } from "@/routers/profile";
 import { updateRewards } from "@/routers/quests";
 import {
   baseServerResponse,
@@ -60,13 +99,9 @@ import {
 import type { DrizzleClient } from "@/server/db";
 import { deferPushToUsers } from "@/server/utils/push/defer";
 import { raidBattleStarted } from "@/server/utils/push/messages";
-import {
-  purgeAllRaidChatMembershipsForUser,
-  purgeRaidChatMembership,
-} from "@/server/utils/raidChat";
-import { fetchRaidJoinUser, fetchRaidListUser } from "@/server/utils/raidUser";
+import { purgeRaidChatMembership } from "@/server/utils/raidChat";
+
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
-import { activeWarAllyWhere } from "@/server/utils/warAlly";
 import { canChangeContent } from "@/utils/permissions";
 import { secondsFromDate } from "@/utils/time";
 import { AllTags } from "@/validators/combat";
@@ -91,21 +126,12 @@ export const raidsRouter = createTRPCRouter({
       const limit = input?.limit ?? 20;
 
       // Query - fetch raids that have ended (time expired or boss defeated)
-      const completedRaids = await ctx.drizzle.query.quest.findMany({
-        where: and(
-          eq(quest.questType, "raid"),
-          eq(quest.hidden, false),
-          sql`(${quest.raidEndsAt} < ${now} OR ${quest.raidBossCurrentHealth} <= 0)`,
-        ),
-        with: {
-          raidParticipations: {
-            where: eq(raidParticipation.userId, ctx.userId),
-            limit: 1,
-          },
-        },
-        orderBy: desc(quest.raidEndsAt),
+      const completedRaids = await listQuestForGetCompletedRaids(
+        ctx.drizzle,
+        now,
+        ctx,
         limit,
-      });
+      );
 
       return {
         raids: completedRaids.map((raid) => {
@@ -148,37 +174,10 @@ export const raidsRouter = createTRPCRouter({
       const [user, , raids, activeSectorWars] = await Promise.all([
         fetchRaidListUser(ctx.drizzle, ctx.userId),
         cleanupExpiredExclusiveRaids(ctx.drizzle),
-        ctx.drizzle.query.quest.findMany({
-          where: and(
-            eq(quest.questType, "raid"),
-            eq(quest.hidden, false),
-            gte(quest.raidBossCurrentHealth, 1),
-          ),
-          with: {
-            raidParticipations: {
-              where: eq(raidParticipation.userId, ctx.userId),
-              limit: 1,
-            },
-          },
-          orderBy: desc(quest.createdAt),
-        }),
+        listQuestForGetAvailableRaids(ctx.drizzle, ctx),
         // Always fetched so this stays in the same round-trip as the user row.
         // Users without a village never match the attacker/ally filter below.
-        ctx.drizzle.query.war.findMany({
-          where: and(
-            eq(war.type, "SECTOR_WAR"),
-            isNull(war.endedAt),
-            lte(war.defenderShrineHp, 0),
-            input?.sector !== undefined ? eq(war.sector, input.sector) : undefined,
-          ),
-          columns: { id: true, sector: true, attackerVillageId: true },
-          with: {
-            warAllies: {
-              where: activeWarAllyWhere(),
-              columns: { villageId: true, supportVillageId: true },
-            },
-          },
-        }),
+        listWarForGetAvailableRaids(ctx.drizzle, input),
       ]);
 
       // Guard
@@ -260,26 +259,14 @@ export const raidsRouter = createTRPCRouter({
       // raid coordination via the public conversation endpoints.
       const raidChatConversationId = getRaidChatConversationId(input.questId);
       const [raid, participation, thresholds, chatMembership] = await Promise.all([
-        ctx.drizzle.query.quest.findFirst({
-          where: and(eq(quest.id, input.questId), eq(quest.questType, "raid")),
-        }),
-        ctx.drizzle.query.raidParticipation.findFirst({
-          where: and(
-            eq(raidParticipation.questId, input.questId),
-            eq(raidParticipation.userId, ctx.userId),
-          ),
-        }),
-        ctx.drizzle.query.raidDamageThreshold.findMany({
-          where: eq(raidDamageThreshold.questId, input.questId),
-          orderBy: raidDamageThreshold.sortOrder,
-        }),
-        ctx.drizzle.query.user2conversation.findFirst({
-          where: and(
-            eq(user2conversation.conversationId, raidChatConversationId),
-            eq(user2conversation.userId, ctx.userId),
-          ),
-          columns: { conversationId: true },
-        }),
+        findQuestForGetRaidDetails(ctx.drizzle, input),
+        findRaidParticipationForGetRaidDetails(ctx.drizzle, input, ctx),
+        listRaidDamageThresholdForGetRaidDetails(ctx.drizzle, input),
+        findUser2conversationForGetRaidDetails(
+          ctx.drizzle,
+          raidChatConversationId,
+          ctx,
+        ),
       ]);
 
       // Guard
@@ -327,22 +314,11 @@ export const raidsRouter = createTRPCRouter({
       const offset = input.cursor ?? 0;
 
       // Query
-      const participations = await ctx.drizzle.query.raidParticipation.findMany({
-        where: eq(raidParticipation.questId, input.questId),
-        orderBy: desc(raidParticipation.damageDealt),
-        limit: input.limit + 1,
+      const participations = await listRaidParticipationForGetRaidLeaderboard(
+        ctx.drizzle,
+        input,
         offset,
-        with: {
-          user: {
-            columns: {
-              username: true,
-              avatar: true,
-              rank: true,
-              level: true,
-            },
-          },
-        },
-      });
+      );
 
       // Derived
       let nextCursor: typeof input.cursor;
@@ -371,25 +347,7 @@ export const raidsRouter = createTRPCRouter({
     })
     .query(async ({ ctx }) => {
       // Query
-      const queue = await ctx.drizzle.query.mpvpBattleUser.findFirst({
-        where: eq(mpvpBattleUser.userId, ctx.userId),
-        with: {
-          clanBattle: {
-            with: {
-              queue: {
-                with: {
-                  user: {
-                    columns: {
-                      username: true,
-                      avatar: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
+      const queue = await findMpvpBattleUserForGetUserRaidQueue(ctx.drizzle, ctx);
 
       // Guard
       if (queue?.clanBattle?.battleType !== "RAID_BATTLE") {
@@ -398,10 +356,7 @@ export const raidsRouter = createTRPCRouter({
 
       // Auto-cleanup if the raid has expired - user would be stuck otherwise
       // Fetch quest explicitly here since attackerEntityId is only a quest ID for RAID_BATTLE entries
-      const raid = await ctx.drizzle.query.quest.findFirst({
-        where: eq(quest.id, queue.clanBattle.attackerEntityId),
-        columns: { raidEndsAt: true, raidBossCurrentHealth: true },
-      });
+      const raid = await findQuestForGetUserRaidQueue(ctx.drizzle, queue);
       if (!raid) {
         void checkAndCleanupExpiredRaid(ctx.drizzle, queue.clanBattle.attackerEntityId);
         return { inQueue: false, queue: null, isClaiming: false };
@@ -449,21 +404,7 @@ export const raidsRouter = createTRPCRouter({
       const now = new Date();
 
       // Query
-      const buffs = await ctx.drizzle.query.userRaidBuff.findMany({
-        where: and(
-          eq(userRaidBuff.userId, ctx.userId),
-          gt(userRaidBuff.expiresAt, now),
-        ),
-        with: {
-          item: { columns: { name: true, image: true } },
-          quest: {
-            columns: {
-              name: true,
-              image: true,
-            },
-          },
-        },
-      });
+      const buffs = await listUserRaidBuffForGetUserRaidBuffs(ctx.drizzle, ctx, now);
 
       return { buffs };
     }),
@@ -477,10 +418,10 @@ export const raidsRouter = createTRPCRouter({
     })
     .input(z.object({ questId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const thresholds = await ctx.drizzle.query.raidDamageThreshold.findMany({
-        where: eq(raidDamageThreshold.questId, input.questId),
-        orderBy: raidDamageThreshold.sortOrder,
-      });
+      const thresholds = await listRaidDamageThresholdForGetRaidDetails(
+        ctx.drizzle,
+        input,
+      );
       return { thresholds };
     }),
 
@@ -507,9 +448,7 @@ export const raidsRouter = createTRPCRouter({
       // Query - parallel fetch
       const [user, questData, titleError] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.quest.findFirst({
-          where: and(eq(quest.id, input.questId), eq(quest.questType, "raid")),
-        }),
+        findQuestForGetRaidDetails(ctx.drizzle, input),
         validateTitleRewardIds(ctx.drizzle, input.rewards),
       ]);
 
@@ -523,15 +462,7 @@ export const raidsRouter = createTRPCRouter({
 
       if (titleError) return errorResponse(titleError);
       // Mutation
-      await ctx.drizzle.insert(raidDamageThreshold).values({
-        id: nanoid(),
-        questId: input.questId,
-        damageRequired: input.damageRequired,
-        sortOrder: input.sortOrder,
-        rewards: input.rewards,
-        effects: input.effects,
-        effectDurationMinutes: input.effectDurationMinutes,
-      });
+      await insertRaidDamageThresholdForCreateDamageThreshold(ctx.drizzle, input);
 
       return { success: true, message: "Damage threshold created" };
     }),
@@ -569,16 +500,10 @@ export const raidsRouter = createTRPCRouter({
 
       if (titleError) return errorResponse(titleError);
       // Mutation
-      const result = await ctx.drizzle
-        .update(raidDamageThreshold)
-        .set({
-          damageRequired: input.damageRequired,
-          sortOrder: input.sortOrder,
-          rewards: input.rewards,
-          effects: input.effects,
-          effectDurationMinutes: input.effectDurationMinutes,
-        })
-        .where(eq(raidDamageThreshold.id, input.thresholdId));
+      const result = await updateRaidDamageThresholdForUpdateDamageThreshold(
+        ctx.drizzle,
+        input,
+      );
 
       // Guard
       if (result.rowsAffected === 0) {
@@ -608,9 +533,7 @@ export const raidsRouter = createTRPCRouter({
       }
 
       // Mutation
-      await ctx.drizzle
-        .delete(raidDamageThreshold)
-        .where(eq(raidDamageThreshold.id, input.thresholdId));
+      await deleteRaidDamageThresholdForDeleteDamageThreshold(ctx.drizzle, input);
 
       return { success: true, message: "Damage threshold deleted" };
     }),
@@ -625,27 +548,7 @@ export const raidsRouter = createTRPCRouter({
     .input(z.object({ questId: z.string() }))
     .query(async ({ ctx, input }) => {
       // Query - include teams in "claiming-" state (stuck during battle initialization)
-      const teams = await ctx.drizzle.query.mpvpBattleQueue.findMany({
-        where: and(
-          eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-          eq(mpvpBattleQueue.attackerEntityId, input.questId),
-          sql`(${mpvpBattleQueue.battleId} IS NULL OR ${mpvpBattleQueue.battleId} LIKE 'claiming-%')`,
-        ),
-        with: {
-          queue: {
-            with: {
-              user: {
-                columns: {
-                  userId: true,
-                  username: true,
-                  avatar: true,
-                },
-              },
-            },
-          },
-        },
-        orderBy: mpvpBattleQueue.createdAt,
-      });
+      const teams = await listMpvpBattleQueueForGetActiveRaidTeams(ctx.drizzle, input);
 
       // Derived
       return {
@@ -680,14 +583,7 @@ export const raidsRouter = createTRPCRouter({
       // Query
       const [user, queueEntry] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.mpvpBattleUser.findFirst({
-          where: eq(mpvpBattleUser.userId, ctx.userId),
-          with: {
-            clanBattle: {
-              columns: { sector: true, battleType: true, attackerEntityId: true },
-            },
-          },
-        }),
+        findMpvpBattleUserForReadyToQueue(ctx.drizzle, ctx),
       ]);
       // Guard
       if (!user) return errorResponse("User not found");
@@ -716,10 +612,9 @@ export const raidsRouter = createTRPCRouter({
       const userId = user.userId;
       // CAS: only transition from the status we read to avoid racing concurrent requests.
       if (user.status !== "AWAKE") {
-        const updateResult = await ctx.drizzle
-          .update(userData)
-          .set({ status: "AWAKE", travelFinishAt: null, battleId: null })
-          .where(and(eq(userData.userId, userId), eq(userData.status, user.status)));
+        const updateResult = await updateUserDataForReadyToQueue(ctx.drizzle, userId, {
+          status: user.status,
+        });
         if (updateResult.rowsAffected === 0) {
           return errorResponse(
             "Failed to update status - your status may have changed",
@@ -734,10 +629,7 @@ export const raidsRouter = createTRPCRouter({
         // Clear any stale dirty fields. No rowsAffected check here — MySQL reports 0
         // when the SET is a no-op (fields already null), which is indistinguishable
         // from a concurrent status change. We already confirmed AWAKE above.
-        await ctx.drizzle
-          .update(userData)
-          .set({ travelFinishAt: null, battleId: null })
-          .where(and(eq(userData.userId, userId), eq(userData.status, "AWAKE")));
+        await updateUserDataForReadyToQueue2(ctx.drizzle, userId);
       }
       // Step 1: remove user from team + other independent cleanups in parallel.
       // mpvpBattleUser must be deleted before the NOT EXISTS team-cleanup check in step 2.
@@ -750,16 +642,7 @@ export const raidsRouter = createTRPCRouter({
       await Promise.all([
         // Only delete the exact mpvpBattleUser row we read — no broad userId fallback
         ...(queueEntry
-          ? [
-              ctx.drizzle
-                .delete(mpvpBattleUser)
-                .where(
-                  and(
-                    eq(mpvpBattleUser.userId, userId),
-                    eq(mpvpBattleUser.id, queueEntry.id),
-                  ),
-                ),
-            ]
+          ? [deleteMpvpBattleUserForReadyToQueue(ctx.drizzle, userId, queueEntry)]
           : []),
         ...(clearedRaidChatConversationId
           ? [
@@ -771,63 +654,19 @@ export const raidsRouter = createTRPCRouter({
             ]
           : []),
         // Clear ranked PVP queue — being in it sets status to QUEUED which blocks raid joining
-        ctx.drizzle.delete(rankedPvpQueue).where(eq(rankedPvpQueue.userId, userId)),
+        deleteRankedQueueForUser(ctx.drizzle, userId),
         // Cancel spar requests the user sent
-        ctx.drizzle
-          .update(userRequest)
-          .set({ status: "CANCELLED" })
-          .where(
-            and(
-              eq(userRequest.senderId, userId),
-              eq(userRequest.type, "SPAR"),
-              eq(userRequest.status, "PENDING"),
-            ),
-          ),
+        updateUserRequestForReadyToQueue(ctx.drizzle, userId),
         // Reject spar requests the user received
-        ctx.drizzle
-          .update(userRequest)
-          .set({ status: "REJECTED" })
-          .where(
-            and(
-              eq(userRequest.receiverId, userId),
-              eq(userRequest.type, "SPAR"),
-              eq(userRequest.status, "PENDING"),
-            ),
-          ),
+        updateUserRequestForReadyToQueue2(ctx.drizzle, userId),
       ]);
       // Step 2: team cleanup — safe to run after mpvpBattleUser row is gone.
       // DELETE fires only when team is now empty (NOT EXISTS).
       // UPDATE resets only stale claiming states (mirrors startRaidBattle staleness check).
       if (queueEntry) {
         await Promise.all([
-          ctx.drizzle
-            .delete(mpvpBattleQueue)
-            .where(
-              and(
-                eq(mpvpBattleQueue.id, queueEntry.clanBattleId),
-                eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-                notExists(
-                  ctx.drizzle
-                    .select({ id: mpvpBattleUser.id })
-                    .from(mpvpBattleUser)
-                    .where(eq(mpvpBattleUser.clanBattleId, queueEntry.clanBattleId)),
-                ),
-              ),
-            ),
-          ctx.drizzle
-            .update(mpvpBattleQueue)
-            .set({ battleId: null })
-            .where(
-              and(
-                eq(mpvpBattleQueue.id, queueEntry.clanBattleId),
-                eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-                like(mpvpBattleQueue.battleId, "claiming-%"),
-                lt(
-                  mpvpBattleQueue.createdAt,
-                  new Date(Date.now() - RAID_CLAIMING_TIMEOUT_MS),
-                ),
-              ),
-            ),
+          deleteMpvpBattleQueueForReadyToQueue(ctx.drizzle, queueEntry),
+          updateMpvpBattleQueueForReadyToQueue(ctx.drizzle, queueEntry),
         ]);
       }
       // Pusher - notify sector so other team members see the roster update in real-time
@@ -858,19 +697,12 @@ export const raidsRouter = createTRPCRouter({
       // Query - parallel fetch all required data upfront
       const [user, raid, teamData, existingQueueEntries] = await Promise.all([
         fetchRaidJoinUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.quest.findFirst({
-          where: and(eq(quest.id, input.questId), eq(quest.questType, "raid")),
-        }),
+        findQuestForGetRaidDetails(ctx.drizzle, input),
         // Fetch team if joining existing, otherwise skip
         input.teamId
-          ? ctx.drizzle.query.mpvpBattleQueue.findFirst({
-              where: and(
-                eq(mpvpBattleQueue.id, input.teamId),
-                eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-                eq(mpvpBattleQueue.attackerEntityId, input.questId),
-                isNull(mpvpBattleQueue.battleId),
-              ),
-              with: { queue: true },
+          ? findMpvpBattleQueueForJoinRaidQueue(ctx.drizzle, {
+              teamId: input.teamId,
+              questId: input.questId,
             })
           : Promise.resolve(null),
         // Check if user is already in any active battle queue
@@ -937,28 +769,11 @@ export const raidsRouter = createTRPCRouter({
 
         // Check sector ownership OR attacker in sector war with defeated shrine
         const [sectorOwnership, sectorWar] = await Promise.all([
-          ctx.drizzle.query.sector.findFirst({
-            where: and(
-              eq(sector.sector, raidData.sector),
-              eq(sector.villageId, user.villageId),
-            ),
+          findSectorForJoinRaidQueue(ctx.drizzle, raidData, {
+            villageId: user.villageId,
           }),
           // Fetch sector war with defeated shrine (if any)
-          ctx.drizzle.query.war.findFirst({
-            where: and(
-              eq(war.type, "SECTOR_WAR"),
-              eq(war.sector, raidData.sector),
-              isNull(war.endedAt),
-              lte(war.defenderShrineHp, 0),
-            ),
-            columns: { attackerVillageId: true },
-            with: {
-              warAllies: {
-                where: activeWarAllyWhere(),
-                columns: { villageId: true, supportVillageId: true },
-              },
-            },
-          }),
+          findWarForJoinRaidQueue(ctx.drizzle, raidData),
         ]);
 
         // Check if user's village is attacker or ally supporting the attacker
@@ -992,18 +807,12 @@ export const raidsRouter = createTRPCRouter({
         // Mutation - create new team with atomic count guard
         // Uses INSERT ... SELECT to atomically check team count and insert only if under limit
         teamId = nanoid();
-        const insertResult = await ctx.drizzle.execute(sql`
-          INSERT INTO ${mpvpBattleQueue} (id, battleType, attackerEntityId, defenderEntityId, sector)
-          SELECT ${teamId}, 'RAID_BATTLE', ${input.questId}, 'RAID_AI', ${raidData.sector ?? null}
-          FROM (SELECT 1) AS dummy
-          WHERE (
-            SELECT COUNT(*)
-            FROM ${mpvpBattleQueue} AS mq
-            WHERE mq.battleType = 'RAID_BATTLE'
-            AND mq.attackerEntityId = ${input.questId}
-            AND mq.battleId IS NULL
-          ) < ${RAID_MAX_CONCURRENT_TEAMS}
-        `);
+        const insertResult = await executeInsertResultForJoinRaidQueue(
+          ctx.drizzle,
+          teamId,
+          input,
+          raidData,
+        );
 
         // Guard - check if insert succeeded
         if (insertResult.rowsAffected === 0) {
@@ -1015,19 +824,12 @@ export const raidsRouter = createTRPCRouter({
       }
 
       // Mutation - update user status with guard
-      const statusResult = await ctx.drizzle
-        .update(userData)
-        .set({ status: "QUEUED" })
-        .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "AWAKE")));
+      const statusResult = await queueAwakeUser(ctx.drizzle, ctx);
 
       if (statusResult.rowsAffected === 0) {
         // Rollback - clean up newly created team if status update fails
         if (createdNewTeam && teamId) {
-          await ctx.drizzle
-            .delete(mpvpBattleQueue)
-            .where(
-              and(eq(mpvpBattleQueue.id, teamId), isNull(mpvpBattleQueue.battleId)),
-            );
+          await deleteMpvpBattleQueueForJoinRaidQueue(ctx.drizzle, teamId);
         }
         return errorResponse("Failed to update status - you may already be in a queue");
       }
@@ -1040,17 +842,14 @@ export const raidsRouter = createTRPCRouter({
         availableSlot = 0;
       } else {
         // For existing teams, re-fetch to get fresh state (handle race conditions)
-        const freshTeam = await ctx.drizzle.query.mpvpBattleQueue.findFirst({
-          where: eq(mpvpBattleQueue.id, teamId),
-          with: { queue: true },
-        });
+        const freshTeam = await findMpvpBattleQueueForJoinRaidQueue2(
+          ctx.drizzle,
+          teamId,
+        );
 
         // Guard - team still exists
         if (!freshTeam) {
-          await ctx.drizzle
-            .update(userData)
-            .set({ status: "AWAKE" })
-            .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED")));
+          await wakeQueuedUser(ctx.drizzle, ctx);
           return errorResponse("Team is no longer available");
         }
 
@@ -1059,10 +858,7 @@ export const raidsRouter = createTRPCRouter({
 
         // Guard - slot available
         if (availableSlot === undefined) {
-          await ctx.drizzle
-            .update(userData)
-            .set({ status: "AWAKE" })
-            .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED")));
+          await wakeQueuedUser(ctx.drizzle, ctx);
           return errorResponse("Team is full");
         }
       }
@@ -1072,13 +868,7 @@ export const raidsRouter = createTRPCRouter({
       // user2conversation) and has no data dependency on the mpvpBattleUser
       // insert, so we run them concurrently to avoid a sequential round-trip.
       const [userInsertResult, chatResult] = await Promise.allSettled([
-        ctx.drizzle.insert(mpvpBattleUser).values({
-          id: nanoid(),
-          clanBattleId: teamId,
-          userId: ctx.userId,
-          side: "ATTACKER",
-          slot: availableSlot,
-        }),
+        insertMpvpBattleUserForJoinRaidQueue(ctx.drizzle, teamId, ctx, availableSlot),
         ensureRaidChatConversation(ctx.drizzle, raid, ctx.userId),
       ]);
 
@@ -1117,10 +907,7 @@ export const raidsRouter = createTRPCRouter({
       // Query - parallel fetch user and queue entry
       const [{ user }, queueEntry] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.mpvpBattleUser.findFirst({
-          where: eq(mpvpBattleUser.userId, ctx.userId),
-          with: { clanBattle: true },
-        }),
+        findMpvpBattleUserForLeaveRaidQueue(ctx.drizzle, ctx),
       ]);
 
       // Guard
@@ -1133,13 +920,8 @@ export const raidsRouter = createTRPCRouter({
         // every raid-chat membership row this user owns to drop access to any
         // stale conversation that survived a prior raid reset.
         await Promise.all([
-          ctx.drizzle
-            .delete(mpvpBattleUser)
-            .where(eq(mpvpBattleUser.id, queueEntry.id)),
-          ctx.drizzle
-            .update(userData)
-            .set({ status: "AWAKE" })
-            .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED"))),
+          deleteMpvpBattleUserForLeaveRaidQueue(ctx.drizzle, queueEntry),
+          wakeQueuedUser(ctx.drizzle, ctx),
           purgeAllRaidChatMembershipsForUser(ctx.drizzle, ctx.userId),
         ]);
         return { success: true, message: "Left the queue" };
@@ -1162,31 +944,21 @@ export const raidsRouter = createTRPCRouter({
       // Mutation - delete queue entry, update user status, drop chat
       // membership, and cleanup claiming ID in parallel.
       await Promise.all([
-        ctx.drizzle.delete(mpvpBattleUser).where(eq(mpvpBattleUser.id, queueEntry.id)),
-        ctx.drizzle
-          .update(userData)
-          .set({ status: "AWAKE" })
-          .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED"))),
+        deleteMpvpBattleUserForLeaveRaidQueue(ctx.drizzle, queueEntry),
+        wakeQueuedUser(ctx.drizzle, ctx),
         purgeRaidChatMembership(ctx.drizzle, raidChatConversationId, ctx.userId),
         // Clean up claiming ID if present
         isClaimingState
-          ? ctx.drizzle
-              .update(mpvpBattleQueue)
-              .set({ battleId: null })
-              .where(eq(mpvpBattleQueue.id, queueEntry.clanBattleId))
+          ? clearQueueBattleId(ctx.drizzle, queueEntry)
           : Promise.resolve(),
       ]);
 
       // Query - check remaining members
-      const remainingMembers = await ctx.drizzle.query.mpvpBattleUser.findMany({
-        where: eq(mpvpBattleUser.clanBattleId, queueEntry.clanBattleId),
-      });
+      const remainingMembers = await listQueueMembers(ctx.drizzle, queueEntry);
 
       // Mutation - clean up empty teams (removed battleId null check for robust cleanup)
       if (remainingMembers.length === 0) {
-        await ctx.drizzle
-          .delete(mpvpBattleQueue)
-          .where(eq(mpvpBattleQueue.id, queueEntry.clanBattleId));
+        await deleteQueueById(ctx.drizzle, queueEntry.clanBattleId);
       }
 
       // Pusher - notify sector about team changes
@@ -1213,15 +985,7 @@ export const raidsRouter = createTRPCRouter({
       // Query - parallel fetch user and team
       const [{ user }, team] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.mpvpBattleQueue.findFirst({
-          where: and(
-            eq(mpvpBattleQueue.id, input.teamId),
-            eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-          ),
-          with: {
-            queue: { with: { user: true } },
-          },
-        }),
+        findMpvpBattleQueueForStartRaidBattle(ctx.drizzle, input),
       ]);
 
       // Guard - basic validations
@@ -1238,19 +1002,7 @@ export const raidsRouter = createTRPCRouter({
 
         if (isStaleClaimingState) {
           // Reset the stale claiming state
-          await ctx.drizzle
-            .update(mpvpBattleQueue)
-            .set({ battleId: null })
-            .where(
-              and(
-                eq(mpvpBattleQueue.id, input.teamId),
-                sql`${mpvpBattleQueue.battleId} LIKE 'claiming-%'`,
-                lt(
-                  mpvpBattleQueue.createdAt,
-                  new Date(Date.now() - RAID_CLAIMING_TIMEOUT_MS),
-                ),
-              ),
-            );
+          await updateMpvpBattleQueueForStartRaidBattle(ctx.drizzle, input);
           // Notify other users that the team is available again
           const pusher = getServerPusher();
           void updateRaidTeamsOnSector(pusher, team.sector);
@@ -1278,9 +1030,7 @@ export const raidsRouter = createTRPCRouter({
       }
 
       // Query - get raid quest data
-      const raid = await ctx.drizzle.query.quest.findFirst({
-        where: eq(quest.id, team.attackerEntityId),
-      });
+      const raid = await findQuestForStartRaidBattle(ctx.drizzle, team);
 
       // Guard - raid validations
       if (!raid) return errorResponse("Raid quest not found");
@@ -1301,42 +1051,31 @@ export const raidsRouter = createTRPCRouter({
 
       // Mutation - claim the battle atomically
       const claimId = `claiming-${nanoid()}`;
-      const claimResult = await ctx.drizzle
-        .update(mpvpBattleQueue)
-        .set({ battleId: claimId })
-        .where(
-          and(eq(mpvpBattleQueue.id, input.teamId), isNull(mpvpBattleQueue.battleId)),
-        );
+      const claimResult = await updateMpvpBattleQueueForStartRaidBattle2(
+        ctx.drizzle,
+        claimId,
+        input,
+      );
 
       if (claimResult.rowsAffected === 0) {
         return errorResponse("Battle was already started by another player");
       }
 
       // Query - re-fetch current queue members after claim for fresh state
-      const currentQueueMembers = await ctx.drizzle.query.mpvpBattleUser.findMany({
-        where: eq(mpvpBattleUser.clanBattleId, input.teamId),
-      });
+      const currentQueueMembers = await listMpvpBattleUserForStartRaidBattle(
+        ctx.drizzle,
+        input,
+      );
 
       // Guard - members validation after claim
       if (currentQueueMembers.length === 0) {
-        await ctx.drizzle
-          .update(mpvpBattleQueue)
-          .set({ battleId: null })
-          .where(eq(mpvpBattleQueue.id, input.teamId));
+        await updateMpvpBattleQueueForStartRaidBattle3(ctx.drizzle, input);
         return errorResponse("No team members available to start battle");
       }
 
       const isStillMember = currentQueueMembers.some((m) => m.userId === ctx.userId);
       if (!isStillMember) {
-        await ctx.drizzle
-          .update(mpvpBattleQueue)
-          .set({ battleId: null })
-          .where(
-            and(
-              eq(mpvpBattleQueue.id, input.teamId),
-              eq(mpvpBattleQueue.battleId, claimId),
-            ),
-          );
+        await updateMpvpBattleQueueForStartRaidBattle4(ctx.drizzle, input, claimId);
         return errorResponse("You are no longer in this team");
       }
 
@@ -1363,10 +1102,7 @@ export const raidsRouter = createTRPCRouter({
 
         if (result.success && result.battleId) {
           // Mutation - update with real battle ID
-          await ctx.drizzle
-            .update(mpvpBattleQueue)
-            .set({ battleId: result.battleId })
-            .where(eq(mpvpBattleQueue.id, input.teamId));
+          await updateMpvpBattleQueueForStartRaidBattle5(ctx.drizzle, result, input);
 
           // Pusher - notify sector about team changes (battle started)
           const pusher = getServerPusher();
@@ -1426,18 +1162,8 @@ export const raidsRouter = createTRPCRouter({
       // Query - parallel fetch user, participation, and threshold
       const [{ user }, participation, threshold] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.raidParticipation.findFirst({
-          where: and(
-            eq(raidParticipation.questId, input.questId),
-            eq(raidParticipation.userId, ctx.userId),
-          ),
-        }),
-        ctx.drizzle.query.raidDamageThreshold.findFirst({
-          where: and(
-            eq(raidDamageThreshold.id, input.thresholdId),
-            eq(raidDamageThreshold.questId, input.questId),
-          ),
-        }),
+        findRaidParticipationForGetRaidDetails(ctx.drizzle, input, ctx),
+        findRaidDamageThresholdForClaimDamageReward(ctx.drizzle, input),
       ]);
 
       // Guard
@@ -1452,18 +1178,11 @@ export const raidsRouter = createTRPCRouter({
       const rewards = threshold.rewards;
 
       // Mutation - atomically claim reward with JSON_CONTAINS guard to prevent double-claim
-      const claimResult = await ctx.drizzle
-        .update(raidParticipation)
-        .set({
-          rewardsClaimed: sql`JSON_ARRAY_APPEND(${raidParticipation.rewardsClaimed}, '$', ${input.thresholdId})`,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(raidParticipation.id, participation.id),
-            sql`NOT JSON_CONTAINS(${raidParticipation.rewardsClaimed}, JSON_QUOTE(${input.thresholdId}))`,
-          ),
-        );
+      const claimResult = await updateRaidParticipationForClaimDamageReward(
+        ctx.drizzle,
+        input,
+        participation,
+      );
 
       // Guard - claim result
       if (claimResult.rowsAffected === 0) {
@@ -1490,13 +1209,13 @@ export const raidsRouter = createTRPCRouter({
           Date.now() + threshold.effectDurationMinutes * 60 * 1000,
         );
 
-        await ctx.drizzle.insert(userRaidBuff).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          questId: input.questId,
-          effects: threshold.effects,
+        await insertUserRaidBuffForClaimDamageReward(
+          ctx.drizzle,
+          ctx,
+          input,
+          threshold,
           expiresAt,
-        });
+        );
       }
 
       // Payout already resolved these names; preserve configured item order and quantities.
@@ -1537,14 +1256,10 @@ export const cleanupExpiredExclusiveRaids = async (
   const now = new Date();
 
   // Find all expired exclusive raids where boss is not defeated
-  const expiredExclusiveRaids = await client.query.quest.findMany({
-    where: and(
-      eq(quest.questType, "raid"),
-      lt(quest.raidEndsAt, now),
-      gte(quest.raidBossCurrentHealth, 1), // Boss not defeated
-    ),
-    columns: { id: true, content: true },
-  });
+  const expiredExclusiveRaids = await listQuestForCleanupExpiredExclusiveRaids(
+    client,
+    now,
+  );
 
   // Collect sector numbers to clean up
   const sectorsToClean = expiredExclusiveRaids
@@ -1563,7 +1278,7 @@ export const cleanupExpiredExclusiveRaids = async (
   // Delete all sectors in parallel
   const results = await Promise.all(
     sectorsToClean.map((sectorNum) =>
-      client.delete(sector).where(eq(sector.sector, sectorNum)),
+      deleteSectorForCleanupExpiredExclusiveRaids(client, sectorNum),
     ),
   );
 
@@ -1586,33 +1301,17 @@ export const checkAndCleanupExpiredRaid = async (
   const now = new Date();
 
   // Match both time-expired and boss-defeated raids
-  const raid = await client.query.quest.findFirst({
-    where: and(
-      eq(quest.id, raidId),
-      eq(quest.questType, "raid"),
-      or(lt(quest.raidEndsAt, now), lte(quest.raidBossCurrentHealth, 0)),
-    ),
-    columns: {
-      id: true,
-      content: true,
-      raidEndsAt: true,
-      raidBossCurrentHealth: true,
-    },
-  });
+  const raid = await findQuestForCheckAndCleanupExpiredRaid(client, raidId, now);
 
   if (!raid) {
     return { wasExpired: false, sectorCleaned: false };
   }
 
   // Clean up only queued/claiming teams — skip teams already in an active battle
-  const queuedTeams = await client.query.mpvpBattleQueue.findMany({
-    where: and(
-      eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-      eq(mpvpBattleQueue.attackerEntityId, raidId),
-      sql`(${mpvpBattleQueue.battleId} IS NULL OR ${mpvpBattleQueue.battleId} LIKE 'claiming-%')`,
-    ),
-    with: { queue: { columns: { userId: true } } },
-  });
+  const queuedTeams = await listMpvpBattleQueueForCheckAndCleanupExpiredRaid(
+    client,
+    raidId,
+  );
 
   if (queuedTeams.length > 0) {
     const teamIds = queuedTeams.map((t) => t.id);
@@ -1620,32 +1319,15 @@ export const checkAndCleanupExpiredRaid = async (
     const raidChatConversationId = getRaidChatConversationId(raidId);
 
     await Promise.all([
-      client
-        .delete(mpvpBattleUser)
-        .where(inArray(mpvpBattleUser.clanBattleId, teamIds)),
-      client
-        .delete(mpvpBattleQueue)
-        .where(
-          and(
-            eq(mpvpBattleQueue.battleType, "RAID_BATTLE"),
-            eq(mpvpBattleQueue.attackerEntityId, raidId),
-            sql`(${mpvpBattleQueue.battleId} IS NULL OR ${mpvpBattleQueue.battleId} LIKE 'claiming-%')`,
-          ),
-        ),
+      deleteMpvpBattleUserForCheckAndCleanupExpiredRaid(client, teamIds),
+      deleteMpvpBattleQueueForCheckAndCleanupExpiredRaid(client, raidId),
       // Drop chat memberships for all queued users on this raid so they lose
       // access once cleanup yanks them out of the queue.
       ...(userIds.length > 0
         ? [purgeRaidChatMembership(client, raidChatConversationId, userIds)]
         : []),
       ...(userIds.length > 0
-        ? [
-            client
-              .update(userData)
-              .set({ status: "AWAKE", battleId: null })
-              .where(
-                and(eq(userData.status, "QUEUED"), inArray(userData.userId, userIds)),
-              ),
-          ]
+        ? [updateUserDataForCheckAndCleanupExpiredRaid(client, userIds)]
         : []),
     ]);
   }
@@ -1659,7 +1341,10 @@ export const checkAndCleanupExpiredRaid = async (
       const raidSector = (objective as RaidObjectiveType).sector;
       if (raidSector !== null && raidSector !== undefined) {
         // Delete sector - returns it to neutral ownership (syndicate)
-        const result = await client.delete(sector).where(eq(sector.sector, raidSector));
+        const result = await deleteSectorForCleanupExpiredExclusiveRaids(
+          client,
+          raidSector,
+        );
         return { wasExpired: true, sectorCleaned: result.rowsAffected > 0 };
       }
     }
@@ -1688,34 +1373,19 @@ const rollbackJoinRaidQueue = async ({
   const raidChatConversationId = getRaidChatConversationId(raidQuestId);
   await Promise.all([
     ...(deleteUserRow
-      ? [
-          client
-            .delete(mpvpBattleUser)
-            .where(
-              and(
-                eq(mpvpBattleUser.userId, userId),
-                eq(mpvpBattleUser.clanBattleId, teamId),
-              ),
-            ),
-        ]
+      ? [deleteMpvpBattleUserForRollbackJoinRaidQueue(client, userId, teamId)]
       : []),
     purgeRaidChatMembership(client, raidChatConversationId, userId),
-    client
-      .update(userData)
-      .set({ status: "AWAKE" })
-      .where(and(eq(userData.userId, userId), eq(userData.status, "QUEUED"))),
+    updateUserDataForRollbackJoinRaidQueue(client, userId),
   ]);
   // Only delete the team if no other queue rows still reference it. A concurrent
   // joiner could have inserted into mpvpBattleUser during the await window
   // before this rollback fired; deleting the team unconditionally would orphan
   // that joiner.
   if (deleteTeam) {
-    const remaining = await client.query.mpvpBattleUser.findFirst({
-      where: eq(mpvpBattleUser.clanBattleId, teamId),
-      columns: { id: true },
-    });
+    const remaining = await findMpvpBattleUserForRollbackJoinRaidQueue(client, teamId);
     if (!remaining) {
-      await client.delete(mpvpBattleQueue).where(eq(mpvpBattleQueue.id, teamId));
+      await deleteQueueById(client, teamId);
     }
   }
 };
@@ -1753,18 +1423,9 @@ const rollbackStartRaidBattle = async ({
   // failed start doesn't leave a phantom empty team behind in getActiveRaidTeams.
   const raidChatConversationId = getRaidChatConversationId(raidId);
   await Promise.all([
-    client
-      .delete(mpvpBattleQueue)
-      .where(
-        and(eq(mpvpBattleQueue.id, teamId), eq(mpvpBattleQueue.battleId, claimId)),
-      ),
-    client
-      .update(userData)
-      .set({ status: "AWAKE" })
-      .where(
-        and(inArray(userData.userId, attackerUserIds), eq(userData.status, "QUEUED")),
-      ),
-    client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.clanBattleId, teamId)),
+    deleteMpvpBattleQueueForRollbackStartRaidBattle(client, teamId, claimId),
+    updateUserDataForRollbackStartRaidBattle(client, attackerUserIds),
+    deleteMpvpBattleUserForRollbackStartRaidBattle(client, teamId),
     purgeRaidChatMembership(client, raidChatConversationId, attackerUserIds),
   ]);
 };
@@ -1782,21 +1443,17 @@ const ensureRaidChatConversation = async (
   // wait for the conversation row — both upserts are idempotent and target
   // different tables, so run them in parallel to halve the latency.
   await Promise.all([
-    client
-      .insert(conversation)
-      .values({
-        id: conversationId,
-        title: `${raid.name} Raid Chat`,
-        createdById: userId,
-        isPublic: false,
-        isLocked: false,
-        isEnabled: true,
-      })
-      .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
-    client
-      .insert(user2conversation)
-      .values({ conversationId, userId })
-      .onDuplicateKeyUpdate({ set: { conversationId: sql`conversationId` } }),
+    insertConversationForEnsureRaidChatConversation(
+      client,
+      conversationId,
+      raid,
+      userId,
+    ),
+    insertUser2conversationForEnsureRaidChatConversation(
+      client,
+      conversationId,
+      userId,
+    ),
   ]);
 
   return conversationId;

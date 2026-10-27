@@ -1,3 +1,4 @@
+import { fetchBattle } from "@/queries/combat";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { MAP_WAR_TORN_BATTLEGROUND_SECTOR, WAR_ESPIONAGE_TARGET } from "@/drizzle/constants";
@@ -5,7 +6,7 @@ import { aiProfile, battle, battleAction, battleHistory, mpvpBattleQueue, mpvpBa
 import { updateUser } from "@/libs/combat/database";
 import { calcBattleResult } from "@/libs/combat/util";
 import { Pusher, type PusherClient } from "@/libs/pusher";
-import { fetchBattle, initiateBattle } from "@/server/api/routers/combat";
+import { initiateBattle } from "@/server/api/routers/combat";
 import { claimDailyQuestSlot } from "@/server/api/routers/quests";
 import { warRouter } from "@/server/api/routers/war";
 import { SimpleObjective } from "@/validators/objectives";

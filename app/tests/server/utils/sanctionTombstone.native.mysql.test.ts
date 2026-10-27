@@ -21,12 +21,9 @@ import { reportsRouter } from "@/server/api/routers/reports";
 import { removeAccountGameData } from "@/server/utils/accountDeletion/cleanup";
 import { processAccountDeletions } from "@/server/utils/accountDeletion/process";
 import * as sanctions from "@/server/utils/sanctionTombstone";
-import {
-  hashSanctionIdentifier,
-  hashSanctionIp,
-  recordSanctionTombstone,
-  type SanctionIdentity,
-} from "@/server/utils/sanctionTombstone";
+import { hashSanctionIdentifier, hashSanctionIp, recordSanctionTombstone, type SanctionIdentity } from "@/server/utils/sanctionTombstone";
+import { fetchActiveSanctionTombstones } from "@/queries/reports";
+
 import { insertUsers } from "../../setup/factories";
 import { beforeStatements } from "../../setup/statements";
 import {
@@ -1070,7 +1067,7 @@ describeWithDatabase("original sanctions during native deletion", () => {
         current = (await database.query.userReport.findFirst({
           where: eq(userReport.id, "original"),
         }))!;
-        const active = await sanctions.fetchActiveSanctionTombstones(database);
+        const active = await fetchActiveSanctionTombstones(database);
         expect(active).toHaveLength(later === "clear" ? 0 : 1);
         if (later !== "clear")
           expect(active[0]).toMatchObject({

@@ -1,4 +1,3 @@
-import { eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { UTApi } from "uploadthing/server";
 import {
@@ -8,11 +7,15 @@ import {
   type GameAssetType,
   IMG_AVATAR_DEFAULT,
 } from "@/drizzle/constants";
-import type { ContentProposalMedia } from "@/drizzle/schema";
-import { gameAsset } from "@/drizzle/schema";
+import type { ContentProposalMedia, gameAsset } from "@/drizzle/schema";
 import { getPrePrompts, REMOVE_BG_TYPES } from "@/libs/imagePrompts";
 import { generateAndUploadAudio, txt2imgNanoBanana } from "@/libs/replicate";
 import { extensionCustomId, servedUfsUrl } from "@/libs/uploadthing";
+import { fetchGameAsset } from "@/queries/asset";
+import {
+  insertGameAssetIfAbsent,
+  selectGameAssetForCollectCandidates,
+} from "@/queries/contentReview";
 import type { DrizzleClient } from "@/server/db";
 import {
   epidemicSfxDownloadUrl,
@@ -41,10 +44,7 @@ export const collectCandidates = async (
   const sceneCharacter = request.kind === "IMAGE" && isSceneCharacterPath(request.path);
   const room = () => CONTENT_PROPOSAL_MAX_CANDIDATES - out.length;
   if (request.catalogIds.length > 0) {
-    const rows = await client
-      .select()
-      .from(gameAsset)
-      .where(inArray(gameAsset.id, request.catalogIds));
+    const rows = await selectGameAssetForCollectCandidates(client, request);
     // The submitter's order is its preference, and the first candidate is the default pick.
     const assets = [...new Set(request.catalogIds)].flatMap((id) =>
       rows.filter((row) => row.id === id),
@@ -211,9 +211,7 @@ export const importEpidemicSfx = async (
   reviewerId: string,
   sfx: { epidemicId: string; title: string },
 ) => {
-  const existing = await client.query.gameAsset.findFirst({
-    where: eq(gameAsset.id, epidemicAssetId(sfx.epidemicId)),
-  });
+  const existing = await fetchGameAsset(client, epidemicAssetId(sfx.epidemicId));
   if (existing) return { asset: existing, created: false };
   const copy = await copyToStorage(await epidemicSfxDownloadUrl(sfx.epidemicId), "mp3");
   const { asset } = materializeChoice(
@@ -227,21 +225,19 @@ export const importEpidemicSfx = async (
     reviewerId,
   );
   if (!asset) throw new Error("Epidemic sounds always become assets");
-  const inserted = await client
-    .insert(gameAsset)
-    .values(asset)
-    .onDuplicateKeyUpdate({ set: { id: asset.id } })
-    .catch(async (error: unknown) => {
+  const inserted = await insertGameAssetIfAbsent(client, asset).catch(
+    async (error: unknown) => {
       // Without its row nothing points at the copy, so it goes before the error surfaces.
       await deleteStoredFiles([copy.key]).catch((cleanup: unknown) =>
         console.error(`Could not delete the copy of ${asset.id}`, cleanup),
       );
       throw error;
-    });
+    },
+  );
   if (inserted.rowsAffected === 1) return { asset, created: true };
   // A simultaneous import of the same sound won; its row stands and this copy goes again.
   const [kept] = await Promise.all([
-    client.query.gameAsset.findFirst({ where: eq(gameAsset.id, asset.id) }),
+    fetchGameAsset(client, asset.id),
     deleteStoredFiles([copy.key]).catch((error: unknown) =>
       console.error(`Could not delete the extra copy of ${asset.id}`, error),
     ),

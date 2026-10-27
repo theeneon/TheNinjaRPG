@@ -1,9 +1,20 @@
-import { and, desc, eq, gte, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
 import { z } from "zod";
 import { FEDERAL_MONTHLY_USD_CENTS } from "@/drizzle/constants";
-import { stripeCheckout, stripePayment, userData } from "@/drizzle/schema";
 import { isNativeUserAgent } from "@/libs/native/userAgent";
+import { findUserById } from "@/queries/profile";
+import {
+  findStripeCheckoutForCancelCheckout,
+  findStripeCheckoutForCreateCheckout,
+  findStripeCheckoutForResolveSession,
+  insertStripeCheckoutForCreateCheckout,
+  listStripeCheckoutForCreateCheckout,
+  listStripeCheckoutForCreateCheckout2,
+  listStripePaymentForGetPayments,
+  selectStripeCheckoutForGetPendingCheckouts,
+  selectStripeCheckoutForGetSubscriptions,
+  updateStripeCheckoutForCancelCheckout,
+  updateStripeCheckoutForCreateCheckout,
+} from "@/queries/stripe";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -47,28 +58,11 @@ export const stripeRouter = createTRPCRouter({
       if (!isStripeConfigured())
         return errorResponse("Card payments are temporarily unavailable.");
       const [buyer, recipient, existing, allowanceUsed, pending] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, input.userId),
-        }),
-        ctx.drizzle.query.stripeCheckout.findFirst({
-          where: eq(stripeCheckout.id, input.requestId),
-        }),
+        findUserById(ctx.drizzle, ctx.userId),
+        findUserById(ctx.drizzle, input.userId),
+        findStripeCheckoutForCreateCheckout(ctx.drizzle, input),
         reputationAllowanceUsed(ctx.drizzle, ctx.userId, "", input.requestId),
-        ctx.drizzle.query.stripeCheckout.findMany({
-          where: and(
-            eq(stripeCheckout.createdById, ctx.userId),
-            ne(stripeCheckout.id, input.requestId),
-            isNull(stripeCheckout.closedAt),
-            gte(
-              stripeCheckout.createdAt,
-              sql`NOW() - INTERVAL ${STRIPE_CHECKOUT_RESERVATION_SECONDS} SECOND`,
-            ),
-            sql`NOT EXISTS (SELECT 1 FROM ${stripePayment} p WHERE p.checkoutId = ${stripeCheckout.id} AND p.grantedAt IS NOT NULL)`,
-          ),
-        }),
+        listStripeCheckoutForCreateCheckout(ctx.drizzle, ctx, input),
       ]);
       if (!buyer || !recipient)
         return errorResponse("The buyer or recipient no longer exists.");
@@ -136,13 +130,11 @@ export const stripeRouter = createTRPCRouter({
           return errorResponse(
             "This federal support price is temporarily unavailable.",
           );
-        const subscriptions = await ctx.drizzle.query.stripeCheckout.findMany({
-          where: and(
-            eq(stripeCheckout.createdById, ctx.userId),
-            eq(stripeCheckout.affectedUserId, input.userId),
-            isNotNull(stripeCheckout.subscriptionId),
-          ),
-        });
+        const subscriptions = await listStripeCheckoutForCreateCheckout2(
+          ctx.drizzle,
+          ctx,
+          input,
+        );
         const external = await Promise.all(
           subscriptions.map((checkout) =>
             stripe.subscriptions.retrieve(checkout.subscriptionId as string),
@@ -184,18 +176,15 @@ export const stripeRouter = createTRPCRouter({
               if (reputationPoints + allowance > dynamicMonthlyRepCap(buyer))
                 return false;
             }
-            await tx
-              .insert(stripeCheckout)
-              .values({
-                id: input.requestId,
-                createdById: ctx.userId,
-                affectedUserId: input.userId,
-                amountCents,
-                reputationPoints,
-                federalStatus: tier,
-                priceId,
-              })
-              .onDuplicateKeyUpdate({ set: { id: input.requestId } });
+            await insertStripeCheckoutForCreateCheckout(
+              tx,
+              input,
+              ctx,
+              amountCents,
+              reputationPoints,
+              tier,
+              priceId,
+            );
             return true;
           }),
         );
@@ -205,9 +194,7 @@ export const stripeRouter = createTRPCRouter({
           );
       }
       // A concurrent request using the same id must agree with the saved, server-authored terms.
-      const saved = await ctx.drizzle.query.stripeCheckout.findFirst({
-        where: eq(stripeCheckout.id, input.requestId),
-      });
+      const saved = await findStripeCheckoutForCreateCheckout(ctx.drizzle, input);
       if (
         !saved ||
         saved.createdById !== ctx.userId ||
@@ -254,10 +241,7 @@ export const stripeRouter = createTRPCRouter({
         },
         { idempotencyKey: `tnr-checkout-${saved.id}` },
       );
-      await ctx.drizzle
-        .update(stripeCheckout)
-        .set({ sessionId: session.id })
-        .where(eq(stripeCheckout.id, saved.id));
+      await updateStripeCheckoutForCreateCheckout(ctx.drizzle, session, saved);
       if (!session.url)
         return errorResponse("Stripe could not open checkout. Please try again.");
       return { success: true, message: "Continue to Stripe", url: session.url };
@@ -266,9 +250,7 @@ export const stripeRouter = createTRPCRouter({
   cancelCheckout: protectedProcedure
     .input(z.object({ checkoutId: z.string().min(1).max(191) }))
     .mutation(async ({ ctx, input }) => {
-      const checkout = await ctx.drizzle.query.stripeCheckout.findFirst({
-        where: eq(stripeCheckout.id, input.checkoutId),
-      });
+      const checkout = await findStripeCheckoutForCancelCheckout(ctx.drizzle, input);
       if (!checkout || checkout.createdById !== ctx.userId)
         return errorResponse("This checkout belongs to another account.");
       if (checkout.closedAt) return { success: true, message: "Checkout cancelled." };
@@ -282,10 +264,7 @@ export const stripeRouter = createTRPCRouter({
           return errorResponse(
             "Checkout is still being created. Retry opening it, or wait until its 25-hour reservation expires.",
           );
-        await ctx.drizzle
-          .update(stripeCheckout)
-          .set({ closedAt: new Date() })
-          .where(eq(stripeCheckout.id, checkout.id));
+        await updateStripeCheckoutForCancelCheckout(ctx.drizzle, checkout);
         return {
           success: true,
           message: "Expired checkout closed. Start a new checkout.",
@@ -296,10 +275,7 @@ export const stripeRouter = createTRPCRouter({
       if (session.status === "complete")
         return errorResponse("Payment already completed. Check your payment status.");
       if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
-      await ctx.drizzle
-        .update(stripeCheckout)
-        .set({ closedAt: new Date() })
-        .where(eq(stripeCheckout.id, checkout.id));
+      await updateStripeCheckoutForCancelCheckout(ctx.drizzle, checkout);
       return {
         success: true,
         message: "Checkout cancelled. No purchase was confirmed.",
@@ -318,8 +294,8 @@ export const stripeRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const session = await getStripe().checkout.sessions.retrieve(input.sessionId);
       const checkout = session.metadata?.tnrCheckoutId
-        ? await ctx.drizzle.query.stripeCheckout.findFirst({
-            where: eq(stripeCheckout.id, session.metadata.tnrCheckoutId),
+        ? await findStripeCheckoutForResolveSession(ctx.drizzle, {
+            metadata: { tnrCheckoutId: session.metadata.tnrCheckoutId },
           })
         : undefined;
       if (!checkout || checkout.createdById !== ctx.userId)
@@ -337,57 +313,15 @@ export const stripeRouter = createTRPCRouter({
     }),
   /** Recover payer-owned reservations with their original immutable checkout terms. */
   getPendingCheckouts: protectedProcedure.query(async ({ ctx }) => {
-    const recipient = alias(userData, "recipient");
-    return ctx.drizzle
-      .select({
-        id: stripeCheckout.id,
-        affectedUserId: stripeCheckout.affectedUserId,
-        federalStatus: stripeCheckout.federalStatus,
-        reputationPoints: stripeCheckout.reputationPoints,
-        recipientUsername: recipient.username,
-      })
-      .from(stripeCheckout)
-      .leftJoin(recipient, eq(recipient.userId, stripeCheckout.affectedUserId))
-      .where(
-        and(
-          eq(stripeCheckout.createdById, ctx.userId),
-          isNull(stripeCheckout.closedAt),
-          isNull(stripeCheckout.subscriptionId),
-          gte(
-            stripeCheckout.createdAt,
-            sql`NOW() - INTERVAL ${STRIPE_CHECKOUT_RESERVATION_SECONDS} SECOND`,
-          ),
-          sql`NOT EXISTS (SELECT 1 FROM ${stripePayment} p WHERE p.checkoutId = ${stripeCheckout.id} AND p.grantedAt IS NOT NULL)`,
-        ),
-      )
-      .orderBy(desc(stripeCheckout.createdAt));
+    return selectStripeCheckoutForGetPendingCheckouts(ctx.drizzle, ctx);
   }),
   /** Return payer receipts, including held payments needed for support or refund review. */
   getPayments: protectedProcedure.query(async ({ ctx }) =>
-    ctx.drizzle.query.stripePayment.findMany({
-      where: eq(stripePayment.createdById, ctx.userId),
-      orderBy: desc(stripePayment.createdAt),
-      limit: 100,
-    }),
+    listStripePaymentForGetPayments(ctx.drizzle, ctx),
   ),
   /** Read provider renewal state for subscriptions the caller pays for or receives. */
   getSubscriptions: protectedProcedure.query(async ({ ctx }) => {
-    const recipient = alias(userData, "recipient");
-    const checkouts = await ctx.drizzle
-      .select({ checkout: stripeCheckout, recipientUsername: recipient.username })
-      .from(stripeCheckout)
-      .leftJoin(recipient, eq(recipient.userId, stripeCheckout.affectedUserId))
-      .where(
-        and(
-          or(
-            eq(stripeCheckout.createdById, ctx.userId),
-            eq(stripeCheckout.affectedUserId, ctx.userId),
-          ),
-          isNotNull(stripeCheckout.subscriptionId),
-        ),
-      )
-      .orderBy(desc(stripeCheckout.createdAt))
-      .limit(100);
+    const checkouts = await selectStripeCheckoutForGetSubscriptions(ctx.drizzle, ctx);
     if (!checkouts.length || !isStripeConfigured()) return [];
     const stripe = getStripe();
     return Promise.all(
@@ -418,9 +352,7 @@ export const stripeRouter = createTRPCRouter({
   cancelSubscription: protectedProcedure
     .input(z.object({ checkoutId: z.string().min(1).max(191) }))
     .mutation(async ({ ctx, input }) => {
-      const checkout = await ctx.drizzle.query.stripeCheckout.findFirst({
-        where: eq(stripeCheckout.id, input.checkoutId),
-      });
+      const checkout = await findStripeCheckoutForCancelCheckout(ctx.drizzle, input);
       if (
         !checkout?.subscriptionId ||
         ![checkout.createdById, checkout.affectedUserId].includes(ctx.userId)

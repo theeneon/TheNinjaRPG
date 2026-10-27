@@ -1,62 +1,35 @@
 import { createHash } from "node:crypto";
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  getTableColumns,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  like,
-  ne,
-  or,
-  type SQL,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { and, eq, gte, inArray, like, ne, or, type SQL, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
   COST_RESKIN_JUTSU,
-  IMG_AVATAR_DEFAULT,
   JUTSU_LEVEL_CAP,
   JUTSU_TRANSFER_COST,
-  JUTSU_TRANSFER_DAYS,
   JUTSU_TRANSFER_MAX_LEVEL,
   JUTSU_TRANSFER_MINIMUM_LEVEL,
   RESKIN_LIMIT,
   TUTORIAL_JUTSU_ID,
 } from "@/drizzle/constants";
-import type {
-  Jutsu,
-  JutsuLoadout,
-  UserData,
-  UserJutsuWithRelations,
-} from "@/drizzle/schema";
 import {
-  actionLog,
-  bloodline,
-  bloodlineReskin,
-  item,
+  type Jutsu,
+  type JutsuLoadout,
   jutsu,
   jutsuLoadout,
-  jutsuReskin,
-  petSpecies,
-  quest,
-  skillTree,
+  type UserData,
+  type UserJutsuWithRelations,
   userData,
   userJutsu,
 } from "@/drizzle/schema";
+
 import {
   deletedReason,
   editedReason,
   outdateProposalsFor,
 } from "@/libs/contentReview/outdate";
 import { filterVisibleEvolutions, validateEvolutionGraph } from "@/libs/evolution";
-import type { ComputedJutsuLoadout, JutsuCapFlags, JutsuEquipCap } from "@/libs/jutsu";
 import {
+  type ComputedJutsuLoadout,
   canEquipUnderCaps,
   computeJutsuLoadoutAssignments,
   computeJutsuLoadoutPreview,
@@ -67,7 +40,10 @@ import {
   getReskinnedUserJutsu,
   hasAnyJutsuEquipCap,
   JUTSU_EQUIP_CAPS,
+  type JutsuCapFlags,
+  type JutsuEquipCap,
 } from "@/libs/jutsu";
+
 import {
   getJutsuReskinMechanics,
   inheritJutsuReskinEffects,
@@ -103,7 +79,125 @@ import {
   isJutsuInTraining,
   isJutsuTrainToLearnRestricted,
 } from "@/libs/train";
-import { fetchStudents } from "@/routers/sensei";
+import {
+  deleteJutsuForDelete,
+  deleteUserJutsuForDelete,
+  deleteUserJutsuForForget,
+  executeRowsForSelectJutsuLoadout,
+  executeTransferredForTransferLevel,
+  executeWriteForImportJutsuLoadout,
+  fetchActiveLoadoutJutsuIds,
+  fetchBloodlineJutsuReskins,
+  fetchJutsu,
+  fetchJutsuLoadouts,
+  fetchReskin,
+  fetchUserReskins,
+  findBloodlineReskinForCreateLinkedReskin,
+  findBloodlineReskinForUpdate,
+  findItemForUpdate,
+  findJutsuForUpdate,
+  findJutsuForUpdateReskin,
+  findJutsuLoadoutForRenameLoadout,
+  findJutsuReskinForAdjustUserJutsu,
+  findJutsuReskinForEvolveJutsu,
+  findJutsuReskinForUpdateReskin,
+  findPetSpeciesForUpdate,
+  findUserDataForUpdateReskin,
+  findUserJutsuForRemoveReskin,
+  findUserJutsuForUpdateReskin,
+  insertActionLogForAdjustUserJutsu,
+  insertActionLogForClone,
+  insertActionLogForCreateLinkedReskin,
+  insertActionLogForDelete,
+  insertActionLogForEvolveJutsu,
+  insertActionLogForSaveJutsuFamily,
+  insertActionLogForTransferLevel,
+  insertActionLogForUpdateReskin,
+  insertActionLogForUpdateReskin2,
+  insertJutsuForClone,
+  insertJutsuForCreate,
+  insertJutsuForCreateLinkedReskin,
+  insertJutsuLoadoutForInsertMissing,
+  insertJutsuReskinForCreateReskin,
+  insertUserJutsuForStartTraining,
+  listActionLogForGetRecentTransfers,
+  listBloodlineForGetJutsuRelations,
+  listItemForGetJutsuRelations,
+  listJutsuForGetAll,
+  listJutsuForGetAllNames,
+  listJutsuForGetEvolutions,
+  listJutsuForGetJutsuRelations,
+  listJutsuForGetJutsuRelations2,
+  listJutsuForGetJutsuRelations3,
+  listJutsuForGetLinkedReskins,
+  listJutsuForGetReskinParents,
+  listJutsuForPrepareJutsuLoadoutImport,
+  listJutsuForUpdate,
+  listJutsuForUpdate2,
+  listJutsuReskinForGetReskinsForJutsu,
+  listPetSpeciesForUpdate,
+  listQuestForGetJutsuRelations,
+  listSkillTreeForGetJutsuRelations,
+  listUserJutsuForGetReskin,
+  listUserJutsuForUpdateReskin,
+  selectBloodlineReskinForCreateLinkedReskin,
+  selectBloodlineReskinForSaveJutsuFamily,
+  selectJutsuForCreateLinkedReskin,
+  selectJutsuForDelete,
+  selectJutsuForDelete2,
+  selectJutsuForSaveJutsuFamily,
+  selectJutsuForSaveJutsuFamily2,
+  selectJutsuLoadoutForImportJutsuLoadout,
+  selectJutsuReskinForGetAllReskins,
+  selectJutsuReskinForGetJutsuRelations,
+  selectUserDataForFetchUserJutsus,
+  selectUserDataForUpdateReskin,
+  selectUserJutsuForFetchOwned,
+  selectUserJutsuForFetchUserJutsus,
+  selectUserJutsuForGetJutsuRelations,
+  selectUserJutsuForStartTraining,
+  selectUserJutsuForToggleEquip,
+  selectUserJutsuForTryEquipUserJutsuAtomically,
+  updateJutsuForSaveJutsuFamily,
+  updateJutsuForSaveJutsuFamily2,
+  updateJutsuLoadoutForAppendJutsuIdToLoadoutAtomically,
+  updateJutsuLoadoutForEvolveJutsu,
+  updateJutsuLoadoutForRemoveJutsuIdFromLoadoutAtomically,
+  updateJutsuLoadoutForRenameLoadout,
+  updateJutsuLoadoutForUnequipAll,
+  updateJutsuLoadoutForUpdateUserJutsuOrder,
+  updateJutsuReskinForCreateReskin,
+  updateJutsuReskinForEvolveJutsu,
+  updateJutsuReskinForUpdateReskin,
+  updateUserDataForCreateReskin,
+  updateUserDataForEvolveJutsu,
+  updateUserDataForWriteDefaultPointer,
+  updateUserJutsuForAdjustUserJutsu,
+  updateUserJutsuForCreateReskin,
+  updateUserJutsuForCreateReskin2,
+  updateUserJutsuForEvolveJutsu,
+  updateUserJutsuForRemoveReskin,
+  updateUserJutsuForRollbackEquipIfOverCap,
+  updateUserJutsuForStartTraining,
+  updateUserJutsuForStopTraining,
+  updateUserJutsuForToggleEquip,
+  updateUserJutsuForTryEquipUserJutsuAtomically,
+  updateUserJutsuForUnequipAll,
+  updateUserJutsuForUpdate,
+  updateUserJutsuForUpdateReskin,
+  updateUserJutsuForUpdateReskin2,
+} from "@/queries/jutsu";
+import {
+  debitUserMoney,
+  fetchLoadoutUser,
+  fetchUser,
+  findUserRoleById,
+  incrementUserMoney,
+} from "@/queries/profile";
+import { fetchStudents } from "@/queries/sensei";
+
+import { findRequiredSkillTreeEntry } from "@/queries/skillTree";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -113,11 +207,7 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
-import {
-  applyLoadoutRename,
-  backfillLoadouts,
-  fetchLoadoutUser,
-} from "@/server/utils/loadout";
+import { applyLoadoutRename, backfillLoadouts } from "@/server/utils/loadout";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import {
   cancelQueuedJutsuTraining,
@@ -140,24 +230,26 @@ import {
   canReskinFreely,
   canTransferJutsu,
 } from "@/utils/permissions";
-import { DAY_S, secondsFromDate } from "@/utils/time";
-import type { ZodAllTags, ZodJutsuType } from "@/validators/combat";
-import { JutsuValidator } from "@/validators/combat";
-import type {
-  JutsuFilteringSchema,
-  UserJutsuFilteringSchema,
-} from "@/validators/jutsu";
+import {
+  JutsuValidator,
+  type ZodAllTags,
+  type ZodJutsuType,
+} from "@/validators/combat";
+
 import {
   createLinkedJutsuSchema,
   evolveJutsuSchema,
   getEvolutionsSchema,
   getJutsuReskinSchema,
+  type JutsuFilteringSchema,
   jutsuFilteringSchema,
   jutsuReskinCreateSchema,
+  type UserJutsuFilteringSchema,
   updateJutsuReskinSchema,
   updateJutsuSchema,
   userJutsuFilteringSchema,
 } from "@/validators/jutsu";
+
 import {
   importJutsuLoadoutSchema,
   previewJutsuLoadoutSchema,
@@ -171,7 +263,7 @@ import {
   jutsuTrainingQueueOutputSchema,
 } from "@/validators/train";
 import { userDeltaResponseSchema } from "@/validators/userCache";
-import { fetchUpdatedUser, fetchUser } from "./profile";
+import { fetchUpdatedUser } from "./profile";
 
 /** "level 3" or "levels 3-5" */
 const formatLevelRange = (from: number, to: number) =>
@@ -183,16 +275,7 @@ export const jutsuRouter = createTRPCRouter({
       mcp: { description: "Get user's recent jutsu level transfers" },
     })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.actionLog.findMany({
-        where: and(
-          eq(actionLog.userId, ctx.userId),
-          eq(actionLog.relatedMsg, "JutsuLevelTransfer"),
-          gte(
-            actionLog.createdAt,
-            secondsFromDate(-JUTSU_TRANSFER_DAYS * DAY_S, new Date()),
-          ),
-        ),
-      });
+      return await listActionLogForGetRecentTransfers(ctx.drizzle, ctx);
     }),
   transferLevel: protectedProcedure
     .meta({ mcp: { description: "Transfer levels between jutsus" } })
@@ -211,16 +294,7 @@ export const jutsuRouter = createTRPCRouter({
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUserJutsus(ctx.drizzle, ctx.userId),
         fetchQueuedJutsuIds(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.actionLog.findMany({
-          where: and(
-            eq(actionLog.userId, ctx.userId),
-            eq(actionLog.relatedMsg, "JutsuLevelTransfer"),
-            gte(
-              actionLog.createdAt,
-              secondsFromDate(-JUTSU_TRANSFER_DAYS * DAY_S, new Date()),
-            ),
-          ),
-        }),
+        listActionLogForGetRecentTransfers(ctx.drizzle, ctx),
       ]);
       const fromUserJutsu = userJutsus.find((j) => j.jutsuId === input.fromJutsuId);
       const fromJutsu = fromUserJutsu?.jutsu;
@@ -282,38 +356,29 @@ export const jutsuRouter = createTRPCRouter({
       // This joined statement commits all three atomically; level and owner snapshot
       // guards reject stale transfers after concurrent progression or account changes.
       const transferred = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-        UPDATE ${userJutsu} source
-        INNER JOIN ${userJutsu} target ON target.id = ${toUserJutsu.id}
-        INNER JOIN ${userData} owner ON owner.userId = source.userId
-        SET source.level = source.level - ${transfer},
-            target.level = target.level + ${transfer},
-            owner.reputationPoints = owner.reputationPoints - ${cost},
-            owner.updatedAt = ${getNextUserSnapshotAt(user.updatedAt)}
-        WHERE source.id = ${fromUserJutsu.id}
-          AND source.userId = ${ctx.userId} AND target.userId = ${ctx.userId}
-          AND source.level = ${fromUserJutsu.level} AND target.level = ${toUserJutsu.level}
-          AND source.level - ${transfer} >= 1
-          AND target.level + ${transfer} <= ${JUTSU_TRANSFER_MAX_LEVEL}
-          AND (source.finishTraining IS NULL OR source.finishTraining <= NOW(3))
-          AND (target.finishTraining IS NULL OR target.finishTraining <= NOW(3))
-          AND owner.updatedAt = ${user.updatedAt}
-          AND owner.reputationPoints >= ${cost}
-      `),
+        executeTransferredForTransferLevel(
+          ctx.drizzle,
+          toUserJutsu,
+          transfer,
+          cost,
+          user,
+          fromUserJutsu,
+          ctx,
+        ),
       );
       if (transferred.rowsAffected === 0)
         return errorResponse("Your jutsu or balance changed. Please try again.");
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "userjutsu",
-        changes: [
-          `Transferred ${transfer} level(s) from ${fromJutsu.name} (new level: ${fromUserJutsu.level - transfer}) to ${toJutsu.name} (new level: ${toUserJutsu.level + transfer}). ${!needsReputation ? ` Used free transfer.` : ""}`,
-        ],
-        relatedId: ctx.userId,
-        relatedMsg: "JutsuLevelTransfer",
-        relatedImage: user.avatarLight,
-      });
+      await insertActionLogForTransferLevel(
+        ctx.drizzle,
+        ctx,
+        transfer,
+        fromJutsu,
+        fromUserJutsu,
+        toJutsu,
+        toUserJutsu,
+        needsReputation,
+        user,
+      );
 
       return {
         success: true,
@@ -329,10 +394,7 @@ export const jutsuRouter = createTRPCRouter({
   getAllNames: publicProcedure
     .meta({ mcp: { description: "Get all jutsu names and images" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.jutsu.findMany({
-        columns: { id: true, name: true, image: true, injectableInBattle: true },
-        orderBy: (table, { asc }) => [asc(table.name)],
-      });
+      return await listJutsuForGetAllNames(ctx.drizzle);
     }),
 
   get: publicProcedure
@@ -366,22 +428,7 @@ export const jutsuRouter = createTRPCRouter({
       // Build the base DB filter
       const baseFilters = jutsuDatabaseFilter(input);
 
-      const results = await ctx.drizzle.query.jutsu.findMany({
-        where: and(
-          ...baseFilters,
-          ...(input.hideAi ? [ne(jutsu.jutsuType, "AI")] : []),
-        ),
-        orderBy: (table) => desc(table.updatedAt),
-        offset: skip,
-        with: {
-          bloodline: {
-            columns: {
-              name: true,
-            },
-          },
-        },
-        limit: input.limit,
-      });
+      const results = await listJutsuForGetAll(ctx.drizzle, baseFilters, input, skip);
 
       // Post-filter to ensure constraints are satisfied within the same effect
       const filtered = filterByEffectConstraints(results, input);
@@ -419,18 +466,11 @@ export const jutsuRouter = createTRPCRouter({
         missing,
         maxLoadouts,
         currentPointer: user?.jutsuLoadout ?? null,
-        insertMissing: (rows) =>
-          ctx.drizzle
-            .insert(jutsuLoadout)
-            .values(rows)
-            .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
+        insertMissing: (rows) => insertJutsuLoadoutForInsertMissing(ctx.drizzle, rows),
         writeDefaultPointer: (id) =>
           // Compare-and-swap: only set the default when no pointer exists yet, so
           // a concurrent select that set it first is not overwritten.
-          ctx.drizzle
-            .update(userData)
-            .set({ jutsuLoadout: id })
-            .where(and(eq(userData.userId, ctx.userId), isNull(userData.jutsuLoadout))),
+          updateUserDataForWriteDefaultPointer(ctx.drizzle, id, ctx),
       });
     }),
 
@@ -526,15 +566,10 @@ export const jutsuRouter = createTRPCRouter({
       ) {
         // Confirm the no-op against one current snapshot, including equipment for
         // an active destination, before acknowledging the import without a write.
-        const current = await ctx.drizzle
-          .select({ id: jutsuLoadout.id, jutsuId: userJutsu.jutsuId })
-          .from(jutsuLoadout)
-          .innerJoin(userData, eq(userData.userId, jutsuLoadout.userId))
-          .leftJoin(
-            userJutsu,
-            and(eq(userJutsu.userId, userData.userId), eq(userJutsu.equipped, true)),
-          )
-          .where(guard);
+        const current = await selectJutsuLoadoutForImportJutsuLoadout(
+          ctx.drizzle,
+          guard,
+        );
         const equippedIds = current.flatMap((entry) =>
           entry.jutsuId === null ? [] : [entry.jutsuId],
         );
@@ -553,19 +588,9 @@ export const jutsuRouter = createTRPCRouter({
       // and equipped flags together in one statement, without a transaction.
       // Snapshot guards also stop a concurrent selection, rename, allowance change,
       // or edit from being overwritten between revalidation and this write.
-      const savedIds = sql`CAST(${JSON.stringify(preview.jutsuIds)} AS JSON)`;
-      const write = isActive
-        ? sql`UPDATE ${jutsuLoadout}
-            INNER JOIN ${userData} ON ${userData.userId} = ${jutsuLoadout.userId}
-            LEFT JOIN ${userJutsu} ON ${userJutsu.userId} = ${userData.userId}
-            SET ${jutsuLoadout.jutsuIds} = ${savedIds},
-                ${userJutsu.equipped} = CASE WHEN ${inArray(userJutsu.jutsuId, preview.jutsuIds)} THEN 1 ELSE 0 END
-            WHERE ${guard}`
-        : sql`UPDATE ${jutsuLoadout}
-            INNER JOIN ${userData} ON ${userData.userId} = ${jutsuLoadout.userId}
-            SET ${jutsuLoadout.jutsuIds} = ${savedIds}
-            WHERE ${guard}`;
-      const changed = await retryOnDeadlock(() => ctx.drizzle.execute(write));
+      const changed = await retryOnDeadlock(() =>
+        executeWriteForImportJutsuLoadout(ctx.drizzle, isActive, preview, guard),
+      );
       if (changed.rowsAffected === 0) {
         return errorResponse("Loadout changed. Preview again before replacing.");
       }
@@ -573,19 +598,12 @@ export const jutsuRouter = createTRPCRouter({
     }),
 
   getReskinParents: protectedProcedure.query(({ ctx }) =>
-    ctx.drizzle.query.jutsu.findMany({
-      columns: { id: true, name: true, bloodlineId: true },
-      where: and(isNull(jutsu.reskinParentJutsuId), ne(jutsu.jutsuRank, "H")),
-      orderBy: asc(jutsu.name),
-    }),
+    listJutsuForGetReskinParents(ctx.drizzle),
   ),
 
-  getLinkedReskins: publicProcedure.input(idSchema).query(({ ctx, input }) =>
-    ctx.drizzle.query.jutsu.findMany({
-      where: eq(jutsu.bloodlineReskinId, input.id),
-      orderBy: asc(jutsu.name),
-    }),
-  ),
+  getLinkedReskins: publicProcedure
+    .input(idSchema)
+    .query(({ ctx, input }) => listJutsuForGetLinkedReskins(ctx.drizzle, input)),
 
   createLinkedReskin: protectedProcedure
     .input(createLinkedJutsuSchema)
@@ -593,9 +611,7 @@ export const jutsuRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, reskin] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.bloodlineReskin.findFirst({
-          where: eq(bloodlineReskin.id, input.bloodlineReskinId),
-        }),
+        findBloodlineReskinForCreateLinkedReskin(ctx.drizzle, input),
       ]);
       if (user.isBanned || !canChangeContent(user.role))
         return errorResponse("Not allowed");
@@ -604,46 +620,22 @@ export const jutsuRouter = createTRPCRouter({
       // stale mechanics or race parent conversion/deletion or group deletion.
       return retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
-          const [parent] = await tx
-            .select()
-            .from(jutsu)
-            .where(eq(jutsu.id, input.parentId))
-            .for("update");
+          const [parent] = await selectJutsuForCreateLinkedReskin(tx, input);
           if (!parent || parent.reskinParentJutsuId || parent.jutsuRank === "H") {
             return errorResponse("Select a non-reskin parent jutsu");
           }
           if (parent.bloodlineId !== reskin.bloodlineId)
             return errorResponse("Parent jutsu must belong to this bloodline");
-          const [currentGroup] = await tx
-            .select()
-            .from(bloodlineReskin)
-            .where(eq(bloodlineReskin.id, reskin.id))
-            .for("update");
+          const [currentGroup] = await selectBloodlineReskinForCreateLinkedReskin(
+            tx,
+            reskin,
+          );
           if (!currentGroup || currentGroup.bloodlineId !== parent.bloodlineId)
             return errorResponse("Bloodline reskin changed; refresh before creating");
           const id = nanoid();
           const name = `${reskin.name.slice(0, 70)}: ${parent.name.slice(0, 70)} - ${id}`;
-          await tx.insert(jutsu).values({
-            ...parent,
-            id,
-            name,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            reskinParentJutsuId: parent.id,
-            bloodlineReskinId: reskin.id,
-            parentJutsuId: null,
-            jutsuRank: "H",
-            hidden: true,
-          });
-          await tx.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "jutsu",
-            relatedId: id,
-            changes: [`Created reskin of ${parent.name} for ${reskin.name}`],
-            relatedMsg: `Create: ${name}`,
-            relatedImage: parent.image,
-          });
+          await insertJutsuForCreateLinkedReskin(tx, parent, id, name, reskin);
+          await insertActionLogForCreateLinkedReskin(tx, ctx, id, parent, reskin, name);
           return { success: true, message: id };
         }),
       );
@@ -655,21 +647,7 @@ export const jutsuRouter = createTRPCRouter({
       return errorResponse("You are banned and cannot perform this action");
     if (canChangeContent(user.role)) {
       const id = nanoid();
-      await ctx.drizzle.insert(jutsu).values({
-        id,
-        name: `New Jutsu - ${id}`,
-        description: "New jutsu description",
-        battleDescription: "%user uses %jutsu on %target",
-        effects: [],
-        range: 1,
-        requiredRank: "STUDENT",
-        requiredLevel: 1,
-        target: "OTHER_USER",
-        jutsuType: "AI",
-        statClassification: "None",
-        elementClassification: "None",
-        image: IMG_AVATAR_DEFAULT,
-      });
+      await insertJutsuForCreate(ctx.drizzle, id);
       return { success: true, message: id };
     } else {
       return { success: false, message: `Not allowed to create jutsu` };
@@ -697,28 +675,8 @@ export const jutsuRouter = createTRPCRouter({
       // The copy and its provenance must commit together; an audit failure must not
       // leave an unlogged copy and invite a duplicate on retry.
       await ctx.drizzle.transaction(async (tx) => {
-        await tx.insert(jutsu).values({
-          ...source,
-          id,
-          name,
-          hidden: true,
-          // Copies start independently; attaching them through the editor validates
-          // evolution limits and synchronizes linked-reskin mechanics.
-          parentJutsuId: null,
-          reskinParentJutsuId: null,
-          bloodlineReskinId: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        });
-        await tx.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "jutsu",
-          relatedId: id,
-          changes: [`Cloned from ${source.name}`],
-          relatedMsg: `Clone: ${name}`.slice(0, 191),
-          relatedImage: source.image,
-        });
+        await insertJutsuForClone(tx, source, id, name);
+        await insertActionLogForClone(tx, ctx, id, source, name);
       });
       return { success: true, message: id };
     }),
@@ -770,33 +728,18 @@ export const jutsuRouter = createTRPCRouter({
       // Mutate
       const deleted = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
-          await tx
-            .select({ id: jutsu.id })
-            .from(jutsu)
-            .where(eq(jutsu.id, input.id))
-            .for("update");
-          const children = await tx
-            .select({ id: jutsu.id })
-            .from(jutsu)
-            .where(eq(jutsu.reskinParentJutsuId, input.id));
+          await selectJutsuForDelete(tx, input);
+          const children = await selectJutsuForDelete2(tx, input);
           if (children.length) return false;
-          await tx.delete(jutsu).where(eq(jutsu.id, input.id));
+          await deleteJutsuForDelete(tx, input);
           return true;
         }),
       );
       if (!deleted)
         return errorResponse("Unlink or delete its reskins before deleting this jutsu");
       await Promise.all([
-        ctx.drizzle.delete(userJutsu).where(eq(userJutsu.jutsuId, input.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "jutsu",
-          changes: [`Deleted: ${entry.name}`],
-          relatedId: entry.id,
-          relatedMsg: `Delete: ${entry.name}`,
-          relatedImage: entry.image,
-        }),
+        deleteUserJutsuForDelete(ctx.drizzle, input),
+        insertActionLogForDelete(ctx.drizzle, ctx, entry),
       ]);
       await outdateProposalsFor(
         ctx.drizzle,
@@ -823,9 +766,7 @@ export const jutsuRouter = createTRPCRouter({
         );
       }
       if (userjutsuObj) {
-        const res1 = await ctx.drizzle
-          .delete(userJutsu)
-          .where(eq(userJutsu.id, input.id));
+        const res1 = await deleteUserJutsuForForget(ctx.drizzle, input);
         if (res1.rowsAffected === 1) {
           return { success: true, message: `Jutsu forgotten, 0 ryo restored` };
         }
@@ -842,16 +783,8 @@ export const jutsuRouter = createTRPCRouter({
     .input(getEvolutionsSchema)
     .query(async ({ ctx, input }) => {
       const [user, evolutions] = await Promise.all([
-        ctx.userId
-          ? ctx.drizzle.query.userData.findFirst({
-              where: eq(userData.userId, ctx.userId),
-              columns: { role: true },
-            })
-          : Promise.resolve(null),
-        ctx.drizzle.query.jutsu.findMany({
-          where: eq(jutsu.parentJutsuId, input.jutsuId),
-          orderBy: (table, { asc }) => [asc(table.requiredLevel)],
-        }),
+        ctx.userId ? findUserRoleById(ctx.drizzle, ctx.userId) : Promise.resolve(null),
+        listJutsuForGetEvolutions(ctx.drizzle, input),
       ]);
       const canViewHidden = !!user && canChangeContent(user.role);
       return filterVisibleEvolutions(evolutions, canViewHidden);
@@ -875,13 +808,7 @@ export const jutsuRouter = createTRPCRouter({
         fetchUserJutsus(ctx.drizzle, ctx.userId),
         fetchJutsu(ctx.drizzle, input.evolutionJutsuId),
         fetchJutsuLoadouts(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.jutsuReskin.findFirst({
-          where: and(
-            eq(jutsuReskin.userId, ctx.userId),
-            eq(jutsuReskin.jutsuId, input.evolutionJutsuId),
-          ),
-          columns: { id: true },
-        }),
+        findJutsuReskinForEvolveJutsu(ctx.drizzle, ctx, input),
         fetchQueuedJutsuIds(ctx.drizzle, ctx.userId),
       ]);
       // Guards
@@ -945,27 +872,14 @@ export const jutsuRouter = createTRPCRouter({
       // - reskinId — on reskin-collision, re-point to the existing historical row so
       //   the user's evolved jutsu activates the slot they already own
       // The CAS WHERE guards against double-evolve on retry/double-submit.
-      const evolveResult = await ctx.drizzle
-        .update(userJutsu)
-        .set({
-          jutsuId: input.evolutionJutsuId,
-          level: 1,
-          experience: 0,
-          finishTraining: null,
-          updatedAt: new Date(),
-          ...(isRestrictedEquipType ? { equipped: false } : {}),
-          ...(userJutsuObj.reskinId && conflictingReskin
-            ? { reskinId: conflictingReskin.id }
-            : {}),
-        })
-        .where(
-          and(
-            eq(userJutsu.id, input.userJutsuId),
-            eq(userJutsu.userId, ctx.userId),
-            eq(userJutsu.jutsuId, userJutsuObj.jutsu.id),
-            eq(userJutsu.level, userJutsuObj.level),
-          ),
-        );
+      const evolveResult = await updateUserJutsuForEvolveJutsu(
+        ctx.drizzle,
+        input,
+        isRestrictedEquipType,
+        userJutsuObj,
+        conflictingReskin,
+        ctx,
+      );
       if (evolveResult.rowsAffected === 0)
         return errorResponse("Evolution failed - jutsu may have already been evolved");
       // Replace old jutsu ID with evolved ID across all user loadouts.
@@ -989,15 +903,9 @@ export const jutsuRouter = createTRPCRouter({
               ),
         }));
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({ questData: questDataForDb })
-          .where(eq(userData.userId, ctx.userId)),
+        updateUserDataForEvolveJutsu(ctx.drizzle, questDataForDb, ctx),
         ...loadoutsToUpdate.map((loadout) =>
-          ctx.drizzle
-            .update(jutsuLoadout)
-            .set({ jutsuIds: loadout.jutsuIds })
-            .where(eq(jutsuLoadout.id, loadout.id)),
+          updateJutsuLoadoutForEvolveJutsu(ctx.drizzle, loadout),
         ),
         // No-collision reskin carry-forward: update the reskin row's jutsuId so
         // createReskin's by-jutsuId lookup still works after evolution. (The
@@ -1007,26 +915,21 @@ export const jutsuRouter = createTRPCRouter({
         // consistent with removeReskin behaviour.)
         ...(userJutsuObj.reskinId && !conflictingReskin
           ? [
-              ctx.drizzle
-                .update(jutsuReskin)
-                .set({ jutsuId: input.evolutionJutsuId, updatedAt: new Date() })
-                .where(
-                  and(
-                    eq(jutsuReskin.id, userJutsuObj.reskinId),
-                    eq(jutsuReskin.userId, ctx.userId),
-                  ),
-                ),
+              updateJutsuReskinForEvolveJutsu(
+                ctx.drizzle,
+                input,
+                { reskinId: userJutsuObj.reskinId },
+                ctx,
+              ),
             ]
           : []),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "userJutsu",
-          changes: [`Evolved ${userJutsuObj.jutsu.name} into ${evolutionJutsu.name}`],
-          relatedId: input.evolutionJutsuId,
-          relatedMsg: "JutsuEvolution",
-          relatedImage: evolutionJutsu.image,
-        }),
+        insertActionLogForEvolveJutsu(
+          ctx.drizzle,
+          ctx,
+          userJutsuObj,
+          evolutionJutsu,
+          input,
+        ),
       ]);
       return { success: true, message: `Evolved into ${evolutionJutsu.name}!` };
     }),
@@ -1056,56 +959,42 @@ export const jutsuRouter = createTRPCRouter({
         fetchJutsu(ctx.drizzle, input.id),
         getJutsuRelations(ctx.drizzle, input.id),
         input.data.requiredSkillId
-          ? ctx.drizzle.query.skillTree.findFirst({
-              columns: { id: true, pathType: true },
-              where: eq(skillTree.id, input.data.requiredSkillId),
+          ? findRequiredSkillTreeEntry(ctx.drizzle, {
+              data: { requiredSkillId: input.data.requiredSkillId },
             })
           : Promise.resolve(null),
-        ctx.drizzle.query.jutsu.findFirst({
-          columns: { name: true, id: true },
-          where: eq(jutsu.name, input.data.name),
-        }),
+        findJutsuForUpdate(ctx.drizzle, input),
         input.data.parentJutsuId
           ? fetchJutsu(ctx.drizzle, input.data.parentJutsuId)
           : Promise.resolve(null),
         input.data.parentJutsuId
-          ? ctx.drizzle.query.jutsu.findMany({
-              columns: { id: true },
-              where: eq(jutsu.parentJutsuId, input.data.parentJutsuId),
+          ? listJutsuForUpdate(ctx.drizzle, {
+              data: { parentJutsuId: input.data.parentJutsuId },
             })
           : Promise.resolve([]),
         input.data.parentJutsuId
-          ? ctx.drizzle.query.jutsu.findMany({
-              columns: { id: true, parentJutsuId: true },
-              where: isNotNull(jutsu.parentJutsuId),
-            })
+          ? listJutsuForUpdate2(ctx.drizzle)
           : Promise.resolve([]),
         input.data.requiredBloodlineItemId && !input.data.reskinParentJutsuId
-          ? ctx.drizzle.query.item.findFirst({
-              columns: { id: true, bloodlineId: true },
-              where: eq(item.id, input.data.requiredBloodlineItemId),
+          ? findItemForUpdate(ctx.drizzle, {
+              data: { requiredBloodlineItemId: input.data.requiredBloodlineItemId },
             })
           : Promise.resolve(null),
         input.data.reskinParentJutsuId
           ? fetchJutsu(ctx.drizzle, input.data.reskinParentJutsuId)
           : Promise.resolve(null),
         input.data.bloodlineReskinId
-          ? ctx.drizzle.query.bloodlineReskin.findFirst({
-              where: eq(bloodlineReskin.id, input.data.bloodlineReskinId),
+          ? findBloodlineReskinForUpdate(ctx.drizzle, {
+              data: { bloodlineReskinId: input.data.bloodlineReskinId },
             })
           : Promise.resolve(null),
         input.data.requiredPetSpeciesId
-          ? ctx.drizzle.query.petSpecies.findFirst({
-              where: eq(petSpecies.id, input.data.requiredPetSpeciesId),
-              columns: { id: true },
+          ? findPetSpeciesForUpdate(ctx.drizzle, {
+              data: { requiredPetSpeciesId: input.data.requiredPetSpeciesId },
             })
           : Promise.resolve(null),
         input.data.requiredPetSpeciesId
-          ? ctx.drizzle.query.petSpecies.findMany({
-              // Retired species still keep defaults used by their owned companions.
-              columns: { id: true },
-              where: sql`JSON_CONTAINS(${petSpecies.defaultJutsuIds}, JSON_QUOTE(${input.id}))`,
-            })
+          ? listPetSpeciesForUpdate(ctx.drizzle, input)
           : Promise.resolve([]),
       ]);
       if (input.data.reskinParentJutsuId) {
@@ -1242,10 +1131,7 @@ export const jutsuRouter = createTRPCRouter({
       if (!saved.success) return errorResponse(saved.message);
       const diff = saved.diff;
       if (input.data.hidden) {
-        await ctx.drizzle
-          .update(userJutsu)
-          .set({ equipped: false })
-          .where(eq(userJutsu.jutsuId, entry.id));
+        await updateUserJutsuForUpdate(ctx.drizzle, entry);
       }
       await outdateProposalsFor(
         ctx.drizzle,
@@ -1298,11 +1184,9 @@ export const jutsuRouter = createTRPCRouter({
         fetchUserJutsus(ctx.drizzle, input.userId),
         ...(input.reskinId
           ? [
-              ctx.drizzle.query.jutsuReskin.findFirst({
-                where: and(
-                  eq(jutsuReskin.id, input.reskinId),
-                  eq(jutsuReskin.jutsuId, input.jutsuId),
-                ),
+              findJutsuReskinForAdjustUserJutsu(ctx.drizzle, {
+                reskinId: input.reskinId,
+                jutsuId: input.jutsuId,
               }),
             ]
           : []),
@@ -1346,24 +1230,8 @@ export const jutsuRouter = createTRPCRouter({
 
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .update(userJutsu)
-          .set(updateFields)
-          .where(
-            and(
-              eq(userJutsu.userId, input.userId),
-              eq(userJutsu.jutsuId, input.jutsuId),
-            ),
-          ),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes,
-          relatedId: input.userId,
-          relatedMsg: `Update: ${userjutsu.jutsu.name}`,
-          relatedImage: userjutsu.jutsu.image,
-        }),
+        updateUserJutsuForAdjustUserJutsu(ctx.drizzle, updateFields, input),
+        insertActionLogForAdjustUserJutsu(ctx.drizzle, ctx, changes, input, userjutsu),
       ]);
       return { success: true, message: `Jutsu updated` };
     }),
@@ -1531,27 +1399,20 @@ export const jutsuRouter = createTRPCRouter({
       // Deduct money first, but persist new-jutsu quest progress only after the
       // ownership insert is confirmed. A duplicate request can then refund its
       // own money without restoring a stale questData snapshot over the winner.
-      const moneyUpdate = await ctx.drizzle
-        .update(userData)
-        .set({ money: sql`${userData.money} - ${trainCost}` })
-        .where(and(eq(userData.userId, ctx.userId), gte(userData.money, trainCost)));
+      const moneyUpdate = await debitUserMoney(ctx.drizzle, trainCost, ctx);
       if (moneyUpdate.rowsAffected !== 1) {
         return errorResponse("You don't have enough money");
       }
 
       // Insert or update user jutsu
       if (userjutsuObj) {
-        await ctx.drizzle
-          .update(userJutsu)
-          .set({
-            level: sql`${userJutsu.level} + 1`,
-            trainingStartedAt,
-            finishTraining,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(eq(userJutsu.id, userjutsuObj.id), eq(userJutsu.userId, ctx.userId)),
-          );
+        await updateUserJutsuForStartTraining(
+          ctx.drizzle,
+          trainingStartedAt,
+          finishTraining,
+          userjutsuObj,
+          ctx,
+        );
       } else {
         // Soft pre-check whether auto-equip is likely to succeed. Insert already
         // equipped when the snapshot says yes; only the over-cap rollback CAS
@@ -1570,24 +1431,19 @@ export const jutsuRouter = createTRPCRouter({
         // already happened above, so refund it when this request definitively did not
         // insert. Quest progress has not been persisted yet and needs no compensation.
         const refundTrainCost = () =>
-          ctx.drizzle
-            .update(userData)
-            .set({ money: sql`${userData.money} + ${trainCost}` })
-            .where(eq(userData.userId, ctx.userId));
+          incrementUserMoney(ctx.drizzle, trainCost, ctx.userId);
 
         let insertedByThisRequest = false;
         try {
-          const insertResult = await ctx.drizzle
-            .insert(userJutsu)
-            .values({
-              id: newUserJutsuId,
-              userId: ctx.userId,
-              jutsuId: input.jutsuId,
-              trainingStartedAt,
-              finishTraining,
-              equipped: canAutoEquip,
-            })
-            .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+          const insertResult = await insertUserJutsuForStartTraining(
+            ctx.drizzle,
+            newUserJutsuId,
+            ctx,
+            input,
+            trainingStartedAt,
+            finishTraining,
+            canAutoEquip,
+          );
           insertedByThisRequest = insertResult.rowsAffected === 1;
         } catch {
           // A transport error can arrive after MySQL committed the insert. Re-read
@@ -1595,16 +1451,11 @@ export const jutsuRouter = createTRPCRouter({
           // session is never refunded and granted for free.
           let persisted: { id: string } | undefined;
           try {
-            [persisted] = await ctx.drizzle
-              .select({ id: userJutsu.id })
-              .from(userJutsu)
-              .where(
-                and(
-                  eq(userJutsu.userId, ctx.userId),
-                  eq(userJutsu.jutsuId, input.jutsuId),
-                ),
-              )
-              .limit(1);
+            [persisted] = await selectUserJutsuForStartTraining(
+              ctx.drizzle,
+              ctx,
+              input,
+            );
           } catch {
             return errorResponse(
               "Training status could not be confirmed — please refresh before retrying",
@@ -1629,10 +1480,7 @@ export const jutsuRouter = createTRPCRouter({
         }
 
         await Promise.all([
-          ctx.drizzle
-            .update(userData)
-            .set({ questData: questDataForDb })
-            .where(eq(userData.userId, ctx.userId)),
+          updateUserDataForEvolveJutsu(ctx.drizzle, questDataForDb, ctx),
           canAutoEquip
             ? rollbackEquipIfOverCap({
                 client: ctx.drizzle,
@@ -1680,16 +1528,7 @@ export const jutsuRouter = createTRPCRouter({
       if (!userjutsuObj) {
         return { success: false, message: "Not training any jutsu" };
       }
-      await ctx.drizzle
-        .update(userJutsu)
-        .set({
-          level: sql`${userJutsu.level} - 1`,
-          finishTraining: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(eq(userJutsu.id, userjutsuObj.id), eq(userJutsu.userId, ctx.userId)),
-        );
+      await updateUserJutsuForStopTraining(ctx.drizzle, userjutsuObj, ctx);
       // The next queued level starts now instead of in the stopped training's slot.
       if (waiting.length > 0) {
         await settleJutsuTrainingQueue(ctx.drizzle, ctx.userId, new Date(), waiting);
@@ -1707,11 +1546,7 @@ export const jutsuRouter = createTRPCRouter({
     })
     .output(jutsuTrainingQueueOutputSchema)
     .query(async ({ ctx }) => {
-      const fetchOwned = () =>
-        ctx.drizzle
-          .select({ jutsuId: userJutsu.jutsuId, level: userJutsu.level })
-          .from(userJutsu)
-          .where(eq(userJutsu.userId, ctx.userId));
+      const fetchOwned = () => selectUserJutsuForFetchOwned(ctx.drizzle, ctx);
       let [user, waiting, owned] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchJutsuTrainingQueue(ctx.drizzle, ctx.userId),
@@ -1786,16 +1621,8 @@ export const jutsuRouter = createTRPCRouter({
       const loadout = loadouts.find((l) => l.id === user.jutsuLoadout);
 
       await Promise.all([
-        ctx.drizzle
-          .update(userJutsu)
-          .set({ equipped: false })
-          .where(eq(userJutsu.userId, ctx.userId)),
-        loadout
-          ? ctx.drizzle
-              .update(jutsuLoadout)
-              .set({ jutsuIds: [] })
-              .where(eq(jutsuLoadout.id, loadout.id))
-          : null,
+        updateUserJutsuForUnequipAll(ctx.drizzle, ctx),
+        loadout ? updateJutsuLoadoutForUnequipAll(ctx.drizzle, loadout) : null,
       ]);
 
       return { success: true, message: "All jutsu unequipped" };
@@ -1896,33 +1723,20 @@ export const jutsuRouter = createTRPCRouter({
             jutsuId: userjutsuObj.jutsuId,
           });
           if (!synced) {
-            const rolledBack = await ctx.drizzle
-              .update(userJutsu)
-              .set({ equipped: false })
-              .where(
-                and(
-                  eq(userJutsu.id, input.userJutsuId),
-                  eq(userJutsu.userId, ctx.userId),
-                  eq(userJutsu.equipped, true),
-                  activeJutsuLoadoutLacksJutsuSql(ctx.userId, userjutsuObj.jutsuId),
-                ),
-              );
+            const rolledBack = await updateUserJutsuForToggleEquip(
+              ctx.drizzle,
+              input,
+              ctx,
+              activeJutsuLoadoutLacksJutsuSql,
+              userjutsuObj,
+            );
             if (rolledBack.rowsAffected === 1) {
               return errorResponse("Failed to update loadout — please retry");
             }
             // 0 rows: either a concurrent writer already put this id in the
             // active loadout (leave equipped), or a concurrent unequip already
             // flipped the row. Only report success when the row is still on.
-            const [row] = await ctx.drizzle
-              .select({ equipped: userJutsu.equipped })
-              .from(userJutsu)
-              .where(
-                and(
-                  eq(userJutsu.id, input.userJutsuId),
-                  eq(userJutsu.userId, ctx.userId),
-                ),
-              )
-              .limit(1);
+            const [row] = await selectUserJutsuForToggleEquip(ctx.drizzle, input, ctx);
             if (!row?.equipped) {
               return errorResponse("Failed to update loadout — please retry");
             }
@@ -1944,33 +1758,18 @@ export const jutsuRouter = createTRPCRouter({
           }
         }
         try {
-          const unequipped = await ctx.drizzle
-            .update(userJutsu)
-            .set({ equipped: false })
-            .where(
-              and(
-                eq(userJutsu.id, input.userJutsuId),
-                eq(userJutsu.userId, ctx.userId),
-                eq(userJutsu.equipped, true),
-                // If a concurrent selectJutsuLoadout activated another loadout
-                // containing this jutsu after the removal above, leave the row
-                // equipped so the newly active loadout remains consistent.
-                activeJutsuLoadoutLacksJutsuSql(ctx.userId, userjutsuObj.jutsuId),
-              ),
-            );
+          const unequipped = await updateUserJutsuForToggleEquip(
+            ctx.drizzle,
+            input,
+            ctx,
+            activeJutsuLoadoutLacksJutsuSql,
+            userjutsuObj,
+          );
           if (unequipped.rowsAffected !== 1) {
             const [row, activeIds] = await Promise.all([
-              ctx.drizzle
-                .select({ equipped: userJutsu.equipped })
-                .from(userJutsu)
-                .where(
-                  and(
-                    eq(userJutsu.id, input.userJutsuId),
-                    eq(userJutsu.userId, ctx.userId),
-                  ),
-                )
-                .limit(1)
-                .then((rows) => rows[0]),
+              selectUserJutsuForToggleEquip(ctx.drizzle, input, ctx).then(
+                (rows) => rows[0],
+              ),
               fetchActiveLoadoutJutsuIds(ctx.drizzle, ctx.userId),
             ]);
             if (row && !row.equipped && !activeIds?.includes(userjutsuObj.jutsuId)) {
@@ -1985,16 +1784,7 @@ export const jutsuRouter = createTRPCRouter({
             );
           }
         } catch {
-          const [row] = await ctx.drizzle
-            .select({ equipped: userJutsu.equipped })
-            .from(userJutsu)
-            .where(
-              and(
-                eq(userJutsu.id, input.userJutsuId),
-                eq(userJutsu.userId, ctx.userId),
-              ),
-            )
-            .limit(1);
+          const [row] = await selectUserJutsuForToggleEquip(ctx.drizzle, input, ctx);
           if (row && !row.equipped) {
             // Unequip committed despite the lost/failed response — loadout already
             // removed; treat as success rather than restoring a stale id.
@@ -2053,10 +1843,7 @@ export const jutsuRouter = createTRPCRouter({
       newOrder.push(input.jutsuId);
       newOrder.push(...loadout.jutsuIds.filter((id) => !newOrder.includes(id)));
 
-      await ctx.drizzle
-        .update(jutsuLoadout)
-        .set({ jutsuIds: newOrder })
-        .where(eq(jutsuLoadout.id, loadout.id));
+      await updateJutsuLoadoutForUpdateUserJutsuOrder(ctx.drizzle, newOrder, loadout);
 
       return {
         success: true,
@@ -2076,23 +1863,11 @@ export const jutsuRouter = createTRPCRouter({
       ]);
       return applyLoadoutRename(
         decideRename(loadouts, fedJutsuLoadouts(user), input),
-        (name) =>
-          ctx.drizzle
-            .update(jutsuLoadout)
-            .set({ name })
-            .where(
-              and(eq(jutsuLoadout.id, input.id), eq(jutsuLoadout.userId, ctx.userId)),
-            ),
+        (name) => updateJutsuLoadoutForRenameLoadout(ctx.drizzle, name, input, ctx),
         () =>
-          ctx.drizzle.query.jutsuLoadout
-            .findFirst({
-              columns: { id: true },
-              where: and(
-                eq(jutsuLoadout.id, input.id),
-                eq(jutsuLoadout.userId, ctx.userId),
-              ),
-            })
-            .then((row) => !!row),
+          findJutsuLoadoutForRenameLoadout(ctx.drizzle, input, ctx).then(
+            (row) => !!row,
+          ),
       );
     }),
 
@@ -2137,66 +1912,30 @@ export const jutsuRouter = createTRPCRouter({
       // Run mutation (free update or new)
       if (existingReskin) {
         await Promise.all([
-          ctx.drizzle
-            .update(jutsuReskin)
-            .set({
-              name: input.name,
-              description: input.description,
-              battleDescription: input.battleDescription,
-              image: resolvedImage,
-              updatedAt: new Date(),
-            })
-            .where(eq(jutsuReskin.id, existingReskin.id)),
-          ctx.drizzle
-            .update(userJutsu)
-            .set({
-              reskinId: existingReskin.id,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(userJutsu.jutsuId, jutsuData.id),
-                eq(userJutsu.userId, ctx.userId),
-              ),
-            ),
+          updateJutsuReskinForCreateReskin(
+            ctx.drizzle,
+            input,
+            resolvedImage,
+            existingReskin,
+          ),
+          updateUserJutsuForCreateReskin(ctx.drizzle, existingReskin, jutsuData, ctx),
         ]);
         return { success: true, message: "Jutsu reskin updated successfully" };
       } else {
         const reskinId = nanoid();
         await Promise.all([
-          ctx.drizzle
-            .update(userJutsu)
-            .set({
-              reskinId: reskinId,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(userJutsu.jutsuId, jutsuData.id),
-                eq(userJutsu.userId, ctx.userId),
-              ),
-            ),
-          ctx.drizzle.insert(jutsuReskin).values({
-            id: reskinId,
-            userId: ctx.userId,
-            jutsuId: jutsuData.id,
-            name: input.name ?? jutsuData.name,
-            description: input.description ?? jutsuData.description,
-            battleDescription: input.battleDescription ?? jutsuData.battleDescription,
-            image: resolvedImage,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          }),
+          updateUserJutsuForCreateReskin2(ctx.drizzle, reskinId, jutsuData, ctx),
+          insertJutsuReskinForCreateReskin(
+            ctx.drizzle,
+            reskinId,
+            ctx,
+            jutsuData,
+            input,
+            resolvedImage,
+          ),
           ...(canReskinFreely(user.role)
             ? []
-            : [
-                ctx.drizzle
-                  .update(userData)
-                  .set({
-                    reputationPoints: sql`${userData.reputationPoints} - ${COST_RESKIN_JUTSU}`,
-                  })
-                  .where(eq(userData.userId, ctx.userId)),
-              ]),
+            : [updateUserDataForCreateReskin(ctx.drizzle, ctx)]),
         ]);
 
         return { success: true, message: "Jutsu reskin created successfully" };
@@ -2210,42 +1949,17 @@ export const jutsuRouter = createTRPCRouter({
       const { reason, username, jutsuId, attached, ...cosmetics } = input.data;
       // The assignment target is resolved by username inside each query, so every
       // lookup runs in parallel.
-      const targetUserId = ctx.drizzle
-        .select({ userId: userData.userId })
-        .from(userData)
-        .where(eq(userData.username, username));
+      const targetUserId = selectUserDataForUpdateReskin(ctx.drizzle, username);
       // Query
       const [user, reskin, targetUser, targetJutsu, conflict, targetUserJutsu, usages] =
         await Promise.all([
           fetchUser(ctx.drizzle, ctx.userId),
           fetchReskin(ctx.drizzle, input.reskinId),
-          ctx.drizzle.query.userData.findFirst({
-            columns: { userId: true, username: true },
-            where: eq(userData.username, username),
-          }),
-          ctx.drizzle.query.jutsu.findFirst({
-            columns: { id: true, name: true },
-            where: eq(jutsu.id, jutsuId),
-          }),
-          ctx.drizzle.query.jutsuReskin.findFirst({
-            columns: { id: true },
-            where: and(
-              eq(jutsuReskin.userId, targetUserId),
-              eq(jutsuReskin.jutsuId, jutsuId),
-              ne(jutsuReskin.id, input.reskinId),
-            ),
-          }),
-          ctx.drizzle.query.userJutsu.findFirst({
-            columns: { id: true, reskinId: true },
-            where: and(
-              eq(userJutsu.userId, targetUserId),
-              eq(userJutsu.jutsuId, jutsuId),
-            ),
-          }),
-          ctx.drizzle.query.userJutsu.findMany({
-            columns: { id: true, userId: true, jutsuId: true },
-            where: eq(userJutsu.reskinId, input.reskinId),
-          }),
+          findUserDataForUpdateReskin(ctx.drizzle, username),
+          findJutsuForUpdateReskin(ctx.drizzle, jutsuId),
+          findJutsuReskinForUpdateReskin(ctx.drizzle, targetUserId, jutsuId, input),
+          findUserJutsuForUpdateReskin(ctx.drizzle, targetUserId, jutsuId),
+          listUserJutsuForUpdateReskin(ctx.drizzle, input),
         ]);
       // Guards
       if (user.isBanned)
@@ -2299,63 +2013,34 @@ export const jutsuRouter = createTRPCRouter({
       // AI moderation of reason
       const aiCheck = await validateUserUpdateReason(diff.join(". "), reason);
       if (!aiCheck.allowUpdate) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "jutsu",
-          changes: [`Reskin update rejected by AI: ${aiCheck.comment}`],
-          relatedId: reskin.jutsuId,
-          relatedMsg: `Reskin update rejected by AI: ${reason}`,
-          relatedImage: reskin.image,
-        });
+        await insertActionLogForUpdateReskin(ctx.drizzle, ctx, aiCheck, reskin, reason);
         return errorResponse(aiCheck.comment);
       }
 
       // Staff-only cosmetic repairs are reversible. Keep the writes parallel;
       // concurrent staff edits may need another repair, but grant no player value.
       await Promise.all([
-        ctx.drizzle
-          .update(jutsuReskin)
-          .set({
-            userId: targetUser.userId,
-            jutsuId: targetJutsu.id,
-            name: cosmetics.name,
-            description: cosmetics.description,
-            battleDescription: cosmetics.battleDescription,
-            image: cosmetics.image ?? reskin.image,
-            updatedAt: new Date(),
-          })
-          .where(eq(jutsuReskin.id, reskin.id)),
+        updateJutsuReskinForUpdateReskin(
+          ctx.drizzle,
+          targetUser,
+          targetJutsu,
+          cosmetics,
+          reskin,
+        ),
         ...(detachIds.length > 0
-          ? [
-              ctx.drizzle
-                .update(userJutsu)
-                .set({ reskinId: null, updatedAt: new Date() })
-                .where(
-                  and(
-                    inArray(userJutsu.id, detachIds),
-                    eq(userJutsu.reskinId, reskin.id),
-                  ),
-                ),
-            ]
+          ? [updateUserJutsuForUpdateReskin(ctx.drizzle, detachIds, reskin)]
           : []),
         ...(shouldAttach
-          ? [
-              ctx.drizzle
-                .update(userJutsu)
-                .set({ reskinId: reskin.id, updatedAt: new Date() })
-                .where(eq(userJutsu.id, targetUserJutsu.id)),
-            ]
+          ? [updateUserJutsuForUpdateReskin2(ctx.drizzle, reskin, targetUserJutsu)]
           : []),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "jutsu",
-          changes: diff,
-          relatedId: targetJutsu.id,
-          relatedMsg: `Reskin updated: ${targetJutsu.name}`,
-          relatedImage: cosmetics.image ?? reskin.image,
-        }),
+        insertActionLogForUpdateReskin2(
+          ctx.drizzle,
+          ctx,
+          diff,
+          targetJutsu,
+          cosmetics,
+          reskin,
+        ),
       ]);
 
       return { success: true, message: "Jutsu reskin updated successfully" };
@@ -2384,21 +2069,12 @@ export const jutsuRouter = createTRPCRouter({
       // Query reskins joined with jutsu to allow filtering via jutsuDatabaseFilter.
       // Reskins whose base jutsu was deleted (jutsu is null) bypass the jutsu
       // filters and are listed first, so staff can re-point them with updateReskin.
-      const rows = await ctx.drizzle
-        .select({
-          reskin: jutsuReskin,
-          jutsu: jutsu,
-          bloodlineName: bloodline.name,
-          userUsername: userData.username,
-        })
-        .from(jutsuReskin)
-        .leftJoin(jutsu, eq(jutsuReskin.jutsuId, jutsu.id))
-        .leftJoin(bloodline, eq(jutsu.bloodlineId, bloodline.id))
-        .innerJoin(userData, eq(jutsuReskin.userId, userData.userId))
-        .where(jutsuFilters ? or(isNull(jutsu.id), jutsuFilters) : undefined)
-        .orderBy(asc(isNotNull(jutsu.id)), desc(jutsuReskin.updatedAt))
-        .offset(skip)
-        .limit(input.limit);
+      const rows = await selectJutsuReskinForGetAllReskins(
+        ctx.drizzle,
+        jutsuFilters,
+        skip,
+        input,
+      );
 
       // Map back to the previous shape used by the frontend consumer
       const results = rows
@@ -2437,15 +2113,7 @@ export const jutsuRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get all reskins for a jutsu" } })
     .input(z.object({ jutsuId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const reskins = await ctx.drizzle.query.jutsuReskin.findMany({
-        where: eq(jutsuReskin.jutsuId, input.jutsuId),
-        orderBy: (table, { desc }) => [desc(table.updatedAt)],
-        with: {
-          user: {
-            columns: { username: true },
-          },
-        },
-      });
+      const reskins = await listJutsuReskinForGetReskinsForJutsu(ctx.drizzle, input);
       return reskins;
     }),
 
@@ -2457,10 +2125,7 @@ export const jutsuRouter = createTRPCRouter({
       const [user, reskin, usages] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchReskin(ctx.drizzle, input.reskinId),
-        ctx.drizzle.query.userJutsu.findMany({
-          columns: { userId: true, jutsuId: true },
-          where: eq(userJutsu.reskinId, input.reskinId),
-        }),
+        listUserJutsuForGetReskin(ctx.drizzle, input),
       ]);
       // Guard - players only see their own reskins, staff can see any
       if (!reskin || (reskin.userId !== ctx.userId && !canModerateReskin(user.role))) {
@@ -2474,13 +2139,7 @@ export const jutsuRouter = createTRPCRouter({
     .input(z.object({ userJutsuId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       // Query
-      const userJutsuData = await ctx.drizzle.query.userJutsu.findFirst({
-        where: and(
-          eq(userJutsu.id, input.userJutsuId),
-          eq(userJutsu.userId, ctx.userId),
-        ),
-        with: { activeReskin: true },
-      });
+      const userJutsuData = await findUserJutsuForRemoveReskin(ctx.drizzle, input, ctx);
       // Guard
       if (!userJutsuData) {
         return errorResponse("User jutsu not found");
@@ -2489,17 +2148,7 @@ export const jutsuRouter = createTRPCRouter({
         return errorResponse("No reskin found for this jutsu");
       }
       // Remove the reskin (but keep the record for history + free future updates)
-      await Promise.all([
-        ctx.drizzle
-          .update(userJutsu)
-          .set({
-            reskinId: null,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(eq(userJutsu.id, input.userJutsuId), eq(userJutsu.userId, ctx.userId)),
-          ),
-      ]);
+      await Promise.all([updateUserJutsuForRemoveReskin(ctx.drizzle, input, ctx)]);
       // Return
       return {
         success: true,
@@ -2533,59 +2182,17 @@ export const getJutsuRelations = async (client: DrizzleClient, jutsuId: string) 
     linkedReskins,
     playerReskins,
   ] = await Promise.all([
-    client.query.jutsu.findMany({
-      columns: { id: true, name: true },
-      where: sql`JSON_SEARCH(${jutsu.effects}, 'one', ${jutsuId}, NULL, '$[*].jutsuIds[*]') IS NOT NULL
-               AND JSON_SEARCH(${jutsu.effects}, 'one', 'injectjutsus', NULL, '$[*].type') IS NOT NULL`,
-    }),
-    client.query.bloodline.findMany({
-      columns: { id: true, name: true },
-      where: sql`JSON_SEARCH(${bloodline.effects}, 'one', ${jutsuId}, NULL, '$[*].jutsuIds[*]') IS NOT NULL
-               AND JSON_SEARCH(${bloodline.effects}, 'one', 'injectjutsus', NULL, '$[*].type') IS NOT NULL`,
-    }),
-    client.query.skillTree.findMany({
-      columns: { id: true, name: true },
-      where: sql`JSON_SEARCH(${skillTree.effects}, 'one', ${jutsuId}, NULL, '$[*].jutsuIds[*]') IS NOT NULL
-               AND JSON_SEARCH(${skillTree.effects}, 'one', 'injectjutsus', NULL, '$[*].type') IS NOT NULL`,
-    }),
-    client.query.item.findMany({
-      columns: { id: true, name: true },
-      where: sql`JSON_SEARCH(${item.effects}, 'one', ${jutsuId}, NULL, '$[*].jutsuIds[*]') IS NOT NULL
-               AND JSON_SEARCH(${item.effects}, 'one', 'injectjutsus', NULL, '$[*].type') IS NOT NULL`,
-    }),
-    client
-      .select({
-        name: userData.username,
-        id: userData.userId,
-      })
-      .from(userJutsu)
-      .innerJoin(userData, eq(userJutsu.userId, userData.userId))
-      .where(and(eq(userJutsu.jutsuId, jutsuId), eq(userData.isAi, true))),
-    client.query.quest.findMany({
-      columns: { id: true, name: true },
-      where: sql`(
-        JSON_SEARCH(${quest.content}, 'one', ${jutsuId}, NULL, '$.reward.reward_jutsus[*]') IS NOT NULL
-        OR JSON_SEARCH(${quest.content}, 'one', ${jutsuId}, NULL, '$.objectives[*].reward_jutsus[*]') IS NOT NULL
-      )`,
-    }),
-    client.query.jutsu.findMany({
-      columns: { id: true, name: true },
-      where: eq(jutsu.parentJutsuId, jutsuId),
-    }),
-    client.query.jutsu.findMany({
-      columns: { id: true, name: true },
-      where: eq(jutsu.reskinParentJutsuId, jutsuId),
-    }),
+    listJutsuForGetJutsuRelations(client, jutsuId),
+    listBloodlineForGetJutsuRelations(client, jutsuId),
+    listSkillTreeForGetJutsuRelations(client, jutsuId),
+    listItemForGetJutsuRelations(client, jutsuId),
+    selectUserJutsuForGetJutsuRelations(client, jutsuId),
+    listQuestForGetJutsuRelations(client, jutsuId),
+    listJutsuForGetJutsuRelations2(client, jutsuId),
+    listJutsuForGetJutsuRelations3(client, jutsuId),
     // Player-owned reskins reference the jutsu by id; staff re-point them with
     // updateReskin before the jutsu can be deleted.
-    client
-      .select({
-        id: jutsuReskin.id,
-        name: sql<string>`CONCAT(${jutsuReskin.name}, ' (', COALESCE(${userData.username}, ${jutsuReskin.userId}), ')')`,
-      })
-      .from(jutsuReskin)
-      .leftJoin(userData, eq(jutsuReskin.userId, userData.userId))
-      .where(eq(jutsuReskin.jutsuId, jutsuId)),
+    selectJutsuReskinForGetJutsuRelations(client, jutsuId),
   ]);
 
   return {
@@ -2619,10 +2226,7 @@ const prepareJutsuLoadoutImport = async (
     fetchJutsuLoadouts(client, userId),
     fetchUpdatedUser({ client, userId }),
     fetchUserJutsus(client, userId),
-    client.query.jutsu.findMany({
-      where: inArray(jutsu.id, jutsuIds),
-      columns: { id: true, name: true, hidden: true },
-    }),
+    listJutsuForPrepareJutsuLoadoutImport(client, jutsuIds),
   ]);
   const { user } = data;
   if (!user) return errorResponse("User not found");
@@ -2661,56 +2265,6 @@ const prepareJutsuLoadoutImport = async (
   };
 };
 
-/** Fetch the stable slot order used for both display and allowance checks. */
-export const fetchJutsuLoadouts = async (client: DrizzleClient, userId: string) => {
-  return await client.query.jutsuLoadout.findMany({
-    where: eq(jutsuLoadout.userId, userId),
-    // id is the deterministic tie-breaker so ties on createdAt (possible after a
-    // batched backfill) keep a stable order across reads.
-    orderBy: (table) => [asc(table.createdAt), asc(table.id)],
-  });
-};
-
-/**
- * Fetch a jutsu by id (for reskin update)
- * @param client - The database client
- * @param id - The ID of the jutsu to fetch
- * @returns A promise that resolves to the result of the select
- */
-export const fetchJutsu = async (client: DrizzleClient, id: string) => {
-  return await client.query.jutsu.findFirst({
-    where: eq(jutsu.id, id),
-  });
-};
-
-/**
- * Fetch a reskin by ID, regardless of owner. Callers decide who may access it.
- * @param client - The database client
- * @param reskinId - The ID of the reskin to fetch
- * @returns A promise that resolves to the result of the select
- */
-export const fetchReskin = async (client: DrizzleClient, reskinId: string) => {
-  return await client.query.jutsuReskin.findFirst({
-    where: eq(jutsuReskin.id, reskinId),
-    with: {
-      jutsu: {
-        with: {
-          bloodline: {
-            columns: {
-              name: true,
-            },
-          },
-        },
-      },
-      user: {
-        columns: {
-          username: true,
-        },
-      },
-    },
-  });
-};
-
 /**
  * Whether the reskin's owner has it active on their copy of the reskinned jutsu
  * @param reskin - The reskin, with its owner and base jutsu
@@ -2723,21 +2277,6 @@ const isAttachedToOwner = (
   return usages.some(
     (usage) => usage.userId === reskin.userId && usage.jutsuId === reskin.jutsuId,
   );
-};
-
-/**
- * Fetch all reskins for a user whose base jutsu still exists
- * @param client - The database client
- * @param userId - The ID of the user to fetch reskins for
- * @returns A promise that resolves to the result of the select
- */
-export const fetchUserReskins = async (client: DrizzleClient, userId: string) => {
-  // Inner join so reskins whose base jutsu was deleted do not occupy reskin slots
-  return await client
-    .select(getTableColumns(jutsuReskin))
-    .from(jutsuReskin)
-    .innerJoin(jutsu, eq(jutsuReskin.jutsuId, jutsu.id))
-    .where(eq(jutsuReskin.userId, userId));
 };
 
 /**
@@ -2754,28 +2293,10 @@ export const fetchUserJutsus = async (
   options: { applyReskins?: boolean } = {},
 ) => {
   // Self-join alias to get the parent jutsu's parentJutsuId (grandparent)
-  const parentJutsuAlias = alias(jutsu, "parentJutsu");
-  const linkedReskinAlias = alias(jutsu, "linkedReskinName");
+
   // Use the same ordering as fetchBloodlineJutsuReskins so only the resolved
   // variant's name matches when a group contains multiple variants of a parent.
-  const linkedReskinName = client
-    .select({ name: linkedReskinAlias.name })
-    .from(userData)
-    .innerJoin(
-      linkedReskinAlias,
-      and(
-        eq(linkedReskinAlias.bloodlineReskinId, userData.bloodlineReskinId),
-        eq(linkedReskinAlias.bloodlineId, userData.bloodlineId),
-      ),
-    )
-    .where(
-      and(
-        eq(userData.userId, userId),
-        eq(linkedReskinAlias.reskinParentJutsuId, jutsu.id),
-      ),
-    )
-    .orderBy(desc(linkedReskinAlias.updatedAt), asc(linkedReskinAlias.id))
-    .limit(1);
+  const linkedReskinName = selectUserDataForFetchUserJutsus(client, userId);
   const filters = jutsuDatabaseFilter(input, true, sql`(${linkedReskinName})`);
   // Equipped slots stay visible; only the unequipped categories follow search filters.
   const inventoryFilter =
@@ -2785,17 +2306,7 @@ export const fetchUserJutsus = async (
   // Grab all userJutsus with Jutsu data and reskin data
   const [linkedReskins, userjutsus] = await Promise.all([
     fetchBloodlineJutsuReskins(client, [userId]),
-    client
-      .select()
-      .from(userJutsu)
-      .innerJoin(jutsu, eq(userJutsu.jutsuId, jutsu.id))
-      .leftJoin(bloodline, eq(jutsu.bloodlineId, bloodline.id))
-      .leftJoin(jutsuReskin, eq(userJutsu.reskinId, jutsuReskin.id))
-      .leftJoin(parentJutsuAlias, eq(jutsu.parentJutsuId, parentJutsuAlias.id))
-      .where(
-        and(eq(userJutsu.userId, userId), ne(jutsu.jutsuType, "AI"), inventoryFilter),
-      )
-      .orderBy(desc(userJutsu.level)),
+    selectUserJutsuForFetchUserJutsus(client, userId, inventoryFilter),
   ]);
   // First map to query-format
   const unskinnedUserJutsus = userjutsus.map((result) => ({
@@ -2821,26 +2332,6 @@ export const fetchUserJutsus = async (
   return options.applyReskins === false
     ? unskinnedUserJutsus
     : unskinnedUserJutsus.map((userjutsu) => getReskinnedUserJutsu(userjutsu));
-};
-
-/** Load variants only for the player's selected reskin and current underlying bloodline. */
-export const fetchBloodlineJutsuReskins = async (
-  client: DrizzleClient,
-  userIds: string[],
-) => {
-  if (!userIds.length) return [];
-  return client
-    .select({ userId: userData.userId, jutsu })
-    .from(userData)
-    .innerJoin(
-      jutsu,
-      and(
-        eq(jutsu.bloodlineReskinId, userData.bloodlineReskinId),
-        eq(jutsu.bloodlineId, userData.bloodlineId),
-      ),
-    )
-    .where(inArray(userData.userId, userIds))
-    .orderBy(desc(jutsu.updatedAt), asc(jutsu.id));
 };
 
 /**
@@ -3193,13 +2684,7 @@ export const selectJutsuLoadout = async (
     equipIds.length > 0
       ? sql`CASE WHEN ${inArray(userJutsu.jutsuId, equipIds)} THEN 1 ELSE 0 END`
       : sql`0`;
-  await client.execute(sql`
-    UPDATE ${userData}
-    LEFT JOIN ${userJutsu} ON ${userJutsu.userId} = ${userData.userId}
-    SET ${userData.jutsuLoadout} = ${loadout.id},
-        ${userJutsu.equipped} = ${equippedAssignment}
-    WHERE ${userData.userId} = ${user.userId}
-  `);
+  await executeRowsForSelectJutsuLoadout(client, loadout, equippedAssignment, user);
 
   const message =
     invalidJutsus.length > 0
@@ -3343,17 +2828,14 @@ export const rollbackEquipIfOverCap = async (args: {
   flags: JutsuCapFlags;
 }): Promise<boolean> => {
   const { client, userId, userJutsuId, maxEquip, flags } = args;
-  const rollback = await client
-    .update(userJutsu)
-    .set({ equipped: false })
-    .where(
-      and(
-        eq(userJutsu.id, userJutsuId),
-        eq(userJutsu.userId, userId),
-        eq(userJutsu.equipped, true),
-        equipCapRollbackGuardSql(userId, maxEquip, flags),
-      ),
-    );
+  const rollback = await updateUserJutsuForRollbackEquipIfOverCap(
+    client,
+    userJutsuId,
+    userId,
+    equipCapRollbackGuardSql,
+    maxEquip,
+    flags,
+  );
   return rollback.rowsAffected === 0;
 };
 
@@ -3378,24 +2860,21 @@ export const tryEquipUserJutsuAtomically = async (args: {
 }): Promise<TryEquipUserJutsuResult> => {
   const { client, userId, userJutsuId, maxEquip, flags } = args;
 
-  const result = await client
-    .update(userJutsu)
-    .set({ equipped: true, updatedAt: new Date() })
-    .where(
-      and(
-        eq(userJutsu.id, userJutsuId),
-        eq(userJutsu.userId, userId),
-        eq(userJutsu.equipped, false),
-        equipCapUnderGuardSql(userId, maxEquip, flags),
-      ),
-    );
+  const result = await updateUserJutsuForTryEquipUserJutsuAtomically(
+    client,
+    userJutsuId,
+    userId,
+    equipCapUnderGuardSql,
+    maxEquip,
+    flags,
+  );
   if (result.rowsAffected !== 1) {
     // Distinguish double-click / concurrent equip from a genuine cap rejection.
-    const [row] = await client
-      .select({ equipped: userJutsu.equipped })
-      .from(userJutsu)
-      .where(and(eq(userJutsu.id, userJutsuId), eq(userJutsu.userId, userId)))
-      .limit(1);
+    const [row] = await selectUserJutsuForTryEquipUserJutsuAtomically(
+      client,
+      userJutsuId,
+      userId,
+    );
     return row?.equipped ? "already-equipped" : "cap-reached";
   }
 
@@ -3429,20 +2908,6 @@ const activeJutsuLoadoutLacksJutsuSql = (userId: string, jutsuId: string) =>
     WHERE JSON_CONTAINS(active_loadout.ids, JSON_QUOTE(${jutsuId}))
   )`;
 
-/** Active loadout's jutsuIds, or null when the user has no pointer / join miss. */
-const fetchActiveLoadoutJutsuIds = async (
-  client: DrizzleClient,
-  userId: string,
-): Promise<string[] | null> => {
-  const [active] = await client
-    .select({ jutsuIds: jutsuLoadout.jutsuIds })
-    .from(userData)
-    .innerJoin(jutsuLoadout, eq(jutsuLoadout.id, userData.jutsuLoadout))
-    .where(and(eq(userData.userId, userId), eq(jutsuLoadout.userId, userId)))
-    .limit(1);
-  return active?.jutsuIds ?? null;
-};
-
 /**
  * Append a jutsuId to a loadout's JSON array without rewriting the whole array, so
  * concurrent equips cannot drop each other's IDs. Idempotent via NOT JSON_CONTAINS.
@@ -3458,19 +2923,13 @@ const appendJutsuIdToLoadoutAtomically = async (args: {
 }): Promise<boolean> => {
   const { client, loadoutId, userId, jutsuId } = args;
   try {
-    const result = await client
-      .update(jutsuLoadout)
-      .set({
-        jutsuIds: sql`JSON_ARRAY_APPEND(${jutsuLoadout.jutsuIds}, '$', ${jutsuId})`,
-      })
-      .where(
-        and(
-          eq(jutsuLoadout.id, loadoutId),
-          eq(jutsuLoadout.userId, userId),
-          isActiveJutsuLoadoutSql(userId, loadoutId),
-          sql`NOT JSON_CONTAINS(${jutsuLoadout.jutsuIds}, JSON_QUOTE(${jutsuId}))`,
-        ),
-      );
+    const result = await updateJutsuLoadoutForAppendJutsuIdToLoadoutAtomically(
+      client,
+      jutsuId,
+      loadoutId,
+      userId,
+      isActiveJutsuLoadoutSql,
+    );
     if (result.rowsAffected === 1) return true;
     // Already present, pointer moved, or missing loadout — check the active one.
     const ids = await fetchActiveLoadoutJutsuIds(client, userId);
@@ -3502,23 +2961,14 @@ const removeJutsuIdFromLoadoutAtomically = async (args: {
   const { client, loadoutId, userId, jutsuId } = args;
   const searchPattern = escapeJsonSearchPattern(jutsuId);
   try {
-    const result = await client
-      .update(jutsuLoadout)
-      .set({
-        jutsuIds: sql`JSON_REMOVE(
-          ${jutsuLoadout.jutsuIds},
-          JSON_UNQUOTE(JSON_SEARCH(${jutsuLoadout.jutsuIds}, 'one', ${searchPattern}, ${"\\"}))
-        )`,
-      })
-      .where(
-        and(
-          eq(jutsuLoadout.id, loadoutId),
-          eq(jutsuLoadout.userId, userId),
-          isActiveJutsuLoadoutSql(userId, loadoutId),
-          // Exact membership — do not use unescaped JSON_SEARCH (LIKE wildcards).
-          sql`JSON_CONTAINS(${jutsuLoadout.jutsuIds}, JSON_QUOTE(${jutsuId}))`,
-        ),
-      );
+    const result = await updateJutsuLoadoutForRemoveJutsuIdFromLoadoutAtomically(
+      client,
+      searchPattern,
+      loadoutId,
+      userId,
+      isActiveJutsuLoadoutSql,
+      jutsuId,
+    );
     if (result.rowsAffected === 1) return true;
     // Pointer moved or already absent — only the active loadout must lack this id.
     const ids = await fetchActiveLoadoutJutsuIds(client, userId);
@@ -3553,12 +3003,7 @@ const saveJutsuFamily = async (
           ].filter((id): id is string => !!id),
         ),
       ].sort();
-      const locked = await tx
-        .select()
-        .from(jutsu)
-        .where(inArray(jutsu.id, lockIds))
-        .orderBy(asc(jutsu.id))
-        .for("update");
+      const locked = await selectJutsuForSaveJutsuFamily(tx, lockIds);
       const current = locked.find((row) => row.id === entry.id);
       if (!current || current.updatedAt.getTime() !== entry.updatedAt.getTime())
         return errorResponse("Jutsu changed; refresh before saving");
@@ -3566,15 +3011,7 @@ const saveJutsuFamily = async (
       const evolutionParent = locked.find((row) => row.id === data.parentJutsuId);
       if (evolutionParent?.reskinParentJutsuId)
         return errorResponse("Reskins cannot be evolution parents");
-      const related = await tx
-        .select()
-        .from(jutsu)
-        .where(
-          or(
-            eq(jutsu.reskinParentJutsuId, entry.id),
-            data.reskinParentJutsuId ? eq(jutsu.parentJutsuId, entry.id) : undefined,
-          ),
-        );
+      const related = await selectJutsuForSaveJutsuFamily2(tx, entry, data);
       const children = related.filter((row) => row.reskinParentJutsuId === entry.id);
       if (
         data.reskinParentJutsuId &&
@@ -3598,11 +3035,9 @@ const saveJutsuFamily = async (
           effects: inheritJutsuReskinEffects(parent.effects, data.effects),
         };
         if (data.bloodlineReskinId) {
-          const [group] = await tx
-            .select()
-            .from(bloodlineReskin)
-            .where(eq(bloodlineReskin.id, data.bloodlineReskinId))
-            .for("update");
+          const [group] = await selectBloodlineReskinForSaveJutsuFamily(tx, {
+            bloodlineReskinId: data.bloodlineReskinId,
+          });
           if (!group || group.bloodlineId !== parent.bloodlineId)
             return errorResponse("Bloodline reskin no longer matches the parent");
         }
@@ -3651,50 +3086,16 @@ const saveJutsuFamily = async (
         current.updatedAt,
       );
       const updatedAt = getNextUserSnapshotAt(latestUpdatedAt);
-      await tx
-        .update(jutsu)
-        .set({ ...data, updatedAt })
-        .where(eq(jutsu.id, entry.id));
+      await updateJutsuForSaveJutsuFamily(tx, data, updatedAt, entry);
       if (children.length) {
         // One batched child write preserves each effect's cosmetic fields.
         const cases = updates.map(
           ({ updated }) =>
             sql`WHEN ${updated.id} THEN ${JSON.stringify(updated.effects)}`,
         );
-        await tx
-          .update(jutsu)
-          .set({
-            ...mechanics,
-            effects: sql`CASE ${jutsu.id} ${sql.join(cases, sql` `)} END`,
-            updatedAt,
-          })
-          .where(
-            inArray(
-              jutsu.id,
-              children.map((child) => child.id),
-            ),
-          );
+        await updateJutsuForSaveJutsuFamily2(tx, mechanics, cases, updatedAt, children);
       }
-      await tx.insert(actionLog).values([
-        {
-          id: nanoid(),
-          userId,
-          tableName: "jutsu",
-          changes: diff,
-          relatedId: entry.id,
-          relatedMsg: `Update: ${entry.name}`,
-          relatedImage: entry.image,
-        },
-        ...updates.map(({ original, updated }) => ({
-          id: nanoid(),
-          userId,
-          tableName: "jutsu",
-          changes: calculateContentDiff(original, updated),
-          relatedId: original.id,
-          relatedMsg: `Sync parent: ${data.name}`,
-          relatedImage: original.image,
-        })),
-      ]);
+      await insertActionLogForSaveJutsuFamily(tx, userId, diff, entry, updates, data);
       return {
         success: true as const,
         diff,

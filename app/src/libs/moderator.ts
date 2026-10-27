@@ -1,30 +1,32 @@
 import { openai as openaiSdk } from "@ai-sdk/openai";
 import { generateText, Output } from "ai";
-import { and, desc, eq, lt, ne } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import OpenAI from "openai";
 import type { AutomoderationCategory } from "@/drizzle/constants";
 import {
   type BanStates,
-  MODERATION_PROMPT_VERSION,
   OPENAI_MODERATION_MODEL,
-  REPORT_CONTEXT_WINDOW,
   TERR_BOT_ID,
 } from "@/drizzle/constants";
-import {
-  conversationComment,
-  forumPost,
-  moderationScan,
-  userData,
-  userReportComment,
-} from "@/drizzle/schema";
 import {
   buildModerationEvidence,
   MODERATION_INSTRUCTIONS,
   type ModerationEvidence,
 } from "@/libs/moderation/evidence";
 import { getRelatedReports } from "@/libs/moderation/reportSearch";
-import { insertAutomatedModeration, insertUserReport } from "@/routers/reports";
+import {
+  insertModerationScanForModerateContent,
+  selectConversationCommentForGetAdditionalContext,
+  selectForumPostForGetAdditionalContext,
+  updateConversationCommentForUpdateReportedStatus,
+  updateForumPostForUpdateReportedStatus,
+  updateModerationScanForModerateContent,
+  updateModerationScanForModerateContent2,
+  updateModerationScanForModerateContent3,
+  updateUserReportCommentForUpdateReportedStatus,
+} from "@/queries/moderator";
+import { insertAutomatedModeration } from "@/queries/reports";
+import { insertUserReport } from "@/routers/reports";
 import type { DrizzleClient } from "@/server/db";
 import { evaluateImageModeration } from "@/utils/imageModeration";
 import { htmlToModerationInput } from "@/utils/sanitize";
@@ -57,15 +59,14 @@ export const moderateContent = async (
   const { content, userId, relationType, relationId, contextId } = info;
   const scanId = nanoid();
   const gateModel = "omni-moderation-latest";
-  await client.insert(moderationScan).values({
-    id: scanId,
+  await insertModerationScanForModerateContent(
+    client,
+    scanId,
     userId,
     relationId,
     relationType,
     gateModel,
-    decisionModel: OPENAI_MODERATION_MODEL,
-    promptVersion: MODERATION_PROMPT_VERSION,
-  });
+  );
   let stage: "gate" | "decision" | "report" = "gate";
   let reportId: string | null = null;
   try {
@@ -75,15 +76,7 @@ export const moderateContent = async (
     });
     const result = moderation.results?.[0];
     if (!result) throw new Error("Moderation returned no result");
-    await client
-      .update(moderationScan)
-      .set({
-        flagged: result.flagged,
-        categoryScores: { ...result.category_scores },
-        outcome: result.flagged ? "CHECKING" : "GATE_CLEAR",
-        completedAt: result.flagged ? null : new Date(),
-      })
-      .where(eq(moderationScan.id, scanId));
+    await updateModerationScanForModerateContent(client, result, scanId);
     if (!result.flagged) return;
     stage = "decision";
     const context = await getAdditionalContext(
@@ -139,24 +132,9 @@ export const moderateContent = async (
       });
       await updateReportedStatus(client, relationType, relationId);
     }
-    await client
-      .update(moderationScan)
-      .set({
-        outcome: reportId ? "REPORTED" : "DECISION_CLEAR",
-        reportId,
-        completedAt: new Date(),
-      })
-      .where(eq(moderationScan.id, scanId));
+    await updateModerationScanForModerateContent2(client, reportId, scanId);
   } catch (error) {
-    await client
-      .update(moderationScan)
-      .set({
-        outcome: "ERROR",
-        errorStage: stage,
-        reportId,
-        completedAt: new Date(),
-      })
-      .where(eq(moderationScan.id, scanId));
+    await updateModerationScanForModerateContent3(client, stage, reportId, scanId);
     throw error;
   }
 };
@@ -181,58 +159,20 @@ export const getAdditionalContext = async (
     case "comment":
     case "privateMessage":
     case "conversation_comment":
-      return await client
-        .select({
-          userId: conversationComment.userId,
-          authorId: conversationComment.authorId,
-          username: userData.username,
-          avatar: userData.avatar,
-          level: userData.level,
-          rank: userData.rank,
-          federalStatus: userData.federalStatus,
-          isOutlaw: userData.isOutlaw,
-          role: userData.role,
-          content: conversationComment.content,
-          createdAt: conversationComment.createdAt,
-        })
-        .from(conversationComment)
-        .innerJoin(userData, eq(conversationComment.userId, userData.userId))
-        .where(
-          and(
-            eq(conversationComment.conversationId, conversationId),
-            excludeId ? ne(conversationComment.id, excludeId) : undefined,
-            lt(conversationComment.createdAt, timestamp || new Date()),
-          ),
-        )
-        .orderBy(desc(conversationComment.createdAt))
-        .limit(REPORT_CONTEXT_WINDOW);
+      return await selectConversationCommentForGetAdditionalContext(
+        client,
+        conversationId,
+        excludeId,
+        timestamp,
+      );
     case "forumPost":
     case "forum_comment":
-      return await client
-        .select({
-          userId: forumPost.userId,
-          authorId: forumPost.authorId,
-          username: userData.username,
-          avatar: userData.avatar,
-          level: userData.level,
-          rank: userData.rank,
-          federalStatus: userData.federalStatus,
-          isOutlaw: userData.isOutlaw,
-          role: userData.role,
-          content: forumPost.content,
-          createdAt: forumPost.createdAt,
-        })
-        .from(forumPost)
-        .innerJoin(userData, eq(forumPost.userId, userData.userId))
-        .where(
-          and(
-            eq(forumPost.threadId, conversationId),
-            excludeId ? ne(forumPost.id, excludeId) : undefined,
-            lt(forumPost.createdAt, timestamp || new Date()),
-          ),
-        )
-        .orderBy(desc(forumPost.createdAt))
-        .limit(REPORT_CONTEXT_WINDOW);
+      return await selectForumPostForGetAdditionalContext(
+        client,
+        conversationId,
+        excludeId,
+        timestamp,
+      );
     default:
       return [];
   }
@@ -300,22 +240,13 @@ const updateReportedStatus = async (
   switch (system) {
     case "comment":
     case "privateMessage":
-      await client
-        .update(conversationComment)
-        .set({ isReported: true })
-        .where(eq(conversationComment.id, relationId));
+      await updateConversationCommentForUpdateReportedStatus(client, relationId);
       break;
     case "forumPost":
-      await client
-        .update(forumPost)
-        .set({ isReported: true })
-        .where(eq(forumPost.id, relationId));
+      await updateForumPostForUpdateReportedStatus(client, relationId);
       break;
     case "userReport":
-      await client
-        .update(userReportComment)
-        .set({ isReported: true })
-        .where(eq(userReportComment.id, relationId));
+      await updateUserReportCommentForUpdateReportedStatus(client, relationId);
       break;
   }
 };

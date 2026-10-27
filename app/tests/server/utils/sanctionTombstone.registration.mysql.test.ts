@@ -26,12 +26,11 @@ import { profileRouter } from "@/server/api/routers/profile";
 import { reportsRouter } from "@/server/api/routers/reports";
 import type { DrizzleClient } from "@/server/db";
 import * as sanctions from "@/server/utils/sanctionTombstone";
+import { hashSanctionIdentifier, type SanctionIdentity } from "@/server/utils/sanctionTombstone";
+import * as sanctionQueries from "@/queries/reports";
 import { processAccountDeletions } from "@/server/utils/accountDeletion/process";
 import { DELETED_STORE_USER_PREFIX } from "@/server/utils/purchases/grant";
-import {
-  hashSanctionIdentifier,
-  type SanctionIdentity,
-} from "@/server/utils/sanctionTombstone";
+
 import { insertUsers } from "../../setup/factories";
 import {
   callerFor,
@@ -883,8 +882,8 @@ describeWithDatabase("registration claims current sanction sources", () => {
     const pending = register("Concurrent");
     await entered;
     const prepared = await reportsOf("Concurrent");
-    const fetch = sanctions.fetchActiveSanctionTombstones;
-    vi.spyOn(sanctions, "fetchActiveSanctionTombstones").mockImplementation(
+    const fetch = sanctionQueries.fetchActiveSanctionTombstones;
+    vi.spyOn(sanctionQueries, "fetchActiveSanctionTombstones").mockImplementation(
       (...args) =>
         Promise.resolve(fetch(...args)).then((sources) => sources.reverse()) as never,
     );

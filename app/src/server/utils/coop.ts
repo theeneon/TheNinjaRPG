@@ -1,16 +1,15 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
-  battle,
-  battleHistory,
-  conversation,
-  user2conversation,
-  userData,
-} from "@/drizzle/schema";
+  deleteBattleById,
+  deleteBattleHistoryByBattleId,
+  insertConversationForJoinCoopChat,
+  insertUser2conversationForJoinCoopChat,
+  updateUserDataForCleanupCoopBattleStart,
+} from "@/queries/combat";
+
 import { errorResponse } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 
 /**
  * Allocate the battle ID before reserving either co-op activity, then initiate and publish.
@@ -56,33 +55,10 @@ export const joinCoopChat = async (
   userId: string,
 ) => {
   await Promise.all([
-    client
-      .insert(conversation)
-      .values({
-        id: partyId,
-        title,
-        createdById: userId,
-        isPublic: false,
-        isEnabled: true,
-      })
-      .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
-    client
-      .insert(user2conversation)
-      .values({ conversationId: partyId, userId })
-      .onDuplicateKeyUpdate({ set: { conversationId: sql`conversationId` } }),
+    insertConversationForJoinCoopChat(client, partyId, title, userId),
+    insertUser2conversationForJoinCoopChat(client, partyId, userId),
   ]);
 };
-
-/** Idempotently revoke this member's conversation access after preserving their quest progress. */
-export const leaveCoopChat = (client: DrizzleClient, partyId: string, userId: string) =>
-  client
-    .delete(user2conversation)
-    .where(
-      and(
-        eq(user2conversation.conversationId, partyId),
-        eq(user2conversation.userId, userId),
-      ),
-    );
 
 /** Compensate a failed start before reopening its party; a newer battle has a different ID. */
 export const cleanupCoopBattleStart = async (
@@ -91,21 +67,10 @@ export const cleanupCoopBattleStart = async (
   memberIds: string[],
 ) =>
   retryOnDeadlock(async () => {
-    await client.delete(battle).where(eq(battle.id, battleId));
+    await deleteBattleById(client, battleId);
     const cleanup = await Promise.allSettled([
-      client.delete(battleHistory).where(eq(battleHistory.battleId, battleId)),
-      client
-        .update(userData)
-        .set({
-          status: "AWAKE",
-          battleId: null,
-          bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-          bracketImmunityPausedAt: null,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(inArray(userData.userId, memberIds), eq(userData.battleId, battleId)),
-        ),
+      deleteBattleHistoryByBattleId(client, battleId),
+      updateUserDataForCleanupCoopBattleStart(client, memberIds, battleId),
     ]);
     const failure = cleanup.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;

@@ -1,10 +1,22 @@
 import { TRPCError } from "@trpc/server";
-import { eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { AI_PROFILE_MAX_RULES } from "@/drizzle/constants";
-import { aiProfile, item, jutsu, quest, userData } from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
+import {
+  fetchAiProfileById,
+  fetchAiProfileByUserId,
+  insertAiProfileForCreateAiProfile,
+  insertAiProfileForToggleAiProfile,
+  listItemForUpdateAiProfile,
+  listJutsuForUpdateAiProfile,
+  listQuestForGetAiRelations,
+  updateAiProfileForUpdateAiProfile,
+  updateUserDataForToggleAiProfile,
+  updateUserDataForToggleAiProfile2,
+  updateUserDataForToggleAiProfile3,
+} from "@/queries/ai";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -53,9 +65,7 @@ export const aiRouter = createTRPCRouter({
       if (profile) return errorResponse("Only one AI profile per user is allowed");
       if (!canChangeContent(user.role)) return errorResponse("Unauthorized");
       // Mutate
-      await ctx.drizzle
-        .insert(aiProfile)
-        .values({ id: nanoid(), userId: input.userId, rules: input.rules });
+      await insertAiProfileForCreateAiProfile(ctx.drizzle, input);
       // Return
       return { success: true, message: "AiProfile created" };
     }),
@@ -81,22 +91,8 @@ export const aiRouter = createTRPCRouter({
       }
       if (profile.userId === user.userId) {
         const [jutsus, items] = await Promise.all([
-          ctx.drizzle.query.jutsu.findMany({
-            where: inArray(
-              jutsu.id,
-              input.rules
-                .filter((r) => "jutsuId" in r.action)
-                .map((r) => (r.action as { jutsuId: string }).jutsuId),
-            ),
-          }),
-          ctx.drizzle.query.item.findMany({
-            where: inArray(
-              item.id,
-              input.rules
-                .filter((r) => "itemId" in r.action)
-                .map((r) => (r.action as { itemId: string }).itemId),
-            ),
-          }),
+          listJutsuForUpdateAiProfile(ctx.drizzle, input),
+          listItemForUpdateAiProfile(ctx.drizzle, input),
         ]);
         const effects = [...jutsus, ...items].flatMap((e) => e.effects);
         const hasMove = effects.some((e) => "type" in e && e.type === "move");
@@ -109,10 +105,7 @@ export const aiRouter = createTRPCRouter({
         }
       }
       // Update
-      await ctx.drizzle
-        .update(aiProfile)
-        .set({ rules: input.rules, includeDefaultRules: input.includeDefaultRules })
-        .where(eq(aiProfile.id, input.id));
+      await updateAiProfileForUpdateAiProfile(ctx.drizzle, input);
       return { success: true, message: "AiProfile updated" };
     }),
   toggleAiProfile: protectedProcedure
@@ -131,26 +124,15 @@ export const aiRouter = createTRPCRouter({
       }
       // Update
       if (target.aiProfileId) {
-        await ctx.drizzle
-          .update(userData)
-          .set({ aiProfileId: null })
-          .where(eq(userData.userId, target.userId));
+        await updateUserDataForToggleAiProfile(ctx.drizzle, target);
       } else {
         if (profile) {
-          await ctx.drizzle
-            .update(userData)
-            .set({ aiProfileId: profile.id })
-            .where(eq(userData.userId, target.userId));
+          await updateUserDataForToggleAiProfile2(ctx.drizzle, profile, target);
         } else {
           const id = nanoid();
           await Promise.all([
-            ctx.drizzle
-              .insert(aiProfile)
-              .values({ id, userId: target.userId, rules: [] }),
-            ctx.drizzle
-              .update(userData)
-              .set({ aiProfileId: id })
-              .where(eq(userData.userId, target.userId)),
+            insertAiProfileForToggleAiProfile(ctx.drizzle, id, target),
+            updateUserDataForToggleAiProfile3(ctx.drizzle, id, target),
           ]);
         }
       }
@@ -166,49 +148,10 @@ export const aiRouter = createTRPCRouter({
 });
 
 /**
- * Fetches an AI profile from the database using the provided client and profile ID.
- *
- * @param client - The DrizzleClient instance used to query the database.
- * @param id - The unique identifier of the AI profile to fetch.
- * @returns The AI profile object, including its associated rules.
- * @throws Will throw an error if the profile with the given ID is not found.
- */
-export const fetchAiProfileById = async (client: DrizzleClient, id: string) => {
-  const profile = await client.query.aiProfile.findFirst({
-    where: eq(aiProfile.id, id),
-  });
-  if (!profile) {
-    throw new Error(`fetchAiProfile: Profile not found: ${id}`);
-  }
-  return profile;
-};
-
-/**
- * Fetches an AI profile from the database using the provided client and user ID.
- *
- * @param client
- * @param userId
- * @returns
- */
-export const fetchAiProfileByUserId = async (client: DrizzleClient, userId: string) => {
-  const profile = await client.query.aiProfile.findFirst({
-    where: eq(aiProfile.userId, userId),
-  });
-  return profile;
-};
-
-/**
  * Find quests referencing an AI in objectives (opponentAIs/allyAIs/attackers)
  */
 export const getAiRelations = async (client: DrizzleClient, aiId: string) => {
-  const questsUsingAi = await client.query.quest.findMany({
-    columns: { id: true, name: true },
-    where: sql`(
-      JSON_SEARCH(${quest.content}, 'one', ${aiId}, NULL, '$.objectives[*].opponentAIs[*].ids[*]') IS NOT NULL
-      OR JSON_SEARCH(${quest.content}, 'one', ${aiId}, NULL, '$.objectives[*].allyAIs[*].ids[*]') IS NOT NULL
-      OR JSON_SEARCH(${quest.content}, 'one', ${aiId}, NULL, '$.objectives[*].attackers[*].ids[*]') IS NOT NULL
-    )`,
-  });
+  const questsUsingAi = await listQuestForGetAiRelations(client, aiId);
 
   return { questsUsingAi };
 };

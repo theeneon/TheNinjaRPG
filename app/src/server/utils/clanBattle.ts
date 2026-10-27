@@ -1,18 +1,15 @@
-import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
-import { CLAN_BATTLE_REWARD_POINTS, CLAN_BATTLE_REWARD_RYO } from "@/drizzle/constants";
 import {
-  battle,
-  battleAction,
-  battleHistory,
-  clan,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  rankedPvpQueue,
-  userData,
-} from "@/drizzle/schema";
+  deleteBattleActionForClearClanCombat,
+  deleteBattleForClearClanCombat,
+  deleteMpvpBattleQueueForDeleteClanBattle,
+  deleteMpvpBattleUserForDeleteClanBattle,
+  executeCreditedForRewardClanBattleVictory,
+  updateUserDataForClearClanCombat,
+  updateUserDataForDeleteClanBattle,
+} from "@/queries/clan";
+import { deleteBattleHistoryByBattleId } from "@/queries/combat";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 
 /**
  * Claim and credit a shared victory atomically, so participant reports and retries pay once.
@@ -28,20 +25,11 @@ export const rewardClanBattleVictory = async (
   retryOnDeadlock(async () => {
     // Drizzle's MySQL update builder cannot JOIN and SET both tables. As with purchase
     // delivery, parameterized SQL keeps the claim and credit in one atomic statement.
-    const credited = await client.execute(sql`
-      UPDATE ${mpvpBattleQueue}
-      INNER JOIN ${clan} ON ${clan.id} = ${clanId}
-      SET ${mpvpBattleQueue.winnerId} = ${clanId},
-          ${clan.points} = ${clan.points} + ${CLAN_BATTLE_REWARD_POINTS},
-          ${clan.activityPoints} = ${clan.activityPoints} + ${CLAN_BATTLE_REWARD_POINTS},
-          ${clan.bank} = ${clan.bank} + ${CLAN_BATTLE_REWARD_RYO},
-          ${clan.pvpActivity} = ${clan.pvpActivity} + 1
-      WHERE ${mpvpBattleQueue.battleId} = ${battleId}
-        AND ${mpvpBattleQueue.battleType} = 'CLAN_BATTLE'
-        AND ${mpvpBattleQueue.winnerId} IS NULL
-        AND (${mpvpBattleQueue.attackerEntityId} = ${clanId}
-          OR ${mpvpBattleQueue.defenderEntityId} = ${clanId})
-    `);
+    const credited = await executeCreditedForRewardClanBattleVictory(
+      client,
+      clanId,
+      battleId,
+    );
     return credited.rowsAffected > 0;
   });
 
@@ -60,17 +48,7 @@ export const deleteClanBattle = async (
   snapshot: ClanBattleSnapshot,
 ) => {
   const deleted = await retryOnDeadlock(() =>
-    client
-      .delete(mpvpBattleQueue)
-      .where(
-        and(
-          eq(mpvpBattleQueue.id, snapshot.id),
-          eq(mpvpBattleQueue.battleType, "CLAN_BATTLE"),
-          snapshot.battleId !== null
-            ? eq(mpvpBattleQueue.battleId, snapshot.battleId)
-            : isNull(mpvpBattleQueue.battleId),
-        ),
-      ),
+    deleteMpvpBattleQueueForDeleteClanBattle(client, snapshot),
   );
   if (deleted.rowsAffected !== 1) return false;
   // The deletion is durable. Retry cleanup alone so a deadlock cannot skip it when
@@ -80,36 +58,8 @@ export const deleteClanBattle = async (
     // Completed lobbies retain memberships after participants can join ranked PvP.
     // Only a claimed ranked row owns QUEUED. A provisional ranked join may have
     // lost its claim to this clan lobby and must not block the lobby's wake-up.
-    await client
-      .update(userData)
-      .set({ status: "AWAKE" })
-      .where(
-        and(
-          eq(userData.status, "QUEUED"),
-          isNull(userData.battleId),
-          inArray(
-            userData.userId,
-            client
-              .select({ userId: mpvpBattleUser.userId })
-              .from(mpvpBattleUser)
-              .where(eq(mpvpBattleUser.clanBattleId, snapshot.id)),
-          ),
-          notExists(
-            client
-              .select({ id: rankedPvpQueue.id })
-              .from(rankedPvpQueue)
-              .where(
-                and(
-                  eq(rankedPvpQueue.userId, userData.userId),
-                  eq(rankedPvpQueue.hasClaimed, true),
-                ),
-              ),
-          ),
-        ),
-      );
-    await client
-      .delete(mpvpBattleUser)
-      .where(eq(mpvpBattleUser.clanBattleId, snapshot.id));
+    await updateUserDataForDeleteClanBattle(client, snapshot);
+    await deleteMpvpBattleUserForDeleteClanBattle(client, snapshot);
   });
   return true;
 };
@@ -121,18 +71,8 @@ export const deleteClanBattle = async (
  * leave partial cleanup, which can safely be retried with the same ID.
  */
 export const clearClanCombat = async (client: DrizzleClient, battleId: string) => {
-  await client
-    .delete(battle)
-    .where(and(eq(battle.id, battleId), eq(battle.battleType, "CLAN_BATTLE")));
-  await client
-    .update(userData)
-    .set({
-      status: sql`CASE WHEN ${userData.status} = 'BATTLE' THEN 'AWAKE' ELSE ${userData.status} END`,
-      bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-      bracketImmunityPausedAt: null,
-      battleId: null,
-    })
-    .where(eq(userData.battleId, battleId));
-  await client.delete(battleAction).where(eq(battleAction.battleId, battleId));
-  await client.delete(battleHistory).where(eq(battleHistory.battleId, battleId));
+  await deleteBattleForClearClanCombat(client, battleId);
+  await updateUserDataForClearClanCombat(client, battleId);
+  await deleteBattleActionForClearClanCombat(client, battleId);
+  await deleteBattleHistoryByBattleId(client, battleId);
 };

@@ -1,32 +1,6 @@
-/**
- * Shared server-side helpers for the item and jutsu loadout endpoints. The
- * pure decision logic lives in `@/libs/loadout`; these wrap the database
- * orchestration the two routers would otherwise copy-paste, taking the
- * table-specific Drizzle calls as callbacks so they stay fully typed per router.
- */
-import { eq } from "drizzle-orm";
-import { userData } from "@/drizzle/schema";
 import type { RenameDecision } from "@/libs/loadout";
-import { type BaseServerResponse, errorResponse } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 
-/**
- * Thin userData fetch for the loadout endpoints: only the columns needed to
- * derive the federal loadout allowance and read the active-loadout pointers,
- * instead of the full row that fetchUser returns.
- */
-export const fetchLoadoutUser = async (client: DrizzleClient, userId: string) => {
-  return await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    columns: {
-      userId: true,
-      federalStatus: true,
-      staffAccount: true,
-      itemLoadout: true,
-      jutsuLoadout: true,
-    },
-  });
-};
+import { type BaseServerResponse, errorResponse } from "@/server/api/trpc";
 
 /**
  * Backfill orchestration shared by the item and jutsu getLoadouts endpoints:

@@ -1,15 +1,30 @@
-import { and, desc, eq, getTableColumns, inArray, like, ne, sql } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { GameAssetTypes, IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
-import { actionLog, contentTag, gameAsset, gameAssetTag } from "@/drizzle/schema";
+import { GameAssetTypes } from "@/drizzle/constants";
+import { gameAsset } from "@/drizzle/schema";
 import {
   deletedReason,
   editedReason,
   outdateProposalsFor,
 } from "@/libs/contentReview/outdate";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteGameAssetForDelete,
+  fetchGameAsset,
+  insertActionLogForDelete,
+  insertActionLogForUpdate,
+  insertGameAssetForCreate,
+  listGameAssetForGetAllNames,
+  listGameAssetForGetNameTags,
+  listGameAssetForGetSceneAssets,
+  selectDistinctGameAssetTagForGetAllGameAssetContentTagNames,
+  selectGameAssetForGetAll,
+  selectGameAssetForGetAllFolders,
+  updateGameAssetForUpdate,
+} from "@/queries/asset";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -17,7 +32,6 @@ import {
   publicProcedure,
   serverError,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { calculateContentDiff } from "@/utils/diff";
 import { canChangeContent } from "@/utils/permissions";
 import { gameAssetSchema, gameAssetValidator } from "@/validators/asset";
@@ -39,10 +53,7 @@ export const gameAssetRouter = createTRPCRouter({
           ? input.selected.map((t) => like(gameAsset.name, `%${t}%`))
           : []),
       ];
-      const names = await ctx.drizzle.query.gameAsset.findMany({
-        columns: { name: true },
-        where: and(...whereClauses),
-      });
+      const names = await listGameAssetForGetNameTags(ctx.drizzle, whereClauses);
 
       const tokenSet = new Set<string>();
       for (const n of names) {
@@ -68,10 +79,7 @@ export const gameAssetRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       // Query
-      let assets = await ctx.drizzle.query.gameAsset.findMany({
-        columns: { id: true, name: true, image: true, folder: true },
-        where: input.type ? eq(gameAsset.type, input.type) : undefined,
-      });
+      let assets = await listGameAssetForGetAllNames(ctx.drizzle, input);
       // Filter by folder prefix
       if (input.folderPrefix) {
         assets = assets.map((a) => ({ ...a, name: `${a.folder}/${a.name}` }));
@@ -86,24 +94,15 @@ export const gameAssetRouter = createTRPCRouter({
       mcp: { description: "Get all game asset content tag names" },
     })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle
-        .selectDistinct({ name: contentTag.name })
-        .from(gameAssetTag)
-        .innerJoin(contentTag, eq(gameAssetTag.tagId, contentTag.id));
+      return await selectDistinctGameAssetTagForGetAllGameAssetContentTagNames(
+        ctx.drizzle,
+      );
     }),
   getAllFolders: publicProcedure
     .meta({ mcp: { description: "Get all game asset folders" } })
     .query(async ({ ctx }) => {
       // Return unique folders with counts
-      return await ctx.drizzle
-        .select({
-          folder: gameAsset.folder,
-          count: sql`count(*)`.mapWith(Number),
-        })
-        .from(gameAsset)
-        .where(sql`${gameAsset.folder} != ''`)
-        .groupBy(gameAsset.folder)
-        .orderBy(gameAsset.folder);
+      return await selectGameAssetForGetAllFolders(ctx.drizzle);
     }),
   getAll: publicProcedure
     .meta({ mcp: { description: "Get all game assets with filtering" } })
@@ -118,28 +117,7 @@ export const gameAssetRouter = createTRPCRouter({
       const currentCursor = input?.cursor ? input.cursor : 0;
       const limit = input?.limit ? input.limit : 100;
       const skip = currentCursor * limit;
-      const results = await ctx.drizzle
-        .select({ ...getTableColumns(gameAsset) })
-        .from(gameAsset)
-        .leftJoin(gameAssetTag, eq(gameAsset.id, gameAssetTag.assetId))
-        .leftJoin(contentTag, eq(gameAssetTag.tagId, contentTag.id))
-        .where(
-          and(
-            ...(input.name ? [like(gameAsset.name, `%${input.name}%`)] : []),
-            ...(input.type
-              ? [eq(gameAsset.type, input.type)]
-              : [ne(gameAsset.type, "ANIMATION")]),
-            ...(input.tags ? [inArray(contentTag.name, input.tags)] : []),
-            ...(input.nameTokens
-              ? input.nameTokens.map((t) => like(gameAsset.name, `%${t}%`))
-              : []),
-            ...(input.folder ? [like(gameAsset.folder, `%${input.folder}%`)] : []),
-          ),
-        )
-        .groupBy(gameAsset.id)
-        .orderBy(desc(gameAsset.name))
-        .limit(limit)
-        .offset(skip);
+      const results = await selectGameAssetForGetAll(ctx.drizzle, input, limit, skip);
 
       const nextCursor = results.length < limit ? null : currentCursor + 1;
       return {
@@ -151,9 +129,7 @@ export const gameAssetRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get scene assets by IDs" } })
     .input(z.object({ assetIds: z.array(z.string()) }))
     .query(async ({ ctx, input }) => {
-      return await ctx.drizzle.query.gameAsset.findMany({
-        where: inArray(gameAsset.id, input.assetIds),
-      });
+      return await listGameAssetForGetSceneAssets(ctx.drizzle, input);
     }),
   get: publicProcedure
     .meta({ mcp: { description: "Get a game asset by ID" } })
@@ -182,19 +158,8 @@ export const gameAssetRouter = createTRPCRouter({
         });
         // Update database
         await Promise.all([
-          ctx.drizzle
-            .update(gameAsset)
-            .set(input.data)
-            .where(eq(gameAsset.id, entry.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "gameAsset",
-            changes: diff,
-            relatedId: entry.id,
-            relatedMsg: `Update: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          updateGameAssetForUpdate(ctx.drizzle, input, entry),
+          insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
         ]);
         await outdateProposalsFor(
           ctx.drizzle,
@@ -214,14 +179,7 @@ export const gameAssetRouter = createTRPCRouter({
     const user = await fetchUser(ctx.drizzle, ctx.userId);
     if (canChangeContent(user.role)) {
       const id = nanoid();
-      await ctx.drizzle.insert(gameAsset).values({
-        id: id,
-        name: "Placeholder",
-        type: "STATIC",
-        image: IMG_AVATAR_DEFAULT,
-        url: IMG_AVATAR_DEFAULT,
-        createdByUserId: ctx.userId,
-      });
+      await insertGameAssetForCreate(ctx.drizzle, id, ctx);
       return { success: true, message: id };
     } else {
       return { success: false, message: `Not allowed to create gameAsset` };
@@ -237,16 +195,8 @@ export const gameAssetRouter = createTRPCRouter({
       ]);
       if (entry && canChangeContent(user.role)) {
         await Promise.all([
-          ctx.drizzle.delete(gameAsset).where(eq(gameAsset.id, input.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "gameAsset",
-            changes: [`Deleted: ${entry.name}`],
-            relatedId: entry.id,
-            relatedMsg: `Delete: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          deleteGameAssetForDelete(ctx.drizzle, input),
+          insertActionLogForDelete(ctx.drizzle, ctx, entry),
         ]);
         await outdateProposalsFor(
           ctx.drizzle,
@@ -260,13 +210,3 @@ export const gameAssetRouter = createTRPCRouter({
       }
     }),
 });
-
-/**
- * COMMON QUERIES WHICH ARE REUSED
- */
-
-export const fetchGameAsset = async (client: DrizzleClient, id: string) => {
-  return await client.query.gameAsset.findFirst({
-    where: eq(gameAsset.id, id),
-  });
-};

@@ -1,51 +1,55 @@
-import { randomInt } from "node:crypto";
-import {
-  and,
-  desc,
-  eq,
-  exists,
-  gte,
-  inArray,
-  isNull,
-  lte,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { and, eq, exists, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import {
   ELDER_KAGE_REMOVAL_VOTE_DAYS,
   ELDER_MIN_VOTING_COUNT,
-  KAGE_DEFAULT_PRESTIGE,
   KAGE_DEFENSE_SETUP_HOURS,
   KAGE_DELAY_SECS,
   KAGE_ELDER_REMOVAL_LOCK_SECS,
   KAGE_MAX_WEEKLY_PRESTIGE_SEND,
-  KAGE_PRESTIGE_REQUIREMENT,
   KAGE_REMOVAL_COOLDOWN_DAYS,
 } from "@/drizzle/constants";
+import { clan, village, villageStructure } from "@/drizzle/schema";
+import { castElderVoteEntry } from "@/libs/elder";
+import { fetchClan } from "@/queries/clan";
+import { fetchElderVote } from "@/queries/elder";
 import {
-  actionLog,
-  clan,
-  notification,
-  userData,
-  village,
-  villageElderVote,
-  villageStructure,
-} from "@/drizzle/schema";
-import { castElderVoteEntry, fetchElderVote } from "@/libs/elder";
-import { fetchClan } from "@/routers/clan";
+  executeResultForUpgradeStructure,
+  fetchElders,
+  fetchKageReplacement,
+  findVillageElderVoteForNominateKage,
+  findVillageElderVoteForVoteOnKageRemoval,
+  incrementKageRemovalNotifications,
+  insertActionLogForSendKagePrestige,
+  insertActionLogForTakeKage,
+  insertNotificationForInitiateKageRemovalVote,
+  insertVillageElderVoteForInitiateKageRemovalVote,
+  listActionLogForSendKagePrestige,
+  listEligibleKageRemovalElders,
+  listVillageElderVoteForGetRemovalHistory,
+  listVillageElderVoteForInitiateKageRemovalVote,
+  selectUserDataForUpgradeStructure,
+  setKageCandidateToJonin,
+  updateUserDataForSendKagePrestige,
+  updateUserDataForSendKagePrestige2,
+  updateUserDataForTakeKage,
+  updateVillageElderVoteForNominateKage,
+  updateVillageForPayStructureMaintenance,
+  updateVillageForResignKage,
+  updateVillageForTakeKage,
+} from "@/queries/kage";
+import { fetchUser, findUserById } from "@/queries/profile";
+import { fetchVillage } from "@/queries/village";
+
 import { kageDefenseProcedures } from "@/routers/kageDefense";
-import { fetchUpdatedUser, fetchUser, updateNindo } from "@/routers/profile";
-import { fetchVillage } from "@/routers/village";
+import { fetchUpdatedUser, updateNindo } from "@/routers/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { queryInTransaction } from "@/server/utils/concurrency";
 import { withKageDefense } from "@/server/utils/kage";
 import { settleKageRemoval } from "@/server/utils/kageGovernance";
@@ -91,10 +95,9 @@ export const kageRouter = createTRPCRouter({
       if (user.villageId !== villageId) return errorResponse("Wrong village");
       if (user.userId !== uVillage?.kageId) return errorResponse("Not kage");
       // Update
-      await ctx.drizzle
-        .update(village)
-        .set({ kageId: elder.userId, leaderUpdatedAt: new Date(), kageSchedule: null })
-        .where(eq(village.id, user.villageId));
+      await updateVillageForResignKage(ctx.drizzle, elder, {
+        villageId: user.villageId,
+      });
       return { success: true, message: "You have resigned as kage" };
     }),
 
@@ -109,14 +112,7 @@ export const kageRouter = createTRPCRouter({
       const [user, kage, records] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, input.kageId),
-        ctx.drizzle.query.actionLog.findMany({
-          columns: { relatedValue: true },
-          where: and(
-            eq(actionLog.userId, ctx.userId),
-            eq(actionLog.relatedId, input.kageId),
-            gte(actionLog.createdAt, sql`NOW() - INTERVAL 1 WEEK`),
-          ),
-        }),
+        listActionLogForSendKagePrestige(ctx.drizzle, ctx, input),
       ]);
       // Derived
       const previousSent = records?.reduce((acc, curr) => acc + curr.relatedValue, 0);
@@ -134,28 +130,9 @@ export const kageRouter = createTRPCRouter({
       }
       // Create transfer request
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({
-            villagePrestige: sql`${userData.villagePrestige} - ${input.amount}`,
-          })
-          .where(eq(userData.userId, ctx.userId)),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            villagePrestige: sql`${userData.villagePrestige} + ${input.amount}`,
-          })
-          .where(eq(userData.userId, input.kageId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`${input.amount} prestige sent to ${kage.username}`],
-          relatedId: input.kageId,
-          relatedMsg: `Sent ${input.amount} prestige to ${kage.username}`,
-          relatedImage: user.avatarLight,
-          relatedValue: input.amount,
-        }),
+        updateUserDataForSendKagePrestige(ctx.drizzle, input, ctx),
+        updateUserDataForSendKagePrestige2(ctx.drizzle, input),
+        insertActionLogForSendKagePrestige(ctx.drizzle, ctx, input, kage, user),
       ]);
       return {
         success: true,
@@ -188,33 +165,19 @@ export const kageRouter = createTRPCRouter({
       if (!canTakeKage(user.role)) return errorResponse("Not staff");
       // Update
       const [result] = await Promise.all([
-        ctx.drizzle
-          .update(village)
-          .set({ kageId: user.userId, leaderUpdatedAt: new Date(), kageSchedule: null })
-          .where(eq(village.id, user.villageId ?? "")),
+        updateVillageForTakeKage(ctx.drizzle, user),
         // The outgoing kage keeps their village prestige: a staff takeover is an
         // administrative action and must not cost the displaced player anything.
-        ctx.drizzle
-          .update(userData)
-          .set({
-            rank: sql`CASE WHEN ${userData.rank} = 'ELDER' THEN 'JONIN' ELSE ${userData.rank} END`,
-            villagePrestige:
-              user.villagePrestige > KAGE_DEFAULT_PRESTIGE
-                ? user.villagePrestige
-                : KAGE_DEFAULT_PRESTIGE,
-          })
-          .where(eq(userData.userId, user.userId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          relatedId: user.userId,
-          relatedMsg: `Staff took kage position in ${user?.village?.name || "Unknown Village"}`,
-          changes: [
-            `Previous KageId: ${user?.village?.kageId}`,
-            `Reason: ${input.reason}`,
-          ],
-        }),
+        updateUserDataForTakeKage(ctx.drizzle, user),
+        insertActionLogForTakeKage(
+          ctx.drizzle,
+          ctx,
+          {
+            userId: user.userId,
+            village: { name: user?.village?.name, kageId: user?.village?.kageId },
+          },
+          input,
+        ),
       ]);
       if (result.rowsAffected === 0) return errorResponse("No village found");
       return { success: true, message: "You have taken the kage position" };
@@ -319,32 +282,19 @@ export const kageRouter = createTRPCRouter({
         fundingClan
           ? lte(village.leaderUpdatedAt, new Date(Date.now() - lockout * 1000))
           : eq(village.structureMaintenanceDue, 0),
-        exists(
-          ctx.drizzle
-            .select({ userId: userData.userId })
-            .from(userData)
-            .where(
-              and(
-                eq(userData.userId, ctx.userId),
-                eq(userData.villageId, village.id),
-                eq(userData.isBanned, false),
-                fundingClan ? eq(userData.clanId, fundingClan.id) : undefined,
-              ),
-            ),
-        ),
+        exists(selectUserDataForUpgradeStructure(ctx.drizzle, ctx, fundingClan)),
       );
       // Drizzle has no multi-table UPDATE builder. A joined write debits funds and
       // upgrades the guarded level together, without a transaction or partial payment.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${villageStructure}
-          INNER JOIN ${village} ON ${village.id} = ${villageStructure.villageId}
-          ${fundingClan ? sql`INNER JOIN ${clan} ON ${clan.id} = ${fundingClan.id}` : sql``}
-          SET ${balance} = ${balance} - ${total},
-              ${villageStructure.level} = ${structure.level + 1},
-              ${villageStructure.lastUpgradedAt} = ${new Date()}
-          WHERE ${guards}
-        `),
+        executeResultForUpgradeStructure(
+          ctx.drizzle,
+          fundingClan,
+          balance,
+          total,
+          structure,
+          guards,
+        ),
       );
       if (result.rowsAffected === 0)
         return errorResponse("Structure or funds changed; refresh and try again");
@@ -355,33 +305,11 @@ export const kageRouter = createTRPCRouter({
     .input(villageMaintenancePaymentSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const result = await ctx.drizzle
-        .update(village)
-        .set({
-          tokens: sql`${village.tokens} - ${village.structureMaintenanceDue}`,
-          structureMaintenanceDue: 0,
-        })
-        .where(
-          and(
-            eq(village.id, input.villageId),
-            eq(village.type, "VILLAGE"),
-            eq(village.kageId, ctx.userId),
-            sql`${village.structureMaintenanceDue} > 0`,
-            gte(village.tokens, village.structureMaintenanceDue),
-            exists(
-              ctx.drizzle
-                .select({ userId: userData.userId })
-                .from(userData)
-                .where(
-                  and(
-                    eq(userData.userId, ctx.userId),
-                    eq(userData.villageId, village.id),
-                    eq(userData.isBanned, false),
-                  ),
-                ),
-            ),
-          ),
-        );
+      const result = await updateVillageForPayStructureMaintenance(
+        ctx.drizzle,
+        input,
+        ctx,
+      );
       return result.rowsAffected > 0
         ? { success: true, message: "Structure maintenance paid" }
         : errorResponse(
@@ -401,25 +329,9 @@ export const kageRouter = createTRPCRouter({
       return (
         (await withKageDefense(ctx.drizzle, input.villageId, async (tx, hall) => {
           const [user, elders, failedVotes] = await queryInTransaction([
-            tx.query.userData.findFirst({ where: eq(userData.userId, ctx.userId) }),
-            tx.query.userData.findMany({
-              columns: { userId: true },
-              where: and(
-                eq(userData.villageId, input.villageId),
-                eq(userData.rank, "ELDER"),
-                eq(userData.isAi, false),
-                eq(userData.isBanned, false),
-              ),
-            }),
-            tx.query.villageElderVote.findMany({
-              where: and(
-                eq(villageElderVote.villageId, input.villageId),
-                eq(villageElderVote.type, "KAGE_REMOVAL"),
-                eq(villageElderVote.status, "REJECTED"),
-              ),
-              orderBy: [desc(villageElderVote.resolvedAt)],
-              limit: 1,
-            }),
+            findUserById(tx, ctx.userId),
+            listEligibleKageRemovalElders(tx, input),
+            listVillageElderVoteForInitiateKageRemovalVote(tx, input),
           ]);
           const v = hall.village;
           if (
@@ -459,33 +371,20 @@ export const kageRouter = createTRPCRouter({
             return errorResponse(
               `At least ${ELDER_MIN_VOTING_COUNT} elders are required`,
             );
-          const inserted = await tx
-            .insert(villageElderVote)
-            .values({
-              id: nanoid(),
-              villageId: v.id,
-              type: "KAGE_REMOVAL",
-              initiatedByUserId: ctx.userId,
-              targetId: v.kageId,
-              tenure: v.leaderUpdatedAt,
-              reason: input.reason,
-              endsAt: secondsFromNow(ELDER_KAGE_REMOVAL_VOTE_DAYS * 86400),
-            })
-            .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+          const inserted = await insertVillageElderVoteForInitiateKageRemovalVote(
+            tx,
+            v,
+            ctx,
+            input,
+          );
           if (!inserted.rowsAffected)
             return errorResponse("There is already a pending Kage removal vote");
           const recipients = eligibleElders.map((e) => e.userId);
           // Commit publication and delivery with the motion so a failed request can retry
           // without leaving an unannounced pending vote that blocks further proposals.
           // Notification is a shared announcement; unread counters select its recipients.
-          await tx.insert(notification).values({
-            userId: user.userId,
-            content: `${user.username} proposed removing the ${v.name} Kage: ${input.reason} Vote at Town Hall.`,
-          });
-          await tx
-            .update(userData)
-            .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-            .where(inArray(userData.userId, recipients));
+          await insertNotificationForInitiateKageRemovalVote(tx, user, v, input);
+          await incrementKageRemovalNotifications(tx, recipients);
           return {
             success: true,
             message: `Removal vote published. Elders have ${ELDER_KAGE_REMOVAL_VOTE_DAYS} days to vote.`,
@@ -512,20 +411,9 @@ export const kageRouter = createTRPCRouter({
         motion.villageId,
         async (tx, hall) => {
           const [user, current, elders] = await queryInTransaction([
-            tx.query.userData.findFirst({ where: eq(userData.userId, ctx.userId) }),
-            tx.query.villageElderVote.findFirst({
-              where: eq(villageElderVote.id, input.voteId),
-              with: { entries: true },
-            }),
-            tx.query.userData.findMany({
-              columns: { userId: true },
-              where: and(
-                eq(userData.villageId, motion.villageId),
-                eq(userData.rank, "ELDER"),
-                eq(userData.isAi, false),
-                eq(userData.isBanned, false),
-              ),
-            }),
+            findUserById(tx, ctx.userId),
+            findVillageElderVoteForVoteOnKageRemoval(tx, input),
+            listEligibleKageRemovalElders(tx, motion),
           ]);
           if (
             user?.rank !== "ELDER" ||
@@ -563,15 +451,7 @@ export const kageRouter = createTRPCRouter({
   getRemovalHistory: protectedProcedure
     .input(kageVillageSchema)
     .query(async ({ ctx, input }) => {
-      const votes = await ctx.drizzle.query.villageElderVote.findMany({
-        where: and(
-          eq(villageElderVote.villageId, input.villageId),
-          eq(villageElderVote.type, "KAGE_REMOVAL"),
-        ),
-        with: { entries: true },
-        orderBy: [desc(villageElderVote.createdAt)],
-        limit: 20,
-      });
+      const votes = await listVillageElderVoteForGetRemovalHistory(ctx.drizzle, input);
       return votes.map(({ entries, ...vote }) => ({
         ...vote,
         yes: entries.filter((e) => e.vote === "YES").length,
@@ -586,22 +466,9 @@ export const kageRouter = createTRPCRouter({
       return (
         (await withKageDefense(ctx.drizzle, input.villageId, async (tx, hall) => {
           const [elder, candidate, motion] = await queryInTransaction([
-            tx.query.userData.findFirst({ where: eq(userData.userId, ctx.userId) }),
-            tx.query.userData.findFirst({ where: eq(userData.userId, input.userId) }),
-            tx.query.villageElderVote.findFirst({
-              where: input.voteId
-                ? eq(villageElderVote.id, input.voteId)
-                : and(
-                    eq(villageElderVote.villageId, input.villageId),
-                    eq(villageElderVote.type, "KAGE_REMOVAL"),
-                    eq(villageElderVote.status, "APPROVED"),
-                    eq(villageElderVote.resolvedAt, hall.village.leaderUpdatedAt),
-                    eq(
-                      villageElderVote.targetId,
-                      hall.state.vacancy?.removedUserId ?? "",
-                    ),
-                  ),
-            }),
+            findUserById(tx, ctx.userId),
+            findUserById(tx, input.userId),
+            findVillageElderVoteForNominateKage(tx, input, hall),
           ]);
           if (
             input.voteId &&
@@ -637,31 +504,16 @@ export const kageRouter = createTRPCRouter({
           // receipt, elder demotion and appointment must commit together to prevent a
           // recorded successor without a Kage, or an appointed Kage still serving as elder.
           if (motion) {
-            const claim = await tx
-              .update(villageElderVote)
-              .set({ successorId: candidate.userId })
-              .where(
-                and(
-                  eq(villageElderVote.id, motion.id),
-                  isNull(villageElderVote.successorId),
-                ),
-              );
+            const claim = await updateVillageElderVoteForNominateKage(
+              tx,
+              candidate,
+              motion,
+            );
             if (!claim.rowsAffected)
               return errorResponse("A successor has already been nominated");
           }
-          if (candidate.rank === "ELDER")
-            await tx
-              .update(userData)
-              .set({ rank: "JONIN" })
-              .where(eq(userData.userId, candidate.userId));
-          await tx
-            .update(village)
-            .set({
-              kageId: candidate.userId,
-              leaderUpdatedAt: new Date(),
-              kageSchedule: null,
-            })
-            .where(eq(village.id, input.villageId));
+          if (candidate.rank === "ELDER") await setKageCandidateToJonin(tx, candidate);
+          await updateVillageForResignKage(tx, candidate, input);
           return {
             success: true,
             message: `${candidate.username} appointed Kage. Publish a schedule within ${KAGE_DEFENSE_SETUP_HOURS} hours.`,
@@ -670,61 +522,3 @@ export const kageRouter = createTRPCRouter({
       );
     }),
 });
-
-/**
- * Fetches the elders from the user data table based on the provided village ID.
- * @param client - The DrizzleClient instance used for querying the database.
- * @param villageId - The ID of the village to fetch elders from.
- * @returns A Promise that resolves to an array of elder user data objects.
- */
-export const fetchElders = async (client: DrizzleClient, villageId: string) => {
-  return await client.query.userData.findMany({
-    columns: {
-      username: true,
-      userId: true,
-      villageId: true,
-      avatar: true,
-      level: true,
-      rank: true,
-      isOutlaw: true,
-      updatedAt: true,
-    },
-    where: and(
-      eq(userData.villageId, villageId),
-      eq(userData.rank, "ELDER"),
-      eq(userData.isAi, false),
-    ),
-  });
-};
-
-/**
- * Fetches a kage replacement from the user data table based on the provided village ID and current kage ID.
- * @param client - The DrizzleClient instance used for querying the database.
- * @param villageId - The ID of the village to fetch a replacement from.
- * @param currentKageId - The ID of the current kage.
- * @returns A Promise that resolves to a user data object representing the replacement kage.
- */
-export const fetchKageReplacement = async (
-  client: DrizzleClient,
-  villageId: string,
-  currentKageId: string,
-) => {
-  const elders = await client.query.userData.findMany({
-    where: and(
-      eq(userData.villageId, villageId),
-      eq(userData.rank, "ELDER"),
-      ne(userData.userId, currentKageId),
-      isNull(userData.anbuId),
-      or(
-        gte(userData.villagePrestige, KAGE_PRESTIGE_REQUIREMENT),
-        eq(userData.isAi, true),
-      ),
-    ),
-  });
-  const userElders = elders.filter((e) => !e.isAi);
-  if (userElders.length > 0) {
-    return userElders[randomInt(userElders.length)];
-  }
-  if (elders.length === 0) return undefined;
-  return elders[randomInt(elders.length)];
-};

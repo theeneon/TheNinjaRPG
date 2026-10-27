@@ -1,6 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { getHTTPStatusCodeFromError } from "@trpc/server/http";
 import { cookies, headers } from "next/headers";
+import { findUserDataForGET } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 
 /**
@@ -45,9 +46,7 @@ export async function GET() {
   const cors = await corsHeaders();
 
   try {
-    const user = await drizzleDB.query.userData.findFirst({
-      columns: { username: true },
-    });
+    const user = await findUserDataForGET(drizzleDB);
     if (!user) {
       throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
     }

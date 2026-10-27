@@ -1,9 +1,20 @@
-import { asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { actionLog, jutsu, petSpecies } from "@/drizzle/schema";
 import { isPetJutsuAllowed } from "@/libs/pets/abilities";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import {
+  findPetSpeciesForCreate,
+  findPetSpeciesForGet,
+  findPetSpeciesForUpdate2,
+  insertActionLogForCreate,
+  insertActionLogForUpdate,
+  insertPetSpeciesForCreate,
+  listJutsuForCreate,
+  listJutsuForUpdate,
+  listPetSpeciesForGetAll,
+  updatePetSpeciesForUpdate,
+} from "@/queries/petSpecies";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -21,15 +32,11 @@ import { PetSpeciesValidator, updatePetSpeciesSchema } from "@/validators/petSpe
 /** Manage authored species independently of each companion's generated artwork and progress. */
 export const petSpeciesRouter = createTRPCRouter({
   /** Include retired species so the manual and owned companions retain their identities. */
-  getAll: publicProcedure.query(({ ctx }) =>
-    ctx.drizzle.query.petSpecies.findMany({ orderBy: asc(petSpecies.name) }),
-  ),
+  getAll: publicProcedure.query(({ ctx }) => listPetSpeciesForGetAll(ctx.drizzle)),
 
   /** Resolve the same authored identity for both editing and previously adopted pets. */
   get: publicProcedure.input(idSchema).query(async ({ ctx, input }) => {
-    const species = await ctx.drizzle.query.petSpecies.findFirst({
-      where: eq(petSpecies.id, input.id),
-    });
+    const species = await findPetSpeciesForGet(ctx.drizzle, input);
     if (!species) throw serverError("NOT_FOUND", "Companion species not found");
     return species;
   }),
@@ -41,14 +48,8 @@ export const petSpeciesRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, existing, defaults] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.petSpecies.findFirst({
-          where: eq(petSpecies.name, input.name),
-        }),
-        input.defaultJutsuIds.length
-          ? ctx.drizzle.query.jutsu.findMany({
-              where: inArray(jutsu.id, input.defaultJutsuIds),
-            })
-          : [],
+        findPetSpeciesForCreate(ctx.drizzle, input),
+        input.defaultJutsuIds.length ? listJutsuForCreate(ctx.drizzle, input) : [],
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -67,21 +68,14 @@ export const petSpeciesRouter = createTRPCRouter({
         );
       const id = nanoid();
       try {
-        await ctx.drizzle.insert(petSpecies).values({ id, ...input });
+        await insertPetSpeciesForCreate(ctx.drizzle, id, input);
       } catch (error) {
         if (isMysqlDuplicateKeyError(error))
           return errorResponse("Companion species name already exists");
         throw error;
       }
       const changes = calculateContentDiff({}, input);
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "petSpecies",
-        changes,
-        relatedId: id,
-        relatedMsg: `Create: ${input.name}`,
-      });
+      await insertActionLogForCreate(ctx.drizzle, ctx, changes, id, input);
       if (process.env.NODE_ENV !== "development") {
         await callDiscordContent(user.username, input.name, changes);
       }
@@ -95,15 +89,9 @@ export const petSpeciesRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, species, existing, defaults] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.petSpecies.findFirst({ where: eq(petSpecies.id, input.id) }),
-        ctx.drizzle.query.petSpecies.findFirst({
-          where: eq(petSpecies.name, input.data.name),
-        }),
-        input.data.defaultJutsuIds.length
-          ? ctx.drizzle.query.jutsu.findMany({
-              where: inArray(jutsu.id, input.data.defaultJutsuIds),
-            })
-          : [],
+        findPetSpeciesForGet(ctx.drizzle, input),
+        findPetSpeciesForUpdate2(ctx.drizzle, input),
+        input.data.defaultJutsuIds.length ? listJutsuForUpdate(ctx.drizzle, input) : [],
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -127,10 +115,7 @@ export const petSpeciesRouter = createTRPCRouter({
       if (changes.length === 0)
         return { success: true, message: "Companion species is already up to date." };
       try {
-        const updated = await ctx.drizzle
-          .update(petSpecies)
-          .set({ ...input.data, updatedAt: new Date() })
-          .where(eq(petSpecies.id, species.id));
+        const updated = await updatePetSpeciesForUpdate(ctx.drizzle, input, species);
         if (updated.rowsAffected !== 1)
           return errorResponse("Companion species not found");
       } catch (error) {
@@ -138,14 +123,7 @@ export const petSpeciesRouter = createTRPCRouter({
           return errorResponse("Companion species name already exists");
         throw error;
       }
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "petSpecies",
-        changes,
-        relatedId: species.id,
-        relatedMsg: `Update: ${species.name}`,
-      });
+      await insertActionLogForUpdate(ctx.drizzle, ctx, changes, species);
       if (process.env.NODE_ENV !== "development") {
         await callDiscordContent(user.username, input.data.name, changes);
       }

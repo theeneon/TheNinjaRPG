@@ -1,9 +1,19 @@
-import { asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { actionLog, mapTerrain } from "@/drizzle/schema";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteMapTerrainForDelete,
+  fetchMapTerrain,
+  findMapTerrainForGet,
+  findMapTerrainForUpdate,
+  insertActionLogForDelete,
+  insertActionLogForUpdate,
+  insertMapTerrainForCreate,
+  listMapTerrainForGetAll,
+  updateMapTerrainForUpdate,
+} from "@/queries/mapTerrain";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -12,7 +22,6 @@ import {
   publicProcedure,
   serverError,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { calculateContentDiff } from "@/utils/diff";
 import { canChangeContent } from "@/utils/permissions";
 import { mapTerrainValidator } from "@/validators/mapTerrain";
@@ -28,18 +37,12 @@ export const mapTerrainRouter = createTRPCRouter({
     })
     .query(async ({ ctx }) => {
       // Public/MCP-exposed: omit the internal authoring user-id
-      return await ctx.drizzle.query.mapTerrain.findMany({
-        columns: { createdByUserId: false },
-        orderBy: [asc(mapTerrain.key)],
-      });
+      return await listMapTerrainForGetAll(ctx.drizzle);
     }),
   /** Single terrain by id; throws NOT_FOUND (query, not baseServerResponse) */
   get: publicProcedure.input(idSchema).query(async ({ ctx, input }) => {
     // Public/MCP-exposed: omit the internal authoring user-id
-    const entry = await ctx.drizzle.query.mapTerrain.findFirst({
-      columns: { createdByUserId: false },
-      where: eq(mapTerrain.id, input.id),
-    });
+    const entry = await findMapTerrainForGet(ctx.drizzle, input);
     if (!entry) throw serverError("NOT_FOUND", "Terrain not found");
     return entry;
   }),
@@ -59,15 +62,7 @@ export const mapTerrainRouter = createTRPCRouter({
     // Mutation: placeholder row. The key is sanitized to lowercase alphanumerics
     // because the world map and combat reference terrains by key (must stay safe).
     const id = nanoid();
-    await ctx.drizzle.insert(mapTerrain).values({
-      id,
-      key: `new.terrain.${id.toLowerCase().replace(/[^a-z0-9]/g, "")}`,
-      name: "New Terrain",
-      colors: ["#48bd48", "#37aa37", "#239623"],
-      swatchColor: "#37aa37",
-      battleBiome: "ground",
-      createdByUserId: ctx.userId,
-    });
+    await insertMapTerrainForCreate(ctx.drizzle, id, ctx);
     return { success: true, message: id };
   }),
   /**
@@ -84,10 +79,7 @@ export const mapTerrainRouter = createTRPCRouter({
       const [user, entry, withKey] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchMapTerrain(ctx.drizzle, input.id),
-        ctx.drizzle.query.mapTerrain.findFirst({
-          columns: { id: true, key: true },
-          where: eq(mapTerrain.key, input.data.key),
-        }),
+        findMapTerrainForUpdate(ctx.drizzle, input),
       ]);
       // Guards
       if (user.isBanned) return errorResponse("You are banned");
@@ -116,19 +108,8 @@ export const mapTerrainRouter = createTRPCRouter({
       });
       // Mutation: update + audit log in parallel (no transaction on PlanetScale)
       await Promise.all([
-        ctx.drizzle
-          .update(mapTerrain)
-          .set(input.data)
-          .where(eq(mapTerrain.id, entry.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "mapTerrain",
-          changes: diff,
-          relatedId: entry.id,
-          relatedMsg: `Update: ${entry.name}`,
-          relatedImage: entry.textureUrl,
-        }),
+        updateMapTerrainForUpdate(ctx.drizzle, input, entry),
+        insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
       ]);
       // Broadcast the change to the content Discord outside development
       if (process.env.NODE_ENV !== "development") {
@@ -167,24 +148,9 @@ export const mapTerrainRouter = createTRPCRouter({
       }
       // Mutation: hard-delete + audit log in parallel
       await Promise.all([
-        ctx.drizzle.delete(mapTerrain).where(eq(mapTerrain.id, input.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "mapTerrain",
-          changes: [`Deleted terrain ${entry.name} (${entry.key})`],
-          relatedId: entry.id,
-          relatedMsg: `Delete: ${entry.name}`,
-          relatedImage: entry.textureUrl,
-        }),
+        deleteMapTerrainForDelete(ctx.drizzle, input),
+        insertActionLogForDelete(ctx.drizzle, ctx, entry),
       ]);
       return { success: true, message: `Deleted ${entry.name}` };
     }),
 });
-
-/** COMMON QUERIES WHICH ARE REUSED */
-
-/** Fetch a terrain row by id; undefined when it does not exist */
-export const fetchMapTerrain = async (client: DrizzleClient, id: string) => {
-  return await client.query.mapTerrain.findFirst({ where: eq(mapTerrain.id, id) });
-};

@@ -1,7 +1,9 @@
+import { fetchSquad } from "@/queries/anbu";
+import { fetchClan } from "@/queries/clan";
 import { beforeEach, expect, it } from "bun:test";
 import { anbuSquad, clan, userData } from "@/drizzle/schema";
-import { fetchSquad } from "@/server/api/routers/anbu";
-import { fetchClan } from "@/server/api/routers/clan";
+
+
 import { insertUsers } from "../../setup/factories";
 import { describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
 

@@ -1,9 +1,14 @@
-import { and, eq, gte, inArray, lt, or } from "drizzle-orm";
 import {
   CONTENT_PROPOSAL_EVIDENCE_DAYS,
   type ContentProposalEntityType,
 } from "@/drizzle/constants";
-import { contentProposal, contentProposalBasis } from "@/drizzle/schema";
+import {
+  selectContentProposalBasisForOutdateProposalsFor,
+  selectContentProposalForExpireStaleEvidence,
+  selectContentProposalForReinstateProposalsFor,
+  updateContentProposalForMarkOutdated,
+  updateContentProposalForReinstateProposalsFor,
+} from "@/queries/contentReview";
 import type { DrizzleClient } from "@/server/db";
 import { type ContentEntity, entityKey, entityLabel, loadEntities } from "./entities";
 import { MISSING_VERSION } from "./version";
@@ -21,22 +26,11 @@ export const outdateProposalsFor = async (
   reason: string,
 ) => {
   if (entityIds.length === 0) return;
-  const rows = await client
-    .select({
-      id: contentProposalBasis.proposalId,
-      statusChangedAt: contentProposal.statusChangedAt,
-      entityId: contentProposalBasis.entityId,
-      version: contentProposalBasis.version,
-    })
-    .from(contentProposalBasis)
-    .innerJoin(contentProposal, eq(contentProposal.id, contentProposalBasis.proposalId))
-    .where(
-      and(
-        eq(contentProposalBasis.entityType, entityType),
-        inArray(contentProposalBasis.entityId, entityIds),
-        eq(contentProposal.status, "PENDING"),
-      ),
-    );
+  const rows = await selectContentProposalBasisForOutdateProposalsFor(
+    client,
+    entityType,
+    entityIds,
+  );
   if (rows.length === 0) return;
   const live = await loadEntities(
     client,
@@ -80,26 +74,7 @@ export const reinstateProposalsFor = async (
   since: Date,
 ) => {
   if (refs.length === 0) return;
-  const rows = await client
-    .select({
-      id: contentProposal.id,
-      statusChangedAt: contentProposal.statusChangedAt,
-      expiresAt: contentProposal.expiresAt,
-      entityType: contentProposalBasis.entityType,
-      entityId: contentProposalBasis.entityId,
-      version: contentProposalBasis.version,
-    })
-    .from(contentProposal)
-    .innerJoin(
-      contentProposalBasis,
-      eq(contentProposalBasis.proposalId, contentProposal.id),
-    )
-    .where(
-      and(
-        eq(contentProposal.status, "OUTDATED"),
-        gte(contentProposal.statusChangedAt, since),
-      ),
-    );
+  const rows = await selectContentProposalForReinstateProposalsFor(client, since);
   const touched = new Set(refs.map((ref) => entityKey(ref.entityType, ref.entityId)));
   const byProposal = new Map<string, typeof rows>();
   for (const row of rows)
@@ -119,26 +94,7 @@ export const reinstateProposalsFor = async (
     ),
   );
   if (current.length === 0) return;
-  await client
-    .update(contentProposal)
-    .set({ status: "PENDING", outdatedReason: null, statusChangedAt: new Date() })
-    .where(
-      and(
-        or(
-          ...current.flatMap((basis) =>
-            basis[0]
-              ? [
-                  and(
-                    eq(contentProposal.id, basis[0].id),
-                    eq(contentProposal.statusChangedAt, basis[0].statusChangedAt),
-                  ),
-                ]
-              : [],
-          ),
-        ),
-        eq(contentProposal.status, "OUTDATED"),
-      ),
-    );
+  await updateContentProposalForReinstateProposalsFor(client, current);
 };
 
 /**
@@ -213,18 +169,7 @@ export const refreshProposalFreshness = async (
 
 /** Outdate pending suggestions whose usage data has expired. */
 export const expireStaleEvidence = async (client: DrizzleClient) => {
-  const rows = await client
-    .select({
-      id: contentProposal.id,
-      statusChangedAt: contentProposal.statusChangedAt,
-    })
-    .from(contentProposal)
-    .where(
-      and(
-        eq(contentProposal.status, "PENDING"),
-        lt(contentProposal.expiresAt, new Date()),
-      ),
-    );
+  const rows = await selectContentProposalForExpireStaleEvidence(client);
   await markOutdated(
     client,
     rows.map((row) => row.id),
@@ -241,24 +186,5 @@ const markOutdated = async (
   revisions: { id: string; statusChangedAt: Date }[],
 ) => {
   if (ids.length === 0) return;
-  await client
-    .update(contentProposal)
-    .set({
-      status: "OUTDATED",
-      outdatedReason: reason.slice(0, 191),
-      statusChangedAt: new Date(),
-    })
-    .where(
-      and(
-        or(
-          ...revisions.map((row) =>
-            and(
-              eq(contentProposal.id, row.id),
-              eq(contentProposal.statusChangedAt, row.statusChangedAt),
-            ),
-          ),
-        ),
-        eq(contentProposal.status, "PENDING"),
-      ),
-    );
+  await updateContentProposalForMarkOutdated(client, reason, revisions);
 };

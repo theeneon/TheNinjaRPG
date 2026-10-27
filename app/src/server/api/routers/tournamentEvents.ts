@@ -1,24 +1,12 @@
 import { randomInt } from "node:crypto";
-import { and, eq, gte, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   EVENT_TOURNAMENT_LAUNCH_RECOVERY_SECONDS,
   EVENT_TOURNAMENT_READY_SECONDS,
   EVENT_TOURNAMENT_RETENTION_DAYS,
-  IMG_MANUAL_TOURNAMENTS,
-  JUTSU_TRAIN_LEVEL_CAP,
   MAP_WAKE_ISLAND_SECTOR,
   RANKED_PVP_STATS,
 } from "@/drizzle/constants";
-import {
-  battle,
-  rankedLoadout,
-  tournament,
-  tournamentMatch,
-  tournamentRewardClaim,
-  userData,
-  userJutsu,
-} from "@/drizzle/schema";
 import { getExpBracket } from "@/libs/profile";
 import { getServerPusher } from "@/libs/pusher";
 import { postProcessRewards } from "@/libs/quest";
@@ -31,6 +19,30 @@ import {
   eventRewardFor,
   generateEventBracket,
 } from "@/libs/tournament/events";
+import { findUserById, findUserRoleById } from "@/queries/profile";
+import {
+  deleteTournamentForMaintainEventTournaments,
+  deleteTournamentMatchForMaintainEventTournaments,
+  deleteTournamentRewardClaimForMaintainEventTournaments,
+  fetchEvent,
+  fetchEventNoticeState,
+  fetchEventUser,
+  findBattleForSyncEventTournament,
+  findTournamentMatchForSyncEventTournament,
+  insertTournamentForSaveEvent,
+  insertTournamentMatchForLaunchEventGame,
+  insertTournamentMatchForSyncEventTournament,
+  insertTournamentRewardClaimForPayEventRewards,
+  listRankedLoadoutForLaunchEventGame,
+  listTournamentForListEvents,
+  listTournamentForMaintainEventTournaments,
+  listTournamentRewardClaimForPayEventRewards,
+  listUserDataForLaunchEventGame,
+  updateTournamentForPayEventRewards,
+  updateTournamentForSaveEventState,
+  updateTournamentMatchForRecordLaunchFailure,
+  updateTournamentMatchForSyncEventTournament,
+} from "@/queries/tournamentEvents";
 import { initiateBattle } from "@/routers/combat";
 import { updateRewards } from "@/routers/quests";
 import { errorResponse, protectedProcedure } from "@/server/api/trpc";
@@ -39,7 +51,6 @@ import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlE
 import { cleanRankedProhibitedSelections } from "@/server/utils/ranked";
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
 import { canManageTournaments } from "@/utils/permissions";
-import { ObjectiveReward } from "@/validators/rewards";
 import {
   type EventParticipant,
   type EventTournamentState,
@@ -57,15 +68,8 @@ export const eventTournamentProcedures = {
   /** List public event summaries, including unpublished drafts only for tournament staff. */
   listEvents: protectedProcedure.query(async ({ ctx }) => {
     const [events, user] = await Promise.all([
-      ctx.drizzle.query.tournament.findMany({
-        where: eq(tournament.type, "EVENT"),
-        orderBy: (t, { desc }) => [desc(t.createdAt)],
-        limit: 100,
-      }),
-      ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      }),
+      listTournamentForListEvents(ctx.drizzle),
+      findUserRoleById(ctx.drizzle, ctx.userId),
     ]);
     return events
       .filter(
@@ -133,10 +137,7 @@ export const eventTournamentProcedures = {
     .input(eventTournamentSaveSchema)
     .mutation(async ({ ctx, input }) => {
       const [user, titleError] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { role: true },
-        }),
+        findUserRoleById(ctx.drizzle, ctx.userId),
         validateTitleRewardIds(ctx.drizzle, input.config),
       ]);
       if (!canManageTournaments(user?.role ?? "USER"))
@@ -153,15 +154,7 @@ export const eventTournamentProcedures = {
       const id = nanoid();
       const eventData = createEventState(input.config);
       audit(eventData, ctx.userId, "Created draft");
-      await ctx.drizzle.insert(tournament).values({
-        id,
-        type: "EVENT",
-        name: `${input.config.name} (${id})`,
-        description: input.config.description,
-        image: IMG_MANUAL_TOURNAMENTS,
-        rewards: ObjectiveReward.parse({}),
-        eventData,
-      });
+      await insertTournamentForSaveEvent(ctx.drizzle, id, input, eventData);
       return { success: true, message: "Tournament draft created", tournamentId: id };
     }),
   /** Apply staff lifecycle and roster changes through the event version guard. */
@@ -169,10 +162,7 @@ export const eventTournamentProcedures = {
     .input(eventTournamentActionSchema)
     .mutation(async ({ ctx, input }) => {
       const [user, target] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { role: true },
-        }),
+        findUserRoleById(ctx.drizzle, ctx.userId),
         input.userId ? fetchEventUser(ctx.drizzle, input.userId) : undefined,
       ]);
       if (!canManageTournaments(user?.role ?? "USER"))
@@ -442,13 +432,6 @@ export const eventTournamentProcedures = {
     }),
 };
 
-/** Load an event and its combat tokens together for synchronization and versioned edits. */
-export const fetchEvent = (client: DrizzleClient, id: string) =>
-  client.query.tournament.findFirst({
-    where: and(eq(tournament.id, id), eq(tournament.type, "EVENT")),
-    with: { matches: true },
-  });
-
 type EventRow = NonNullable<Awaited<ReturnType<typeof fetchEvent>>>;
 
 /** Whole-event CAS serializes roster, bracket and score changes without missing-row locks. */
@@ -457,18 +440,7 @@ const saveEventState = async (
   row: EventRow,
   event: EventTournamentState,
 ) => {
-  const saved = await client
-    .update(tournament)
-    .set({
-      eventData: event,
-      version: sql`${tournament.version} + 1`,
-      status: ["COMPLETED", "CANCELLED"].includes(event.status)
-        ? "COMPLETED"
-        : event.series.length
-          ? "IN_PROGRESS"
-          : "OPEN",
-    })
-    .where(and(eq(tournament.id, row.id), eq(tournament.version, row.version)));
+  const saved = await updateTournamentForSaveEventState(client, event, row);
   return saved.rowsAffected === 1;
 };
 
@@ -574,56 +546,23 @@ export const syncEventTournament = async (
       ["STARTING", "FIGHTING"].includes(game.status) &&
       now > game.deadline + EVENT_TOURNAMENT_LAUNCH_RECOVERY_SECONDS * 1000
     ) {
-      const running = await client.query.battle.findFirst({
-        where: eq(battle.id, game.battleId),
-        columns: { id: true },
-      });
+      const running = await findBattleForSyncEventTournament(client, game);
       if (running) game.status = "FIGHTING";
       else {
         let token = saved;
         if (!token) {
           // STARTING can survive a crash before its token insert. Reserve that same ID
           // as revoked so the delayed launch cannot create a token after recovery.
-          await client
-            .insert(tournamentMatch)
-            .values({
-              id: game.id,
-              tournamentId: id,
-              round: series.round,
-              match: series.games.length,
-              userId1: game.userIds[0] ?? "",
-              userId2: game.userIds[1] ?? "",
-              battleId: game.battleId,
-              startedAt: new Date(),
-              state: "NO_SHOW",
-            })
-            .onDuplicateKeyUpdate({ set: { id: sql`${tournamentMatch.id}` } });
+          await insertTournamentMatchForSyncEventTournament(client, game, id, series);
           // FOUND_ROWS can report a matched WAITING row for the no-op duplicate branch.
           // Read its actual state before deciding whether this recovery owns the game.
-          token = await client.query.tournamentMatch.findFirst({
-            where: eq(tournamentMatch.id, game.id),
-          });
+          token = await findTournamentMatchForSyncEventTournament(client, game);
         }
         // Combat verifies this token while claiming both players in its transaction.
         // A committed battle wins; a revoked token rolls back a delayed initiation.
         const revoked =
           token?.state === "WAITING"
-            ? await client
-                .update(tournamentMatch)
-                .set({ state: "NO_SHOW" })
-                .where(
-                  and(
-                    eq(tournamentMatch.id, game.id),
-                    eq(tournamentMatch.state, "WAITING"),
-                    isNull(tournamentMatch.winnerId),
-                    notExists(
-                      client
-                        .select({ id: battle.id })
-                        .from(battle)
-                        .where(eq(battle.id, game.battleId)),
-                    ),
-                  ),
-                )
+            ? await updateTournamentMatchForSyncEventTournament(client, game)
             : undefined;
         if (token?.state === "NO_SHOW" || revoked?.rowsAffected === 1)
           completeEventGame(event, series, null, "DRAW", now);
@@ -689,16 +628,7 @@ const launchEventGame = async (client: DrizzleClient, id: string, seriesId: stri
   // only after winning the roster's version. Recovery tombstones any crash gap.
   if (!(await retryOnDeadlock(() => saveEventState(client, row, event)))) return;
   try {
-    await client.insert(tournamentMatch).values({
-      id: game.id,
-      tournamentId: id,
-      round: series.round,
-      match: series.games.length,
-      userId1: game.userIds[0] ?? "",
-      userId2: game.userIds[1] ?? "",
-      battleId: game.battleId,
-      startedAt: new Date(),
-    });
+    await insertTournamentMatchForLaunchEventGame(client, game, id, series);
   } catch (error) {
     // A duplicate belongs to another launch or recovery. Recovery alone advances
     // a tombstoned game; recording a setup failure here could overwrite its draw.
@@ -706,20 +636,9 @@ const launchEventGame = async (client: DrizzleClient, id: string, seriesId: stri
     throw error;
   }
   const [users, loadouts] = await Promise.all([
-    client.query.userData.findMany({
-      where: inArray(userData.userId, game.userIds),
-      columns: {
-        userId: true,
-        status: true,
-        battleId: true,
-        sector: true,
-        isBanned: true,
-      },
-    }),
+    listUserDataForLaunchEventGame(client, game),
     event.config.rules === "RANKED"
-      ? client.query.rankedLoadout.findMany({
-          where: inArray(rankedLoadout.userId, game.userIds),
-        })
+      ? listRankedLoadoutForLaunchEventGame(client, game)
       : [],
   ]);
   const available = users.filter(
@@ -804,10 +723,7 @@ const recordLaunchFailure = async (
   available: string[],
   message?: string,
 ) => {
-  await client
-    .update(tournamentMatch)
-    .set({ state: "NO_SHOW" })
-    .where(and(eq(tournamentMatch.id, gameId), eq(tournamentMatch.state, "WAITING")));
+  await updateTournamentMatchForRecordLaunchFailure(client, gameId);
   await editEvent(client, id, (event) => {
     const series = event.series.find((s) => s.id === seriesId);
     const game = series?.games.at(-1);
@@ -848,9 +764,7 @@ const payEventRewards = async (client: DrizzleClient, row: EventRow) => {
         .flatMap((p) => [p.userId, ...p.previousUsers.map((u) => u.userId)]),
     ),
   ];
-  const receipts = await client.query.tournamentRewardClaim.findMany({
-    where: eq(tournamentRewardClaim.tournamentId, row.id),
-  });
+  const receipts = await listTournamentRewardClaimForPayEventRewards(client, row);
   const unpaid = users.filter((id) => !receipts.some((r) => r.userId === id));
   for (const userId of unpaid) {
     try {
@@ -859,24 +773,11 @@ const payEventRewards = async (client: DrizzleClient, row: EventRow) => {
           const database = tx as unknown as DrizzleClient;
           // Claim the still-retained terminal event, preventing cleanup from removing receipts
           // while a delayed payer is in flight. The version increment also fences deletion.
-          const retained = await database
-            .update(tournament)
-            .set({ version: sql`${tournament.version} + 1` })
-            .where(
-              and(
-                eq(tournament.id, row.id),
-                eq(tournament.type, "EVENT"),
-                eq(tournament.status, "COMPLETED"),
-              ),
-            );
+          const retained = await updateTournamentForPayEventRewards(database, row);
           if (retained.rowsAffected !== 1) return;
           // Unique receipt and all grants roll back together; a duplicate never grants twice.
-          await database
-            .insert(tournamentRewardClaim)
-            .values({ id: `${row.id}:${userId}`, tournamentId: row.id, userId });
-          const user = await database.query.userData.findFirst({
-            where: eq(userData.userId, userId),
-          });
+          await insertTournamentRewardClaimForPayEventRewards(database, row, userId);
+          const user = await findUserById(database, userId);
           // Deleted entrants are nonpayable; retain their receipt so payout can finish.
           if (!user) return;
           const rewards = eventRewardFor(event, userId);
@@ -900,9 +801,7 @@ const payEventRewards = async (client: DrizzleClient, row: EventRow) => {
 
 /** Synchronize events and remove expired terminal events only after pending payouts finish. */
 export const maintainEventTournaments = async (client: DrizzleClient) => {
-  const rows = await client.query.tournament.findMany({
-    where: eq(tournament.type, "EVENT"),
-  });
+  const rows = await listTournamentForMaintainEventTournaments(client);
   for (const row of rows) {
     const event = row.eventData;
     if (!event) continue;
@@ -912,32 +811,14 @@ export const maintainEventTournaments = async (client: DrizzleClient) => {
     ) {
       // Finish any interrupted payout before removing its event and receipts.
       await syncEventTournament(client, row.id);
-      const removed = await client
-        .delete(tournament)
-        .where(and(eq(tournament.id, row.id), eq(tournament.version, row.version)));
+      const removed = await deleteTournamentForMaintainEventTournaments(client, row);
       if (removed.rowsAffected !== 1) continue;
       await Promise.all([
-        client.delete(tournamentMatch).where(eq(tournamentMatch.tournamentId, row.id)),
-        client
-          .delete(tournamentRewardClaim)
-          .where(eq(tournamentRewardClaim.tournamentId, row.id)),
+        deleteTournamentMatchForMaintainEventTournaments(client, row),
+        deleteTournamentRewardClaimForMaintainEventTournaments(client, row),
       ]);
     } else await syncEventTournament(client, row.id);
   }
-};
-
-/** Fetch the account and distinct mastered jutsu needed for event eligibility in parallel. */
-const fetchEventUser = async (client: DrizzleClient, id: string) => {
-  const [user, mastered] = await Promise.all([
-    client.query.userData.findFirst({ where: eq(userData.userId, id) }),
-    client.query.userJutsu.findMany({
-      where: and(eq(userJutsu.userId, id), gte(userJutsu.level, JUTSU_TRAIN_LEVEL_CAP)),
-      columns: { jutsuId: true },
-    }),
-  ]);
-  return user
-    ? { ...user, masteredJutsu: new Set(mastered.map((j) => j.jutsuId)).size }
-    : null;
 };
 /** Freeze the account's current eligibility values for its registration or substitution. */
 const snapshotFor = (
@@ -973,64 +854,6 @@ const occupiedSeats = (event: EventTournamentState) =>
 /** Append a timestamped actor action to the versioned event's audit trail. */
 const audit = (event: EventTournamentState, userId: string, action: string) => {
   event.audit.push({ userId, action, at: Date.now() });
-};
-
-/**
- * Share actionable invitations and match notices between global prompts and navigation.
- * Reuse the same rows for polling eligibility, including seats between actionable checks.
- * Restrict the capped query to this player, then discard withdrawn seats and closed checks.
- */
-export const fetchEventNoticeState = async (client: DrizzleClient, userId: string) => {
-  const now = Date.now();
-  const events = await client.query.tournament.findMany({
-    where: and(
-      eq(tournament.type, "EVENT"),
-      inArray(tournament.status, ["OPEN", "IN_PROGRESS"]),
-      sql`JSON_CONTAINS(JSON_EXTRACT(${tournament.eventData}, '$.participants[*].userId'), JSON_QUOTE(${userId}))`,
-    ),
-    columns: { id: true, eventData: true },
-    limit: 100,
-  });
-  const participations = events.flatMap((row) => {
-    const event = row.eventData;
-    const seat = event?.participants.find((p) => p.userId === userId && !p.withdrawn);
-    return event && seat ? [{ id: row.id, event, seat }] : [];
-  });
-  const notices = participations.flatMap(({ id, event, seat }) => {
-    const ready = event.series.find(
-      (s) =>
-        !s.complete &&
-        s.seats.includes(seat.id) &&
-        s.games.at(-1)?.status === "READY" &&
-        (s.games.at(-1)?.opensAt ?? Infinity) <= now &&
-        (s.games.at(-1)?.deadline ?? 0) > now &&
-        !s.games.at(-1)?.accepted.includes(userId),
-    );
-    if (ready)
-      return [
-        {
-          tournamentId: id,
-          name: event.config.name,
-          message: "Your tournament match is ready",
-          deadline: ready.games.at(-1)!.deadline,
-        },
-      ];
-    if (
-      !seat.accepted &&
-      event.status === "REGISTRATION" &&
-      event.config.registrationClosesAt > now
-    )
-      return [
-        {
-          tournamentId: id,
-          name: event.config.name,
-          message: "You have a tournament invitation",
-          deadline: event.config.registrationClosesAt,
-        },
-      ];
-    return [];
-  });
-  return { notices, isEventParticipant: participations.length > 0 };
 };
 
 /** Best-effort cache refresh; polling remains available when websocket delivery fails. */

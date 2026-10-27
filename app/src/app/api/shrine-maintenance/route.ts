@@ -1,15 +1,3 @@
-import {
-  and,
-  eq,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lt,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
 import { cookies } from "next/headers";
 import {
   SHRINE_BOOST_COST,
@@ -18,26 +6,30 @@ import {
   WAR_SHRINE_MAINTENANCE_DAYS,
 } from "@/drizzle/constants";
 import {
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  sector,
-  userData,
-  village,
-  war,
-} from "@/drizzle/schema";
-import {
   handleEndpointError,
   lockWithDailyTimer,
   lockWithMinuteTimer,
 } from "@/libs/gamesettings";
-import { fetchVillages } from "@/server/api/routers/village";
+import {
+  deleteMpvpBattleQueueForRunStaleShrineLobbyCleanup,
+  deleteMpvpBattleUserForRunStaleShrineLobbyCleanup,
+  deleteSectorForRunShrineMaintenance,
+  listSectorForRunShrineMaintenance,
+  listVillageForRunShrineBoostTick,
+  selectMpvpBattleQueueForRunStaleShrineLobbyCleanup,
+  selectMpvpBattleQueueForRunStaleShrineLobbyCleanup2,
+  selectMpvpBattleUserForRunStaleShrineLobbyCleanup,
+  selectSectorForRunShrineBoostTick,
+  updateSectorForRunShrineMaintenance,
+  updateUserDataForRunStaleShrineLobbyCleanup,
+  updateVillageForRunShrineBoostTick,
+} from "@/queries/shrine";
+import { fetchVillages } from "@/queries/village";
+import { listActiveWarsWithRules } from "@/queries/war";
+
 import { type DrizzleClient, drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { syncWarCamps } from "@/server/utils/objectiveWar";
-import {
-  boostInactivePredicate,
-  mergeActiveBoostsExpression,
-} from "@/server/utils/shrine";
 import {
   getCurrentSlotBoundary,
   getSlotIndex,
@@ -70,9 +62,7 @@ export async function GET(request: Request) {
     const [boostResult, staleLobbyResult, objectiveWars] = await Promise.all([
       runShrineBoostTick(now, minuteCheck.prevTime),
       runStaleShrineLobbyCleanup(now),
-      drizzleDB.query.war.findMany({
-        where: and(eq(war.status, "ACTIVE"), isNotNull(war.rules)),
-      }),
+      listActiveWarsWithRules(drizzleDB),
     ]);
     if (objectiveWars.length) await syncWarCamps(drizzleDB, objectiveWars, now);
 
@@ -104,9 +94,7 @@ export async function GET(request: Request) {
  */
 async function runShrineMaintenance(now: Date) {
   const [overdueSectors, villages] = await Promise.all([
-    drizzleDB.query.sector.findMany({
-      where: lte(sector.nextMaintainanceDueDate, now),
-    }),
+    listSectorForRunShrineMaintenance(drizzleDB, now),
     fetchVillages(drizzleDB),
   ]);
 
@@ -123,17 +111,19 @@ async function runShrineMaintenance(now: Date) {
       const newLevel = s.shrineLevel - 1;
       if (newLevel < 1) {
         shrinesDestroyed++;
-        return drizzleDB.delete(sector).where(eq(sector.id, s.id));
+        return deleteSectorForRunShrineMaintenance(drizzleDB, s);
       }
       shrinesDowngraded++;
       const nextMaintainanceDueDate = secondsFromDate(
         WAR_SHRINE_MAINTENANCE_DAYS * 24 * 60 * 60,
         now,
       );
-      return drizzleDB
-        .update(sector)
-        .set({ shrineLevel: newLevel, nextMaintainanceDueDate })
-        .where(eq(sector.id, s.id));
+      return updateSectorForRunShrineMaintenance(
+        drizzleDB,
+        newLevel,
+        nextMaintainanceDueDate,
+        s,
+      );
     });
 
   await Promise.all(mutations);
@@ -254,18 +244,8 @@ async function runShrineBoostTick(now: Date, prevTime: Date) {
   // Only needed on slot boundaries: villages (to read templates) and the set of
   // villages controlling a Level 3 shrine (a prerequisite for activation).
   const [allVillages, level3Sectors] = await Promise.all([
-    drizzleDB.query.village.findMany({
-      columns: { id: true, shrineSettings: true, tokens: true },
-    }),
-    drizzleDB
-      .select({ villageId: sector.villageId })
-      .from(sector)
-      .where(
-        and(
-          eq(sector.shrineLevel, 3),
-          or(isNull(sector.boostLockedUntil), lte(sector.boostLockedUntil, now)),
-        ),
-      ),
+    listVillageForRunShrineBoostTick(drizzleDB),
+    selectSectorForRunShrineBoostTick(drizzleDB, now),
   ]);
 
   const villagesWithLevel3Shrine = new Set(level3Sectors.map((s) => s.villageId));
@@ -324,19 +304,13 @@ async function runShrineBoostTick(now: Date, prevTime: Date) {
   const templateUpdateResults = await Promise.all(
     [...activationsByVillage.entries()].map(async ([villageId, upserts]) => {
       const totalCost = SHRINE_BOOST_COST * upserts.length;
-      const res = await drizzleDB
-        .update(village)
-        .set({
-          shrineSettings: mergeActiveBoostsExpression({ removeKeys: [], upserts }),
-          tokens: sql`${village.tokens} - ${totalCost}`,
-        })
-        .where(
-          and(
-            eq(village.id, villageId),
-            gte(village.tokens, totalCost),
-            ...upserts.map((u) => boostInactivePredicate(u.boostType, nowIso)),
-          ),
-        );
+      const res = await updateVillageForRunShrineBoostTick(
+        drizzleDB,
+        upserts,
+        totalCost,
+        villageId,
+        nowIso,
+      );
       return { res, count: upserts.length };
     }),
   );
@@ -361,16 +335,10 @@ export async function runStaleShrineLobbyCleanup(
 ) {
   const cutoff = shrineLobbyFreshAfter(now);
 
-  const staleLobbies = await db
-    .select({ id: mpvpBattleQueue.id })
-    .from(mpvpBattleQueue)
-    .where(
-      and(
-        eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-        isNull(mpvpBattleQueue.battleId),
-        lt(mpvpBattleQueue.createdAt, cutoff),
-      ),
-    );
+  const staleLobbies = await selectMpvpBattleQueueForRunStaleShrineLobbyCleanup(
+    db,
+    cutoff,
+  );
 
   if (staleLobbies.length === 0) {
     return { lobbiesCleared: 0, usersReset: 0 };
@@ -381,50 +349,33 @@ export async function runStaleShrineLobbyCleanup(
   // Re-check isNull(battleId) at execution time via a subquery so any lobby
   // claimed between the SELECT above and these statements is excluded from both
   // child cleanup and parent delete (claimed rows have battleId set).
-  const unclaimedSubquery = db
-    .select({ id: mpvpBattleQueue.id })
-    .from(mpvpBattleQueue)
-    .where(
-      and(
-        inArray(mpvpBattleQueue.id, deletedQueueIds),
-        isNull(mpvpBattleQueue.battleId),
-        lt(mpvpBattleQueue.createdAt, cutoff),
-      ),
-    );
+  const unclaimedSubquery = selectMpvpBattleQueueForRunStaleShrineLobbyCleanup2(
+    db,
+    deletedQueueIds,
+    cutoff,
+  );
 
-  const unclaimedUsersSubquery = db
-    .select({ userId: mpvpBattleUser.userId })
-    .from(mpvpBattleUser)
-    .where(inArray(mpvpBattleUser.clanBattleId, unclaimedSubquery));
+  const unclaimedUsersSubquery = selectMpvpBattleUserForRunStaleShrineLobbyCleanup(
+    db,
+    unclaimedSubquery,
+  );
 
   // Step 1a: reset user statuses while mpvpBattleUser rows still exist —
   // the subquery reads from mpvpBattleUser, so the UPDATE must precede the DELETE.
-  const resetResult = await db
-    .update(userData)
-    .set({ status: "AWAKE" })
-    .where(
-      and(
-        inArray(userData.userId, unclaimedUsersSubquery),
-        eq(userData.status, "QUEUED"),
-      ),
-    );
+  const resetResult = await updateUserDataForRunStaleShrineLobbyCleanup(
+    db,
+    unclaimedUsersSubquery,
+  );
 
   // Step 1b: now safe to drop the child rows
-  await db
-    .delete(mpvpBattleUser)
-    .where(inArray(mpvpBattleUser.clanBattleId, unclaimedSubquery));
+  await deleteMpvpBattleUserForRunStaleShrineLobbyCleanup(db, unclaimedSubquery);
 
   // Step 2: parent delete with the same guard
-  const deleteResult = await db
-    .delete(mpvpBattleQueue)
-    .where(
-      and(
-        inArray(mpvpBattleQueue.id, deletedQueueIds),
-        eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-        isNull(mpvpBattleQueue.battleId),
-        lt(mpvpBattleQueue.createdAt, cutoff),
-      ),
-    );
+  const deleteResult = await deleteMpvpBattleQueueForRunStaleShrineLobbyCleanup(
+    db,
+    deletedQueueIds,
+    cutoff,
+  );
 
   return {
     lobbiesCleared: deleteResult.rowsAffected ?? 0,

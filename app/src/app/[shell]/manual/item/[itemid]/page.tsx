@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import ContentDetail from "@/layout/ContentDetail";
 import { buildMetadata, metaDescription } from "@/libs/seo";
-import { fetchItem } from "@/server/api/routers/item";
+import { fetchItem } from "@/queries/item";
+
 import { drizzleDB } from "@/server/db";
 import { capitalizeFirstLetter } from "@/utils/string";
 

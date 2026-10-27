@@ -1,8 +1,14 @@
-import { and, eq, gte, ne, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import { COST_SKILL_RESET, MAX_BLOODRIGHT_TIERS } from "@/drizzle/constants";
-import { actionLog, skillTree, skillTreeFolder, userData } from "@/drizzle/schema";
 import { getBloodrightRefundIds } from "@/libs/bloodright";
+import {
+  insertActionLogForReset,
+  listSkillTreeForGet,
+  listSkillTreeForRefund,
+  updateUserDataForPurchase,
+  updateUserDataForRefund,
+  updateUserDataForReset,
+} from "@/queries/bloodright";
+import { findSkillWithFolderById } from "@/queries/skillTree";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
   fetchMonthlyResets,
@@ -11,7 +17,6 @@ import {
   isSkillVisible,
 } from "@/routers/skillTree";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
-import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { canAccessHiddenSkillTree, isStaffMember } from "@/utils/permissions";
 import { bloodrightTierSchema } from "@/validators/skillTree";
 import { userDeltaResponseSchema } from "@/validators/userCache";
@@ -20,11 +25,7 @@ export const bloodrightRouter = createTRPCRouter({
   get: protectedProcedure.query(async ({ ctx }) => {
     const [{ user }, tiers] = await Promise.all([
       fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-      ctx.drizzle.query.skillTree.findMany({
-        where: eq(skillTree.pathType, "BLOODRIGHT"),
-        with: { folder: true },
-        orderBy: [skillTree.tier, skillTree.name],
-      }),
+      listSkillTreeForGet(ctx.drizzle),
     ]);
     return {
       tiers: tiers.filter(
@@ -42,10 +43,7 @@ export const bloodrightRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [updatedUser, tier] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.skillTree.findFirst({
-          where: eq(skillTree.id, input.skillId),
-          with: { folder: true },
-        }),
+        findSkillWithFolderById(ctx.drizzle, input.skillId),
       ]);
       const { user } = updatedUser;
       if (!user) return errorResponse("User not found");
@@ -76,25 +74,19 @@ export const bloodrightRouter = createTRPCRouter({
         ...purchased,
         { skillId: tier.id, cost: tier.seichiSilverCost },
       ];
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          updatedAt: getNextUserSnapshotAt(user.updatedAt),
-          seichiSilver: sql`${userData.seichiSilver} - ${tier.seichiSilverCost}`,
-          bloodrightSpent: sql`${userData.bloodrightSpent} + ${tier.seichiSilverCost}`,
-          bloodright,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.bloodlineId, tier.bloodlineId),
-            // Content may change between loading the card and claiming its purchase.
-            sql`EXISTS (SELECT 1 FROM ${skillTree} LEFT JOIN ${skillTreeFolder} ON ${skillTree.folderId} = ${skillTreeFolder.id} WHERE ${skillTree.id} = ${tier.id} AND ${skillTree.updatedAt} = ${tier.updatedAt} AND (${canAccessHiddenSkillTree(user.role)} OR (${skillTree.hidden} = false AND COALESCE(${skillTreeFolder.hidden}, false) = false)))`,
-            ne(userData.status, "BATTLE"),
-            sql`${userData.bloodright} = CAST(${JSON.stringify(purchased)} AS JSON)`,
-            gte(userData.seichiSilver, tier.seichiSilverCost),
-          ),
-        );
+      const result = await updateUserDataForPurchase(
+        ctx.drizzle,
+        user,
+        {
+          seichiSilverCost: tier.seichiSilverCost,
+          bloodlineId: tier.bloodlineId,
+          id: tier.id,
+          updatedAt: tier.updatedAt,
+        },
+        bloodright,
+        ctx,
+        purchased,
+      );
       if (result.rowsAffected !== 1)
         return errorResponse(
           "Your Bloodright or balance changed. Refresh and try again",
@@ -117,9 +109,7 @@ export const bloodrightRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [updatedUser, tiers] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.skillTree.findMany({
-          where: eq(skillTree.pathType, "BLOODRIGHT"),
-        }),
+        listSkillTreeForRefund(ctx.drizzle),
       ]);
       const { user } = updatedUser;
       if (!user) return errorResponse("User not found");
@@ -138,21 +128,13 @@ export const bloodrightRouter = createTRPCRouter({
       const bloodright = user.bloodright.filter(
         (entry) => !removed.includes(entry.skillId),
       );
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          updatedAt: getNextUserSnapshotAt(user.updatedAt),
-          seichiSilver: sql`${userData.seichiSilver} + ${refund}`,
-          bloodrightSpent: sql`${userData.bloodrightSpent} - ${refund}`,
-          bloodright,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            ne(userData.status, "BATTLE"),
-            sql`${userData.bloodright} = CAST(${JSON.stringify(user.bloodright)} AS JSON)`,
-          ),
-        );
+      const result = await updateUserDataForRefund(
+        ctx.drizzle,
+        user,
+        refund,
+        bloodright,
+        ctx,
+      );
       if (result.rowsAffected !== 1)
         return errorResponse("Your Bloodright changed. Refresh and try again");
       return {
@@ -184,40 +166,18 @@ export const bloodrightRouter = createTRPCRouter({
         ...allowance,
         count: allowance.count + (isStaff ? 0 : 1),
       };
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          updatedAt: getNextUserSnapshotAt(user.updatedAt),
-          seichiSilver: sql`${userData.seichiSilver} + ${userData.bloodrightSpent}`,
-          bloodrightSpent: 0,
-          bloodright: [],
-          reputationPoints: sql`${userData.reputationPoints} - ${cost}`,
-          monthlySkillResets,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            ne(userData.status, "BATTLE"),
-            sql`${userData.bloodright} = CAST(${JSON.stringify(user.bloodright)} AS JSON)`,
-            sql`${userData.monthlySkillResets} = CAST(${JSON.stringify(user.monthlySkillResets)} AS JSON)`,
-            // The confirmed refund delta must equal the SQL expression's committed amount.
-            eq(userData.bloodrightSpent, user.bloodrightSpent),
-            gte(userData.reputationPoints, cost),
-          ),
-        );
+      const result = await updateUserDataForReset(
+        ctx.drizzle,
+        user,
+        cost,
+        monthlySkillResets,
+        ctx,
+      );
       if (result.rowsAffected !== 1)
         return errorResponse(
           "Your Bloodright, reset allowance or reputation balance changed. Refresh and try again",
         );
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "skillReset",
-        changes: ["Bloodright reset"],
-        relatedMsg: isStaff ? "Free reset for staff member" : "Bloodright reset",
-        relatedValue: cost,
-        relatedImage: user.avatarLight,
-      });
+      await insertActionLogForReset(ctx.drizzle, ctx, isStaff, cost, user);
       return {
         success: true,
         userDelta: updatedUser.requiresUserRefresh

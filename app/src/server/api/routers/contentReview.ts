@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type {
   ContentProposalCategory,
@@ -8,12 +8,7 @@ import type {
 } from "@/drizzle/constants";
 import { CONTENT_REVIEW_SFX_SEARCH_RESULTS, ItemTypes } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
-import {
-  contentProposal,
-  contentProposalChange,
-  contentProposalMedia,
-  gameAsset,
-} from "@/drizzle/schema";
+import { contentProposal, type gameAsset } from "@/drizzle/schema";
 import {
   type ContentEntity,
   draftName,
@@ -42,12 +37,31 @@ import {
   validationError,
 } from "@/libs/contentReview/submit";
 import { sameValue } from "@/libs/contentReview/version";
+import {
+  deleteGameAssetForRollback,
+  fetchProposal,
+  insertGameAssetIfAbsent,
+  listContentProposalForGetQueue,
+  listContentProposalForGetStats,
+  selectContentProposalForGetCounts,
+  selectContentProposalForGetCounts2,
+  selectGameAssetForGetProposal,
+  updateContentProposalChangeForApplyProposal,
+  updateContentProposalForApplyProposal,
+  updateContentProposalForReject,
+  updateContentProposalForRestore,
+  updateContentProposalForRevert,
+  updateContentProposalForRollback,
+  updateContentProposalForUnreject,
+  updateContentProposalMediaForApplyProposal,
+} from "@/queries/contentReview";
+import { fetchUser } from "@/queries/profile";
 import { gameAssetRouter } from "@/routers/asset";
 import { badgeRouter } from "@/routers/badge";
 import { bloodlineRouter } from "@/routers/bloodline";
 import { itemRouter } from "@/routers/item";
 import { jutsuRouter } from "@/routers/jutsu";
-import { fetchUser, profileRouter } from "@/routers/profile";
+import { profileRouter } from "@/routers/profile";
 import { questsRouter } from "@/routers/quests";
 import { titleRouter } from "@/routers/title";
 import {
@@ -56,9 +70,7 @@ import {
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { canChangeContent, canSuggestContent, isStaffRole } from "@/utils/permissions";
-import { getUtcDayWindowStart } from "@/utils/time";
 import type { insertAiSchema } from "@/validators/aiInput";
 import type { gameAssetValidator } from "@/validators/asset";
 import type { BadgeValidator } from "@/validators/badge";
@@ -97,35 +109,13 @@ export const contentReviewRouter = createTRPCRouter({
         return { items: [], nextCursor: null, canReview: false };
       const canReview = canChangeContent(user.role);
       const offset = input.cursor ?? 0;
-      const rows = await ctx.drizzle.query.contentProposal.findMany({
-        where: and(
-          eq(contentProposal.status, input.status),
-          input.category ? eq(contentProposal.category, input.category) : undefined,
-          input.source ? eq(contentProposal.source, input.source) : undefined,
-          input.entityType
-            ? inArray(
-                contentProposal.id,
-                ctx.drizzle
-                  .select({ id: contentProposalChange.proposalId })
-                  .from(contentProposalChange)
-                  .where(eq(contentProposalChange.entityType, input.entityType)),
-              )
-            : undefined,
-          canReview ? undefined : eq(contentProposal.createdByUserId, ctx.userId),
-        ),
-        with: {
-          changes: { orderBy: (table, { asc }) => [asc(table.sortOrder)] },
-          basis: true,
-          createdBy: { columns: { username: true } },
-          reviewedBy: { columns: { username: true } },
-        },
-        orderBy:
-          input.status === "PENDING"
-            ? [asc(contentProposal.createdAt)]
-            : [desc(contentProposal.statusChangedAt)],
+      const rows = await listContentProposalForGetQueue(
+        ctx.drizzle,
+        input,
+        canReview,
+        ctx,
         offset,
-        limit: input.limit + 1,
-      });
+      );
       const hasMore = rows.length > input.limit;
       const page = rows.slice(0, input.limit);
       // A page of pending suggestions is re-checked against the live rows, which catches
@@ -155,16 +145,8 @@ export const contentReviewRouter = createTRPCRouter({
       ? undefined
       : eq(contentProposal.createdByUserId, ctx.userId);
     const [byStatus, byCategory] = await Promise.all([
-      ctx.drizzle
-        .select({ status: contentProposal.status, n: count() })
-        .from(contentProposal)
-        .where(scope)
-        .groupBy(contentProposal.status),
-      ctx.drizzle
-        .select({ category: contentProposal.category, n: count() })
-        .from(contentProposal)
-        .where(and(eq(contentProposal.status, "PENDING"), scope))
-        .groupBy(contentProposal.category),
+      selectContentProposalForGetCounts(ctx.drizzle, scope),
+      selectContentProposalForGetCounts2(ctx.drizzle, scope),
     ]);
     return {
       canReview,
@@ -235,18 +217,7 @@ export const contentReviewRouter = createTRPCRouter({
       }
       assetIds.delete("");
       const assets = assetIds.size
-        ? await ctx.drizzle
-            .select({
-              id: gameAsset.id,
-              name: gameAsset.name,
-              type: gameAsset.type,
-              image: gameAsset.image,
-              url: gameAsset.url,
-              frames: gameAsset.frames,
-              speed: gameAsset.speed,
-            })
-            .from(gameAsset)
-            .where(inArray(gameAsset.id, [...assetIds]))
+        ? await selectGameAssetForGetProposal(ctx.drizzle, assetIds)
         : [];
       return {
         ...toSummary({ ...proposal, status }, entities),
@@ -378,27 +349,7 @@ export const contentReviewRouter = createTRPCRouter({
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
       if (!canChangeContent(user.role)) return errorResponse("Not allowed");
-      const result = await ctx.drizzle
-        .update(contentProposal)
-        .set({
-          status: "REJECTED",
-          rejectReason: input.reason,
-          reviewNote: input.note?.trim() || null,
-          reviewedByUserId: ctx.userId,
-          statusChangedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(contentProposal.id, input.id),
-            eq(contentProposal.status, "PENDING"),
-            input.expectedStatusChangedAt
-              ? eq(
-                  contentProposal.statusChangedAt,
-                  new Date(input.expectedStatusChangedAt),
-                )
-              : undefined,
-          ),
-        );
+      const result = await updateContentProposalForReject(ctx.drizzle, input, ctx);
       if (result.rowsAffected !== 1) {
         return errorResponse("This suggestion was already decided or went out of date");
       }
@@ -425,26 +376,11 @@ export const contentReviewRouter = createTRPCRouter({
       const statusChangedAt = new Date(
         Math.max(Date.now(), proposal.statusChangedAt.getTime() + 1),
       );
-      const result = await ctx.drizzle
-        .update(contentProposal)
-        .set({
-          status: "PENDING",
-          rejectReason: null,
-          reviewNote: null,
-          reviewedByUserId: null,
-          outdatedReason: null,
-          statusChangedAt,
-        })
-        .where(
-          and(
-            eq(contentProposal.id, input.id),
-            eq(contentProposal.status, "REJECTED"),
-            eq(
-              contentProposal.statusChangedAt,
-              new Date(input.expectedStatusChangedAt),
-            ),
-          ),
-        );
+      const result = await updateContentProposalForUnreject(
+        ctx.drizzle,
+        statusChangedAt,
+        input,
+      );
       if (result.rowsAffected !== 1)
         return errorResponse(
           "This suggestion changed. Reload before undoing its rejection.",
@@ -511,15 +447,7 @@ export const contentReviewRouter = createTRPCRouter({
           );
         }
       }
-      const claim = await ctx.drizzle
-        .update(contentProposal)
-        .set({ status: "REVERTED", statusChangedAt: new Date() })
-        .where(
-          and(
-            eq(contentProposal.id, proposal.id),
-            eq(contentProposal.status, "APPLIED"),
-          ),
-        );
+      const claim = await updateContentProposalForRevert(ctx.drizzle, proposal);
       if (claim.rowsAffected !== 1)
         return errorResponse("This suggestion was already reverted");
       const startedAt = new Date();
@@ -555,10 +483,7 @@ export const contentReviewRouter = createTRPCRouter({
             );
           }
         }
-        await ctx.drizzle
-          .update(contentProposal)
-          .set({ status: "APPLIED", statusChangedAt: appliedAt })
-          .where(eq(contentProposal.id, proposal.id));
+        await updateContentProposalForRestore(ctx.drizzle, appliedAt, proposal);
         await reinstateProposalsFor(
           ctx.drizzle,
           targetRefs([{ changes: reverted }]),
@@ -609,18 +534,7 @@ export const contentReviewRouter = createTRPCRouter({
       const user = await fetchUser(ctx.drizzle, ctx.userId);
       const now = new Date();
       if (!canChangeContent(user.role)) return buildReviewStats([], input, now);
-      const proposals = await ctx.drizzle.query.contentProposal.findMany({
-        columns: {
-          id: true,
-          source: true,
-          agentName: true,
-          category: true,
-          status: true,
-          createdAt: true,
-        },
-        where: gte(contentProposal.createdAt, getUtcDayWindowStart(input.days, now)),
-        with: { changes: { columns: { entityType: true } } },
-      });
+      const proposals = await listContentProposalForGetStats(ctx.drizzle, input, now);
       return buildReviewStats(proposals, input, now);
     }),
 
@@ -768,20 +682,7 @@ const applyProposal = async (
   if (plans.length === 0) return errorResponse("Tick at least one change to apply");
   // Suggestions this approval outdates from here on come back if it is undone.
   const startedAt = new Date();
-  const claim = await ctx.drizzle
-    .update(contentProposal)
-    .set({
-      status: "APPLIED",
-      reviewedByUserId: ctx.userId,
-      statusChangedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(contentProposal.id, proposal.id),
-        eq(contentProposal.status, "PENDING"),
-        eq(contentProposal.statusChangedAt, proposal.statusChangedAt),
-      ),
-    );
+  const claim = await updateContentProposalForApplyProposal(ctx.drizzle, ctx, proposal);
   if (claim.rowsAffected !== 1) {
     return errorResponse(
       "This suggestion was decided or went out of date a moment ago",
@@ -796,10 +697,7 @@ const applyProposal = async (
     // library and stays as it is; only rows this approval inserted are removed on failure.
     const inserted = await Promise.all(
       assets.map(async (asset) => {
-        const result = await ctx.drizzle
-          .insert(gameAsset)
-          .values(asset)
-          .onDuplicateKeyUpdate({ set: { id: asset.id } });
+        const result = await insertGameAssetIfAbsent(ctx.drizzle, asset);
         return result.rowsAffected === 1 ? [asset] : [];
       }),
     );
@@ -842,16 +740,15 @@ const applyProposal = async (
             stored && field in stored ? stored[field] : plan.fields[field],
           ]),
         );
-        return ctx.drizzle
-          .update(contentProposalChange)
-          .set({ applied, entityId })
-          .where(eq(contentProposalChange.id, plan.change.id));
+        return updateContentProposalChangeForApplyProposal(
+          ctx.drizzle,
+          applied,
+          entityId,
+          plan,
+        );
       }),
       chosenMedia.length
-        ? ctx.drizzle
-            .update(contentProposalMedia)
-            .set({ chosen: true })
-            .where(inArray(contentProposalMedia.id, chosenMedia))
+        ? updateContentProposalMediaForApplyProposal(ctx.drizzle, chosenMedia)
         : null,
     ]);
   } catch (error) {
@@ -897,18 +794,8 @@ const rollback = async (
     }
   }
   await Promise.all([
-    assets.length
-      ? ctx.drizzle.delete(gameAsset).where(
-          inArray(
-            gameAsset.id,
-            assets.map((asset) => asset.id),
-          ),
-        )
-      : null,
-    ctx.drizzle
-      .update(contentProposal)
-      .set({ status: "PENDING", reviewedByUserId: null, statusChangedAt: new Date() })
-      .where(eq(contentProposal.id, proposalId)),
+    assets.length ? deleteGameAssetForRollback(ctx.drizzle, assets) : null,
+    updateContentProposalForRollback(ctx.drizzle, proposalId),
   ]);
   // The entities' own updates outdated the other suggestions resting on them.
   await reinstateProposalsFor(
@@ -1160,22 +1047,6 @@ const toSummary = (
     };
   }),
 });
-
-/**
- * A suggestion with its changes and media in submission order, its basis, and the author's
- * and reviewer's usernames; undefined when it does not exist.
- */
-const fetchProposal = async (client: DrizzleClient, id: string) =>
-  client.query.contentProposal.findFirst({
-    where: eq(contentProposal.id, id),
-    with: {
-      changes: { orderBy: (table, { asc }) => [asc(table.sortOrder)] },
-      basis: true,
-      media: { orderBy: (table, { asc }) => [asc(table.sortOrder)] },
-      createdBy: { columns: { username: true } },
-      reviewedBy: { columns: { username: true } },
-    },
-  });
 
 type Proposal = NonNullable<Awaited<ReturnType<typeof fetchProposal>>>;
 

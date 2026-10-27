@@ -1,5 +1,5 @@
 import { format } from "date-fns";
-import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
 import { z } from "zod";
@@ -10,17 +10,10 @@ import {
 } from "@/drizzle/constants";
 import {
   type Conversation,
-  conversation,
   conversationComment,
-  forumPost,
-  forumThread,
-  supportTicket,
-  supportTicketActivity,
   user2conversation,
   userBlackList,
   userData,
-  userReportComment,
-  village,
 } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
 import { deferModeration } from "@/libs/moderation/defer";
@@ -31,9 +24,53 @@ import {
 import { getServerPusher } from "@/libs/pusher";
 import { isRaidChatConversationId } from "@/libs/raids";
 import { getStatusAfterComment } from "@/libs/support";
-import { fetchThread } from "@/routers/forum";
-import { fetchUser } from "@/routers/profile";
-import { fetchUserReport } from "@/routers/reports";
+import {
+  deleteConversationCommentForDeleteConversationComment,
+  deleteConversationCommentForExitConversation,
+  deleteConversationForExitConversation,
+  deleteForumPostForDeleteForumComment,
+  deleteUser2conversationForExitConversation,
+  fetchComments,
+  fetchForumThreadPage,
+  fetchPrivateConversationSenders,
+  findConversationCommentForDeleteConversationComment,
+  findConversationCommentForEditConversationComment,
+  findConversationCommentForReactConversationComment,
+  findConversationForGetConvo,
+  findConversationForGetConvo2,
+  findConversationForGetConvo3,
+  findForumPostForDeleteForumComment,
+  findForumPostForEditForumComment,
+  findSupportTicketForCreateConversationComment,
+  findSupportTicketForExitConversation,
+  findSupportTicketForUpdateSupportTicketStatusAfterComment,
+  findUserDataForGetUserConversations,
+  findUserDataForSendTypingIndicator,
+  insertConversationCommentForCreateConversationComment,
+  insertConversationCommentForCreateConvo,
+  insertConversationForCreateConvo,
+  insertForumPostForCreateForumComment,
+  insertSupportTicketActivityForUpdateSupportTicketStatusAfterComment,
+  insertUser2conversationForCreateConvo,
+  insertUserReportCommentForCreateReportComment,
+  listNotificationUserCandidates,
+  listUserReportCommentForGetReportComments,
+  selectConversationCommentForFetchConversationComment,
+  selectConversationCommentForGetConversationComments,
+  updateConversationCommentForEditConversationComment,
+  updateConversationCommentForReactConversationComment,
+  updateConversationForCreateConversationComment,
+  updateForumPostForEditForumComment,
+  updateForumThreadForCreateForumComment,
+  updateSupportTicketForUpdateSupportTicketStatusAfterComment,
+  updateUser2conversationForGetConversationComments,
+  updateUserDataForCreateConversationComment,
+  updateUserDataForCreateConversationComment2,
+  updateUserDataForGetUserConversations,
+} from "@/queries/comments";
+import { fetchThread } from "@/queries/forum";
+import { fetchCommunicationPolicies } from "@/queries/parentalControls";
+import { fetchUser } from "@/queries/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -44,12 +81,11 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { fetchCommunicationPolicies } from "@/server/utils/parentalControls";
 import {
   notifyConversationMentions,
   notifyPrivateConversation,
 } from "@/server/utils/push/social";
-import { displayTitleSql } from "@/server/utils/titleDisplay";
+import { fetchUserReport } from "@/server/utils/reports";
 import { getNewReactions, processMentions } from "@/utils/chat";
 import {
   canDeleteComment,
@@ -97,26 +133,12 @@ export const commentsRouter = createTRPCRouter({
       // Get comments
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
-      const comments = await ctx.drizzle.query.userReportComment.findMany({
-        offset: skip,
-        limit: input.limit,
-        where: eq(userReportComment.reportId, report.id),
-        with: {
-          user: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-              rank: true,
-              isOutlaw: true,
-              level: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-        },
-        orderBy: [desc(userReportComment.createdAt)],
-      });
+      const comments = await listUserReportCommentForGetReportComments(
+        ctx.drizzle,
+        skip,
+        input,
+        report,
+      );
       const nextCursor = comments.length < input.limit ? null : currentCursor + 1;
       // If not able to see secret data, hide reporter
       if (!canSeeSecretData(user.role)) {
@@ -153,12 +175,7 @@ export const commentsRouter = createTRPCRouter({
       if (!canPostReportComment(report)) return errorResponse("Already resolved");
       if (!canSeeReport(user, report)) return errorResponse("No access to report");
       // Update
-      await ctx.drizzle.insert(userReportComment).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        reportId: input.object_id,
-        content: sanitize(input.comment),
-      });
+      await insertUserReportCommentForCreateReportComment(ctx.drizzle, ctx, input);
       return { success: true, message: "Comment posted" };
     }),
   /**
@@ -206,28 +223,23 @@ export const commentsRouter = createTRPCRouter({
       const sanitized = moderated.sanitized;
       const createdId = nanoid();
       await Promise.all([
-        ctx.drizzle
-          .insert(forumPost)
-          .values({
-            id: createdId,
-            userId: effectiveUserId,
-            threadId: thread.id,
+        insertForumPostForCreateForumComment(
+          ctx.drizzle,
+          createdId,
+          effectiveUserId,
+          thread,
+          sanitized,
+          ctx,
+        ).then(() =>
+          deferModeration(ctx.drizzle, {
             content: sanitized,
-            authorId: ctx.userId,
-          })
-          .then(() =>
-            deferModeration(ctx.drizzle, {
-              content: sanitized,
-              userId: ctx.userId,
-              relationType: "forumPost",
-              relationId: createdId,
-              contextId: thread.id,
-            }),
-          ),
-        ctx.drizzle
-          .update(forumThread)
-          .set({ nPosts: sql`nPosts + 1` })
-          .where(eq(forumThread.id, thread.id)),
+            userId: ctx.userId,
+            relationType: "forumPost",
+            relationId: createdId,
+            contextId: thread.id,
+          }),
+        ),
+        updateForumThreadForCreateForumComment(ctx.drizzle, thread),
       ]);
       return { success: true, message: "Comment posted" };
     }),
@@ -239,12 +251,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment, moderated] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.forumPost.findFirst({
-          where: and(
-            eq(forumPost.id, input.object_id),
-            eq(forumPost.userId, ctx.userId),
-          ),
-        }),
+        findForumPostForEditForumComment(ctx.drizzle, input, ctx),
         moderateUserText(input.comment),
       ]);
       // Guard
@@ -255,10 +262,7 @@ export const commentsRouter = createTRPCRouter({
       // Mutate
       const postId = input.object_id;
       const sanitized = moderated.sanitized;
-      await ctx.drizzle
-        .update(forumPost)
-        .set({ content: sanitized })
-        .where(eq(forumPost.id, postId));
+      await updateForumPostForEditForumComment(ctx.drizzle, sanitized, postId);
       deferModeration(ctx.drizzle, {
         content: sanitized,
         userId: ctx.userId,
@@ -277,9 +281,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.forumPost.findFirst({
-          where: and(eq(forumPost.id, input.id)),
-        }),
+        findForumPostForDeleteForumComment(ctx.drizzle, input),
       ]);
       // Guard
       if (!comment) return errorResponse("Comment not found");
@@ -289,7 +291,7 @@ export const commentsRouter = createTRPCRouter({
         return errorResponse("You can only delete own comments");
       }
       // Mutate
-      await ctx.drizzle.delete(forumPost).where(eq(forumPost.id, input.id));
+      await deleteForumPostForDeleteForumComment(ctx.drizzle, input);
       return { success: true, message: "Comment deleted" };
     }),
   /**
@@ -302,39 +304,11 @@ export const commentsRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       // Query
       const [data, policies, senders] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          with: {
-            creatorBlacklist: true,
-            conversations: {
-              with: {
-                conversation: {
-                  with: {
-                    users: {
-                      with: {
-                        userData: {
-                          columns: {
-                            userId: true,
-                            username: true,
-                            avatar: true,
-                            role: true,
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        }),
+        findUserDataForGetUserConversations(ctx.drizzle, ctx),
         fetchCommunicationPolicies(ctx.drizzle, [ctx.userId]),
         fetchPrivateConversationSenders(ctx.drizzle, ctx.userId),
         // Remove the counter of new conversations
-        ctx.drizzle
-          .update(userData)
-          .set({ inboxNews: 0 })
-          .where(eq(userData.userId, ctx.userId)),
+        updateUserDataForGetUserConversations(ctx.drizzle, ctx),
       ]);
       // Filter off blacklisted conversations
       const filteredConverations = data?.conversations
@@ -420,10 +394,7 @@ export const commentsRouter = createTRPCRouter({
           id: input.convo_id,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.supportTicket.findFirst({
-          where: eq(supportTicket.conversationId, input.convo_id),
-          columns: { id: true },
-        }),
+        findSupportTicketForExitConversation(ctx.drizzle, input),
       ]);
       // Guard
       if (!convo) return errorResponse("Conversation not found");
@@ -431,14 +402,11 @@ export const commentsRouter = createTRPCRouter({
         return errorResponse("You are not allowed to view this conversation");
       }
       // Mutate
-      const membershipDeleteResult = await ctx.drizzle
-        .delete(user2conversation)
-        .where(
-          and(
-            eq(user2conversation.conversationId, convo.id),
-            eq(user2conversation.userId, ctx.userId),
-          ),
-        );
+      const membershipDeleteResult = await deleteUser2conversationForExitConversation(
+        ctx.drizzle,
+        convo,
+        ctx,
+      );
 
       // A support ticket's conversation is its message history with staff, and
       // its creator is its only member, so it must outlive the membership.
@@ -449,14 +417,12 @@ export const commentsRouter = createTRPCRouter({
         // conversation someone still belongs to, without serializing them.
         const noMembersLeft = sql`NOT EXISTS (SELECT 1 FROM ${user2conversation} WHERE ${user2conversation.conversationId} = ${convo.id})`;
         await Promise.all([
-          ctx.drizzle
-            .delete(conversation)
-            .where(and(eq(conversation.id, convo.id), noMembersLeft)),
-          ctx.drizzle
-            .delete(conversationComment)
-            .where(
-              and(eq(conversationComment.conversationId, convo.id), noMembersLeft),
-            ),
+          deleteConversationForExitConversation(ctx.drizzle, convo, noMembersLeft),
+          deleteConversationCommentForExitConversation(
+            ctx.drizzle,
+            convo,
+            noMembersLeft,
+          ),
         ]);
       }
       return { success: true, message: "Conversation exited" };
@@ -472,72 +438,8 @@ export const commentsRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const posterUser = alias(userData, "posterUser");
-      const readerUser = alias(userData, "readerUser");
-      const posterBlacklist = alias(userBlackList, "posterBlacklist");
-      const readerBlacklist = alias(userBlackList, "readerBlacklist");
       const [comment, initialConvo] = await Promise.all([
-        ctx.drizzle
-          .select({
-            id: conversationComment.id,
-            createdAt: conversationComment.createdAt,
-            content: conversationComment.content,
-            conversationId: conversationComment.conversationId,
-            authorId: conversationComment.authorId,
-            isPinned: conversationComment.isPinned,
-            isReported: conversationComment.isReported,
-            reactions: conversationComment.reactions,
-            villageName: village.name,
-            villageHexColor: village.hexColor,
-            villageKageId: village.kageId,
-            userId: posterUser.userId,
-            username: posterUser.username,
-            avatar: posterUser.avatar,
-            rank: posterUser.rank,
-            isOutlaw: posterUser.isOutlaw,
-            level: posterUser.level,
-            role: posterUser.role,
-            readerRole: readerUser.role,
-            displayTitle: displayTitleSql(posterUser),
-            federalStatus: posterUser.federalStatus,
-            tavernUsernameColor: posterUser.tavernUsernameColor,
-            tavernTitleColor: posterUser.tavernTitleColor,
-            nRecruited: posterUser.nRecruited,
-            tavernMessages: posterUser.tavernMessages,
-            isStaffOnly: conversationComment.isStaffOnly,
-          })
-          .from(conversationComment)
-          .innerJoin(posterUser, eq(posterUser.userId, conversationComment.userId))
-          .innerJoin(readerUser, eq(readerUser.userId, ctx.userId))
-          .leftJoin(
-            posterBlacklist,
-            and(
-              notInArray(readerUser.role, canModerateRoles),
-              eq(posterBlacklist.creatorUserId, conversationComment.userId),
-              eq(posterBlacklist.targetUserId, ctx.userId),
-            ),
-          )
-          .leftJoin(
-            readerBlacklist,
-            and(
-              eq(readerBlacklist.creatorUserId, ctx.userId),
-              eq(readerBlacklist.targetUserId, conversationComment.userId),
-            ),
-          )
-          .leftJoin(village, eq(village.id, posterUser.villageId))
-          .where(
-            and(
-              eq(conversationComment.id, input.commentId),
-              input.conversationId
-                ? eq(conversationComment.conversationId, input.conversationId)
-                : undefined,
-              or(
-                isNull(readerBlacklist.id),
-                inArray(posterUser.role, canModerateRoles),
-              ),
-              isNull(posterBlacklist.id),
-            ),
-          ),
+        selectConversationCommentForFetchConversationComment(ctx.drizzle, ctx, input),
         input.conversationId
           ? fetchConversation({
               client: ctx.drizzle,
@@ -655,71 +557,23 @@ export const commentsRouter = createTRPCRouter({
       }
 
       const [comments] = await Promise.all([
-        ctx.drizzle
-          .select({
-            id: conversationComment.id,
-            createdAt: conversationComment.createdAt,
-            content: conversationComment.content,
-            conversationId: conversationComment.conversationId,
-            authorId: conversationComment.authorId,
-            reactions: conversationComment.reactions,
-            isPinned: conversationComment.isPinned,
-            isReported: conversationComment.isReported,
-            villageName: village.name,
-            villageHexColor: village.hexColor,
-            villageKageId: village.kageId,
-            userId: userData.userId,
-            username: userData.username,
-            avatar: userData.avatar,
-            rank: userData.rank,
-            isOutlaw: userData.isOutlaw,
-            level: userData.level,
-            role: userData.role,
-            displayTitle: displayTitleSql(userData),
-            federalStatus: userData.federalStatus,
-            tavernUsernameColor: userData.tavernUsernameColor,
-            tavernTitleColor: userData.tavernTitleColor,
-            nRecruited: userData.nRecruited,
-            tavernMessages: userData.tavernMessages,
-            isStaffOnly: conversationComment.isStaffOnly,
-          })
-          .from(conversationComment)
-          .innerJoin(userData, eq(conversationComment.userId, userData.userId))
-          .leftJoin(
-            posterBlacklist,
-            and(
-              eq(
-                posterBlacklist.creatorUserId,
-                canSeeSecretData(user.role) ? "neverfound" : conversationComment.userId,
-              ),
-              eq(posterBlacklist.targetUserId, ctx.userId),
-            ),
-          )
-          .leftJoin(
-            readerBlacklist,
-            and(
-              eq(readerBlacklist.creatorUserId, ctx.userId),
-              eq(readerBlacklist.targetUserId, conversationComment.userId),
-            ),
-          )
-          .leftJoin(village, eq(village.id, userData.villageId))
-          .where(whereConditions)
-          .orderBy(desc(conversationComment.createdAt))
-          .limit(input.limit)
-          .offset(skip),
+        selectConversationCommentForGetConversationComments(
+          ctx.drizzle,
+          user,
+          ctx,
+          whereConditions,
+          input,
+          skip,
+        ),
         // Update last read
         ...(convo.isPublic
           ? []
           : [
-              ctx.drizzle
-                .update(user2conversation)
-                .set({ lastReadAt: new Date() })
-                .where(
-                  and(
-                    eq(user2conversation.userId, ctx.userId),
-                    eq(user2conversation.conversationId, convo.id),
-                  ),
-                ),
+              updateUser2conversationForGetConversationComments(
+                ctx.drizzle,
+                ctx,
+                convo,
+              ),
             ]),
       ]);
       // Fetch
@@ -765,10 +619,10 @@ export const commentsRouter = createTRPCRouter({
         if (!isBannedOrSilenced || !convo.isStaffAvailable) {
           return errorResponse(messagingRestriction);
         }
-        const linkedSupportTicket = await ctx.drizzle.query.supportTicket.findFirst({
-          where: eq(supportTicket.conversationId, convo.id),
-          columns: { createdByUserId: true },
-        });
+        const linkedSupportTicket = await findSupportTicketForCreateConversationComment(
+          ctx.drizzle,
+          convo,
+        );
         if (
           !canReplyToStaffConversationWhileRestricted(
             user,
@@ -855,48 +709,33 @@ export const commentsRouter = createTRPCRouter({
           convo,
         ),
         // Insert into DB
-        ctx.drizzle
-          .insert(conversationComment)
-          .values({
-            id: commentId,
-            content: sanitized,
-            userId: effectiveUserId,
-            authorId: ctx.userId,
-            conversationId: convo.id,
-          })
-          .then(() => {
-            if (convo.isPublic) {
-              deferModeration(ctx.drizzle, {
-                content: sanitized,
-                userId: ctx.userId,
-                relationType: "comment",
-                relationId: commentId,
-                contextId: convo.id,
-              });
-            }
-          }),
+        insertConversationCommentForCreateConversationComment(
+          ctx.drizzle,
+          commentId,
+          sanitized,
+          effectiveUserId,
+          ctx,
+          convo,
+        ).then(() => {
+          if (convo.isPublic) {
+            deferModeration(ctx.drizzle, {
+              content: sanitized,
+              userId: ctx.userId,
+              relationType: "comment",
+              relationId: commentId,
+              contextId: convo.id,
+            });
+          }
+        }),
         // Update conversation
-        ctx.drizzle
-          .update(conversation)
-          .set({ updatedAt: new Date() })
-          .where(eq(conversation.id, convo.id)),
+        updateConversationForCreateConversationComment(ctx.drizzle, convo),
         // Inbox news (database update)
         ...(usersIdsInConvo.length > 0 && !convo.isPublic && !skipInboxNotifications
-          ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ inboxNews: sql`${userData.inboxNews} + 1` })
-                .where(inArray(userData.userId, usersIdsInConvo)),
-            ]
+          ? [updateUserDataForCreateConversationComment(ctx.drizzle, usersIdsInConvo)]
           : []),
         // Public conversation stats
         ...(convo.isPublic
-          ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ tavernMessages: sql`${userData.tavernMessages} + 1` })
-                .where(eq(userData.userId, effectiveUserId)),
-            ]
+          ? [updateUserDataForCreateConversationComment2(ctx.drizzle, effectiveUserId)]
           : []),
       ]);
 
@@ -958,9 +797,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.conversationComment.findFirst({
-          where: eq(conversationComment.id, input.commentId),
-        }),
+        findConversationCommentForReactConversationComment(ctx.drizzle, input),
       ]);
       // Guard
       if (user.isBanned) return errorResponse("You are banned");
@@ -985,10 +822,11 @@ export const commentsRouter = createTRPCRouter({
       // Update the conversation & mutate
       const pusher = getServerPusher();
       await Promise.all([
-        ctx.drizzle
-          .update(conversationComment)
-          .set({ reactions: newReactions })
-          .where(eq(conversationComment.id, input.commentId)),
+        updateConversationCommentForReactConversationComment(
+          ctx.drizzle,
+          newReactions,
+          input,
+        ),
         pusher.trigger(convo.id, "event", {
           message: "reaction",
           fromId: ctx.userId,
@@ -1008,10 +846,7 @@ export const commentsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       if (!ctx.userId) return errorResponse("You are not logged in");
       const [user, convo] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { username: true, role: true },
-        }),
+        findUserDataForSendTypingIndicator(ctx.drizzle, ctx),
         fetchConversation({
           client: ctx.drizzle,
           id: input.conversationId,
@@ -1037,12 +872,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment, moderated] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.conversationComment.findFirst({
-          where: and(
-            eq(conversationComment.id, input.object_id),
-            eq(conversationComment.userId, ctx.userId),
-          ),
-        }),
+        findConversationCommentForEditConversationComment(ctx.drizzle, input, ctx),
         moderateUserText(input.comment),
       ]);
       // Guard
@@ -1063,10 +893,11 @@ export const commentsRouter = createTRPCRouter({
       // Mutate
       const commentId = input.object_id;
       const sanitized = moderated.sanitized;
-      await ctx.drizzle
-        .update(conversationComment)
-        .set({ content: sanitized })
-        .where(eq(conversationComment.id, commentId));
+      await updateConversationCommentForEditConversationComment(
+        ctx.drizzle,
+        sanitized,
+        commentId,
+      );
       deferModeration(ctx.drizzle, {
         content: sanitized,
         userId: ctx.userId,
@@ -1085,9 +916,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.conversationComment.findFirst({
-          where: eq(conversationComment.id, input.id),
-        }),
+        findConversationCommentForDeleteConversationComment(ctx.drizzle, input),
       ]);
       // Guard
       if (user.isBanned) return errorResponse("You are banned");
@@ -1097,37 +926,10 @@ export const commentsRouter = createTRPCRouter({
         return errorResponse("You can only delete own comments");
       }
       // Mutate
-      await ctx.drizzle
-        .delete(conversationComment)
-        .where(eq(conversationComment.id, input.id));
+      await deleteConversationCommentForDeleteConversationComment(ctx.drizzle, input);
       return { success: true, message: "Comment deleted" };
     }),
 });
-
-/**
- * Fetches comments from the database.
- * @param client - The DrizzleClient instance used for database operations.
- * @param ids - An array of comment IDs to fetch.
- * @returns An array of comments.
- */
-export const fetchComments = async (client: DrizzleClient, ids: string[]) => {
-  if (ids.length > 0) {
-    const comments = await client.query.conversationComment.findMany({
-      where: inArray(conversationComment.id, ids),
-      with: {
-        user: {
-          columns: {
-            userId: true,
-            username: true,
-          },
-        },
-      },
-    });
-    return comments;
-  } else {
-    return [];
-  }
-};
 
 interface FetchConvoOptions {
   client: DrizzleClient;
@@ -1145,22 +947,13 @@ export const fetchConversation = async (params: FetchConvoOptions) => {
   const { client, id, title, userId } = params;
   const getConvo = async () => {
     if (id) {
-      return await client.query.conversation.findFirst({
-        where: eq(conversation.id, id),
-        with: { users: true },
-      });
+      return await findConversationForGetConvo(client, id);
     } else if (title) {
       // First try to find a public conversation with this title
-      const publicConvo = await client.query.conversation.findFirst({
-        where: and(eq(conversation.title, title), eq(conversation.isPublic, true)),
-        with: { users: true },
-      });
+      const publicConvo = await findConversationForGetConvo2(client, title);
       if (publicConvo) return publicConvo;
       // Fallback to any conversation with this title (for private convos)
-      return await client.query.conversation.findFirst({
-        where: eq(conversation.title, title),
-        with: { users: true },
-      });
+      return await findConversationForGetConvo3(client, title);
     } else {
       throw serverError("BAD_REQUEST", "Invalid request");
     }
@@ -1192,10 +985,7 @@ export const fetchConversation = async (params: FetchConvoOptions) => {
       ? []
       : fetchPrivateConversationSenders(client, userId, convo.id),
     needsTicketLookup
-      ? client.query.supportTicket.findFirst({
-          where: eq(supportTicket.conversationId, convo.id),
-          columns: { createdByUserId: true },
-        })
+      ? findSupportTicketForCreateConversationComment(client, convo)
       : undefined,
   ]);
   const policies = [...initialPolicies, ...participantPolicies];
@@ -1226,10 +1016,10 @@ const updateSupportTicketStatusAfterComment = async (
   client: DrizzleClient,
   input: { conversationId: string; userId: string; isStaff: boolean },
 ) => {
-  const ticket = await client.query.supportTicket.findFirst({
-    where: eq(supportTicket.conversationId, input.conversationId),
-    columns: { id: true, status: true, createdByUserId: true },
-  });
+  const ticket = await findSupportTicketForUpdateSupportTicketStatusAfterComment(
+    client,
+    input,
+  );
   if (!ticket) return;
   const nextStatus = getStatusAfterComment(ticket.status, {
     isCreator: ticket.createdByUserId === input.userId,
@@ -1237,55 +1027,19 @@ const updateSupportTicketStatusAfterComment = async (
   });
   if (!nextStatus) return;
   // Guard on the status read so a concurrent staff change is not overwritten
-  const result = await client
-    .update(supportTicket)
-    .set({ status: nextStatus, updatedAt: new Date() })
-    .where(
-      and(eq(supportTicket.id, ticket.id), eq(supportTicket.status, ticket.status)),
-    );
+  const result = await updateSupportTicketForUpdateSupportTicketStatusAfterComment(
+    client,
+    nextStatus,
+    ticket,
+  );
   if (result.rowsAffected === 0) return;
-  await client.insert(supportTicketActivity).values({
-    id: nanoid(),
-    ticketId: ticket.id,
-    authorId: input.userId,
-    action: "STATUS_CHANGED",
-    oldValue: ticket.status,
-    newValue: nextStatus,
-    metadata: {},
-  });
+  await insertSupportTicketActivityForUpdateSupportTicketStatusAfterComment(
+    client,
+    ticket,
+    input,
+    nextStatus,
+  );
 };
-
-/**
- * Retained senders must stay subject to approval after leaving a private conversation.
- * Without an explicit conversation ID, loads senders across the account's memberships.
- */
-const fetchPrivateConversationSenders = (
-  client: DrizzleClient,
-  userId: string,
-  conversationId?: string,
-) =>
-  client
-    .selectDistinct({
-      conversationId: conversationComment.conversationId,
-      userId: conversationComment.userId,
-    })
-    .from(conversationComment)
-    .innerJoin(conversation, eq(conversation.id, conversationComment.conversationId))
-    .where(
-      and(
-        eq(conversation.isPublic, false),
-        eq(conversation.isStaffAvailable, false),
-        conversationId
-          ? eq(conversationComment.conversationId, conversationId)
-          : inArray(
-              conversationComment.conversationId,
-              client
-                .select({ conversationId: user2conversation.conversationId })
-                .from(user2conversation)
-                .where(eq(user2conversation.userId, userId)),
-            ),
-      ),
-    );
 
 /**
  * Creates a conversation with the given parameters and performs necessary database operations.
@@ -1329,35 +1083,28 @@ export const createConvo = async (info: {
   const messageId = nanoid();
   const sanitized = sanitize(content);
   await Promise.all([
-    client.insert(conversation).values({
-      id: insertId,
-      title: title,
-      createdById: senderUserId,
-      isPublic: isPublic,
-      isLocked: false,
-      isStaffAvailable: isStaffAvailable,
-    }),
+    insertConversationForCreateConvo(
+      client,
+      insertId,
+      title,
+      senderUserId,
+      isPublic,
+      isStaffAvailable,
+    ),
     ...uniqueUserIds.map((user) =>
-      client.insert(user2conversation).values({
-        conversationId: insertId,
-        userId: user,
-      }),
+      insertUser2conversationForCreateConvo(client, insertId, user),
     ),
     ...(receiverUserIds.length > 0
-      ? [
-          client
-            .update(userData)
-            .set({ inboxNews: sql`${userData.inboxNews} + 1` })
-            .where(inArray(userData.userId, receiverUserIds)),
-        ]
+      ? [updateUserDataForCreateConversationComment(client, receiverUserIds)]
       : []),
-    client.insert(conversationComment).values({
-      id: messageId,
-      content: sanitized,
-      userId: senderUserId,
-      authorId: authorUserId,
-      conversationId: insertId,
-    }),
+    insertConversationCommentForCreateConvo(
+      client,
+      messageId,
+      sanitized,
+      senderUserId,
+      authorUserId,
+      insertId,
+    ),
   ]);
   notifyPrivateConversation(client, {
     conversationId: insertId,
@@ -1368,14 +1115,6 @@ export const createConvo = async (info: {
   });
   return insertId;
 };
-
-/**
- * Interface for users to be notified in comments
- */
-interface NotifiedUser {
-  userId: string;
-  type: "mentioned" | "quoted";
-}
 
 /**
  * Returns mention/quote recipients allowed by their blacklist and parental policy.
@@ -1409,20 +1148,13 @@ export const fetchUsersToNotify = async (
         : inArray(userData.userId, quotedUserIds);
 
   // Execute the query with the appropriate where conditions
-  const usersWithBlacklist = await client.query.userData.findMany({
-    where: whereClause,
-    columns: {
-      userId: true,
-      username: true,
-    },
-    with: {
-      // Users who have blacklisted the sender (current user is the target)
-      creatorBlacklist: {
-        where: eq(userBlackList.targetUserId, currentUserId),
-      },
-    },
-  });
+  const usersWithBlacklist = await listNotificationUserCandidates(
+    client,
+    whereClause,
+    currentUserId,
+  );
 
+  // Policy reads depend on candidate IDs; skip that round trip when no users matched.
   const policies = usersWithBlacklist.length
     ? await fetchCommunicationPolicies(
         client,
@@ -1459,53 +1191,9 @@ export const fetchUsersToNotify = async (
 };
 
 /**
- * One page of a forum thread: the thread row, its posts and the totals the pager needs.
- *
- * Lives here rather than inline in getForumComments because the thread route also calls
- * it during its server render, to seed the client query. Sharing the function is what
- * keeps the seeded payload the same shape as the one the procedure returns -- a
- * hand-rolled copy in the page would drift the moment a column is added here.
+ * Interface for users to be notified in comments
  */
-export const fetchForumThreadPage = async (
-  client: DrizzleClient,
-  input: { thread_id: string; limit: number; cursor?: number | null },
-) => {
-  const currentCursor = input.cursor ? input.cursor : 0;
-  const skip = currentCursor * input.limit;
-  const [thread, comments, counts] = await Promise.all([
-    fetchThread(client, input.thread_id),
-    client.query.forumPost.findMany({
-      offset: skip,
-      limit: input.limit,
-      where: eq(forumPost.threadId, input.thread_id),
-      with: {
-        user: {
-          columns: {
-            userId: true,
-            username: true,
-            avatar: true,
-            rank: true,
-            isOutlaw: true,
-            level: true,
-            role: true,
-            federalStatus: true,
-          },
-        },
-      },
-      orderBy: [asc(forumPost.createdAt)],
-    }),
-    client
-      .select({ count: sql`count(*)`.mapWith(Number) })
-      .from(forumPost)
-      .where(eq(forumPost.threadId, input.thread_id)),
-  ]);
-  const nextCursor = comments.length < input.limit ? null : currentCursor + 1;
-  const totalComments = counts?.[0]?.count || 0;
-  return {
-    thread: thread,
-    data: comments,
-    nextCursor: nextCursor,
-    totalComments: totalComments,
-    totalPages: Math.ceil(totalComments / input.limit),
-  };
-};
+interface NotifiedUser {
+  userId: string;
+  type: "mentioned" | "quoted";
+}

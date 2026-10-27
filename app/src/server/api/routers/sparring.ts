@@ -1,14 +1,20 @@
-import { and, eq, gt, inArray, or } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { UserRequestState, UserRequestType } from "@/drizzle/constants";
 import { RANKED_PVP_STATS } from "@/drizzle/constants";
 import type { RankedLoadout, UserRequest } from "@/drizzle/schema";
-import { rankedLoadout, userRequest } from "@/drizzle/schema";
 import { SPAR_EXPIRY_SECONDS } from "@/libs/combat/constants";
 import { getServerPusher } from "@/libs/pusher";
+import { fetchUser } from "@/queries/profile";
+import {
+  fetchRequests,
+  findRankedLoadoutForAcceptChallenge,
+  findRankedLoadoutForAcceptChallenge2,
+  findUserRequestForFetchRequest,
+  insertRequest,
+  updateUserRequestForUpdateRequestState,
+} from "@/queries/sparring";
 import { initiateBattle } from "@/routers/combat";
-import { fetchUser } from "@/routers/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -18,7 +24,6 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { cleanRankedProhibitedSelections } from "@/server/utils/ranked";
-import { secondsFromNow } from "@/utils/time";
 import { idSchema } from "@/validators/misc";
 
 const pusher = getServerPusher();
@@ -96,12 +101,8 @@ export const sparringRouter = createTRPCRouter({
       let forceLoadouts: RankedLoadout[] | undefined;
       if (useRankedRules) {
         const [senderLoadout, receiverLoadout] = await Promise.all([
-          ctx.drizzle.query.rankedLoadout.findFirst({
-            where: eq(rankedLoadout.userId, challenge.senderId),
-          }),
-          ctx.drizzle.query.rankedLoadout.findFirst({
-            where: eq(rankedLoadout.userId, challenge.receiverId),
-          }),
+          findRankedLoadoutForAcceptChallenge(ctx.drizzle, challenge),
+          findRankedLoadoutForAcceptChallenge2(ctx.drizzle, challenge),
         ]);
 
         if (!senderLoadout || !receiverLoadout) {
@@ -209,49 +210,6 @@ export const sparringRouter = createTRPCRouter({
 });
 
 /**
- * Fetches user requests based on the specified criteria.
- * @param client - The DrizzleClient instance used for querying the database.
- * @param types - An array of user request types to fetch.
- * @param [secondsBack] - Optional. The number of seconds in the past to consider when fetching requests.
- * @param [id] - Optional. The ID of the user to filter requests by.
- * @returns - A Promise that resolves to an array of user requests matching the specified criteria.
- */
-export const fetchRequests = async (
-  client: DrizzleClient,
-  types: UserRequestType[],
-  secondsBack?: number,
-  id?: string | string[],
-  relatedId?: string,
-) => {
-  return await client.query.userRequest.findMany({
-    where: and(
-      ...(id
-        ? [
-            or(
-              inArray(userRequest.senderId, Array.isArray(id) ? id : [id]),
-              inArray(userRequest.receiverId, Array.isArray(id) ? id : [id]),
-            ),
-          ]
-        : []),
-      ...(relatedId ? [eq(userRequest.relatedId, relatedId)] : []),
-      ...(secondsBack ? [gt(userRequest.createdAt, secondsFromNow(-secondsBack))] : []),
-      inArray(userRequest.type, types),
-    ),
-    with: {
-      sender: {
-        columns: { username: true, level: true, rank: true },
-        with: { village: { columns: { name: true } } },
-      },
-      receiver: {
-        columns: { username: true, level: true, rank: true },
-        with: { village: { columns: { name: true } } },
-      },
-    },
-    orderBy: (table, { desc }) => [desc(table.createdAt)],
-  });
-};
-
-/**
  * Fetches a user request from the database based on the request ID and type.
  * @param client - The Drizzle client used to query the database.
  * @param id - The ID of the request to fetch.
@@ -277,9 +235,7 @@ export async function fetchRequest(
   type: UserRequestType,
   options?: { allowMissing: true },
 ) {
-  const result = await client.query.userRequest.findFirst({
-    where: and(eq(userRequest.id, id), eq(userRequest.type, type)),
-  });
+  const result = await findUserRequestForFetchRequest(client, id, type);
   if (!result && !options?.allowMissing)
     throw serverError("NOT_FOUND", "Request not found");
   return result;
@@ -303,54 +259,15 @@ export const updateRequestState = async (
   relatedId?: string,
   expectedStatus?: UserRequestState,
 ) => {
-  const result = await client
-    .update(userRequest)
-    .set({
-      status,
-      ...(relatedId && { relatedId }),
-    })
-    .where(
-      and(
-        eq(userRequest.id, challengeId),
-        eq(userRequest.type, type),
-        ...(expectedStatus ? [eq(userRequest.status, expectedStatus)] : []),
-      ),
-    );
+  const result = await updateUserRequestForUpdateRequestState(
+    client,
+    status,
+    relatedId,
+    challengeId,
+    type,
+    expectedStatus,
+  );
   if (expectedStatus && !result.rowsAffected)
     return errorResponse("Request changed. Refresh and try again");
   return { success: true, message: "Challenge state updated" };
-};
-
-/**
- * Inserts a new request into the database.
- *
- * @param client - The DrizzleClient instance used to interact with the database.
- * @param senderId - The ID of the sender.
- * @param receiverId - The ID of the receiver.
- * @param senderVillageId - The ID of the sender's village.
- * @param receiverVillageId - The ID of the receiver's village.
- * @param type - The type of the user request.
- * @returns A Promise that resolves when the request is successfully inserted.
- */
-export const insertRequest = async (
-  client: DrizzleClient,
-  senderId: string,
-  receiverId: string,
-  type: UserRequestType,
-  value?: number,
-  relatedId?: string,
-  useRankedRules?: boolean,
-  spectatable?: boolean,
-) => {
-  await client.insert(userRequest).values({
-    id: nanoid(),
-    senderId,
-    receiverId,
-    status: "PENDING",
-    type,
-    value: value || null,
-    relatedId: relatedId || null,
-    useRankedRules: useRankedRules || false,
-    spectatable: spectatable || false,
-  });
 };

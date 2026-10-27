@@ -14,7 +14,7 @@ import {
   warCamp,
 } from "@/drizzle/schema";
 import * as gamesettings from "@/libs/gamesettings";
-import * as villageRouter from "@/server/api/routers/village";
+import * as villageRouter from "@/queries/village";
 import * as objectiveWar from "@/server/utils/objectiveWar";
 import { defaultWarRules } from "@/validators/war";
 import { insertUsers } from "../../../setup/factories";

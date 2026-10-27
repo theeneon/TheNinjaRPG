@@ -1,10 +1,19 @@
-import { asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
-import { actionLog, mapAsset } from "@/drizzle/schema";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteMapAssetForDelete,
+  fetchMapAsset,
+  findMapAssetForGet,
+  findMapAssetForUpdate,
+  insertActionLogForDelete,
+  insertActionLogForUpdate,
+  insertMapAssetForCreate,
+  listMapAssetForGetAll,
+  updateMapAssetForUpdate,
+} from "@/queries/mapAsset";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -13,7 +22,6 @@ import {
   publicProcedure,
   serverError,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import {
   isStructureAssetUsed,
   notifyMapLocationsChanged,
@@ -33,18 +41,12 @@ export const mapAssetRouter = createTRPCRouter({
     })
     .query(async ({ ctx }) => {
       // Public/MCP-exposed: omit the internal authoring user-id
-      return await ctx.drizzle.query.mapAsset.findMany({
-        columns: { createdByUserId: false },
-        orderBy: [asc(mapAsset.category), asc(mapAsset.key)],
-      });
+      return await listMapAssetForGetAll(ctx.drizzle);
     }),
   /** Single map asset by id; throws NOT_FOUND (query, not baseServerResponse) */
   get: publicProcedure.input(idSchema).query(async ({ ctx, input }) => {
     // Public/MCP-exposed: omit the internal authoring user-id
-    const entry = await ctx.drizzle.query.mapAsset.findFirst({
-      columns: { createdByUserId: false },
-      where: eq(mapAsset.id, input.id),
-    });
+    const entry = await findMapAssetForGet(ctx.drizzle, input);
     if (!entry) throw serverError("NOT_FOUND", "Map asset not found");
     return entry;
   }),
@@ -66,15 +68,7 @@ export const mapAssetRouter = createTRPCRouter({
       // Mutation: placeholder row. The key is sanitized to lowercase alphanumerics
       // because map decoration objects reference assets by key (must stay url-safe).
       const id = nanoid();
-      await ctx.drizzle.insert(mapAsset).values({
-        id,
-        key: `new.asset.${id.toLowerCase().replace(/[^a-z0-9]/g, "")}`,
-        name: input?.category === "structure" ? "New Structure" : "New Map Asset",
-        category: input?.category ?? "prop",
-        renderScale: input?.category === "structure" ? 2.4 : 1,
-        imageUrl: IMG_AVATAR_DEFAULT,
-        createdByUserId: ctx.userId,
-      });
+      await insertMapAssetForCreate(ctx.drizzle, id, input, ctx);
       return { success: true, message: id };
     }),
   /**
@@ -90,10 +84,7 @@ export const mapAssetRouter = createTRPCRouter({
       const [user, entry, withKey] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchMapAsset(ctx.drizzle, input.id),
-        ctx.drizzle.query.mapAsset.findFirst({
-          columns: { id: true, key: true },
-          where: eq(mapAsset.key, input.data.key),
-        }),
+        findMapAssetForUpdate(ctx.drizzle, input),
       ]);
       // Guards
       if (user.isBanned) return errorResponse("You are banned");
@@ -115,19 +106,8 @@ export const mapAssetRouter = createTRPCRouter({
       });
       // Mutation: asset update and audit log are independent writes, issued in parallel.
       await Promise.all([
-        ctx.drizzle
-          .update(mapAsset)
-          .set({ ...input.data, updatedAt: new Date() })
-          .where(eq(mapAsset.id, entry.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "mapAsset",
-          changes: diff,
-          relatedId: entry.id,
-          relatedMsg: `Update: ${entry.name}`,
-          relatedImage: entry.imageUrl,
-        }),
+        updateMapAssetForUpdate(ctx.drizzle, input, entry),
+        insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
       ]);
       await notifyMapLocationsChanged();
       // Broadcast the change to the content Discord outside development
@@ -164,25 +144,10 @@ export const mapAssetRouter = createTRPCRouter({
         );
       // Mutation: hard-delete + audit log in parallel
       await Promise.all([
-        ctx.drizzle.delete(mapAsset).where(eq(mapAsset.id, input.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "mapAsset",
-          changes: [`Deleted map asset ${entry.name} (${entry.key})`],
-          relatedId: entry.id,
-          relatedMsg: `Delete: ${entry.name}`,
-          relatedImage: entry.imageUrl,
-        }),
+        deleteMapAssetForDelete(ctx.drizzle, input),
+        insertActionLogForDelete(ctx.drizzle, ctx, entry),
       ]);
       await notifyMapLocationsChanged();
       return { success: true, message: `Deleted ${entry.name}` };
     }),
 });
-
-/** COMMON QUERIES WHICH ARE REUSED */
-
-/** Fetch a map asset row by id; undefined when it does not exist */
-export const fetchMapAsset = async (client: DrizzleClient, id: string) => {
-  return await client.query.mapAsset.findFirst({ where: eq(mapAsset.id, id) });
-};

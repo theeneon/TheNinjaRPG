@@ -1,3 +1,4 @@
+import { fetchRewardChoiceOwnership } from "@/queries/quests";
 import { readFile } from "node:fs/promises";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
@@ -6,7 +7,7 @@ import { alias } from "drizzle-orm/mysql-core";
 import { actionLog, title, userData, userTitle, quest, questHistory } from "@/drizzle/schema";
 import { titleRouter } from "@/server/api/routers/title";
 import { fetchUpdatedUser, profileRouter } from "@/server/api/routers/profile";
-import { updateRewards, fetchRewardChoiceOwnership, questsRouter } from "@/server/api/routers/quests";
+import { updateRewards, questsRouter } from "@/server/api/routers/quests";
 import { grantTitles } from "@/server/utils/titleGrants";
 import { displayTitleSql } from "@/server/utils/titleDisplay";
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";

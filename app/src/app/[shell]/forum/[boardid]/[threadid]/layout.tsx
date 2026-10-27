@@ -1,7 +1,6 @@
-import { eq } from "drizzle-orm";
 import type { Metadata } from "next";
-import { forumBoard, forumThread } from "@/drizzle/schema";
 import { buildMetadata, noindexMetadata } from "@/libs/seo";
+import { findForumBoardNameById, findForumThreadMetadata } from "@/queries/forum";
 import { drizzleDB } from "@/server/db";
 
 export async function generateMetadata(props: {
@@ -10,14 +9,8 @@ export async function generateMetadata(props: {
   const params = await props.params;
   // forumThread has no board relation, so both are fetched in one parallel round-trip.
   const [thread, boardRow] = await Promise.all([
-    drizzleDB.query.forumThread.findFirst({
-      columns: { title: true, nPosts: true, boardId: true },
-      where: eq(forumThread.id, params.threadid),
-    }),
-    drizzleDB.query.forumBoard.findFirst({
-      columns: { name: true },
-      where: eq(forumBoard.id, params.boardid),
-    }),
+    findForumThreadMetadata(drizzleDB, params.threadid),
+    findForumBoardNameById(drizzleDB, params.boardid),
   ]);
   if (!thread) return noindexMetadata("Thread Not Found");
   const board = boardRow?.name;

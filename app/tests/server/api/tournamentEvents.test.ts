@@ -1,3 +1,4 @@
+import { fetchEvent, fetchEventNoticeState } from "@/queries/tournamentEvents";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import * as nextServer from "next/server";
@@ -34,12 +35,7 @@ import {
 } from "@/libs/tournament/events";
 import { combatRouter, initiateBattle } from "@/server/api/routers/combat";
 import { tournamentRouter } from "@/server/api/routers/tournament";
-import {
-  fetchEvent,
-  fetchEventNoticeState,
-  maintainEventTournaments,
-  syncEventTournament,
-} from "@/server/api/routers/tournamentEvents";
+import { maintainEventTournaments, syncEventTournament } from "@/server/api/routers/tournamentEvents";
 import type { DrizzleClient } from "@/server/db";
 import { eventTournamentConfigSchema, type EventParticipant } from "@/validators/tournament";
 import { ObjectiveReward } from "@/validators/rewards";

@@ -1,16 +1,29 @@
-import { and, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { z } from "zod";
 import { RYO_CAP } from "@/drizzle/constants";
-import { bankTransfers, dailyBankInterest, userData } from "@/drizzle/schema";
+import { dailyBankInterest } from "@/drizzle/schema";
 import { bankAccessBlockMessage } from "@/libs/bank";
-import { fetchUser } from "@/routers/profile";
+import {
+  fetchUserBalances,
+  insertBankTransfersForTransfer,
+  listBankTransfersForGetTransfers,
+  listDailyBankInterestForGetPendingInterest,
+  selectBankTransfersForGetGraph,
+  selectDailyBankInterestForClaimBankInterest,
+  selectUserDataForClaimBankInterest,
+  updateDailyBankInterestForClaimBankInterest,
+  updateUserDataForClaimBankInterest,
+  updateUserDataForTransfer,
+  updateUserDataForTransfer2,
+  updateUserDataForTransferRyo,
+} from "@/queries/bank";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
-  serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -68,21 +81,11 @@ export const bankRouter = createTRPCRouter({
       if (user.status === "BATTLE")
         return errorResponse("Cannot access bank while in combat");
       // Update
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ bank: sql`${userData.bank} - ${value}` })
-        .where(and(eq(userData.userId, ctx.userId), gte(userData.bank, value)));
+      const result = await updateUserDataForTransfer(ctx.drizzle, value, ctx);
       if (result.rowsAffected === 0) return errorResponse("Not enough money in bank");
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({ bank: sql`${userData.bank} + ${value}` })
-          .where(eq(userData.userId, input.targetId)),
-        ctx.drizzle.insert(bankTransfers).values({
-          senderId: ctx.userId,
-          receiverId: input.targetId,
-          amount: value,
-        }),
+        updateUserDataForTransfer2(ctx.drizzle, value, input),
+        insertBankTransfersForTransfer(ctx.drizzle, ctx, input, value),
       ]);
       // Re-fetch user to get accurate bank balance after concurrent updates
       const updatedUser = await fetchUser(ctx.drizzle, ctx.userId);
@@ -107,25 +110,11 @@ export const bankRouter = createTRPCRouter({
       const { minAmount = 100, dayLimit = 30 } = input ?? {};
       const cutoffDate = new Date(Date.now() - dayLimit * 24 * 60 * 60 * 1000);
 
-      const sender = alias(userData, "sender");
-      const receiver = alias(userData, "receiver");
-      const transfers = await ctx.drizzle
-        .select({
-          senderId: bankTransfers.senderId,
-          receiverId: bankTransfers.receiverId,
-          senderUsername: sender.username,
-          receiverUsername: receiver.username,
-          senderAvatar: sender.avatar,
-          receiverAvatar: receiver.avatar,
-          total: sql<number>`SUM(${bankTransfers.amount})`,
-        })
-        .from(bankTransfers)
-        .innerJoin(sender, eq(bankTransfers.senderId, sender.userId))
-        .innerJoin(receiver, eq(bankTransfers.receiverId, receiver.userId))
-        .where(gte(bankTransfers.createdAt, cutoffDate))
-        .groupBy(bankTransfers.senderId, bankTransfers.receiverId)
-        .having(sql`SUM(${bankTransfers.amount}) >= ${minAmount}`)
-        .limit(50);
+      const transfers = await selectBankTransfersForGetGraph(
+        ctx.drizzle,
+        cutoffDate,
+        minAmount,
+      );
       return transfers;
     }),
   getTransfers: protectedProcedure
@@ -143,19 +132,11 @@ export const bankRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
-      const transfers = await ctx.drizzle.query.bankTransfers.findMany({
-        where: or(
-          input.senderId ? eq(bankTransfers.senderId, input.senderId) : undefined,
-          input.receiverId ? eq(bankTransfers.receiverId, input.receiverId) : undefined,
-        ),
-        with: {
-          sender: { columns: { username: true } },
-          receiver: { columns: { username: true } },
-        },
-        offset: skip,
-        limit: input.limit,
-        orderBy: desc(bankTransfers.createdAt),
-      });
+      const transfers = await listBankTransfersForGetTransfers(
+        ctx.drizzle,
+        input,
+        skip,
+      );
       const nextCursor = transfers.length < input.limit ? null : currentCursor + 1;
       return {
         data: transfers,
@@ -166,14 +147,11 @@ export const bankRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get pending daily bank interest" } })
     .query(async ({ ctx }) => {
       // Query
-      const pendingInterest = await ctx.drizzle.query.dailyBankInterest.findMany({
-        where: pendingInterestWhere(ctx.userId),
-        columns: {
-          id: true,
-          date: true,
-          amount: true,
-        },
-      });
+      const pendingInterest = await listDailyBankInterestForGetPendingInterest(
+        ctx.drizzle,
+        pendingInterestWhere,
+        ctx,
+      );
       // Derived
       const totalPending = pendingInterest.reduce(
         (sum, record) => sum + record.amount,
@@ -220,25 +198,7 @@ const transferRyo = async (
   if (user.isBanned) return errorResponse("You are banned");
   if (user.status === "BATTLE")
     return errorResponse("Cannot access bank while in combat");
-  const result = await client
-    .update(userData)
-    .set(
-      fromPocket
-        ? {
-            money: sql`${userData.money} - ${value}`,
-            bank: sql`${userData.bank} + ${value}`,
-          }
-        : {
-            money: sql`${userData.money} + ${value}`,
-            bank: sql`${userData.bank} - ${value}`,
-          },
-    )
-    .where(
-      and(
-        eq(userData.userId, userId),
-        gte(fromPocket ? userData.money : userData.bank, value),
-      ),
-    );
+  const result = await updateUserDataForTransferRyo(client, fromPocket, value, userId);
   if (result.rowsAffected === 0) {
     return {
       success: false,
@@ -253,25 +213,6 @@ const transferRyo = async (
       : `Successfully withdrew ${value} ryo`,
     data: { bank: updatedUser.bank, money: updatedUser.money },
   };
-};
-
-/**
- * Post-CAS pocket/bank read. Concurrent grants can change either column after
- * the increment, so callers cannot derive balances from the pre-update snapshot.
- * Only these two columns are returned to the UI.
- */
-export const fetchUserBalances = async (client: DrizzleClient, userId: string) => {
-  const user = await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    columns: { money: true, bank: true },
-  });
-  if (!user) {
-    throw serverError(
-      "NOT_FOUND",
-      `User not found: ${userId}. Please complete registration.`,
-    );
-  }
-  return user;
 };
 
 /** Expiry is enforced on reads and claims independently of background cleanup. */
@@ -289,49 +230,35 @@ export const claimBankInterest = (client: DrizzleClient, userId: string) =>
   retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       // Serialize claims and balance changes; both the payout and receipts must commit together.
-      const [user] = await tx
-        .select({
-          bank: userData.bank,
-          isBanned: userData.isBanned,
-          status: userData.status,
-        })
-        .from(userData)
-        .where(eq(userData.userId, userId))
-        .for("update");
+      const [user] = await selectUserDataForClaimBankInterest(tx, userId);
       if (!user) return errorResponse("User not found");
       const block = bankAccessBlockMessage(user);
       if (block) return errorResponse(block);
 
-      const pending = await tx
-        .select({ id: dailyBankInterest.id, amount: dailyBankInterest.amount })
-        .from(dailyBankInterest)
-        .where(pendingInterestWhere(userId))
-        .for("update");
+      const pending = await selectDailyBankInterestForClaimBankInterest(
+        tx,
+        pendingInterestWhere,
+        userId,
+      );
       if (pending.length === 0) return errorResponse("No pending interest to claim");
       const total = pending.reduce((sum, record) => sum + record.amount, 0);
       const amount = Math.min(total, RYO_CAP - user.bank);
       if (amount <= 0) return errorResponse("Bank already at capacity");
 
-      const claimed = await tx
-        .update(dailyBankInterest)
-        .set({ claimed: true })
-        .where(
-          and(
-            eq(dailyBankInterest.userId, userId),
-            eq(dailyBankInterest.claimed, false),
-            inArray(
-              dailyBankInterest.id,
-              pending.map((record) => record.id),
-            ),
-          ),
-        );
+      const claimed = await updateDailyBankInterestForClaimBankInterest(
+        tx,
+        userId,
+        pending,
+      );
       if (claimed.rowsAffected !== pending.length) {
         throw new Error("Bank interest claim changed during transaction");
       }
-      const credited = await tx
-        .update(userData)
-        .set({ bank: sql`${userData.bank} + ${amount}` })
-        .where(and(eq(userData.userId, userId), eq(userData.bank, user.bank)));
+      const credited = await updateUserDataForClaimBankInterest(
+        tx,
+        amount,
+        userId,
+        user,
+      );
       if (credited.rowsAffected !== 1) {
         throw new Error("Bank balance changed during interest claim");
       }

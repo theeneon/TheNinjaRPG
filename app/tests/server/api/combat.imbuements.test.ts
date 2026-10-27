@@ -1,3 +1,4 @@
+import { fetchBattleEssentials } from "@/queries/combat";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import {
@@ -14,11 +15,7 @@ import {
 import { userItemToAction } from "@/libs/combat/actions";
 import type { CombatQueryUser, UserEffect } from "@/libs/combat/types";
 import { Pusher } from "@/libs/pusher";
-import {
-  combatRouter,
-  fetchBattleEssentials,
-  processUsersForBattle,
-} from "@/server/api/routers/combat";
+import { combatRouter, processUsersForBattle } from "@/server/api/routers/combat";
 import { fetchUserItemsWithVariants } from "@/server/api/routers/item";
 import { fetchUserJutsus } from "@/server/api/routers/jutsu";
 import { getTagSchema } from "@/validators/combat";

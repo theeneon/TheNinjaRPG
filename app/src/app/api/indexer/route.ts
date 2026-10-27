@@ -1,9 +1,11 @@
-import { and, asc, eq } from "drizzle-orm";
-import { userReport } from "@/drizzle/schema";
 import { handleEndpointError, lockWithGameTimer } from "@/libs/gamesettings";
 import { buildModerationEvidence } from "@/libs/moderation/evidence";
 import { indexReportEmbeddings } from "@/libs/moderation/reportSearch";
 import { generateAiSummary } from "@/libs/moderator";
+import {
+  listUserReportForSummaryIndexer as listUserReportForGET,
+  updateUserReportForGET,
+} from "@/queries/reports";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 
@@ -19,18 +21,7 @@ export async function GET(request: Request) {
 
   try {
     // Fetch reports without a summary
-    const reports = await drizzleDB.query.userReport.findMany({
-      columns: {
-        id: true,
-        system: true,
-        reportedUserId: true,
-        infraction: true,
-        additionalContext: true,
-      },
-      where: eq(userReport.needsAiSummary, true),
-      limit: 50,
-      orderBy: asc(userReport.createdAt),
-    });
+    const reports = await listUserReportForGET(drizzleDB);
 
     // Generate summaries before indexing eligible resolved reports
     for (const report of reports) {
@@ -42,12 +33,7 @@ export async function GET(request: Request) {
           reportedUserId: report.reportedUserId ?? undefined,
         }),
       );
-      await drizzleDB
-        .update(userReport)
-        .set({
-          aiInterpretation: aiInterpretation,
-        })
-        .where(and(eq(userReport.id, report.id), eq(userReport.aiInterpretation, "")));
+      await updateUserReportForGET(drizzleDB, aiInterpretation, report);
     }
 
     await indexReportEmbeddings(drizzleDB);

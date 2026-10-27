@@ -1,3 +1,4 @@
+import { fetchBattle } from "@/queries/combat";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import * as nextServer from "next/server";
 import { eq, sql } from "drizzle-orm";
@@ -21,7 +22,7 @@ import { applyEffects } from "@/libs/combat/process";
 import type { CompleteBattle } from "@/libs/combat/types";
 import { alignBattle, calcBattleResult } from "@/libs/combat/util";
 import { Pusher, type PusherClient } from "@/libs/pusher";
-import { combatRouter, fetchBattle, initiateBattle } from "@/server/api/routers/combat";
+import { combatRouter, initiateBattle } from "@/server/api/routers/combat";
 import { fetchUpdatedUser } from "@/server/api/routers/profile";
 import type { UserWithRelations } from "@/server/api/routers/profile";
 import { claimUserSnapshot } from "@/server/utils/concurrency";

@@ -1,7 +1,6 @@
 import type { ExecutedQuery } from "@planetscale/database";
 import * as Sentry from "@sentry/nextjs";
-import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { eq, gte, sql } from "drizzle-orm";
 import { after } from "next/server";
 import {
   MEDNIN_EXP_CAP,
@@ -9,7 +8,6 @@ import {
   MEDNIN_MIN_RANK,
   REGEN_SECONDS,
   SENSEI_GENIN_MED_EXP_SHARE_PERC,
-  SENSEI_MAX_STUDENT_LEVEL,
 } from "@/drizzle/constants";
 import { userData } from "@/drizzle/schema";
 import {
@@ -24,15 +22,25 @@ import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { filterQuestTrackersForDbPersist, getNewTrackers } from "@/libs/quest";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
 import { hasRequiredRank } from "@/libs/train";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
-import { fetchAlliances, fetchStructures } from "@/routers/village";
+import {
+  executeResultForUserHeal,
+  listUserDataForGetHospitalizedUsers,
+  listVillageAllianceForGetHospitalizedUsers,
+  updateUserDataForNpcHeal,
+  updateUserDataForNpcHeal2,
+  updateUserDataForUserHeal,
+} from "@/queries/hospital";
+import { fetchUser } from "@/queries/profile";
+import { fetchAlliances, fetchStructures } from "@/queries/village";
+import { fetchUpdatedUser } from "@/routers/profile";
+
 import {
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
   serverError,
 } from "@/server/api/trpc";
-import { claimUserSnapshot, getNextUserSnapshotAt } from "@/server/utils/concurrency";
+import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { pushActivityUpdate } from "@/server/utils/push/liveActivity";
 import {
@@ -41,7 +49,7 @@ import {
 } from "@/server/utils/regeneration";
 import { flushSafe } from "@/server/utils/sentry";
 import { findRelationship } from "@/utils/alliance";
-import { secondsFromDate, secondsFromNow } from "@/utils/time";
+import { secondsFromDate } from "@/utils/time";
 import { getStrucBoost } from "@/utils/village";
 import {
   npcHealInputSchema,
@@ -61,7 +69,7 @@ export const hospitalRouter = createTRPCRouter({
       // Query
       const [user, alliances] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.villageAlliance.findMany(),
+        listVillageAllianceForGetHospitalizedUsers(ctx.drizzle),
       ]);
       // Derived
       const allies = alliances
@@ -74,35 +82,11 @@ export const hospitalRouter = createTRPCRouter({
         ? [...new Set([user.villageId, ...allies])]
         : [];
       // Return filtered data
-      return await ctx.drizzle.query.userData.findMany({
-        columns: {
-          userId: true,
-          avatar: true,
-          username: true,
-          curHealth: true,
-          maxHealth: true,
-          regeneration: true,
-          regenAt: true,
-          level: true,
-          status: true,
-          sector: true,
-          longitude: true,
-          latitude: true,
-          rank: true,
-          isOutlaw: true,
-        },
-        where: and(
-          eq(userData.sector, user.sector),
-          user.villageId
-            ? inArray(userData.villageId, uniqueVillageIds)
-            : isNull(userData.villageId),
-          or(...MEDNIN_HEALABLE_STATES.map((s) => eq(userData.status, s))),
-          lt(userData.curHealth, userData.maxHealth),
-          gte(userData.updatedAt, secondsFromNow(-36000)),
-        ),
-        limit: 10,
-        orderBy: [asc(userData.updatedAt), asc(userData.userId)],
-      });
+      return await listUserDataForGetHospitalizedUsers(
+        ctx.drizzle,
+        user,
+        uniqueVillageIds,
+      );
     }),
   /** Deliver allowed healing pools with their chakra payment and medical progress. */
   userHeal: protectedProcedure
@@ -242,40 +226,23 @@ export const hospitalRouter = createTRPCRouter({
         });
         healSucceeded = claim.success;
       } else {
-        const recipient = alias(userData, "recipient");
         // Drizzle has no multi-table UPDATE builder. A joined write delivers healing and
         // claims the healer's payment, experience and trackers together. Recipient status
         // guards a player who enters battle after the initial read; rejection changes
         // neither account and cannot award student shares. Energy is settled before
         // resetting the hospital admission/regen clock; checkout remains manual.
         const result = await retryOnDeadlock(() =>
-          ctx.drizzle.execute(sql`
-            UPDATE ${userData}
-            INNER JOIN ${userData} AS recipient ON ${recipient.userId} = ${t.userId}
-            SET ${userData.updatedAt} = ${getNextUserSnapshotAt(u.updatedAt, healedAt)},
-                ${userData.medicalExperience} = LEAST(${userData.medicalExperience} + ${expGain}, ${MEDNIN_EXP_CAP}),
-                ${userData.curChakra} = ${userData.curChakra} - ${chakraCost},
-                ${userData.questData} = CAST(${JSON.stringify(questDataForDb)} AS JSON),
-                ${pools.includes("Health") ? sql`${recipient.curHealth} = LEAST(${recipient.curHealth} + ${toHeal}, ${recipient.maxHealth}),` : sql``}
-                ${pools.includes("Chakra") ? sql`${recipient.curChakra} = LEAST(${recipient.curChakra} + ${toHeal}, ${recipient.maxChakra}),` : sql``}
-                ${pools.includes("Stamina") ? sql`${recipient.curStamina} = LEAST(${recipient.curStamina} + ${toHeal}, ${recipient.maxStamina}),` : sql``}
-                ${recipient.curEnergy} = LEAST(${t.maxEnergy}, ${recipient.curEnergy} + ${userRegenerationGainSql(t, recipient.regenAt, sql`NOW(3)`)}),
-                ${recipient.maxEnergy} = ${t.maxEnergy},
-                ${recipient.regenAt} = ${
-                  t.status === "HOSPITALIZED"
-                    ? sql`NOW(3)`
-                    : sql`TIMESTAMPADD(SECOND, FLOOR(GREATEST(0, TIMESTAMPDIFF(SECOND, ${recipient.regenAt}, NOW(3))) / ${REGEN_SECONDS}) * ${REGEN_SECONDS}, ${recipient.regenAt})`
-                },
-                ${recipient.updatedAt} = GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${recipient.updatedAt}))
-            WHERE ${and(
-              eq(userData.userId, u.userId),
-              eq(userData.updatedAt, u.updatedAt),
-              eq(userData.status, "AWAKE"),
-              gte(userData.curChakra, chakraCost),
-              eq(recipient.updatedAt, t.updatedAt),
-              inArray(recipient.status, MEDNIN_HEALABLE_STATES),
-            )}
-          `),
+          executeResultForUserHeal(
+            ctx.drizzle,
+            t,
+            u,
+            healedAt,
+            expGain,
+            chakraCost,
+            questDataForDb,
+            pools,
+            toHeal,
+          ),
         );
         // MySQL may count both changed accounts for this single delivery.
         healSucceeded = result.rowsAffected > 0;
@@ -291,17 +258,7 @@ export const hospitalRouter = createTRPCRouter({
         // The heal has committed; student progress need not delay the healer's response.
         after(async () => {
           try {
-            await ctx.drizzle
-              .update(userData)
-              .set({
-                medicalExperience: sql`LEAST(${userData.medicalExperience} + ${shareExp}, ${MEDNIN_EXP_CAP})`,
-              })
-              .where(
-                and(
-                  eq(userData.senseiId, u.userId),
-                  lte(userData.level, SENSEI_MAX_STUDENT_LEVEL),
-                ),
-              );
+            await updateUserDataForUserHeal(ctx.drizzle, shareExp, u);
           } catch (error) {
             Sentry.captureException(error, {
               tags: { source: "hospital.userHeal.studentShare" },
@@ -353,42 +310,26 @@ export const hospitalRouter = createTRPCRouter({
       let cost: number;
       if (finishAt <= healedAt) {
         cost = 0;
-        result = await ctx.drizzle
-          .update(userData)
-          .set({
-            curHealth: user.maxHealth,
-            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${energyRecovery})`,
-            maxEnergy: user.maxEnergy,
-            regenAt: healedAt,
-            updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-            status: "AWAKE",
-          })
-          .where(
-            and(eq(userData.userId, ctx.userId), eq(userData.status, "HOSPITALIZED")),
-          );
+        result = await updateUserDataForNpcHeal(
+          ctx.drizzle,
+          user,
+          energyRecovery,
+          healedAt,
+          ctx,
+        );
       } else {
         cost = calcHealCost(user);
         if (user.money < cost) {
           return errorResponse("You don't have enough money");
         }
-        result = await ctx.drizzle
-          .update(userData)
-          .set({
-            curHealth: user.maxHealth,
-            money: sql`${userData.money} - ${cost}`,
-            curEnergy: sql`LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${energyRecovery})`,
-            maxEnergy: user.maxEnergy,
-            regenAt: healedAt,
-            updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-            status: "AWAKE",
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              gte(userData.money, cost),
-              eq(userData.status, "HOSPITALIZED"),
-            ),
-          );
+        result = await updateUserDataForNpcHeal2(
+          ctx.drizzle,
+          user,
+          cost,
+          energyRecovery,
+          healedAt,
+          ctx,
+        );
         void updateUserOnMap(pusher, user.sector, user);
       }
       if (result.rowsAffected === 1) {

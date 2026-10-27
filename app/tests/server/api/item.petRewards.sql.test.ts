@@ -1,7 +1,8 @@
+import { fetchItemWithCraftingRequirements } from "@/queries/item";
 import { beforeEach, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
 import { actionLog, item, jutsu, petSpecies, questHistory, userData, userItem, userPet } from "@/drizzle/schema";
-import { fetchItemWithCraftingRequirements, itemRouter } from "@/server/api/routers/item";
+import { itemRouter } from "@/server/api/routers/item";
 import type { DrizzleClient } from "@/server/db";
 import { AiRule } from "@/validators/ai";
 import { ItemValidator, NonCombatConsumeRewardTag } from "@/validators/combat";

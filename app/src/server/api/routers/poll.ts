@@ -1,9 +1,37 @@
-import { and, count, desc, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { Poll, PollOption } from "@/drizzle/schema";
-import { actionLog, poll, pollOption, userPollVote } from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
+import { poll } from "@/drizzle/schema";
+import {
+  deletePollOptionForDeletePollOption,
+  deleteUserPollVoteForDeletePollOption,
+  deleteUserPollVoteForRetractVote,
+  fetchPoll,
+  fetchUserVote,
+  findPollOptionForAddOption,
+  findPollOptionForDeletePollOption,
+  findPollOptionForVote,
+  insertActionLogForAddOption,
+  insertActionLogForAddOption2,
+  insertActionLogForClosePoll,
+  insertActionLogForCreatePoll,
+  insertActionLogForDeletePollOption,
+  insertActionLogForUpdatePoll,
+  insertPollForCreatePoll,
+  insertPollOptionForAddOption,
+  insertPollOptionForAddOption2,
+  insertPollOptionForCreatePoll,
+  insertUserPollVoteForVote,
+  listPollForGetPolls,
+  selectUserPollVoteForGetVoteCountsForPolls,
+  selectUserPollVoteForGetVoteCountsForPolls2,
+  updatePollForClosePoll,
+  updatePollForUpdatePoll,
+  updateUserPollVoteForVote,
+} from "@/queries/poll";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -78,27 +106,9 @@ export const pollRouter = createTRPCRouter({
 
       // Run both database operations in parallel
       await Promise.all([
-        ctx.drizzle.insert(poll).values({
-          id: pollId,
-          title: input.title,
-          description: input.description,
-          allowCustomOptions: input.allowCustomOptions,
-          createdByUserId: user.userId,
-          endDate: input.endDate,
-        }),
-        ctx.drizzle.insert(pollOption).values(optionsToInsert),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: user.userId,
-          tableName: "poll",
-          changes: [
-            `Created poll: ${input.title}`,
-            ...(input.description ? [input.description] : []),
-            `Options: ${input.options.map((o) => (o.type === "text" ? o.text : o.username)).join(", ")}`,
-          ],
-          relatedId: pollId,
-          relatedMsg: `Poll created: ${input.title}`,
-        }),
+        insertPollForCreatePoll(ctx.drizzle, pollId, input, user),
+        insertPollOptionForCreatePoll(ctx.drizzle, optionsToInsert),
+        insertActionLogForCreatePoll(ctx.drizzle, user, input, pollId),
       ]);
 
       return { success: true, message: "Poll created successfully" };
@@ -135,18 +145,14 @@ export const pollRouter = createTRPCRouter({
       if (input.endDate !== undefined) updateData.endDate = input.endDate;
 
       // Update poll
-      await ctx.drizzle.update(poll).set(updateData).where(eq(poll.id, input.id));
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: user.userId,
-        tableName: "poll",
-        changes: [
-          `Updated poll: ${existingPoll.title}`,
-          ...Object.entries(updateData).map(([k, v]) => `${k}: ${JSON.stringify(v)}`),
-        ],
-        relatedId: input.id,
-        relatedMsg: `Poll updated: ${existingPoll.title}`,
-      });
+      await updatePollForUpdatePoll(ctx.drizzle, updateData, input);
+      await insertActionLogForUpdatePoll(
+        ctx.drizzle,
+        user,
+        existingPoll,
+        updateData,
+        input,
+      );
 
       return { success: true, message: "Poll updated successfully" };
     }),
@@ -161,12 +167,7 @@ export const pollRouter = createTRPCRouter({
         fetchUser(ctx.drizzle, ctx.userId),
         fetchPoll(ctx.drizzle, input.pollId),
         fetchUserVote(ctx.drizzle, ctx.userId, input.pollId),
-        ctx.drizzle.query.pollOption.findFirst({
-          where: and(
-            eq(pollOption.id, input.optionId),
-            eq(pollOption.pollId, input.pollId),
-          ),
-        }),
+        findPollOptionForVote(ctx.drizzle, input),
       ]);
       // Guard
       if (!user) return errorResponse("User not found");
@@ -182,20 +183,12 @@ export const pollRouter = createTRPCRouter({
 
       // Update existing vote
       if (existingVote) {
-        await ctx.drizzle
-          .update(userPollVote)
-          .set({ optionId: input.optionId })
-          .where(eq(userPollVote.id, existingVote.id));
+        await updateUserPollVoteForVote(ctx.drizzle, input, existingVote);
         return { success: true, message: "Vote updated successfully" };
       }
 
       // Create new vote
-      await ctx.drizzle.insert(userPollVote).values({
-        id: nanoid(),
-        userId: user.userId,
-        pollId: input.pollId,
-        optionId: input.optionId,
-      });
+      await insertUserPollVoteForVote(ctx.drizzle, user, input);
       return { success: true, message: "Vote submitted successfully" };
     }),
 
@@ -208,20 +201,7 @@ export const pollRouter = createTRPCRouter({
       const [user, existingPoll, existingOption] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchPoll(ctx.drizzle, input.pollId),
-        ctx.drizzle.query.pollOption.findFirst({
-          where:
-            input.type === "text"
-              ? and(
-                  eq(pollOption.pollId, input.pollId),
-                  eq(pollOption.text, input.text),
-                  eq(pollOption.optionType, "text"),
-                )
-              : and(
-                  eq(pollOption.pollId, input.pollId),
-                  eq(pollOption.targetUserId, input.userId),
-                  eq(pollOption.optionType, "user"),
-                ),
-        }),
+        findPollOptionForAddOption(ctx.drizzle, input),
       ]);
       // Guard
       if (!user) return errorResponse("User not found");
@@ -238,46 +218,11 @@ export const pollRouter = createTRPCRouter({
 
       // Create new option
       if (input.type === "text") {
-        await ctx.drizzle.insert(pollOption).values({
-          id: nanoid(),
-          pollId: input.pollId,
-          text: input.text,
-          optionType: "text" as const,
-          createdByUserId: user.userId,
-          isCustomOption: !isAdmin, // Only mark as custom if not admin
-        });
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: user.userId,
-          tableName: "poll",
-          changes: [
-            `Added option to poll: ${existingPoll.title}`,
-            `Option: ${input.text}`,
-          ],
-          relatedId: input.pollId,
-          relatedMsg: `Added option: ${input.text}`,
-        });
+        await insertPollOptionForAddOption(ctx.drizzle, input, user, isAdmin);
+        await insertActionLogForAddOption(ctx.drizzle, user, existingPoll, input);
       } else if (input.type === "user") {
-        await ctx.drizzle.insert(pollOption).values({
-          id: nanoid(),
-          pollId: input.pollId,
-          text: input.username,
-          optionType: "user" as const,
-          targetUserId: input.userId,
-          createdByUserId: user.userId,
-          isCustomOption: !isAdmin, // Only mark as custom if not admin
-        });
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: user.userId,
-          tableName: "poll",
-          changes: [
-            `Added user option to poll: ${existingPoll.title}`,
-            `User: ${input.username}`,
-          ],
-          relatedId: input.pollId,
-          relatedMsg: `Added user option: ${input.username}`,
-        });
+        await insertPollOptionForAddOption2(ctx.drizzle, input, user, isAdmin);
+        await insertActionLogForAddOption2(ctx.drizzle, user, existingPoll, input);
       } else {
         return errorResponse("Invalid option type");
       }
@@ -293,39 +238,7 @@ export const pollRouter = createTRPCRouter({
     const whereClause = input.includeInactive ? undefined : eq(poll.isActive, true);
 
     // First, get the polls with their options and creators
-    const polls = await ctx.drizzle.query.poll.findMany({
-      where: whereClause,
-      with: {
-        createdBy: {
-          columns: {
-            userId: true,
-            username: true,
-            avatar: true,
-          },
-        },
-        options: {
-          with: {
-            createdBy: {
-              columns: {
-                userId: true,
-                username: true,
-                avatar: true,
-              },
-            },
-            targetUser: {
-              columns: {
-                userId: true,
-                username: true,
-                avatar: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: [desc(poll.createdAt)],
-      offset: skip,
-      limit,
-    });
+    const polls = await listPollForGetPolls(ctx.drizzle, whereClause, skip, limit);
 
     if (polls.length === 0) {
       return {
@@ -394,9 +307,7 @@ export const pollRouter = createTRPCRouter({
       }
 
       // Delete the vote
-      await ctx.drizzle
-        .delete(userPollVote)
-        .where(eq(userPollVote.id, existingVote.id));
+      await deleteUserPollVoteForRetractVote(ctx.drizzle, existingVote);
       return { success: true, message: "Vote retracted successfully" };
     }),
 
@@ -422,20 +333,8 @@ export const pollRouter = createTRPCRouter({
       }
 
       // Update poll status
-      await ctx.drizzle
-        .update(poll)
-        .set({ isActive: input.isActive })
-        .where(eq(poll.id, input.id));
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: user.userId,
-        tableName: "poll",
-        changes: [
-          `${input.isActive ? "Reopened" : "Closed"} poll: ${existingPoll.title}`,
-        ],
-        relatedId: input.id,
-        relatedMsg: `${input.isActive ? "Reopened" : "Closed"} poll: ${existingPoll.title}`,
-      });
+      await updatePollForClosePoll(ctx.drizzle, input);
+      await insertActionLogForClosePoll(ctx.drizzle, user, input, existingPoll);
 
       return {
         success: true,
@@ -454,15 +353,7 @@ export const pollRouter = createTRPCRouter({
       const [user, existingPoll, existingOption] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchPoll(ctx.drizzle, input.pollId),
-        ctx.drizzle.query.pollOption.findFirst({
-          where: and(
-            eq(pollOption.id, input.optionId),
-            eq(pollOption.pollId, input.pollId),
-          ),
-          with: {
-            votes: true,
-          },
-        }),
+        findPollOptionForDeletePollOption(ctx.drizzle, input),
       ]);
 
       // Guard
@@ -485,65 +376,16 @@ export const pollRouter = createTRPCRouter({
       // Delete both the votes and the option in parallel
       await Promise.all([
         // Delete any votes for this option
-        ctx.drizzle
-          .delete(userPollVote)
-          .where(eq(userPollVote.optionId, input.optionId)),
+        deleteUserPollVoteForDeletePollOption(ctx.drizzle, input),
 
         // Delete the option
-        ctx.drizzle
-          .delete(pollOption)
-          .where(
-            and(eq(pollOption.id, input.optionId), eq(pollOption.pollId, input.pollId)),
-          ),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: user.userId,
-          tableName: "poll",
-          changes: [
-            `Deleted poll option in poll: ${existingPoll.title}`,
-            `OptionId: ${input.optionId}`,
-          ],
-          relatedId: input.pollId,
-          relatedMsg: `Deleted poll option: ${input.optionId}`,
-        }),
+        deletePollOptionForDeletePollOption(ctx.drizzle, input),
+        insertActionLogForDeletePollOption(ctx.drizzle, user, existingPoll, input),
       ]);
 
       return { success: true, message: "Poll option deleted successfully" };
     }),
 });
-
-/**
- * Fetch a poll by ID
- * @param client - The database client
- * @param pollId - The ID of the poll to fetch
- * @returns The poll
- */
-export const fetchPoll = async (client: DrizzleClient, pollId: string) => {
-  return await client.query.poll.findFirst({
-    where: eq(poll.id, pollId),
-  });
-};
-
-/**
- * Fetch a user's vote for a specific poll
- * @param client - The database client
- * @param userId - The ID of the user
- * @param pollId - The ID of the poll
- * @returns The user's vote
- */
-export const fetchUserVote = async (
-  client: DrizzleClient,
-  userId: string,
-  pollId: string,
-) => {
-  const vote = await client.query.userPollVote.findFirst({
-    where: and(eq(userPollVote.userId, userId), eq(userPollVote.pollId, pollId)),
-    with: {
-      option: true,
-    },
-  });
-  return vote || null;
-};
 
 // Define types for the poll data with relations
 interface PollWithOptions extends Poll {
@@ -576,25 +418,10 @@ async function getVoteCountsForPolls(client: DrizzleClient, pollIds: string[]) {
   // Run both queries in parallel for better performance
   const [optionVoteCounts, totalVoteCounts] = await Promise.all([
     // Get vote counts for all options in all polls
-    client
-      .select({
-        pollId: userPollVote.pollId,
-        optionId: userPollVote.optionId,
-        count: count(),
-      })
-      .from(userPollVote)
-      .where(inArray(userPollVote.pollId, pollIds))
-      .groupBy(userPollVote.pollId, userPollVote.optionId),
+    selectUserPollVoteForGetVoteCountsForPolls(client, pollIds),
 
     // Get total votes for all polls
-    client
-      .select({
-        pollId: userPollVote.pollId,
-        count: count(),
-      })
-      .from(userPollVote)
-      .where(inArray(userPollVote.pollId, pollIds))
-      .groupBy(userPollVote.pollId),
+    selectUserPollVoteForGetVoteCountsForPolls2(client, pollIds),
   ]);
 
   // Create maps for quick lookup

@@ -1,7 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
-import { userData } from "@/drizzle/schema";
+import { findUserRoleById } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 import { canChangeContent } from "@/utils/permissions";
 import { ManualWorldEditor } from "./ManualWorldEditor";
@@ -15,10 +14,7 @@ export const dynamic = "force-dynamic";
 export default async function ManualWorld() {
   const { userId } = await auth();
   if (!userId) redirect("/guide/world");
-  const row = await drizzleDB.query.userData.findFirst({
-    columns: { role: true },
-    where: eq(userData.userId, userId),
-  });
+  const row = await findUserRoleById(drizzleDB, userId);
   if (!row || !canChangeContent(row.role)) {
     redirect("/guide/world");
   }

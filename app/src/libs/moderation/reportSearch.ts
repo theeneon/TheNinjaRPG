@@ -1,23 +1,23 @@
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  exists,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  notExists,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, exists, ne, notExists, sql } from "drizzle-orm";
 import OpenAI from "openai";
 import {
   OPENAI_REPORT_EMBEDDING_MODEL,
   REPORT_EMBEDDING_DIMENSIONS,
 } from "@/drizzle/constants";
-import { userReport, userReportComment, userReportEmbedding } from "@/drizzle/schema";
+import { userReport, userReportEmbedding } from "@/drizzle/schema";
+import {
+  deleteUserReportEmbeddingForDeleteOrphanedReportEmbeddings,
+  deleteUserReportEmbeddingForDeleteUserReportEmbeddings,
+  insertUserReportEmbeddingForIndexReportEmbeddings,
+  selectUserReportCommentForEligibleReports,
+  selectUserReportEmbeddingForDeleteOrphanedReportEmbeddings,
+  selectUserReportEmbeddingForSupportsReportVectorSearch,
+  selectUserReportForDeleteOrphanedReportEmbeddings,
+  selectUserReportForGetRelatedReports,
+  selectUserReportForGetRelatedReports2,
+  selectUserReportForGetRelatedReports3,
+  selectUserReportForIndexReportEmbeddings,
+} from "@/queries/reports";
 import type { DrizzleClient } from "@/server/db";
 import { chunkArray } from "@/utils/array";
 
@@ -28,29 +28,6 @@ const vectorCapabilities = new WeakMap<
 >();
 const fulltextUnavailableUntil = new WeakMap<DrizzleClient, number>();
 
-const reportColumns = (client: DrizzleClient) => ({
-  id: userReport.id,
-  createdAt: userReport.createdAt,
-  aiInterpretation: userReport.aiInterpretation,
-  reason: userReport.reason,
-  infraction: userReport.infraction,
-  status: userReport.status,
-  system: userReport.system,
-  predictedStatus: userReport.predictedStatus,
-  // A report contributes one precedent, even when it has several comments.
-  comment: sql<string>`(${client
-    .select({ content: userReportComment.content })
-    .from(userReportComment)
-    .where(
-      and(
-        eq(userReportComment.reportId, userReport.id),
-        isNotNull(userReportComment.decision),
-      ),
-    )
-    .orderBy(desc(userReportComment.createdAt), desc(userReportComment.id))
-    .limit(1)})`,
-});
-
 export type PreviousReport = Awaited<ReturnType<typeof getRelatedReports>>[number];
 
 const eligibleReports = (client: DrizzleClient) =>
@@ -59,17 +36,7 @@ const eligibleReports = (client: DrizzleClient) =>
     sql`JSON_LENGTH(${userReport.additionalContext}) > 0`,
     ne(userReport.system, "user_profile"),
     ne(userReport.status, "UNVIEWED"),
-    exists(
-      client
-        .select({ id: userReportComment.id })
-        .from(userReportComment)
-        .where(
-          and(
-            eq(userReportComment.reportId, userReport.id),
-            isNotNull(userReportComment.decision),
-          ),
-        ),
-    ),
+    exists(selectUserReportCommentForEligibleReports(client)),
   );
 
 /** Cache only explicit feature misses. Outages and permission failures must surface. */
@@ -112,12 +79,7 @@ export const supportsReportVectorSearch = async (client: DrizzleClient) => {
   const supported = (async () => {
     try {
       // Probe both the function and optional table before calling the embedding API.
-      await client
-        .select({
-          distance: sql<number>`DISTANCE(TO_VECTOR('[1,0]'), TO_VECTOR('[1,0]'), 'cosine')`,
-        })
-        .from(userReportEmbedding)
-        .limit(1);
+      await selectUserReportEmbeddingForSupportsReportVectorSearch(client);
       return true;
     } catch (error) {
       if (isFeatureUnavailable(error, "vector")) return false;
@@ -161,20 +123,7 @@ export const deleteUserReportEmbeddings = async (
   userId: string,
 ) => {
   try {
-    await client.delete(userReportEmbedding).where(
-      inArray(
-        userReportEmbedding.reportId,
-        client
-          .select({ id: userReport.id })
-          .from(userReport)
-          .where(
-            or(
-              eq(userReport.reporterUserId, userId),
-              eq(userReport.reportedUserId, userId),
-            ),
-          ),
-      ),
-    );
+    await deleteUserReportEmbeddingForDeleteUserReportEmbeddings(client, userId);
   } catch (error) {
     // Account cleanup also works before the optional embedding table is deployed.
     if (!isFeatureUnavailable(error, "vector")) throw error;
@@ -193,7 +142,6 @@ export const getRelatedReports = async (
     eligibleReports(client),
     options.excludeReportId ? ne(userReport.id, options.excludeReportId) : undefined,
   );
-  const columns = reportColumns(client);
   const embed = options.embed ?? generateReportEmbeddings;
   if (await supportsReportVectorSearch(client)) {
     // An unavailable embedding provider must not take down report retrieval.
@@ -209,20 +157,11 @@ export const getRelatedReports = async (
     if (embedding) {
       const distance = sql<number>`DISTANCE(${userReportEmbedding.embedding}, TO_VECTOR(${JSON.stringify(embedding)}), 'cosine')`;
       try {
-        const reports = await client
-          .select({ ...columns, score: sql<number>`1 - ${distance}`.mapWith(Number) })
-          .from(userReport)
-          .innerJoin(
-            userReportEmbedding,
-            and(
-              eq(userReportEmbedding.reportId, userReport.id),
-              eq(userReportEmbedding.sourceText, userReport.aiInterpretation),
-              eq(userReportEmbedding.model, OPENAI_REPORT_EMBEDDING_MODEL),
-            ),
-          )
-          .where(eligible)
-          .orderBy(asc(distance), desc(userReport.createdAt), asc(userReport.id))
-          .limit(10);
+        const reports = await selectUserReportForGetRelatedReports(
+          client,
+          distance,
+          eligible,
+        );
         if (reports.length > 0) return reports;
       } catch (error) {
         if (!isFeatureUnavailable(error, "vector")) throw error;
@@ -240,12 +179,7 @@ export const getRelatedReports = async (
         Number,
       );
     try {
-      return await client
-        .select({ ...columns, score })
-        .from(userReport)
-        .where(and(eligible, sql`${score} > 0`))
-        .orderBy(desc(score), desc(userReport.createdAt), asc(userReport.id))
-        .limit(10);
+      return await selectUserReportForGetRelatedReports2(client, score, eligible);
     } catch (error) {
       if (!isFeatureUnavailable(error, "fulltext")) throw error;
       fulltextUnavailableUntil.set(client, Date.now() + capabilityTtl);
@@ -264,39 +198,26 @@ export const getRelatedReports = async (
     matches.map((match) => sql`CASE WHEN ${match} THEN 1 ELSE 0 END`),
     sql` + `,
   )})`.mapWith(Number);
-  return client
-    .select({ ...columns, score })
-    .from(userReport)
-    .where(and(eligible, or(...matches)))
-    .orderBy(desc(score), desc(userReport.createdAt), asc(userReport.id))
-    .limit(10);
+  return selectUserReportForGetRelatedReports3(client, score, eligible, matches);
 };
 
 /** Daily backstop for reports deleted while an embedding request was in flight. */
 export const deleteOrphanedReportEmbeddings = async (client: DrizzleClient) => {
   if (!(await supportsReportVectorSearch(client))) return;
   const hasNoReport = notExists(
-    client
-      .select({ id: userReport.id })
-      .from(userReport)
-      .where(eq(userReport.id, userReportEmbedding.reportId)),
+    selectUserReportForDeleteOrphanedReportEmbeddings(client),
   );
   // Scan only IDs in a plain read, then restrict the locking delete to those IDs.
-  const orphans = await client
-    .select({ reportId: userReportEmbedding.reportId })
-    .from(userReportEmbedding)
-    .where(hasNoReport);
+  const orphans = await selectUserReportEmbeddingForDeleteOrphanedReportEmbeddings(
+    client,
+    hasNoReport,
+  );
   if (orphans.length === 0) return;
   for (const batch of chunkArray(orphans, 500)) {
-    await client.delete(userReportEmbedding).where(
-      and(
-        inArray(
-          userReportEmbedding.reportId,
-          batch.map(({ reportId }) => reportId),
-        ),
-        // A parent restored since the read must keep its embedding.
-        hasNoReport,
-      ),
+    await deleteUserReportEmbeddingForDeleteOrphanedReportEmbeddings(
+      client,
+      batch,
+      hasNoReport,
     );
   }
 };
@@ -307,52 +228,20 @@ export const indexReportEmbeddings = async (
   embed: EmbedReports = generateReportEmbeddings,
 ) => {
   if (!(await supportsReportVectorSearch(client))) return;
-  const reports = await client
-    .select({ id: userReport.id, text: userReport.aiInterpretation })
-    .from(userReport)
-    .leftJoin(userReportEmbedding, eq(userReportEmbedding.reportId, userReport.id))
-    .where(
-      and(
-        eligibleReports(client),
-        or(
-          isNull(userReportEmbedding.reportId),
-          ne(userReportEmbedding.sourceText, userReport.aiInterpretation),
-          ne(userReportEmbedding.model, OPENAI_REPORT_EMBEDDING_MODEL),
-        ),
-      ),
-    )
-    .orderBy(asc(userReport.createdAt), asc(userReport.id))
-    .limit(50);
+  const reports = await selectUserReportForIndexReportEmbeddings(
+    client,
+    eligibleReports(client),
+  );
   if (reports.length === 0) return;
   const embeddings = await embed(reports.map((report) => report.text));
   await Promise.all(
     reports.map((report, index) => {
       const embedding = sql`TO_VECTOR(${JSON.stringify(embeddings[index])})`;
-      return client
-        .insert(userReportEmbedding)
-        .select(
-          client
-            .select({
-              reportId: userReport.id,
-              sourceText: userReport.aiInterpretation,
-              model: sql`${OPENAI_REPORT_EMBEDDING_MODEL}`.as("model"),
-              embedding: embedding.as("embedding"),
-            })
-            .from(userReport)
-            .where(
-              and(
-                eq(userReport.id, report.id),
-                eq(userReport.aiInterpretation, report.text),
-              ),
-            ),
-        )
-        .onDuplicateKeyUpdate({
-          set: {
-            sourceText: report.text,
-            model: OPENAI_REPORT_EMBEDDING_MODEL,
-            embedding,
-          },
-        });
+      return insertUserReportEmbeddingForIndexReportEmbeddings(
+        client,
+        embedding,
+        report,
+      );
     }),
   );
 };

@@ -1,7 +1,6 @@
-import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { userVote } from "@/drizzle/schema";
 import { handleEndpointError } from "@/libs/gamesettings";
+import { updateUserVoteForHandleVote } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 
 export async function POST(request: Request) {
@@ -71,18 +70,5 @@ export async function GET(request: Request) {
 async function handleVote(secret: string, siteId: string) {
   const now = new Date();
 
-  await drizzleDB
-    .update(userVote)
-    .set({
-      ...(siteId === "topWebGames" ? { topWebGames: true } : {}), // in review
-      ...(siteId === "top100arena" ? { top100Arena: true } : {}),
-      ...(siteId === "mmohub" ? { mmoHub: true } : {}),
-      ...(siteId === "arenaTop100" ? { arenaTop100: true } : {}),
-      ...(siteId === "xtremeTop100" ? { xtremeTop100: true } : {}), // No postbacks received
-      ...(siteId === "topOnlineMmorpg" ? { topOnlineMmorpg: true } : {}), // Cannot register
-      ...(siteId === "browserMmorpg" ? { browserMmorpg: true } : {}), // Pending approval?
-      ...(siteId === "apexWebGaming" ? { apexWebGaming: true } : {}), // in review
-      lastVoteAt: now,
-    })
-    .where(eq(userVote.secret, secret));
+  await updateUserVoteForHandleVote(drizzleDB, siteId, now, secret);
 }

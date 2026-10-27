@@ -1,5 +1,6 @@
 import { GuideHub } from "@/layout/GuideHub";
-import { fetchPublishedGuides } from "@/server/api/routers/guide";
+import { fetchPublishedGuides } from "@/queries/guide";
+
 import { drizzleDB } from "@/server/db";
 
 // The guide index reads the database at render time. With the shell prerendered that

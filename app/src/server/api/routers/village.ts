@@ -1,48 +1,49 @@
-import {
-  and,
-  count,
-  eq,
-  getTableColumns,
-  gte,
-  inArray,
-  isNotNull,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
-import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { AllianceState, AllianceVillageType } from "@/drizzle/constants";
 import {
   ALLIANCE_VILLAGE_TYPES,
-  ALLIANCEHALL_LAT,
-  ALLIANCEHALL_LONG,
   COST_SWAP_VILLAGE,
-  IMG_AVATAR_DEFAULT,
-  KAGE_WAR_DECLARE_COST,
   UserRequestTypes,
   VILLAGE_LEAVE_REQUIRED_RANK,
-  VILLAGE_SYNDICATE_ID,
-  WAR_FUNDS_COST,
 } from "@/drizzle/constants";
 import type { VillageAlliance } from "@/drizzle/schema";
-import {
-  actionLog,
-  kageDefendedChallenges,
-  notification,
-  sector,
-  userData,
-  village,
-  villageAlliance,
-  villageStructure,
-  war,
-} from "@/drizzle/schema";
 import { hasRequiredRank } from "@/libs/train";
+import { fetchUser } from "@/queries/profile";
+import { deleteRequests } from "@/queries/sensei";
+import { fetchRequests, insertRequest } from "@/queries/sparring";
+import {
+  countVillageSectors,
+  executeReleasedForReleaseSector,
+  fetchAlliances,
+  fetchSector,
+  fetchSectorVillage,
+  fetchStructures,
+  fetchVillage,
+  fetchVillages,
+  insertActionLogForReleaseSector,
+  insertActionLogForRestoreStructurePoints,
+  insertNotificationForDeclareEnemy,
+  insertVillageAllianceForUpsertAllianceStatus,
+  listKageDefendedChallengesForGet,
+  listSectorForGetSectorOwnerships,
+  listVillageForGetAllNames,
+  listVillageForGetSectorOwnerships,
+  listWarForGetSectorOwnerships,
+  updateUserDataForBuyFood,
+  updateUserDataForDeclareEnemy,
+  updateUserDataForDeclareEnemy2,
+  updateUserDataForJoinVillage,
+  updateUserDataForJoinVillage2,
+  updateUserDataForLeaveVillage,
+  updateUserDataForSwapVillage,
+  updateVillageAllianceForUpsertAllianceStatus,
+  updateVillageForDeclareEnemy,
+  updateVillageStructureForRestoreStructurePoints,
+} from "@/queries/village";
 import { createConvo } from "@/routers/comments";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
-import { deleteRequests } from "@/routers/sensei";
-import { fetchRequests, insertRequest, updateRequestState } from "@/routers/sparring";
+import { fetchUpdatedUser } from "@/routers/profile";
+
+import { updateRequestState } from "@/routers/sparring";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -54,7 +55,6 @@ import {
 import type { DrizzleClient } from "@/server/db";
 import { scheduleDiscordSync } from "@/server/utils/discord/sync";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { activeWarAllyWhere } from "@/server/utils/warAlly";
 import { canAlly, canEnemy, canSurrender, findRelationship } from "@/utils/alliance";
 import { isKage } from "@/utils/kage";
 import { canAdministrateWars, canSwapVillage } from "@/utils/permissions";
@@ -69,11 +69,7 @@ export const villageRouter = createTRPCRouter({
   getAllNames: publicProcedure
     .meta({ mcp: { description: "Get all village names and IDs" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.village.findMany({
-        columns: { id: true, name: true },
-        where: inArray(village.type, ["VILLAGE", "OUTLAW", "SAFEZONE"]),
-        orderBy: (table, { asc }) => [asc(table.name)],
-      });
+      return await listVillageForGetAllNames(ctx.drizzle);
     }),
   // Get all villages
   getAll: publicProcedure
@@ -94,17 +90,8 @@ export const villageRouter = createTRPCRouter({
       }
       // Restore
       await Promise.all([
-        ctx.drizzle
-          .update(villageStructure)
-          .set({ curSp: sql`${villageStructure.maxSp}` })
-          .where(eq(villageStructure.id, input.structureId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "war",
-          changes: [`Restored structure points for ${input.structureId}`],
-          relatedId: input.structureId,
-        }),
+        updateVillageStructureForRestoreStructurePoints(ctx.drizzle, input),
+        insertActionLogForRestoreStructurePoints(ctx.drizzle, ctx, input),
       ]);
       return { success: true, message: "Structure points restored successfully" };
     }),
@@ -117,25 +104,7 @@ export const villageRouter = createTRPCRouter({
       const [villageData, sectorCount, defendedChallenges] = await Promise.all([
         fetchVillage(ctx.drizzle, input.id),
         countVillageSectors(ctx.drizzle, input.id),
-        ctx.drizzle.query.kageDefendedChallenges.findMany({
-          with: {
-            user: {
-              columns: {
-                username: true,
-                userId: true,
-                avatar: true,
-              },
-            },
-          },
-          where: and(
-            eq(kageDefendedChallenges.villageId, input.id),
-            eq(kageDefendedChallenges.status, "COMPLETED"),
-            isNotNull(kageDefendedChallenges.didWin),
-            isNotNull(kageDefendedChallenges.rounds),
-          ),
-          limit: 8,
-          orderBy: (table, { desc }) => [desc(table.resolvedAt)],
-        }),
+        listKageDefendedChallengesForGet(ctx.drizzle, input),
       ]);
 
       // Guards
@@ -151,37 +120,9 @@ export const villageRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [user, sectors, colors, sectorWars] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.sector.findMany({
-          columns: {
-            sector: true,
-            villageId: true,
-          },
-          where: ne(sector.villageId, VILLAGE_SYNDICATE_ID),
-        }),
-        ctx.drizzle.query.village.findMany({
-          columns: {
-            id: true,
-            name: true,
-            mapName: true,
-            hexColor: true,
-          },
-        }),
-        ctx.drizzle.query.war.findMany({
-          columns: {
-            sector: true,
-            attackerVillageId: true,
-            defenderVillageId: true,
-          },
-          with: {
-            warAllies: {
-              where: activeWarAllyWhere(),
-              columns: {
-                villageId: true,
-              },
-            },
-          },
-          where: and(eq(war.status, "ACTIVE"), eq(war.type, "SECTOR_WAR")),
-        }),
+        listSectorForGetSectorOwnerships(ctx.drizzle),
+        listVillageForGetSectorOwnerships(ctx.drizzle),
+        listWarForGetSectorOwnerships(ctx.drizzle),
       ]);
       const returnedWars = input.onlyOwnWar
         ? sectorWars.filter(
@@ -246,20 +187,13 @@ export const villageRouter = createTRPCRouter({
         user.maxChakra,
         user.curChakra + (user.maxChakra * healPercentage) / 100,
       );
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          money: sql`${userData.money} - ${cost}`,
-          curStamina: newStamina,
-          curChakra: newChakra,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.status, "AWAKE"),
-            gte(userData.money, cost),
-          ),
-        );
+      const result = await updateUserDataForBuyFood(
+        ctx.drizzle,
+        cost,
+        newStamina,
+        newChakra,
+        ctx,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse("Error trying to buy food. Try again.");
       } else {
@@ -300,18 +234,7 @@ export const villageRouter = createTRPCRouter({
       }
 
       // Update
-      await ctx.drizzle
-        .update(userData)
-        .set({
-          villageId: VILLAGE_SYNDICATE_ID,
-          villagePrestige:
-            user.villagePrestige >= 0 ? user.villagePrestige : -user.villagePrestige, // Converted to notoriety
-          isOutlaw: true,
-          joinedVillageAt: new Date(),
-          ...(user.rank === "GENIN" && { senseiId: null }),
-          ...(user.rank === "ELDER" && { rank: "JONIN" }),
-        })
-        .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "AWAKE")));
+      await updateUserDataForLeaveVillage(ctx.drizzle, user, ctx);
 
       scheduleDiscordSync(ctx.drizzle, ctx.userId);
       return { success: true, message: "You have left the village" };
@@ -345,24 +268,11 @@ export const villageRouter = createTRPCRouter({
 
       // Update
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({
-            villageId: village.id,
-            villagePrestige: 0,
-            isOutlaw: false,
-            joinedVillageAt: new Date(),
-            ...(user.rank === "GENIN" && { senseiId: null }),
-            ...(user.rank === "ELDER" && { rank: "JONIN" }),
-          })
-          .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "AWAKE"))),
+        updateUserDataForJoinVillage(ctx.drizzle, village, user, ctx),
         // Clear current sensei requests for this user
         deleteRequests(ctx.drizzle, ctx.userId),
         // Remove the user as sensei for any active students
-        ctx.drizzle
-          .update(userData)
-          .set({ senseiId: null })
-          .where(and(eq(userData.senseiId, ctx.userId), eq(userData.rank, "GENIN"))),
+        updateUserDataForJoinVillage2(ctx.drizzle, ctx),
       ]);
       scheduleDiscordSync(ctx.drizzle, ctx.userId);
       return { success: true, message: "You have joined the village" };
@@ -401,32 +311,11 @@ export const villageRouter = createTRPCRouter({
 
       // Update
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({
-            villageId: village.id,
-            reputationPoints: user.reputationPoints - cost,
-            isOutlaw: village.type === "OUTLAW",
-            sector: village.sector,
-            longitude: ALLIANCEHALL_LONG,
-            latitude: ALLIANCEHALL_LAT,
-            ...(user.rank === "GENIN" && { senseiId: null }),
-            ...(user.rank === "ELDER" && { rank: "JONIN" }),
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              gte(userData.reputationPoints, cost),
-              eq(userData.status, "AWAKE"),
-            ),
-          ),
+        updateUserDataForSwapVillage(ctx.drizzle, village, user, cost, ctx),
         // Clear current sensei requests for this user
         deleteRequests(ctx.drizzle, ctx.userId),
         // Remove the user as sensei for any active students
-        ctx.drizzle
-          .update(userData)
-          .set({ senseiId: null })
-          .where(and(eq(userData.senseiId, ctx.userId), eq(userData.rank, "GENIN"))),
+        updateUserDataForJoinVillage2(ctx.drizzle, ctx),
       ]);
 
       scheduleDiscordSync(ctx.drizzle, ctx.userId);
@@ -665,36 +554,20 @@ export const villageRouter = createTRPCRouter({
       // coordinates with declarations' FOR UPDATE before they select objectives.
       // Recheck leadership, ownership and active objectives in the same statement.
       const released = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          DELETE ${sector} FROM ${sector}
-          INNER JOIN ${village} ON ${village.id} = ${sector.villageId}
-          WHERE ${sector.sector} = ${input.sector}
-            AND ${village.id} = ${villageId} AND ${village.kageId} = ${ctx.userId}
-            AND NOT EXISTS (
-              SELECT 1 FROM ${war}
-              WHERE ${war.status} = 'ACTIVE' AND ${war.endedAt} IS NULL
-                AND (${war.attackerVillageId} = ${village.id} OR ${war.defenderVillageId} = ${village.id})
-                AND ${war.rules} IS NOT NULL
-                AND JSON_CONTAINS(${war.objectiveState}, JSON_OBJECT(
-                  'sector', ${sector.sector}, 'villageId', ${village.id}, 'destroyed', CAST('false' AS JSON)
-                ), '$.objectives')
-            )
-        `),
+        executeReleasedForReleaseSector(ctx.drizzle, input, villageId, ctx),
       );
       if (released.rowsAffected === 0) {
         return errorResponse(
           "Sector ownership or leadership changed, or this is an active war objective. Refresh and try again.",
         );
       }
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "war",
-        changes: [`Released sector ${input.sector} from ${sectorData.village.name}`],
-        relatedId: villageId,
-        relatedMsg: `Released sector ${input.sector}`,
-        relatedImage: IMG_AVATAR_DEFAULT,
-      });
+      await insertActionLogForReleaseSector(
+        ctx.drizzle,
+        ctx,
+        input,
+        sectorData,
+        villageId,
+      );
 
       // Return
       return { success: true, message: "You have released the sector" };
@@ -741,32 +614,10 @@ export const villageRouter = createTRPCRouter({
         ...check.newNeutrals.map((id) =>
           upsertAllianceStatus(ctx.drizzle, relationships, villageId, id, "NEUTRAL"),
         ),
-        ctx.drizzle.insert(notification).values({
-          userId: ctx.userId,
-          content: `${userVillage.name} has declared war on ${target.name}`,
-        }),
-        ctx.drizzle
-          .update(userData)
-          .set({ unreadNotifications: sql`unreadNotifications + 1` })
-          // Only members of the two villages; the kage's own row is bumped by the
-          // prestige update below, as overlapping UserData updates can deadlock.
-          .where(
-            and(
-              inArray(userData.villageId, [villageId, targetId]),
-              ne(userData.userId, user.userId),
-            ),
-          ),
-        ctx.drizzle
-          .update(village)
-          .set({ tokens: sql`${village.tokens} - ${WAR_FUNDS_COST}` })
-          .where(eq(village.id, villageId)),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            villagePrestige: sql`${userData.villagePrestige} - ${KAGE_WAR_DECLARE_COST}`,
-            unreadNotifications: sql`${userData.unreadNotifications} + 1`,
-          })
-          .where(eq(userData.userId, user.userId)),
+        insertNotificationForDeclareEnemy(ctx.drizzle, ctx, userVillage, target),
+        updateUserDataForDeclareEnemy(ctx.drizzle, villageId, targetId, user),
+        updateVillageForDeclareEnemy(ctx.drizzle, villageId),
+        updateUserDataForDeclareEnemy2(ctx.drizzle, user),
       ]);
       // Return
       return { success: true, message: "You have declared yourself an enemy" };
@@ -794,14 +645,14 @@ export const upsertAllianceStatus = async (
 ) => {
   const alliance = findRelationship(relationships, villageIdA, villageIdB);
   if (alliance) {
-    await client
-      .update(villageAlliance)
-      .set({ status })
-      .where(eq(villageAlliance.id, alliance.id));
+    await updateVillageAllianceForUpsertAllianceStatus(client, status, alliance);
   } else {
-    await client
-      .insert(villageAlliance)
-      .values({ id: nanoid(), villageIdA, villageIdB, status });
+    await insertVillageAllianceForUpsertAllianceStatus(
+      client,
+      villageIdA,
+      villageIdB,
+      status,
+    );
   }
 };
 
@@ -820,154 +671,4 @@ export const fetchAllienceInfo = async (client: DrizzleClient, userId: string) =
     fetchRequests(client, ["ALLIANCE", "SURRENDER"], 3600 * 48),
   ]);
   return { user, villages, relationships, requests };
-};
-
-/**
- * Fetches all alliances from the database.
- *
- * @param client - The DrizzleClient instance used to query the database.
- * @returns A promise that resolves to an array of alliance objects.
- */
-export const fetchAlliances = async (client: DrizzleClient) => {
-  const villageA = alias(village, "villageA");
-  const villageB = alias(village, "villageB");
-  return await client
-    .select(getTableColumns(villageAlliance))
-    .from(villageAlliance)
-    .innerJoin(villageA, eq(villageA.id, villageAlliance.villageIdA))
-    .innerJoin(villageB, eq(villageB.id, villageAlliance.villageIdB))
-    .where(and(eq(villageA.allianceSystem, true), eq(villageB.allianceSystem, true)));
-};
-
-/**
- * Fetches a village from the database.
- *
- * @param client - The DrizzleClient instance used to query the database.
- * @param villageId - The ID of the village to fetch.
- * @returns A Promise that resolves to the fetched village.
- */
-export const fetchVillage = async (client: DrizzleClient, villageId: string) => {
-  return await client.query.village.findFirst({
-    where: eq(village.id, villageId),
-    with: {
-      notice: true,
-      relationshipA: true,
-      relationshipB: true,
-      structures: {
-        orderBy: (structure, { desc }) => desc(structure.name),
-      },
-      kage: {
-        columns: {
-          username: true,
-          userId: true,
-          avatar: true,
-        },
-      },
-    },
-  });
-};
-
-/**
- * Fetches a sector village from the database.
- *
- * @param client - The DrizzleClient instance used to query the database.
- * @param sector - The sector number of the village to fetch.
- * @returns A Promise that resolves to the fetched village.
- */
-export const fetchSectorVillage = async (
-  client: DrizzleClient,
-  sector: number,
-  isOutlaw = false,
-) => {
-  const result = await client.query.village.findFirst({
-    where: !isOutlaw
-      ? eq(village.sector, sector)
-      : or(
-          and(eq(village.sector, sector), eq(village.type, "SAFEZONE")),
-          and(eq(village.sector, sector), eq(village.type, "HIDEOUT")),
-          and(eq(village.sector, sector), eq(village.type, "STRONGHOLD")),
-          eq(village.type, "OUTLAW"),
-        ),
-    orderBy: (villages) =>
-      sql`FIELD(${villages.type}, 'SAFEZONE', 'HIDEOUT', 'STRONGHOLD', 'OUTLAW')`,
-    with: {
-      notice: true,
-      relationshipA: true,
-      relationshipB: true,
-      structures: {
-        orderBy: (structure, { desc }) => desc(structure.name),
-      },
-      kage: {
-        columns: {
-          username: true,
-          userId: true,
-          avatar: true,
-        },
-      },
-    },
-  });
-  return result || null;
-};
-
-/**
- * Fetches villages from the server.
- * @param client - The DrizzleClient instance used for querying the server.
- * @returns A promise that resolves to an array of villages, including the associated kage information.
- */
-export const fetchVillages = async (client: DrizzleClient) => {
-  return await client.query.village.findMany({
-    with: { kage: { columns: { username: true, userId: true, avatar: true } } },
-  });
-};
-
-/**
- * Fetches structures for a given village.
- * @param client - The DrizzleClient instance used for querying.
- * @param villageId - The ID of the village to fetch structures for.
- * @returns A promise that resolves to an array of structures.
- */
-export const fetchStructures = async (
-  client: DrizzleClient,
-  villageId?: string | null,
-) => {
-  return await client.query.villageStructure.findMany({
-    where: eq(villageStructure.villageId, villageId ?? VILLAGE_SYNDICATE_ID),
-  });
-};
-
-/**
- * Counts the number of sectors a village has.
- * @param client - The DrizzleClient instance used to query the database.
- * @param villageId - The ID of the village to count sectors for.
- * @returns The number of sectors a village has.
- */
-export const countVillageSectors = async (
-  client: DrizzleClient,
-  villageId: string | null,
-) => {
-  if (!villageId) return 0;
-  const counts = await client
-    .select({ count: count() })
-    .from(sector)
-    .where(eq(sector.villageId, villageId));
-  return counts?.[0]?.count || 0;
-};
-
-/**
- * Fetches a sector from the database.
- * @param client - The DrizzleClient instance used to query the database.
- * @param sectorId - The ID of the sector to fetch.
- * @returns A Promise that resolves to the fetched sector.
- */
-export const fetchSector = async (client: DrizzleClient, sectorId: number) => {
-  return await client.query.sector.findFirst({
-    columns: {
-      sector: true,
-      villageId: true,
-      shrineLevel: true,
-      capturedAt: true,
-    },
-    with: { village: { columns: { name: true, id: true } } },
-    where: eq(sector.sector, sectorId),
-  });
 };

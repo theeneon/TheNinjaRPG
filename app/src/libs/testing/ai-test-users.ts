@@ -9,20 +9,22 @@
  * run ID and profile key, so repeated runs reuse/reset the same accounts.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
 import type { UserRank, UserRole } from "@/drizzle/constants";
-import {
-  activityStreakConfig,
-  userData,
-  userItem,
-  userStreakProgress,
-  village,
-} from "@/drizzle/schema";
 import { env } from "@/env/server.mjs";
+import { findUserIdentityById } from "@/queries/profile";
+import {
+  findVillageForResolveVillage,
+  findVillageForResolveVillage2,
+  insertUserDataForUpsertUserData,
+  insertUserItemForUpsertUserData,
+  insertUserStreakProgressForSuppressActivityStreakPopup,
+  selectActivityStreakConfigForSuppressActivityStreakPopup,
+  selectUserStreakProgressForSuppressActivityStreakPopup,
+  updateUserDataForUpsertUserData,
+  updateUserStreakProgressForSuppressActivityStreakPopup,
+} from "@/queries/register";
 import { drizzleDB } from "@/server/db";
-import { createStarterHomeItems } from "@/server/utils/homeFurniture";
-import type { AiTestUserProfile } from "@/validators/ai-test-user";
-import { sanitizeKey } from "@/validators/ai-test-user";
+import { type AiTestUserProfile, sanitizeKey } from "@/validators/ai-test-user";
 
 /** Shape returned per user after successful provisioning. */
 type ProvisionedAiTestUser = {
@@ -97,11 +99,12 @@ const resolveVillage = async (profile: AiTestUserProfile) => {
   } as const;
 
   if (profile.villageId) {
-    const villageRecord = await drizzleDB.query.village.findFirst({
-      where: eq(village.id, profile.villageId),
+    const villageRecord = await findVillageForResolveVillage(
+      drizzleDB,
+      { villageId: profile.villageId },
       columns,
-      with: withRelations,
-    });
+      withRelations,
+    );
     if (villageRecord) return villageRecord;
     throw new Error(
       `Village with id "${profile.villageId}" not found for profile key ${profile.key}`,
@@ -109,11 +112,12 @@ const resolveVillage = async (profile: AiTestUserProfile) => {
   }
 
   if (profile.villageName) {
-    const villageRecord = await drizzleDB.query.village.findFirst({
-      where: eq(village.name, profile.villageName),
+    const villageRecord = await findVillageForResolveVillage2(
+      drizzleDB,
+      { villageName: profile.villageName },
       columns,
-      with: withRelations,
-    });
+      withRelations,
+    );
     if (villageRecord) return villageRecord;
   }
 
@@ -220,49 +224,33 @@ const AGENT_FRIENDLY_SETTINGS = {
  * and having a row at all clears `activeRecurringConfig` (no enrolment prompt).
  */
 const suppressActivityStreakPopup = async (userId: string) => {
-  const configs = await drizzleDB
-    .select({ id: activityStreakConfig.id })
-    .from(activityStreakConfig)
-    .where(eq(activityStreakConfig.isActive, true));
+  const configs =
+    await selectActivityStreakConfigForSuppressActivityStreakPopup(drizzleDB);
   if (configs.length === 0) return;
 
-  const existing = await drizzleDB
-    .select({ configId: userStreakProgress.configId })
-    .from(userStreakProgress)
-    .where(
-      and(
-        eq(userStreakProgress.userId, userId),
-        inArray(
-          userStreakProgress.configId,
-          configs.map((c) => c.id),
-        ),
-      ),
-    );
+  const existing = await selectUserStreakProgressForSuppressActivityStreakPopup(
+    drizzleDB,
+    userId,
+    configs,
+  );
   const seeded = new Set(existing.map((e) => e.configId));
   const now = new Date();
   const missing = configs.filter((c) => !seeded.has(c.id));
   if (missing.length > 0) {
-    await drizzleDB.insert(userStreakProgress).values(
-      missing.map((c) => ({
-        id: `agentstreak-${userId}-${c.id}`.slice(0, 191),
-        userId,
-        configId: c.id,
-        currentDay: 0,
-        lastClaimDate: now,
-        startedAt: now,
-      })),
+    await insertUserStreakProgressForSuppressActivityStreakPopup(
+      drizzleDB,
+      missing,
+      userId,
+      now,
     );
   }
   if (seeded.size > 0) {
-    await drizzleDB
-      .update(userStreakProgress)
-      .set({ currentDay: 0, lastClaimDate: now })
-      .where(
-        and(
-          eq(userStreakProgress.userId, userId),
-          inArray(userStreakProgress.configId, [...seeded]),
-        ),
-      );
+    await updateUserStreakProgressForSuppressActivityStreakPopup(
+      drizzleDB,
+      now,
+      userId,
+      seeded,
+    );
   }
 };
 
@@ -286,50 +274,41 @@ const upsertUserData = async ({
   isBanned: boolean;
   sector: number;
 }) => {
-  const existing = await drizzleDB.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    columns: { userId: true },
-  });
+  const existing = await findUserIdentityById(drizzleDB, userId);
 
   if (!existing) {
-    await drizzleDB.insert(userData).values({
+    await insertUserDataForUpsertUserData(
+      drizzleDB,
       userId,
       username,
-      gender: "Other",
       level,
       rank,
       role,
       villageId,
       sector,
-      status: "AWAKE",
       isBanned,
-      ...AGENT_FRIENDLY_SETTINGS,
-    });
+      AGENT_FRIENDLY_SETTINGS,
+    );
     await Promise.all([
-      drizzleDB.insert(userItem).values(createStarterHomeItems(userId)),
+      insertUserItemForUpsertUserData(drizzleDB, userId),
       suppressActivityStreakPopup(userId),
     ]);
     return;
   }
 
   // Reset combat/location flags so the user starts in a clean state
-  await drizzleDB
-    .update(userData)
-    .set({
-      username,
-      level,
-      rank,
-      role,
-      villageId,
-      sector,
-      status: "AWAKE",
-      inArena: false,
-      inShrines: false,
-      isOutlaw: false,
-      isBanned,
-      ...AGENT_FRIENDLY_SETTINGS,
-    })
-    .where(eq(userData.userId, userId));
+  await updateUserDataForUpsertUserData(
+    drizzleDB,
+    username,
+    level,
+    rank,
+    role,
+    villageId,
+    sector,
+    isBanned,
+    AGENT_FRIENDLY_SETTINGS,
+    userId,
+  );
   await suppressActivityStreakPopup(userId);
 };
 

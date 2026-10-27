@@ -1,12 +1,24 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { battle, dungeonMember, dungeonRun, userData } from "@/drizzle/schema";
+import { eq, sql } from "drizzle-orm";
+import { type dungeonRun, userData } from "@/drizzle/schema";
 import { combatEnergyRecoverySql } from "@/libs/combat/database";
 import type { CompleteBattle } from "@/libs/combat/types";
 import { dungeonBattleOutcome, dungeonNextState } from "@/libs/dungeon";
+import { deleteBattleById, deleteBattleIfVersionMatches } from "@/queries/combat";
+
+import {
+  clearDungeonActiveUsers,
+  findBattleForExpireDungeonRun,
+  updateDungeonMemberForSettleDungeonBattle,
+  updateDungeonRunForExpireDungeonRun,
+  updateDungeonRunForRollbackDungeonStart,
+  updateDungeonRunForSettleDungeonBattle,
+  updateUserDataForExpireDungeonRun,
+  updateUserDataForSettleDungeonBattle,
+} from "@/queries/dungeon";
+
 import type { DrizzleClient } from "@/server/db";
 import { cleanupCoopBattleStart } from "@/server/utils/coop";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 
 /** Compensate every committed sibling write before reopening a failed floor start. */
 export const rollbackDungeonStart = (
@@ -23,22 +35,13 @@ export const rollbackDungeonStart = (
     } = run.state;
     await cleanupCoopBattleStart(client, battleId, run.state.memberIds);
     // Reopen only after all cleanup finished; the CAS rejects stale or competing recovery.
-    await client
-      .update(dungeonRun)
-      .set({
-        status: run.expiresAt ? "BETWEEN" : "LOBBY",
-        battleId: null,
-        expiresAt: run.expiresAt,
-        version: sql`${dungeonRun.version} + 1`,
-        state: { ...state, readyIds: [] },
-      })
-      .where(
-        and(
-          eq(dungeonRun.id, run.id),
-          eq(dungeonRun.battleId, battleId),
-          eq(dungeonRun.version, version),
-        ),
-      );
+    await updateDungeonRunForRollbackDungeonStart(
+      client,
+      run,
+      state,
+      battleId,
+      version,
+    );
   });
 
 /**
@@ -68,57 +71,25 @@ export const settleDungeonBattle = async (
   // cannot delete the battle too; retain a short transaction so failed revival is retryable.
   return retryOnDeadlock(() =>
     client.transaction(async (tx) => {
-      const claim = await tx
-        .delete(battle)
-        .where(and(eq(battle.id, current.id), eq(battle.version, fetchedVersion)));
+      const claim = await deleteBattleIfVersionMatches(tx, current, fetchedVersion);
       if (claim.rowsAffected === 0) return false;
-      const run = await tx
-        .update(dungeonRun)
-        .set({
-          state: next,
-          status,
-          battleId: null,
-          version: sql`${dungeonRun.version} + 1`,
-        })
-        .where(
-          and(
-            eq(dungeonRun.id, meta.runId),
-            eq(dungeonRun.battleId, current.id),
-            eq(dungeonRun.version, meta.runVersion),
-            eq(dungeonRun.status, "FIGHTING"),
-          ),
-        );
+      const run = await updateDungeonRunForSettleDungeonBattle(
+        tx,
+        next,
+        status,
+        meta,
+        current,
+      );
       if (run.rowsAffected !== 1)
         throw new Error("Dungeon run changed during floor settlement");
-      await tx
-        .update(userData)
-        .set({
-          status: "AWAKE",
-          battleId: null,
-          bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-          bracketImmunityPausedAt: null,
-          curHealth: sql`${userData.maxHealth}`,
-          curChakra: sql`${userData.maxChakra}`,
-          curStamina: sql`${userData.maxStamina}`,
-          curEnergy: dungeonEnergyRecoverySql(
-            current,
-            meta.runState.memberIds,
-            settledAt,
-          ),
-          regenAt: settledAt,
-          updatedAt: settledAt,
-        })
-        .where(
-          and(
-            inArray(userData.userId, meta.runState.memberIds),
-            eq(userData.battleId, current.id),
-          ),
-        );
-      if (status === "ENDED")
-        await tx
-          .update(dungeonMember)
-          .set({ activeUserId: null })
-          .where(eq(dungeonMember.runId, meta.runId));
+      await updateUserDataForSettleDungeonBattle(
+        tx,
+        dungeonEnergyRecoverySql,
+        current,
+        meta,
+        settledAt,
+      );
+      if (status === "ENDED") await updateDungeonMemberForSettleDungeonBattle(tx, meta);
       return true;
     }),
   );
@@ -142,57 +113,25 @@ export const expireDungeonRun = async (
     return false;
   const settledAt = new Date();
   const snapshot = run.battleId
-    ? await client.query.battle.findFirst({ where: eq(battle.id, run.battleId) })
+    ? await findBattleForExpireDungeonRun(client, { battleId: run.battleId })
     : undefined;
   // The terminal status disables future expiry, so battle removal, revival and reservation
   // release must commit with it. A single run CAS cannot express those multi-table effects.
   await retryOnDeadlock(() =>
     client.transaction(async (tx) => {
-      const claim = await tx
-        .update(dungeonRun)
-        .set({
-          status: "ENDED",
-          battleId: null,
-          version: sql`${dungeonRun.version} + 1`,
-          state: {
-            ...run.state,
-            readyIds: [],
-            message: "The one-hour dungeon deadline expired.",
-          },
-        })
-        .where(and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)));
+      const claim = await updateDungeonRunForExpireDungeonRun(tx, run);
       if (claim.rowsAffected === 0) return;
       if (run.battleId) {
-        await tx.delete(battle).where(eq(battle.id, run.battleId));
-        await tx
-          .update(userData)
-          .set({
-            status: "AWAKE",
-            battleId: null,
-            bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-            bracketImmunityPausedAt: null,
-            curHealth: sql`${userData.maxHealth}`,
-            curChakra: sql`${userData.maxChakra}`,
-            curStamina: sql`${userData.maxStamina}`,
-            curEnergy: dungeonEnergyRecoverySql(
-              snapshot,
-              run.state.memberIds,
-              settledAt,
-            ),
-            updatedAt: settledAt,
-            regenAt: settledAt,
-          })
-          .where(
-            and(
-              inArray(userData.userId, run.state.memberIds),
-              eq(userData.battleId, run.battleId),
-            ),
-          );
+        await deleteBattleById(tx, run.battleId);
+        await updateUserDataForExpireDungeonRun(
+          tx,
+          dungeonEnergyRecoverySql,
+          snapshot,
+          { state: { memberIds: run.state.memberIds }, battleId: run.battleId },
+          settledAt,
+        );
       }
-      await tx
-        .update(dungeonMember)
-        .set({ activeUserId: null })
-        .where(eq(dungeonMember.runId, run.id));
+      await clearDungeonActiveUsers(tx, run);
     }),
   );
   return true;

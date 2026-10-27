@@ -1,11 +1,13 @@
-import { and, eq, ne, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { overworldAiPlacement } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
 import {
   resolveOverworldPosition,
   snapOverworldPositionToWalkable,
 } from "@/libs/overworldAi";
+import {
+  listOverworldAiPlacementForGET,
+  updateOverworldAiPlacementForGET,
+} from "@/queries/overworldAi";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { fetchPublishedSectorMaps } from "@/server/utils/sectorMap";
@@ -33,15 +35,7 @@ export const GET = async (request: Request) => {
     // tile within a fixed sector (sectorType=specific, locationType=random). Only fully-fixed
     // placements (specific/specific) stay put; resolveOverworldPosition keeps the fixed axes.
     // isActive is pushed into the query (index-backed) so inactive rows are never transferred.
-    const placements = await drizzleDB.query.overworldAiPlacement.findMany({
-      where: and(
-        eq(overworldAiPlacement.isActive, true),
-        or(
-          ne(overworldAiPlacement.sectorType, "specific"),
-          ne(overworldAiPlacement.locationType, "specific"),
-        ),
-      ),
-    });
+    const placements = await listOverworldAiPlacementForGET(drizzleDB);
 
     const resolved = placements.map((placement) => ({
       placement,
@@ -67,15 +61,7 @@ export const GET = async (request: Request) => {
     // Re-randomize positions for all fetched placements in parallel
     await Promise.all(
       snapped.map(({ placement, pos }) => {
-        return drizzleDB
-          .update(overworldAiPlacement)
-          .set({
-            sector: pos.sector,
-            longitude: pos.longitude,
-            latitude: pos.latitude,
-            positionVersion: sql`${overworldAiPlacement.positionVersion} + 1`,
-          })
-          .where(eq(overworldAiPlacement.id, placement.id));
+        return updateOverworldAiPlacementForGET(drizzleDB, pos, placement);
       }),
     );
 

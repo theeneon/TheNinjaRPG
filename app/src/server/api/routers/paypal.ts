@@ -1,21 +1,50 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { TransactionType } from "@/drizzle/constants";
-import { FEDERAL_MONTHLY_USD_CENTS, FederalStatuses } from "@/drizzle/constants";
-import type { FederalStatus } from "@/drizzle/schema";
 import {
-  actionLog,
-  item,
-  paypalSubscription,
-  paypalTransaction,
-  recruitmentRewards,
-  storeUserIdAlias,
-  userData,
-  webStoreBundle,
-  webStoreOrder,
-} from "@/drizzle/schema";
+  FEDERAL_MONTHLY_USD_CENTS,
+  FederalStatuses,
+  type TransactionType,
+} from "@/drizzle/constants";
+
+import type { FederalStatus } from "@/drizzle/schema";
 import { isNativeUserAgent } from "@/libs/native/userAgent";
+import {
+  executeResultForUpgradeSubscription,
+  findPaypalSubscriptionForCancelPaypalSubscription,
+  findPaypalSubscriptionForUpgradeSubscription,
+  findPaypalTransactionForDeliverPaypalReputation,
+  findPaypalTransactionForSyncTransactions,
+  findUserDataForPrepareWebCheckout,
+  findWebStoreBundleForPrepareWebCheckout,
+  findWebStoreBundleForSaveStoreBundle,
+  findWebStoreOrderById,
+  insertActionLogForSaveStoreBundle,
+  insertPaypalSubscriptionForSubscribeWithReps,
+  insertPaypalSubscriptionForUpdateSubscription,
+  insertPaypalTransactionForDeliverPaypalReputation,
+  insertPaypalTransactionForUpdateReps,
+  insertRecruitmentRewardsForUpdateReps,
+  insertWebStoreBundleForSaveStoreBundle,
+  listItemForGetStoreBundles,
+  listItemForPrepareWebCheckout,
+  listItemForSaveStoreBundle,
+  listPaypalSubscriptionForGetPaypalSubscriptions,
+  listPaypalTransactionForGetPaypalTransactions,
+  listStoreUserIdAliasForPrepareWebCheckout,
+  listWebStoreBundleForGetStoreBundles,
+  releaseDeclinedStoreCapture,
+  selectWebStoreOrderForGetStoreBundles,
+  updatePaypalSubscriptionForCancelPaypalSubscription,
+  updatePaypalSubscriptionForUpdateSubscription,
+  updatePaypalTransactionForDeliverPaypalReputation,
+  updateUserDataForSubscribeWithReps,
+  updateUserDataForSubscribeWithReps2,
+  updateUserDataForUpdateReps,
+  updateWebStoreBundleForSaveStoreBundle,
+  updateWebStoreOrderForCreateStoreOrder,
+} from "@/queries/paypal";
+import { fetchUser } from "@/queries/profile";
+
 import {
   type BaseServerResponse,
   baseServerResponse,
@@ -40,10 +69,8 @@ import {
   authorizeStoreCapture,
   deliverStoreOrder,
   readStoreCustomId,
-  releaseDeclinedStoreCapture,
   reserveStoreOrder,
 } from "@/server/utils/webStore";
-import { calculateContentDiff } from "@/utils/diff";
 import {
   calcFedUgradeCost,
   dollars2reps,
@@ -63,7 +90,6 @@ import {
   storeCheckoutSchema,
 } from "@/validators/points";
 import type { DrizzleClient } from "../../db";
-import { fetchUser } from "./profile";
 
 type PaypalAmount = {
   currency_code?: string;
@@ -139,24 +165,9 @@ export const paypalRouter = createTRPCRouter({
           "Only the owner and content administrators can manage store bundles",
         );
       const [bundles, items, purchases] = await Promise.all([
-        ctx.drizzle.query.webStoreBundle.findMany({
-          where: input?.includeInactive ? undefined : eq(webStoreBundle.isActive, true),
-          orderBy: (table, { asc }) => [asc(table.priceCents), asc(table.name)],
-        }),
-        ctx.drizzle.query.item.findMany({
-          columns: { id: true, name: true, image: true, repsCost: true },
-        }),
-        ctx.drizzle
-          .select({ bundleId: webStoreOrder.bundleId, count: count() })
-          .from(webStoreOrder)
-          .where(
-            and(
-              eq(webStoreOrder.buyerId, ctx.userId),
-              isNotNull(webStoreOrder.bundleId),
-              isNotNull(webStoreOrder.grantedAt),
-            ),
-          )
-          .groupBy(webStoreOrder.bundleId),
+        listWebStoreBundleForGetStoreBundles(ctx.drizzle, input),
+        listItemForGetStoreBundles(ctx.drizzle),
+        selectWebStoreOrderForGetStoreBundles(ctx.drizzle, ctx),
       ]);
       const purchaseCounts = new Map(
         purchases.map((purchase) => [purchase.bundleId, purchase.count]),
@@ -177,11 +188,9 @@ export const paypalRouter = createTRPCRouter({
       const [user, existing, items] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         input.id
-          ? ctx.drizzle.query.webStoreBundle.findFirst({
-              where: eq(webStoreBundle.id, input.id),
-            })
+          ? findWebStoreBundleForSaveStoreBundle(ctx.drizzle, { id: input.id })
           : undefined,
-        ctx.drizzle.query.item.findMany({ columns: { id: true, repsCost: true } }),
+        listItemForSaveStoreBundle(ctx.drizzle),
       ]);
       if (user.isBanned || !canManageStore(user.role))
         return errorResponse(
@@ -202,19 +211,9 @@ export const paypalRouter = createTRPCRouter({
       const id = input.id ?? nanoid();
       await Promise.all([
         existing
-          ? ctx.drizzle
-              .update(webStoreBundle)
-              .set({ ...input.data, updatedAt: new Date() })
-              .where(eq(webStoreBundle.id, id))
-          : ctx.drizzle.insert(webStoreBundle).values({ id, ...input.data }),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "webStoreBundle",
-          relatedId: id,
-          relatedMsg: `${existing ? "Update" : "Create"}: ${input.data.name}`,
-          changes: calculateContentDiff(existing ?? {}, input.data),
-        }),
+          ? updateWebStoreBundleForSaveStoreBundle(ctx.drizzle, input, id)
+          : insertWebStoreBundleForSaveStoreBundle(ctx.drizzle, id, input),
+        insertActionLogForSaveStoreBundle(ctx.drizzle, ctx, id, existing, input),
       ]);
       return { success: true, message: "Store bundle saved" };
     }),
@@ -253,10 +252,7 @@ export const paypalRouter = createTRPCRouter({
           orderId: providerOrder.id,
         };
       } catch (error) {
-        await ctx.drizzle
-          .update(webStoreOrder)
-          .set({ expiresAt: new Date(0) })
-          .where(eq(webStoreOrder.id, order.id));
+        await updateWebStoreOrderForCreateStoreOrder(ctx.drizzle, order);
         throw error;
       }
     }),
@@ -283,9 +279,7 @@ export const paypalRouter = createTRPCRouter({
       let order = await getPaypalOrder({ orderId: input.orderId, token });
       const snapshotId = readStoreCustomId(order?.purchase_units?.[0]?.custom_id);
       if (!snapshotId) return errorResponse("Checkout not found");
-      const snapshot = await ctx.drizzle.query.webStoreOrder.findFirst({
-        where: eq(webStoreOrder.id, snapshotId),
-      });
+      const snapshot = await findWebStoreOrderById(ctx.drizzle, snapshotId);
       if (!snapshot || snapshot.buyerId !== ctx.userId)
         return errorResponse("This checkout belongs to another account");
       const unit = order?.purchase_units?.[0];
@@ -379,9 +373,7 @@ export const paypalRouter = createTRPCRouter({
       if (snapshotId) {
         const capture = unit?.payments?.captures?.[0];
         if (isDeclinedStoreCapture(capture?.status)) {
-          const snapshot = await ctx.drizzle.query.webStoreOrder.findFirst({
-            where: eq(webStoreOrder.id, snapshotId),
-          });
+          const snapshot = await findWebStoreOrderById(ctx.drizzle, snapshotId);
           if (
             snapshot?.buyerId === ctx.userId &&
             snapshot.captureAttemptId &&
@@ -477,13 +469,12 @@ export const paypalRouter = createTRPCRouter({
       const targetUserId = input.userId ?? ctx.userId;
       const [user, transactions] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.paypalTransaction.findMany({
-          offset: skip,
-          limit: input.limit,
-          where: eq(paypalTransaction.createdById, targetUserId),
-          with: { affectedUser: true },
-          orderBy: desc(paypalTransaction.createdAt),
-        }),
+        listPaypalTransactionForGetPaypalTransactions(
+          ctx.drizzle,
+          skip,
+          input,
+          targetUserId,
+        ),
       ]);
       if (!canSeeSecretData(user.role) && ctx.userId !== targetUserId) {
         throw serverError("UNAUTHORIZED", "You are not allowed to see this data");
@@ -496,17 +487,7 @@ export const paypalRouter = createTRPCRouter({
     }),
   // Get all paypal subscriptions by this user
   getPaypalSubscriptions: protectedProcedure.query(async ({ ctx }) => {
-    return await ctx.drizzle.query.paypalSubscription.findMany({
-      where: and(
-        or(
-          eq(paypalSubscription.createdById, ctx.userId),
-          eq(paypalSubscription.affectedUserId, ctx.userId),
-        ),
-        eq(paypalSubscription.status, "ACTIVE"),
-      ),
-      with: { affectedUser: true, createdBy: true },
-      orderBy: desc(paypalSubscription.createdAt),
-    });
+    return await listPaypalSubscriptionForGetPaypalSubscriptions(ctx.drizzle, ctx);
   }),
   // Buy subscription with reputation points
   subscribeWithReps: protectedProcedure
@@ -533,34 +514,11 @@ export const paypalRouter = createTRPCRouter({
       try {
         await retryOnDeadlock(() =>
           ctx.drizzle.transaction(async (tx) => {
-            const debited = await tx
-              .update(userData)
-              .set({ reputationPoints: sql`${userData.reputationPoints} - ${cost}` })
-              .where(
-                and(
-                  eq(userData.userId, ctx.userId),
-                  gte(userData.reputationPoints, cost),
-                ),
-              );
+            const debited = await updateUserDataForSubscribeWithReps(tx, cost, ctx);
             if (debited.rowsAffected !== 1) throw changed;
-            const claimed = await tx
-              .update(userData)
-              .set({ federalStatus: input.status })
-              .where(
-                and(
-                  eq(userData.userId, input.userId),
-                  eq(userData.federalStatus, "NONE"),
-                ),
-              );
+            const claimed = await updateUserDataForSubscribeWithReps2(tx, input);
             if (claimed.rowsAffected !== 1) throw changed;
-            await tx.insert(paypalSubscription).values({
-              id: nanoid(),
-              createdById: ctx.userId,
-              affectedUserId: input.userId,
-              federalStatus: input.status,
-              subscriptionId: `reps_${nanoid()}`,
-              status: "ACTIVE",
-            });
+            await insertPaypalSubscriptionForSubscribeWithReps(tx, ctx, input);
           }),
         );
       } catch (error) {
@@ -592,18 +550,11 @@ export const paypalRouter = createTRPCRouter({
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, input.userId),
       ]);
-      const subscription = await ctx.drizzle.query.paypalSubscription.findFirst({
-        where: and(
-          or(
-            eq(paypalSubscription.status, "ACTIVE"),
-            eq(paypalSubscription.status, "CANCELLED"),
-          ),
-          eq(paypalSubscription.federalStatus, target.federalStatus),
-          eq(paypalSubscription.affectedUserId, target.userId),
-          eq(paypalSubscription.createdById, ctx.userId),
-          gte(paypalSubscription.updatedAt, sql`NOW() - INTERVAL 31 DAY`),
-        ),
-      });
+      const subscription = await findPaypalSubscriptionForUpgradeSubscription(
+        ctx.drizzle,
+        target,
+        ctx,
+      );
       // If we could not find in paypal
       if (!subscription)
         return await upgradeStripeFederalWithReps(
@@ -624,18 +575,14 @@ export const paypalRouter = createTRPCRouter({
       // The balance, displayed tier, and paid ledger must advance together. A single
       // guarded joined update prevents duplicate upgrades and stale-plan debits.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-        UPDATE ${userData} u INNER JOIN ${paypalSubscription} p ON p.affectedUserId = u.userId
-        SET u.federalStatus = ${input.plan},
-            u.reputationPoints = u.reputationPoints - ${cost},
-            u.reputationPointsTotal = u.reputationPointsTotal - ${cost},
-            p.federalStatus = ${input.plan}, p.updatedAt = CURRENT_TIMESTAMP(3)
-        WHERE u.userId = ${ctx.userId} AND u.federalStatus = ${target.federalStatus}
-          AND u.reputationPoints >= ${cost} AND p.id = ${subscription.id}
-          AND p.createdById = ${ctx.userId} AND p.federalStatus = ${subscription.federalStatus}
-          AND p.status IN ('ACTIVE', 'CANCELLED')
-          AND p.updatedAt = ${subscription.updatedAt}
-          AND p.updatedAt >= CURRENT_TIMESTAMP(3) - INTERVAL 31 DAY`),
+        executeResultForUpgradeSubscription(
+          ctx.drizzle,
+          input,
+          cost,
+          ctx,
+          target,
+          subscription,
+        ),
       );
       if (result.rowsAffected === 0)
         return errorResponse(
@@ -649,9 +596,10 @@ export const paypalRouter = createTRPCRouter({
     .input(z.strictObject({ subscriptionId: z.string().min(1).max(191) }))
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const stored = await ctx.drizzle.query.paypalSubscription.findFirst({
-        where: eq(paypalSubscription.subscriptionId, input.subscriptionId),
-      });
+      const stored = await findPaypalSubscriptionForCancelPaypalSubscription(
+        ctx.drizzle,
+        input,
+      );
       if (!stored)
         return errorResponse("Subscription was not found. Refresh your subscriptions.");
       if (stored.createdById !== ctx.userId && stored.affectedUserId !== ctx.userId)
@@ -664,10 +612,7 @@ export const paypalRouter = createTRPCRouter({
           (/^[A-Za-z0-9_-]{21}$/.test(stored.subscriptionId) &&
             !stored.subscriptionId.startsWith("I-")))
       ) {
-        await ctx.drizzle
-          .update(paypalSubscription)
-          .set({ status: "CANCELLED" })
-          .where(eq(paypalSubscription.id, stored.id));
+        await updatePaypalSubscriptionForCancelPaypalSubscription(ctx.drizzle, stored);
         return {
           success: true,
           message:
@@ -703,10 +648,7 @@ export const paypalRouter = createTRPCRouter({
         return errorResponse(
           "PayPal did not confirm cancellation. Try again or manage the subscription in PayPal.",
         );
-      await ctx.drizzle
-        .update(paypalSubscription)
-        .set({ status: "CANCELLED" })
-        .where(eq(paypalSubscription.id, stored.id));
+      await updatePaypalSubscriptionForCancelPaypalSubscription(ctx.drizzle, stored);
       // Cancellation is allowed even when billing terms need support review. Only verified
       // paid data can refresh coverage; stopping future charges does not fabricate a period.
       await reconcilePaypalSubscription({
@@ -735,9 +677,10 @@ export const updateSubscription = async (input: {
   lastPayment?: Date;
 }) => {
   return retryOnDeadlock(async () => {
-    const current = await input.client.query.paypalSubscription.findFirst({
-      where: eq(paypalSubscription.subscriptionId, input.subscriptionId),
-    });
+    const current = await findPaypalSubscriptionForCancelPaypalSubscription(
+      input.client,
+      input,
+    );
     if (
       current &&
       (current.createdById !== input.createdById ||
@@ -773,38 +716,24 @@ export const updateSubscription = async (input: {
       current.updatedAt.getTime() === paidAt.getTime() &&
       current.orderId === (approvalReference ?? null);
     if (current && !synchronized) {
-      const claimed = await input.client
-        .update(paypalSubscription)
-        .set({
-          status: input.status,
-          federalStatus: tier,
-          updatedAt: paidAt,
-          orderId: approvalReference,
-        })
-        .where(
-          and(
-            eq(paypalSubscription.id, current.id),
-            eq(paypalSubscription.createdById, current.createdById),
-            eq(paypalSubscription.affectedUserId, current.affectedUserId),
-            eq(paypalSubscription.updatedAt, current.updatedAt),
-            eq(paypalSubscription.status, current.status),
-            eq(paypalSubscription.federalStatus, current.federalStatus),
-          ),
-        );
+      const claimed = await updatePaypalSubscriptionForUpdateSubscription(
+        input.client,
+        input,
+        tier,
+        paidAt,
+        approvalReference,
+        current,
+      );
       if (claimed.rowsAffected !== 1)
         return errorResponse("Subscription changed. Retry recovery.");
     } else if (!current) {
       try {
-        await input.client.insert(paypalSubscription).values({
-          id: nanoid(),
-          createdById: input.createdById,
-          affectedUserId: input.affectedUserId,
-          orderId: input.orderId,
-          subscriptionId: input.subscriptionId,
-          federalStatus: tier,
-          status: input.status,
-          updatedAt: paidAt,
-        });
+        await insertPaypalSubscriptionForUpdateSubscription(
+          input.client,
+          input,
+          tier,
+          paidAt,
+        );
       } catch (error) {
         if (isMysqlDuplicateKeyError(error))
           return errorResponse("Subscription changed. Retry recovery.");
@@ -839,39 +768,26 @@ export const updateReps = async (input: {
 }) => {
   if (input.type === "REP_PURCHASE") return deliverPaypalReputation(input);
   // First see if we can insert transaction.
-  await input.client.insert(paypalTransaction).values({
-    id: nanoid(),
+  await insertPaypalTransactionForUpdateReps(input.client, {
     createdById: input.createdById,
     transactionId: input.transactionId,
     transactionUpdatedDate: input.transactionUpdatedDate,
     orderId: input.orderId,
     affectedUserId: input.affectedUserId,
     invoiceId: input.invoiceId,
-    amount: input.value,
-    reputationPoints: input.reps,
+    value: input.value,
+    reps: input.reps,
     currency: input.currency,
     status: input.status,
     type: input.type,
-    rawData: input.raw,
+    raw: input.raw,
   });
   if (input.type === "REFERRAL") {
-    await input.client.insert(recruitmentRewards).values({
-      id: nanoid(),
-      userId: input.affectedUserId,
-      recruitedUserId: input.createdById,
-      amount: input.reps,
-      type: "REPUTATION",
-    });
+    await insertRecruitmentRewardsForUpdateReps(input.client, input);
   }
   // If we succeed, that means the transaction was not already in the database.
   // We can then update the user
-  return await input.client
-    .update(userData)
-    .set({
-      reputationPointsTotal: sql`${userData.reputationPointsTotal} + ${input.reps}`,
-      reputationPoints: sql`${userData.reputationPoints} + ${input.reps}`,
-    })
-    .where(eq(userData.userId, input.affectedUserId));
+  return await updateUserDataForUpdateReps(input.client, input);
 };
 
 /**
@@ -998,17 +914,7 @@ export const syncTransactions = async (
             expected: { createdById: createdByUserId, affectedUserId },
           });
         } else {
-          const stored = await client.query.paypalTransaction.findFirst({
-            where: and(
-              eq(paypalTransaction.type, "REP_PURCHASE"),
-              or(
-                eq(paypalTransaction.transactionId, info.transaction_id),
-                ...(info.invoice_id
-                  ? [eq(paypalTransaction.invoiceId, info.invoice_id)]
-                  : []),
-              ),
-            ),
-          });
+          const stored = await findPaypalTransactionForSyncTransactions(client, info);
           const parsedValue = Number(value);
           if (stored?.status === "REVIEW_REQUIRED")
             return errorResponse(
@@ -1230,18 +1136,7 @@ const deliverPaypalReputation = async (input: Parameters<typeof updateReps>[0]) 
         return errorResponse(
           "Payment requires support review: buyer account was not found.",
         );
-      const stored = await tx.query.paypalTransaction.findFirst({
-        where: and(
-          eq(paypalTransaction.type, "REP_PURCHASE"),
-          or(
-            eq(paypalTransaction.transactionId, input.transactionId),
-            ...(input.invoiceId
-              ? [eq(paypalTransaction.invoiceId, input.invoiceId)]
-              : []),
-            ...(input.orderId ? [eq(paypalTransaction.orderId, input.orderId)] : []),
-          ),
-        ),
-      });
+      const stored = await findPaypalTransactionForDeliverPaypalReputation(tx, input);
       if (
         stored &&
         (stored.createdById !== input.createdById ||
@@ -1302,24 +1197,16 @@ const deliverPaypalReputation = async (input: Parameters<typeof updateReps>[0]) 
         dynamicMonthlyRepCap(buyer);
       const status = allowed ? "COMPLETED" : "REVIEW_REQUIRED";
       if (stored)
-        await tx
-          .update(paypalTransaction)
-          .set({ ...terms, status })
-          .where(eq(paypalTransaction.id, id));
-      else await tx.insert(paypalTransaction).values({ id, ...terms, status });
+        await updatePaypalTransactionForDeliverPaypalReputation(tx, terms, status, id);
+      else
+        await insertPaypalTransactionForDeliverPaypalReputation(tx, id, terms, status);
       // A previously captured legacy order may arrive after another provider reserved the
       // remaining allowance. Retain the payment for staff review; never silently over-grant.
       if (!allowed)
         return errorResponse(
           "Payment received but exceeds your monthly allowance. Contact support with your PayPal transaction ID for review or refund; no points were delivered.",
         );
-      const granted = await tx
-        .update(userData)
-        .set({
-          reputationPointsTotal: sql`${userData.reputationPointsTotal} + ${input.reps}`,
-          reputationPoints: sql`${userData.reputationPoints} + ${input.reps}`,
-        })
-        .where(eq(userData.userId, input.affectedUserId));
+      const granted = await updateUserDataForUpdateReps(tx, input);
       if (granted.rowsAffected !== 1)
         throw new Error("PayPal recipient not found; delivery will retry");
       return { success: true, message: "Reputation points purchased" };
@@ -1439,21 +1326,14 @@ const prepareWebCheckout = async (
   if (isNativeUserAgent(ctx.userAgent))
     return errorResponse("Use the in-app store to make purchases");
   const [recipient, bundle, items, aliases] = await Promise.all([
-    ctx.drizzle.query.userData.findFirst({
-      where: eq(userData.userId, input.recipientId),
-    }),
+    findUserDataForPrepareWebCheckout(ctx.drizzle, input),
     input.selection.type === "bundle"
-      ? ctx.drizzle.query.webStoreBundle.findFirst({
-          where: eq(webStoreBundle.id, input.selection.bundleId),
+      ? findWebStoreBundleForPrepareWebCheckout(ctx.drizzle, {
+          selection: { bundleId: input.selection.bundleId },
         })
       : undefined,
-    ctx.drizzle.query.item.findMany({
-      columns: { id: true, repsCost: true },
-      where: eq(item.hidden, false),
-    }),
-    ctx.drizzle.query.storeUserIdAlias.findMany({
-      where: inArray(storeUserIdAlias.oldUserId, [ctx.userId, input.recipientId]),
-    }),
+    listItemForPrepareWebCheckout(ctx.drizzle),
+    listStoreUserIdAliasForPrepareWebCheckout(ctx.drizzle, ctx, input),
   ]);
   if (aliases.some((alias) => isDeletedStoreUserId(alias.newUserId)))
     return errorResponse(

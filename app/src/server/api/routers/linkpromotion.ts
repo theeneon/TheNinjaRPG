@@ -1,8 +1,14 @@
-import { desc, eq, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import { z } from "zod";
-import { linkPromotion, userData } from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
+import {
+  findLinkPromotionForReviewLinkPromotion,
+  findLinkPromotionForSubmitLinkPromotion,
+  insertLinkPromotionForSubmitLinkPromotion,
+  listLinkPromotionForGetLinkPromotions,
+  updateLinkPromotionForReviewLinkPromotion,
+  updateUserDataForReviewLinkPromotion,
+} from "@/queries/linkpromotion";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -30,22 +36,12 @@ export const linkPromotionRouter = createTRPCRouter({
       // Query 2
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
-      const results = await ctx.drizzle.query.linkPromotion.findMany({
-        where: canReviewLinkPromotions(user.role)
-          ? eq(linkPromotion.reviewed, false)
-          : eq(linkPromotion.userId, input.userId),
-        with: {
-          user: {
-            columns: { userId: true, username: true, avatar: true },
-          },
-          reviewer: {
-            columns: { userId: true, username: true, avatar: true },
-          },
-        },
-        offset: skip,
-        limit: input.limit,
-        orderBy: desc(linkPromotion.createdAt),
-      });
+      const results = await listLinkPromotionForGetLinkPromotions(
+        ctx.drizzle,
+        user,
+        input,
+        skip,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return { data: results, nextCursor };
     }),
@@ -55,22 +51,14 @@ export const linkPromotionRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Query
-      const result = await ctx.drizzle.query.linkPromotion.findFirst({
-        where: eq(linkPromotion.url, input.url),
-      });
+      const result = await findLinkPromotionForSubmitLinkPromotion(ctx.drizzle, input);
       // Guard
       if (result) return errorResponse("URL already submitted");
       if (input.url.includes("https://www.theninja-rpg.com")) {
         return errorResponse("Cannot submit link to TNR");
       }
       // Mutate
-      await ctx.drizzle.insert(linkPromotion).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        url: input.url,
-        points: 0,
-        reviewed: false,
-      });
+      await insertLinkPromotionForSubmitLinkPromotion(ctx.drizzle, ctx, input);
       return { success: true, message: "Summitted link" };
     }),
 
@@ -81,9 +69,7 @@ export const linkPromotionRouter = createTRPCRouter({
       // Query
       const [user, promotion] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.linkPromotion.findFirst({
-          where: eq(linkPromotion.id, input.id),
-        }),
+        findLinkPromotionForReviewLinkPromotion(ctx.drizzle, input),
       ]);
       // Guard
       if (!promotion) return errorResponse("Could not find link");
@@ -93,25 +79,9 @@ export const linkPromotionRouter = createTRPCRouter({
       }
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .update(linkPromotion)
-          .set({
-            points: input.points,
-            reviewed: true,
-            reviewedBy: ctx.userId,
-            reviewedAt: new Date(),
-          })
-          .where(eq(linkPromotion.id, input.id)),
+        updateLinkPromotionForReviewLinkPromotion(ctx.drizzle, input, ctx),
         ...(input.points > 0
-          ? [
-              ctx.drizzle
-                .update(userData)
-                .set({
-                  reputationPoints: sql`reputationPoints + ${input.points || 0}`,
-                  reputationPointsTotal: sql`reputationPointsTotal + ${input.points || 0}`,
-                })
-                .where(eq(userData.userId, promotion.userId)),
-            ]
+          ? [updateUserDataForReviewLinkPromotion(ctx.drizzle, input, promotion)]
           : []),
       ]);
       return { success: true, message: `Reward for ${promotion.url}` };

@@ -1,19 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNull,
-  like,
-  lt,
-  ne,
-  not,
-  notInArray,
-  or,
-  sql,
-} from "drizzle-orm";
+import { eq, isNull, like, notInArray, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -24,21 +9,52 @@ import {
   SKILL_TREE_RESET_FREE_SILVER,
 } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
-import {
-  actionLog,
-  bloodline,
-  item,
-  jutsu,
-  skillTree,
-  skillTreeFolder,
-  userData,
-  userItem,
-  userSkill,
-} from "@/drizzle/schema";
-import type { MasterySources } from "@/libs/mastery";
+import { skillTree } from "@/drizzle/schema";
 import { effectiveMasteries } from "@/libs/mastery";
 import { calcMaxEnergy } from "@/libs/profile";
 import { callDiscordContent } from "@/libs/socials";
+import {
+  deleteSkillTreeFolderForDeleteFolder,
+  deleteSkillTreeForDelete,
+  deleteUserSkillForResetAllUsersSkillPoints,
+  deleteUserSkillForResetSkillPoints,
+  fetchSkillTreeViewer,
+  fetchUserSkills,
+  findBloodlineForCreate,
+  findBloodlineForUpdate,
+  findSkillTreeFolderForDeleteFolder,
+  findSkillTreeFolderForUpdate,
+  findSkillTreeFolderForUpdateFolder,
+  findSkillTreeForDelete,
+  findSkillTreeForUpdate,
+  findSkillWithFolderById,
+  findUserDataForUpdate,
+  insertActionLogForResetAllUsersSkillPoints,
+  insertActionLogForResetAllUsersSkillPoints2,
+  insertActionLogForResetSkillPoints,
+  insertSkillTreeFolderForCreateFolder,
+  insertSkillTreeForCreate,
+  insertUserSkillForPurchaseSkill,
+  listActionLogForFetchMonthlyResets,
+  listItemForDelete,
+  listJutsuForDelete,
+  listSkillTreeFolderForGetAllFolders,
+  listSkillTreeForDelete,
+  listSkillTreeForDeleteFolder,
+  listSkillTreeForGetAll,
+  listSkillTreeForGetAllNames,
+  listSkillTreeForGetFolderStats,
+  listSkillTreeForUpdate,
+  listSkillTreeForUpdate2,
+  listUserSkillForDelete,
+  selectSkillTreeFolderForGetAll,
+  selectUserSkillForResetAllUsersSkillPoints,
+  updateSkillTreeFolderForReorderFolders,
+  updateSkillTreeFolderForUpdateFolder,
+  updateSkillTreeForUpdate,
+  updateUserDataForResetSkillPoints,
+  updateUserSkillForPurchaseSkill,
+} from "@/queries/skillTree";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
@@ -49,7 +65,6 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { calculateContentDiff } from "@/utils/diff";
 import { getUserFederalStatus } from "@/utils/paypal";
 import {
@@ -76,12 +91,7 @@ export const skillTreeRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       const [user, skills] = await Promise.all([
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.skillTree.findMany({
-          columns: { id: true, name: true, skillType: true, hidden: true },
-          where: eq(skillTree.pathType, "SKILL"),
-          with: { folder: true },
-          orderBy: (table, { asc }) => [asc(table.name)],
-        }),
+        listSkillTreeForGetAllNames(ctx.drizzle),
       ]);
       return skills
         .filter((skill) => isSkillVisible(skill, canAccessHiddenSkillTree(user?.role)))
@@ -94,10 +104,7 @@ export const skillTreeRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [user, skill] = await Promise.all([
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.skillTree.findFirst({
-          where: eq(skillTree.id, input.id),
-          with: { folder: true },
-        }),
+        findSkillWithFolderById(ctx.drizzle, input.id),
       ]);
       // React Query rejects undefined query data, so missing/hidden skills resolve to null.
       return skill && isSkillVisible(skill, canAccessHiddenSkillTree(user?.role))
@@ -132,23 +139,16 @@ export const skillTreeRouter = createTRPCRouter({
           eq(skillTree.hidden, false),
           or(
             isNull(skillTree.folderId),
-            notInArray(
-              skillTree.folderId,
-              ctx.drizzle
-                .select({ id: skillTreeFolder.id })
-                .from(skillTreeFolder)
-                .where(eq(skillTreeFolder.hidden, true)),
-            ),
+            notInArray(skillTree.folderId, selectSkillTreeFolderForGetAll(ctx.drizzle)),
           )!,
         );
       }
-      const results = await ctx.drizzle.query.skillTree.findMany({
-        where: and(...baseFilters),
-        orderBy: [skillTree.tier, skillTree.name],
-        with: { folder: true },
+      const results = await listSkillTreeForGetAll(
+        ctx.drizzle,
+        baseFilters,
         limit,
-        offset: skip,
-      });
+        skip,
+      );
 
       const nextCursor = results.length < limit ? null : currentCursor + 1;
       return {
@@ -193,10 +193,7 @@ export const skillTreeRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.skillTree.findFirst({
-          where: eq(skillTree.id, input.skillId),
-          with: { folder: true },
-        }),
+        findSkillWithFolderById(ctx.drizzle, input.skillId),
         fetchUserSkills(ctx.drizzle, ctx.userId),
       ]);
 
@@ -246,10 +243,7 @@ export const skillTreeRouter = createTRPCRouter({
         if (existingUserSkill.activated) {
           return errorResponse("Skill already activated");
         }
-        await ctx.drizzle
-          .update(userSkill)
-          .set({ activated: true })
-          .where(eq(userSkill.id, existingUserSkill.id));
+        await updateUserSkillForPurchaseSkill(ctx.drizzle, existingUserSkill);
         return { success: true, message: `Successfully activated ${skill.name}!` };
       }
 
@@ -257,15 +251,7 @@ export const skillTreeRouter = createTRPCRouter({
       // Uses onDuplicateKeyUpdate to handle race conditions where concurrent requests
       // both pass the ownership check. The unique index on (userId, skillId) ensures
       // only one record exists, and we simply update activated=true if it already exists.
-      await ctx.drizzle
-        .insert(userSkill)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          skillId: input.skillId,
-          activated: true,
-        })
-        .onDuplicateKeyUpdate({ set: { activated: true } });
+      await insertUserSkillForPurchaseSkill(ctx.drizzle, ctx, input);
 
       return { success: true, message: `Successfully purchased ${skill.name}!` };
     }),
@@ -279,10 +265,7 @@ export const skillTreeRouter = createTRPCRouter({
       const [{ user }, line] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
         input?.bloodlineId
-          ? ctx.drizzle.query.bloodline.findFirst({
-              where: eq(bloodline.id, input.bloodlineId),
-              columns: { id: true },
-            })
+          ? findBloodlineForCreate(ctx.drizzle, { bloodlineId: input.bloodlineId })
           : Promise.resolve(null),
       ]);
       if (!user || !canChangeContent(user.role)) {
@@ -295,21 +278,7 @@ export const skillTreeRouter = createTRPCRouter({
 
       if (input?.bloodlineId && !line) return errorResponse("Bloodline not found");
       const id = nanoid();
-      await ctx.drizzle.insert(skillTree).values({
-        id,
-        name: `New Skill - ${id}`,
-        description: "New skill description",
-        image: IMG_AVATAR_DEFAULT,
-        effects: [],
-        target: "SELF",
-        tier: 1,
-        requiredSkillIds: [],
-        costSkillPoints: 1,
-        pathType: input?.bloodlineId ? "BLOODRIGHT" : "SKILL",
-        bloodlineId: input?.bloodlineId ?? null,
-        hidden: true,
-        skillType: "DEFAULT",
-      });
+      await insertSkillTreeForCreate(ctx.drizzle, id, input);
 
       await callDiscordContent(user.username, `Created skill: New Skill - ${id}`, [
         "skill created",
@@ -339,41 +308,23 @@ export const skillTreeRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.skillTree.findFirst({
-          where: eq(skillTree.id, input.id),
-          with: { folder: true },
-        }),
-        ctx.drizzle.query.skillTree.findFirst({
-          columns: { name: true, id: true },
-          where: eq(skillTree.name, input.data.name),
-        }),
+        findSkillWithFolderById(ctx.drizzle, input.id),
+        findSkillTreeForUpdate(ctx.drizzle, input),
         requestedFolderId
-          ? ctx.drizzle.query.skillTreeFolder.findFirst({
-              where: eq(skillTreeFolder.id, requestedFolderId),
-              columns: { hidden: true },
-            })
+          ? findSkillTreeFolderForUpdate(ctx.drizzle, requestedFolderId)
           : Promise.resolve(null),
         input.data.bloodlineId
-          ? ctx.drizzle.query.bloodline.findFirst({
-              where: eq(bloodline.id, input.data.bloodlineId),
-              columns: { id: true },
+          ? findBloodlineForUpdate(ctx.drizzle, {
+              data: { bloodlineId: input.data.bloodlineId },
             })
           : Promise.resolve(null),
         input.data.requiredSkillIds.length
-          ? ctx.drizzle.query.skillTree.findMany({
-              where: inArray(skillTree.id, input.data.requiredSkillIds),
-            })
+          ? listSkillTreeForUpdate(ctx.drizzle, input)
           : Promise.resolve([]),
         input.data.pathType === "BLOODRIGHT"
-          ? ctx.drizzle.query.userData.findFirst({
-              where: sql`JSON_SEARCH(${userData.bloodright}, 'one', ${input.id}, NULL, '$[*].skillId') IS NOT NULL`,
-              columns: { userId: true },
-            })
+          ? findUserDataForUpdate(ctx.drizzle, input)
           : Promise.resolve(null),
-        ctx.drizzle.query.skillTree.findMany({
-          where: sql`JSON_CONTAINS(${skillTree.requiredSkillIds}, ${JSON.stringify(input.id)})`,
-          columns: { id: true, tier: true, bloodlineId: true, pathType: true },
-        }),
+        listSkillTreeForUpdate2(ctx.drizzle, input),
       ]);
       if (!user || !canChangeContent(user.role)) {
         throw serverError(
@@ -474,17 +425,13 @@ export const skillTreeRouter = createTRPCRouter({
       });
 
       if (diff.length > 0) {
-        const result = await ctx.drizzle
-          .update(skillTree)
-          .set({ ...data, updatedAt: getNextUserSnapshotAt(skill.updatedAt) })
-          .where(
-            and(
-              eq(skillTree.id, input.id),
-              changesHierarchy && skill.pathType === "BLOODRIGHT"
-                ? sql`NOT EXISTS (SELECT 1 FROM ${userData} WHERE JSON_SEARCH(${userData.bloodright}, 'one', ${skill.id}, NULL, '$[*].skillId') IS NOT NULL)`
-                : undefined,
-            ),
-          );
+        const result = await updateSkillTreeForUpdate(
+          ctx.drizzle,
+          data,
+          skill,
+          input,
+          changesHierarchy,
+        );
         if (result.rowsAffected !== 1)
           return errorResponse("Tier changed or was purchased. Refresh and try again");
 
@@ -511,28 +458,12 @@ export const skillTreeRouter = createTRPCRouter({
         requiredJutsus,
       ] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.skillTree.findFirst({ where: eq(skillTree.id, input.id) }),
-        ctx.drizzle.query.userSkill.findMany({
-          where: eq(userSkill.skillId, input.id),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: sql`JSON_SEARCH(${userData.bloodright}, 'one', ${input.id}, NULL, '$[*].skillId') IS NOT NULL`,
-          columns: { userId: true },
-        }),
-        ctx.drizzle.query.skillTree.findMany({
-          where: sql`JSON_CONTAINS(${skillTree.requiredSkillIds}, ${JSON.stringify(input.id)})`,
-          columns: { id: true },
-        }),
-        ctx.drizzle.query.item.findMany({
-          columns: { id: true },
-          where: eq(item.requiredSkillId, input.id),
-          limit: 1,
-        }),
-        ctx.drizzle.query.jutsu.findMany({
-          columns: { id: true },
-          where: eq(jutsu.requiredSkillId, input.id),
-          limit: 1,
-        }),
+        findSkillTreeForDelete(ctx.drizzle, input),
+        listUserSkillForDelete(ctx.drizzle, input),
+        findUserDataForUpdate(ctx.drizzle, input),
+        listSkillTreeForDelete(ctx.drizzle, input),
+        listItemForDelete(ctx.drizzle, input),
+        listJutsuForDelete(ctx.drizzle, input),
       ]);
       if (!user || !canChangeContent(user.role)) {
         throw serverError(
@@ -555,7 +486,7 @@ export const skillTreeRouter = createTRPCRouter({
         return errorResponse("Cannot delete skill that users have purchased");
       }
 
-      await ctx.drizzle.delete(skillTree).where(eq(skillTree.id, input.id));
+      await deleteSkillTreeForDelete(ctx.drizzle, input);
 
       await callDiscordContent(user.username, `Deleted skill: ${skill.name}`, [
         "skill deleted",
@@ -598,23 +529,14 @@ export const skillTreeRouter = createTRPCRouter({
       }
 
       // Both trees share one persisted allowance; CAS prevents concurrent free resets.
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          updatedAt: getNextUserSnapshotAt(user.updatedAt),
-          reputationPoints: sql`${userData.reputationPoints} - ${isFreeReset ? 0 : COST_SKILL_RESET}`,
-          monthlySkillResets: {
-            ...resetState,
-            count: resetState.count + (isStaffFreeReset ? 0 : 1),
-          },
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            sql`${userData.monthlySkillResets} = CAST(${JSON.stringify(user.monthlySkillResets)} AS JSON)`,
-            gte(userData.reputationPoints, isFreeReset ? 0 : COST_SKILL_RESET),
-          ),
-        );
+      const result = await updateUserDataForResetSkillPoints(
+        ctx.drizzle,
+        user,
+        isFreeReset,
+        resetState,
+        isStaffFreeReset,
+        ctx,
+      );
       if (result.rowsAffected !== 1)
         return errorResponse(
           "Your reset allowance or reputation balance changed. Refresh and try again",
@@ -640,15 +562,13 @@ export const skillTreeRouter = createTRPCRouter({
 
       // Perform the reset
       const writes: Promise<unknown>[] = [
-        ctx.drizzle.delete(userSkill).where(eq(userSkill.userId, ctx.userId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "skillReset",
-          relatedId: null,
-          relatedImage: user.avatarLight,
-          ...resetActionLogDetails,
-        }),
+        deleteUserSkillForResetSkillPoints(ctx.drizzle, ctx),
+        insertActionLogForResetSkillPoints(
+          ctx.drizzle,
+          ctx,
+          user,
+          resetActionLogDetails,
+        ),
       ];
 
       await Promise.all(writes);
@@ -723,17 +643,18 @@ export const skillTreeRouter = createTRPCRouter({
       let hadUndeletedRows = false;
 
       while (true) {
-        const batch = await ctx.drizzle
-          .select({ id: userSkill.id })
-          .from(userSkill)
-          .limit(BATCH_SIZE);
+        const batch = await selectUserSkillForResetAllUsersSkillPoints(
+          ctx.drizzle,
+          BATCH_SIZE,
+        );
 
         if (batch.length === 0) break;
 
         const ids = batch.map((row) => row.id);
-        const result = await ctx.drizzle
-          .delete(userSkill)
-          .where(inArray(userSkill.id, ids));
+        const result = await deleteUserSkillForResetAllUsersSkillPoints(
+          ctx.drizzle,
+          ids,
+        );
         if (result.rowsAffected === 0) {
           hadUndeletedRows = true;
           break;
@@ -750,30 +671,19 @@ export const skillTreeRouter = createTRPCRouter({
       }
 
       if (hadUndeletedRows) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "userSkill",
-          changes: [`Partial mass reset of users' skill trees`],
-          relatedId: null,
-          relatedMsg: `Partial skill tree reset by ${user.username} (${totalDeleted} entries cleared, some remained)`,
-          relatedImage: user.avatarLight,
-        });
+        await insertActionLogForResetAllUsersSkillPoints(
+          ctx.drizzle,
+          ctx,
+          user,
+          totalDeleted,
+        );
         return errorResponse(
           `Partial reset: ${totalDeleted} entries cleared, but some entries could not be deleted`,
         );
       }
 
       // Log the action
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "userSkill",
-        changes: [`Mass reset all users' skill trees`],
-        relatedId: null,
-        relatedMsg: `Mass skill tree reset by ${user.username}`,
-        relatedImage: user.avatarLight,
-      });
+      await insertActionLogForResetAllUsersSkillPoints2(ctx.drizzle, ctx, user);
 
       return {
         success: true,
@@ -792,9 +702,7 @@ export const skillTreeRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [user, folders] = await Promise.all([
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.skillTreeFolder.findMany({
-          orderBy: [asc(skillTreeFolder.order), asc(skillTreeFolder.name)],
-        }),
+        listSkillTreeFolderForGetAllFolders(ctx.drizzle),
       ]);
       const isStaff = canAccessHiddenSkillTree(user?.role);
 
@@ -811,14 +719,8 @@ export const skillTreeRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       // Fetch all data in parallel for efficiency
       const [allFolders, skills, userSkillsData, user] = await Promise.all([
-        ctx.drizzle.query.skillTreeFolder.findMany({
-          orderBy: [asc(skillTreeFolder.order), asc(skillTreeFolder.name)],
-        }),
-        ctx.drizzle.query.skillTree.findMany({
-          columns: { id: true, folderId: true, hidden: true, skillType: true },
-          where: eq(skillTree.pathType, "SKILL"),
-          with: { folder: true },
-        }),
+        listSkillTreeFolderForGetAllFolders(ctx.drizzle),
+        listSkillTreeForGetFolderStats(ctx.drizzle),
         fetchUserSkills(ctx.drizzle, ctx.userId),
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
       ]);
@@ -883,14 +785,7 @@ export const skillTreeRouter = createTRPCRouter({
       }
 
       const id = nanoid();
-      await ctx.drizzle.insert(skillTreeFolder).values({
-        id,
-        name: input.name,
-        image: input.image || "",
-        description: input.description || null,
-        hidden: input.hidden || false,
-        order: input.order || 0,
-      });
+      await insertSkillTreeFolderForCreateFolder(ctx.drizzle, id, input);
 
       return { success: true, message: id };
     }),
@@ -906,9 +801,7 @@ export const skillTreeRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.skillTreeFolder.findFirst({
-          where: eq(skillTreeFolder.id, input.id),
-        }),
+        findSkillTreeFolderForUpdateFolder(ctx.drizzle, input),
       ]);
       if (!user || !canChangeContent(user.role)) {
         throw serverError("UNAUTHORIZED", "You are not authorized to edit folders");
@@ -918,17 +811,7 @@ export const skillTreeRouter = createTRPCRouter({
       }
       if (!folder) return errorResponse("Folder not found");
 
-      await ctx.drizzle
-        .update(skillTreeFolder)
-        .set({
-          name: input.data.name,
-          image: input.data.image || "",
-          description: input.data.description || null,
-          hidden: input.data.hidden || false,
-          order: input.data.order || 0,
-          updatedAt: new Date(),
-        })
-        .where(eq(skillTreeFolder.id, input.id));
+      await updateSkillTreeFolderForUpdateFolder(ctx.drizzle, input);
 
       return { success: true, message: "Folder updated successfully" };
     }),
@@ -944,14 +827,8 @@ export const skillTreeRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.skillTreeFolder.findFirst({
-          where: eq(skillTreeFolder.id, input.id),
-          columns: { id: true },
-        }),
-        ctx.drizzle.query.skillTree.findMany({
-          where: eq(skillTree.folderId, input.id),
-          columns: { id: true },
-        }),
+        findSkillTreeFolderForDeleteFolder(ctx.drizzle, input),
+        listSkillTreeForDeleteFolder(ctx.drizzle, input),
       ]);
       if (!user || !canChangeContent(user.role)) {
         throw serverError("UNAUTHORIZED", "You are not authorized to delete folders");
@@ -965,7 +842,7 @@ export const skillTreeRouter = createTRPCRouter({
         );
       }
 
-      await ctx.drizzle.delete(skillTreeFolder).where(eq(skillTreeFolder.id, input.id));
+      await deleteSkillTreeFolderForDeleteFolder(ctx.drizzle, input);
 
       return { success: true, message: "Folder deleted successfully" };
     }),
@@ -991,10 +868,7 @@ export const skillTreeRouter = createTRPCRouter({
       // Update each folder's order in parallel
       await Promise.all(
         input.folderOrders.map(({ id, order }) =>
-          ctx.drizzle
-            .update(skillTreeFolder)
-            .set({ order, updatedAt: new Date() })
-            .where(eq(skillTreeFolder.id, id)),
+          updateSkillTreeFolderForReorderFolders(ctx.drizzle, order, id),
         ),
       );
 
@@ -1062,16 +936,13 @@ export const fetchMonthlyResets = async (client: DrizzleClient, userId: string) 
   const startOfNextMonth = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0),
   );
-  const results = await client.query.actionLog.findMany({
-    where: and(
-      eq(actionLog.userId, userId),
-      eq(actionLog.tableName, "skillReset"),
-      not(eq(actionLog.relatedMsg, SKILL_RESET_STAFF_RELATED_MSG)),
-      gte(actionLog.createdAt, startOfMonth),
-      lt(actionLog.createdAt, startOfNextMonth),
-    ),
-    columns: { id: true },
-  });
+  const results = await listActionLogForFetchMonthlyResets(
+    client,
+    userId,
+    SKILL_RESET_STAFF_RELATED_MSG,
+    startOfMonth,
+    startOfNextMonth,
+  );
   return results;
 };
 
@@ -1093,97 +964,6 @@ export const getFreeResetAmount = (user: UserData) => {
       return SKILL_TREE_RESET_FREE_NORMAL;
   }
 };
-
-/**
- * Fetch the user's skills
- * @param client - The database client
- * @param userId - The user ID
- * @returns The user's skills
- */
-export const fetchUserSkills = async (client: DrizzleClient, userId: string) => {
-  return await client.query.userSkill.findMany({
-    where: eq(userSkill.userId, userId),
-    with: { skill: { with: { folder: true } } },
-  });
-};
-
-/**
- * Preload the bloodline, activated skills and equipped gear for mastery and activity bonuses.
- * Keep hidden equipped items: inventory visibility does not determine passive eligibility.
- * Availability fields let the shared eligibility helpers filter these sources in memory.
- * @param client - The database client
- * @param userId - The user ID
- */
-export const fetchMasterySources = async (
-  client: DrizzleClient,
-  userId: string,
-): Promise<Required<MasterySources>> => {
-  const sources = await client.query.userData.findFirst({
-    columns: { userId: true },
-    where: eq(userData.userId, userId),
-    with: {
-      bloodline: { columns: { effects: true } },
-      titles: true,
-      userSkills: {
-        columns: { id: true, skillId: true, activated: true },
-        where: eq(userSkill.activated, true),
-        with: { skill: { columns: { target: true, effects: true } } },
-      },
-      items: {
-        columns: {
-          id: true,
-          equipped: true,
-          durability: true,
-          level: true,
-          quantity: true,
-          storedAtHome: true,
-          isInAuction: true,
-          craftingFinishedAt: true,
-        },
-        where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
-        with: {
-          item: {
-            columns: {
-              itemType: true,
-              maxDurability: true,
-              bloodlineId: true,
-              canBeImbued: true,
-              effects: true,
-              requiredNinjutsuMastery: true,
-              requiredGenjutsuMastery: true,
-              requiredTaijutsuMastery: true,
-              requiredBukijutsuMastery: true,
-              requiredSkillId: true,
-              requiredBloodlineMastery: true,
-              requiredSageMastery: true,
-            },
-          },
-          imbuements: {
-            columns: { craftingFinishedAt: true },
-            with: { item: { columns: { effects: true } } },
-          },
-        },
-      },
-    },
-  });
-  return {
-    bloodline: sources?.bloodline ?? null,
-    titles: sources?.titles ?? [],
-    userSkills: sources?.userSkills ?? [],
-    items: sources?.items ?? [],
-  };
-};
-
-export const fetchSkillTreeViewer = async (
-  client: DrizzleClient,
-  userId: string | null | undefined,
-) =>
-  userId
-    ? client.query.userData.findFirst({
-        where: eq(userData.userId, userId),
-        columns: { role: true },
-      })
-    : undefined;
 
 export const isSkillVisible = (
   skill: { hidden: boolean; folder: { hidden: boolean } | null },

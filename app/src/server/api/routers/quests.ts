@@ -1,16 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
 import {
   and,
-  asc,
   eq,
-  getTableColumns,
-  gt,
   gte,
   inArray,
   isNotNull,
   isNull,
-  like,
-  lt,
   lte,
   ne,
   notExists,
@@ -19,12 +14,10 @@ import {
 } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { QuestType, UserRole } from "@/drizzle/constants";
 import {
   ENERGY_QUEST_REWARDS,
   FARM_ACTIVITY_REWARD_TIME_REDUCTION_SECONDS,
   getUserCaps,
-  IMG_AVATAR_DEFAULT,
   LetterRanks,
   MAX_SKILL_POINTS,
   MasteryNames,
@@ -32,47 +25,27 @@ import {
   NPC_ONLY_QUEST_TYPES,
   PET_TASK_MAX_MINUTES,
   PET_TASK_MIN_RANK,
+  type QuestType,
   QuestTypes,
   REGEN_SECONDS,
   SAGE_MASTERY_EXP_CAP,
   SENSEI_STUDENT_RYO_PER_MISSION,
   TUTORIAL_GENIN_EXAM_QUEST_ID,
   TUTORIAL_STARTER_QUEST_ID,
+  type UserRole,
   VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
-import type { Quest, UserData, UserPet } from "@/drizzle/schema";
+
 import {
-  actionLog,
-  anbuSquad,
-  badge,
-  bankTransfers,
-  bloodline,
-  bloodlineRolls,
-  clan,
-  item,
-  jutsu,
-  overworldAiPlacement,
-  overworldAiPlacementQuest,
+  type Quest,
   quest,
   questHistory,
-  raidDamageThreshold,
-  raidParticipation,
-  recruitmentRewards,
-  sageMode,
-  sageModeRolls,
-  title,
-  userBadge,
+  type UserData,
+  type UserPet,
   userData,
-  userItem,
-  userJutsu,
   userPet,
-  userQuestAttempt,
-  userRaidBuff,
-  userRewards,
-  userTitle,
-  village,
-  war,
 } from "@/drizzle/schema";
+
 import {
   deletedReason,
   editedReason,
@@ -82,7 +55,7 @@ import {
   eliteJoninMilestoneBlockMessage,
   eliteJoninMilestoneUpdate,
 } from "@/libs/eliteJonin";
-import { getFarmingLevel, qualifiesForFarmActivityReward } from "@/libs/farming";
+import { qualifiesForFarmActivityReward } from "@/libs/farming";
 import { getGatheringItemDrops } from "@/libs/gathering";
 import { getHuntingItemDrops } from "@/libs/hunting";
 import { isQuestPresentationOnlyChange } from "@/libs/mapLocations";
@@ -90,7 +63,6 @@ import { canRetryQuestBattle } from "@/libs/objectives";
 import { getWarSide } from "@/libs/objectiveWar";
 import {
   deriveOverworldOpponents,
-  isSupportedOverworldBindingTask,
   validateFriendlyPlacementBindings,
 } from "@/libs/overworldAi";
 import { petExperienceGainSql } from "@/libs/pets/experience";
@@ -102,12 +74,12 @@ import {
 } from "@/libs/pets/tasks";
 import { eliteJoninExamBlockMessage } from "@/libs/profile";
 import { boostPvpGain, boostPvpRewards, getPvpBoost } from "@/libs/pvpExperience";
-import type { GetRewardResult, QuestConsequence } from "@/libs/quest";
 import {
   applyQuestResets,
   controlShownQuestLocationInformation,
   fallbackQuestsFilter,
   filterQuestTrackersForDbPersist,
+  type GetRewardResult,
   getActiveObjectives,
   getExperienceTrackerTasks,
   getMissionHallSettings,
@@ -115,12 +87,12 @@ import {
   getPublicQuestUser,
   getQuestTargetSectorsToCheck,
   getReward,
-  getUserQuests,
   isAvailableUserQuests,
   isQuestRankAllowed,
   isWarMissionAvailable,
   missionHallStartBlockedMessage,
   postProcessRewards,
+  type QuestConsequence,
   questAlreadyActiveBlockMessage,
   questDailyLimitMessage,
   questDailyQuota,
@@ -129,6 +101,7 @@ import {
   rollObjectiveAttackers,
   verifyQuestContentForSave,
 } from "@/libs/quest";
+
 import {
   formatQuestEntryCost,
   getIsolatedPyramid,
@@ -144,7 +117,6 @@ import {
   REWARD_CHOICE_AMOUNT_LABELS,
   REWARD_CHOICE_PENDING_MESSAGE,
   REWARD_CHOICE_READY_MESSAGE,
-  type RewardChoiceOwnership,
   rewardFromChoiceCards,
   validateRewardPicks,
   verifyRewardChoiceForSave,
@@ -154,18 +126,130 @@ import { getSageMasteryDisplayRank, sageRanksAtOrBelow } from "@/libs/sageMode";
 import { callDiscordContent } from "@/libs/socials";
 import { availableQuestLetterRanks, availableRanks } from "@/libs/train";
 import { villageMissionCompletionEvents } from "@/libs/villageMission";
+import { reduceActiveFarmPlotTimers } from "@/queries/farming";
+import { deleteUserItemsWithPositiveQuantity } from "@/queries/item";
+import { fetchUser, findUserById, incrementUserMoney } from "@/queries/profile";
+import {
+  deleteOverworldAiPlacementQuestForDelete,
+  deleteQuestForDelete,
+  deleteQuestHistoryForDelete,
+  deleteQuestHistoryForDeleteUserQuest,
+  deleteRaidDamageThresholdForDelete,
+  deleteRaidParticipationForDelete,
+  deleteUserQuestAttemptForDelete,
+  deleteUserRaidBuffForDelete,
+  executeCancelledForCancelPetTask,
+  executeDefinitionWriteForUpdate,
+  executeResultForAbandon,
+  executeResultForCommitQuestObjectiveRewards,
+  fetchBoundPlacementStatus,
+  fetchQuest,
+  fetchQuestEntryInventory,
+  fetchQuestsStartingQuest,
+  fetchRestrictedNewQuestTargets,
+  fetchRewardChoiceOwnership,
+  fetchUserQuestByQuestId,
+  fetchViewerRole,
+  findOverworldAiPlacementQuestForAssignQuestToUser,
+  findQuestHistoryForCheckRewards,
+  findQuestHistoryForClaimRewardChoice,
+  findQuestHistoryForCollectPetTask,
+  findQuestHistoryForUpsertQuestEntry,
+  findUserDataForCommitQuestObjectiveRewards,
+  findUserDataForGet,
+  findUserDataForGetPendingRewardChoices,
+  findUserDataForGetPetTask,
+  findUserDataForUpdateRewards,
+  findUserPetForStartPetTask,
+  insertActionLogForDelete,
+  insertActionLogForDeleteUserQuest,
+  insertActionLogForUpdate,
+  insertBankTransfersForCommitQuestObjectiveRewards,
+  insertBloodlineRollsForUpdateRewards,
+  insertQuestForClone,
+  insertQuestForCreate,
+  insertQuestHistoryForCommitQuestObjectiveRewards,
+  insertQuestHistoryForUpsertQuestEntries,
+  insertQuestHistoryForUpsertQuestEntry,
+  insertRecruitmentRewardsForUpdateRewards,
+  insertSageModeRollsForUpdateRewards,
+  insertUserBadgeForUpdateRewards,
+  insertUserItemForExecuteClaimedQuestConsequences,
+  insertUserItemForUpdateRewards,
+  insertUserJutsuForUpdateRewards,
+  insertUserRewardsForUpdateRewards,
+  listItemForAssignQuestToUser,
+  listOverworldAiPlacementForPrepareOverworldBindings,
+  listQuestForGetAll,
+  listQuestForGetAllNames,
+  listQuestHistoryForGetPendingRewardChoices,
+  listQuestHistoryForGetQuestHistory,
+  listQuestHistoryForGetUserQuests,
+  listQuestsByIds,
+  listRewardPackageForUpdate,
+  listUserItemForHandleQuestConsequences,
+  listUserItemForSpecificQuests,
+  revertQuestCompletionAfterFailedClaim,
+  selectBadgeForResolveRewardChoiceDisplays,
+  selectBadgeForUpdateRewards,
+  selectBloodlineForResolveRewardChoiceDisplays,
+  selectBloodlineForUpdateRewards,
+  selectItemForResolveRewardChoiceDisplays,
+  selectItemForUpdateRewards,
+  selectItemForUpdateRewards2,
+  selectItemForUpdateRewards3,
+  selectJutsuForResolveRewardChoiceDisplays,
+  selectJutsuForUpdateRewards,
+  selectQuestForFetchUncompletedQuests,
+  selectQuestForStartRandom,
+  selectQuestForUpdate,
+  selectQuestHistoryForWhere,
+  selectQuestHistoryForWhere2,
+  selectSageModeForResolveRewardChoiceDisplays,
+  selectSageModeForUpdateRewards,
+  selectTitleForResolveRewardChoiceDisplays,
+  selectTitleForUpdateRewards,
+  selectUserDataForUpsertQuestEntries,
+  selectVillageForUpdateRewards,
+  updateAnbuSquadForUpdateRewards,
+  updateClanForUpdateRewards,
+  updateQuestForUpdate,
+  updateQuestHistoryForAbandon,
+  updateQuestHistoryForClaimRewardChoice,
+  updateQuestHistoryForClaimRewardChoice2,
+  updateQuestHistoryForCommitQuestObjectiveRewards,
+  updateQuestHistoryForExecuteClaimedQuestConsequences,
+  updateQuestHistoryForUpdate,
+  updateQuestHistoryForUpdate2,
+  updateQuestHistoryForUpsertQuestEntries,
+  updateQuestHistoryForUpsertQuestEntry,
+  updateUserDataForAbandon,
+  updateUserDataForClaimDailyQuestSlot,
+  updateUserDataForDeleteUserQuest,
+  updateUserDataForUpdateRewards,
+  updateUserDataForUpdateRewards2,
+  updateUserDataForUpsertQuestEntries,
+  updateUserDataForUpsertQuestEntry,
+  updateVillageForUpdateRewards,
+  updateWarForUpdateRewards,
+  updateWarForUpdateRewards2,
+  updateWarForUpdateRewards3,
+  updateWarForUpdateRewards4,
+} from "@/queries/quests";
+import { deleteRequests } from "@/queries/sensei";
+
+import { fetchSectorVillage } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUserItems } from "@/routers/item";
-import type { UserWithRelations } from "@/routers/profile";
 import {
   fetchPublishedAchievements,
   fetchUpdatedUser,
-  fetchUser,
   getUserProgressionUpdate,
+  type UserWithRelations,
 } from "@/routers/profile";
+
 import { startQuestPartyEncounter } from "@/routers/questParty";
-import { deleteRequests } from "@/routers/sensei";
-import { fetchSectorVillage } from "@/routers/village";
+
 import { fetchActiveWars } from "@/routers/war";
 import { validateQuestRewardPackages } from "@/server/api/routers/rewardPackages";
 import {
@@ -179,7 +263,7 @@ import {
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot, getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { setEmptyStringsToNulls } from "@/server/utils/emptyStrings";
-import { reduceActiveFarmPlotTimers } from "@/server/utils/farming";
+
 import {
   fetchPublicQuestLocations,
   notifyMapLocationsChanged,
@@ -192,15 +276,8 @@ import {
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
 import { hydrateQuestCollections } from "@/server/utils/questCollections";
-import {
-  fetchQuestDiscoveryCandidates,
-  questLevelFilters,
-} from "@/server/utils/questDiscovery";
-import {
-  fetchQuestEntryInventory,
-  getQuestEntryCharges,
-  payQuestEntryAtStart,
-} from "@/server/utils/questEntry";
+import { fetchQuestDiscoveryCandidates } from "@/server/utils/questDiscovery";
+import { getQuestEntryCharges, payQuestEntryAtStart } from "@/server/utils/questEntry";
 import {
   publishQuestPartyProgress,
   resetQuestPartyProgress,
@@ -213,11 +290,6 @@ import {
 import { grantTitles } from "@/server/utils/titleGrants";
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
 import { recordVillageMissionProgress } from "@/server/utils/villageMission";
-import {
-  extendWarParticipantSql,
-  liftBracketImmunitySql,
-  warRaidCombatGuard,
-} from "@/server/utils/war";
 import { chunkArray, getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
 import {
@@ -238,12 +310,14 @@ import type { QueryCondition } from "@/utils/typeutils";
 import { canAccessStructure } from "@/utils/village";
 import { publicMapLocationsSchema } from "@/validators/mapLocation";
 import { idSchema } from "@/validators/misc";
-import type { AllObjectivesType, QuestTrackerType } from "@/validators/objectives";
 import {
+  type AllObjectivesType,
   QuestCompletionTasks,
   QuestTracker,
+  type QuestTrackerType,
   QuestValidator,
 } from "@/validators/objectives";
+
 import { petSelectionSchema } from "@/validators/pets";
 import {
   type PetTask,
@@ -262,10 +336,12 @@ import {
   type RewardChoiceDisplay,
   RewardChoiceDisplaySchema,
 } from "@/validators/rewards";
-import type { QuestCounterFieldName } from "@/validators/user";
-import { getQuestCounterFieldName } from "@/validators/user";
-import type { UserDelta } from "@/validators/userCache";
-import { userDeltaResponseSchema } from "@/validators/userCache";
+import {
+  getQuestCounterFieldName,
+  type QuestCounterFieldName,
+} from "@/validators/user";
+
+import { type UserDelta, userDeltaResponseSchema } from "@/validators/userCache";
 
 export const questsRouter = createTRPCRouter({
   /** Public scenery exposes neutral presentation, never quest steps or player progress. */
@@ -279,10 +355,7 @@ export const questsRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       const [viewerRole, results] = await Promise.all([
         fetchViewerRole(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.quest.findMany({
-          columns: { id: true, name: true, questType: true },
-          orderBy: (table, { asc }) => [asc(table.name)],
-        }),
+        listQuestForGetAllNames(ctx.drizzle),
       ]);
       return hideRestrictedQuestsFrom(viewerRole, results);
     }),
@@ -301,33 +374,7 @@ export const questsRouter = createTRPCRouter({
       const skip = currentCursor * input.limit;
       const [viewerRole, results] = await Promise.all([
         fetchViewerRole(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.quest.findMany({
-          with: { village: true },
-          where: and(
-            ...(input?.name ? [like(quest.name, `%${input.name}%`)] : []),
-            ...(input?.objectives && input.objectives.length > 0
-              ? [
-                  or(
-                    ...input.objectives.map(
-                      (e) => sql`JSON_SEARCH(${quest.content},'one',${e}) IS NOT NULL`,
-                    ),
-                  ),
-                ]
-              : []),
-            ...(input?.questType ? [eq(quest.questType, input.questType)] : []),
-            ...(input?.rank ? [eq(quest.questRank, input.rank)] : []),
-            ...(input?.village ? [eq(quest.requiredVillage, input.village)] : []),
-            ...(input?.bloodline
-              ? [eq(quest.requiredBloodlineId, input.bloodline)]
-              : []),
-            ...(input?.sageMode ? [eq(quest.requiredSageModeId, input.sageMode)] : []),
-            ...(input?.userLevel ? [...questLevelFilters(input.userLevel)] : []),
-            ...(input?.hidden !== undefined ? [eq(quest.hidden, !!input.hidden)] : []),
-          ),
-          offset: skip,
-          limit: input.limit,
-          ...(input?.questType === "tier" ? { orderBy: asc(quest.tierLevel) } : {}),
-        }),
+        listQuestForGetAll(ctx.drizzle, input, skip),
       ]);
       results.forEach((r) => {
         controlShownQuestLocationInformation(r);
@@ -356,9 +403,7 @@ export const questsRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [result, user] = await Promise.all([
         fetchQuest(ctx.drizzle, input.id),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId ?? ""),
-        }),
+        findUserDataForGet(ctx.drizzle, ctx),
       ]);
       if (!result) {
         return null;
@@ -460,20 +505,7 @@ export const questsRouter = createTRPCRouter({
           questTypes: [input.questType],
           level: input.level,
         }),
-        ctx.drizzle.query.userItem.findMany({
-          where: and(
-            eq(userItem.userId, ctx.userId),
-            eq(userItem.storedAtHome, false),
-            eq(userItem.isInAuction, false),
-            or(
-              isNull(userItem.craftingFinishedAt),
-              lte(userItem.craftingFinishedAt, new Date()),
-            ),
-            gt(userItem.quantity, 0),
-          ),
-          columns: { itemId: true, quantity: true },
-          with: { item: { columns: { name: true } } },
-        }),
+        listUserItemForSpecificQuests(ctx.drizzle, ctx),
       ]);
       if (!user) return [];
       quests.forEach((r) => {
@@ -517,47 +549,7 @@ export const questsRouter = createTRPCRouter({
         // `eq(quest.questType, input.type)` predicate, so no per-type query branch is needed.
         // Farming, bloodline and sage requirements are checked by isAvailableUserQuests
         // after the user refresh, so this query can run alongside it.
-        ctx.drizzle
-          .select({
-            ...getTableColumns(quest),
-            previousAttempts: questHistory.previousAttempts,
-            completed: questHistory.completed,
-            periodCompletes: questHistory.periodCompletes,
-            periodStartAt: questHistory.periodStartAt,
-            // Extra history columns, aliased so they do NOT feed isAvailableUserQuests's flat
-            // reads (esp. `previousCompletes`, which would change mission-hall availability).
-            // Used only to reconstruct a prevEntry for upsertQuestEntry below, so it skips its
-            // internal questHistory.findFirst on every random mission start.
-            questHistoryId: questHistory.id,
-            historyPreviousCompletes: questHistory.previousCompletes,
-            historyStartedAt: questHistory.startedAt,
-            historyEndAt: questHistory.endAt,
-            historyPendingRewardChoice: questHistory.pendingRewardChoice,
-            historyEntryPaid: questHistory.entryPaid,
-            historyIsolated: questHistory.isolated,
-            historyQuestVersion: questHistory.questVersion,
-          })
-          .from(quest)
-          .leftJoin(
-            questHistory,
-            and(
-              eq(quest.id, questHistory.questId),
-              eq(questHistory.userId, ctx.userId),
-            ),
-          )
-          .where(
-            and(
-              eq(quest.questType, input.type),
-              eq(quest.questRank, input.rank),
-              ...questLevelFilters(input.userLevel),
-              or(isNull(quest.startsAt), lte(quest.startsAt, new Date().toISOString())),
-              or(isNull(quest.endsAt), gte(quest.endsAt, new Date().toISOString())),
-              or(
-                isNull(quest.requiredVillage),
-                eq(quest.requiredVillage, input.userVillageId ?? VILLAGE_SYNDICATE_ID),
-              ),
-            ),
-          ),
+        selectQuestForStartRandom(ctx.drizzle, ctx, input),
       ]);
       const { user } = updatedUser;
       if (!user) return errorResponse("User does not exist");
@@ -775,26 +767,15 @@ export const questsRouter = createTRPCRouter({
         // Drizzle has no multi-table UPDATE builder. One joined write releases the run
         // and its account/NPC state together; a combat or snapshot race changes neither.
         const result = await retryOnDeadlock(() =>
-          ctx.drizzle.execute(sql`
-            UPDATE ${userData}
-            INNER JOIN ${questHistory}
-              ON ${questHistory.userId} = ${userData.userId}
-            SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt, now)},
-                ${userData.questFinishAt} = ${now},
-                ${userData.questData} = CAST(${JSON.stringify(questData)} AS JSON),
-                ${userData.curEnergy} = IF(${questHistory.isolated}, LEAST(${user.maxEnergy}, ${userData.curEnergy} + ${userRegenerationGainSql(user, userData.regenAt, now)}), ${userData.curEnergy}),
-                ${userData.regenAt} = IF(${questHistory.isolated}, ${now}, ${userData.regenAt}),
-                ${userData.status} = IF(${questHistory.isolated}, 'AWAKE', ${userData.status}),
-                ${userData.activeNpcQuestId} = IF(${userData.activeNpcQuestId} = ${input.id}, NULL, ${userData.activeNpcQuestId}),
-                ${questHistory.completed} = 0,
-                ${questHistory.endAt} = ${now}
-            WHERE ${userData.userId} = ${ctx.userId}
-              AND ${userData.updatedAt} = ${user.updatedAt}
-              AND (${userData.status} <> 'BATTLE' OR (${questHistory.isolated} = TRUE AND ${userData.battleId} IS NULL))
-              AND ${questHistory.id} = ${current.id}
-              AND ${questHistory.endAt} IS NULL
-              AND ${questHistory.completed} = 0
-          `),
+          executeResultForAbandon(
+            ctx.drizzle,
+            user,
+            now,
+            questData,
+            input,
+            ctx,
+            current,
+          ),
         );
         // MySQL counts both changed tables, so a successful joined claim can affect two rows.
         if (result.rowsAffected === 0)
@@ -803,24 +784,8 @@ export const questsRouter = createTRPCRouter({
           );
       } else {
         await Promise.all([
-          ctx.drizzle
-            .update(questHistory)
-            .set({ completed: 0, endAt: new Date() })
-            .where(
-              and(
-                eq(questHistory.id, current.id),
-                isNull(questHistory.endAt),
-                eq(questHistory.completed, 0),
-              ),
-            ),
-          ctx.drizzle
-            .update(userData)
-            .set({
-              questFinishAt: new Date(),
-              questData,
-              activeNpcQuestId: sql`IF(${userData.activeNpcQuestId} = ${input.id}, NULL, ${userData.activeNpcQuestId})`,
-            })
-            .where(eq(userData.userId, ctx.userId)),
+          updateQuestHistoryForAbandon(ctx.drizzle, current),
+          updateUserDataForAbandon(ctx.drizzle, questData, input, ctx),
         ]);
       }
       return { success: true, message: `Quest abandoned` };
@@ -836,14 +801,12 @@ export const questsRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
-      const results = await ctx.drizzle.query.questHistory.findMany({
-        where: eq(questHistory.userId, ctx.userId),
-        with: {
-          quest: true,
-        },
-        offset: skip,
-        limit: input.limit,
-      });
+      const results = await listQuestHistoryForGetQuestHistory(
+        ctx.drizzle,
+        ctx,
+        skip,
+        input,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return {
         data: results,
@@ -863,8 +826,8 @@ export const questsRouter = createTRPCRouter({
         await Promise.all([
           fetchUser(ctx.drizzle, ctx.userId),
           fetchQuest(ctx.drizzle, input.id),
-          ctx.drizzle.select().from(quest).where(eq(quest.questType, "tier")),
-          ctx.drizzle.query.rewardPackage.findMany(),
+          selectQuestForUpdate(ctx.drizzle),
+          listRewardPackageForUpdate(ctx.drizzle),
           validateTitleRewardIds(ctx.drizzle, input.data.content),
           validateQuestStructures(ctx.drizzle, input.data),
         ]);
@@ -1036,62 +999,18 @@ export const questsRouter = createTRPCRouter({
         // Gameplay edits use the ordinary builder and retain quest revision checks.
         const definitionWrite = isPresentationOnlyChange
           ? await retryOnDeadlock(() =>
-              ctx.drizzle.execute(sql`
-                UPDATE ${quest}
-                LEFT JOIN ${questHistory}
-                  ON ${questHistory.questId} = ${quest.id}
-                  AND ${questHistory.questVersion} = ${entry.updatedAt}
-                SET ${quest.hidden} = ${input.data.hidden},
-                    ${quest.publicLocations} = ${input.data.publicLocations},
-                    ${quest.content} = ${JSON.stringify(input.data.content)},
-                    ${quest.updatedAt} = ${updatedAt},
-                    ${questHistory.questVersion} = ${updatedAt}
-                WHERE ${quest.id} = ${entry.id}
-                  AND ${quest.updatedAt} = ${entry.updatedAt}
-              `),
+              executeDefinitionWriteForUpdate(ctx.drizzle, entry, input, updatedAt),
             )
-          : await ctx.drizzle
-              .update(quest)
-              .set({ ...input.data, updatedAt })
-              .where(and(eq(quest.id, entry.id), eq(quest.updatedAt, entry.updatedAt)));
+          : await updateQuestForUpdate(ctx.drizzle, input, updatedAt, entry);
         if (definitionWrite.rowsAffected === 0)
           return errorResponse("Quest changed while saving. Refresh and try again.");
         await Promise.all([
           // Village Missions retire personal attempts without granting completions
           // or reclassifying completed history as collective progress.
           data.questType === "village_mission"
-            ? ctx.drizzle
-                .update(questHistory)
-                .set({ endAt: new Date() })
-                .where(
-                  and(
-                    eq(questHistory.questId, entry.id),
-                    eq(questHistory.completed, 0),
-                    isNull(questHistory.endAt),
-                  ),
-                )
-            : ctx.drizzle
-                .update(questHistory)
-                .set({
-                  questType: input.data.questType,
-                  ...(entry.questType === "battlepyramid" &&
-                  input.data.questType !== "battlepyramid"
-                    ? {
-                        // Retire open runs without rewriting completed or abandoned history.
-                        endAt: sql`IF(${questHistory.endAt} IS NULL AND ${questHistory.completed} = 0, ${updatedAt}, ${questHistory.endAt})`,
-                      }
-                    : {}),
-                })
-                .where(eq(questHistory.questId, entry.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "quest",
-            changes: diff,
-            relatedId: entry.id,
-            relatedMsg: `Update: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+            ? updateQuestHistoryForUpdate(ctx.drizzle, entry)
+            : updateQuestHistoryForUpdate2(ctx.drizzle, input, entry, updatedAt),
+          insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
         ]);
         await notifyMapLocationsChanged();
         await outdateProposalsFor(
@@ -1119,53 +1038,7 @@ export const questsRouter = createTRPCRouter({
         return errorResponse("You are banned and cannot perform this action");
       if (canChangeContent(user.role)) {
         const id = nanoid();
-        await ctx.drizzle.insert(quest).values({
-          id: id,
-          name: `New Quest - ${id}`,
-          image: IMG_AVATAR_DEFAULT,
-          description: "",
-          questType: "mission",
-          medicalRank: "NONE",
-          huntingRank: "NONE",
-          gatheringRank: "NONE",
-          hidden: true,
-          prerequisiteQuestId: "",
-          content: {
-            sceneBackground: "",
-            sceneCharacters: [],
-            objectives: [],
-            reward: {
-              reward_medical_experience: 0,
-              reward_hunting_experience: 0,
-              reward_crafting_experience: 0,
-              reward_gathering_experience: 0,
-              reward_sage_mastery_experience: 0,
-              reward_seichi_silver: 0,
-              reward_money: 0,
-              reward_clanpoints: 0,
-              reward_anbupoints: 0,
-              reward_exp: 0,
-              reward_tokens: 0,
-              reward_prestige: 0,
-              reward_reputation: 0,
-              reward_skillpoints: 0,
-              reward_jutsus: [],
-              reward_bloodlines: [],
-              reward_sage_modes: [],
-              reward_badges: [],
-              reward_titles: [],
-              reward_items: [],
-              reward_rank: "NONE",
-              reward_village_membership: "NONE",
-              reward_hunter_items: false,
-              reward_gathering_items: false,
-              reward_hunter_items_ids: [],
-              reward_gathering_items_ids: [],
-              reward_war_damage: 0,
-              reward_war_healing: 0,
-            },
-          },
-        });
+        await insertQuestForCreate(ctx.drizzle, id);
         return { success: true, message: id };
       } else {
         return { success: false, message: `Not allowed to create quest` };
@@ -1229,7 +1102,7 @@ export const questsRouter = createTRPCRouter({
       );
       if (!preparedBindings.success) return errorResponse(preparedBindings.message);
       questData.content.objectives = preparedBindings.objectives;
-      await ctx.drizzle.insert(quest).values(questData);
+      await insertQuestForClone(ctx.drizzle, questData);
       await notifyMapLocationsChanged();
 
       return { success: true, message: questData.id };
@@ -1253,30 +1126,14 @@ export const questsRouter = createTRPCRouter({
       // Permission check
       if (entry && canChangeContent(user.role)) {
         await Promise.all([
-          ctx.drizzle.delete(quest).where(eq(quest.id, input.id)),
-          ctx.drizzle.delete(questHistory).where(eq(questHistory.questId, input.id)),
-          ctx.drizzle
-            .delete(raidParticipation)
-            .where(eq(raidParticipation.questId, input.id)),
-          ctx.drizzle
-            .delete(raidDamageThreshold)
-            .where(eq(raidDamageThreshold.questId, input.id)),
-          ctx.drizzle.delete(userRaidBuff).where(eq(userRaidBuff.questId, input.id)),
-          ctx.drizzle
-            .delete(overworldAiPlacementQuest)
-            .where(eq(overworldAiPlacementQuest.questId, input.id)),
-          ctx.drizzle
-            .delete(userQuestAttempt)
-            .where(eq(userQuestAttempt.questId, input.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "quest",
-            changes: [`Deleted: ${entry.name}`],
-            relatedId: entry.id,
-            relatedMsg: `Delete: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          deleteQuestForDelete(ctx.drizzle, input),
+          deleteQuestHistoryForDelete(ctx.drizzle, input),
+          deleteRaidParticipationForDelete(ctx.drizzle, input),
+          deleteRaidDamageThresholdForDelete(ctx.drizzle, input),
+          deleteUserRaidBuffForDelete(ctx.drizzle, input),
+          deleteOverworldAiPlacementQuestForDelete(ctx.drizzle, input),
+          deleteUserQuestAttemptForDelete(ctx.drizzle, input),
+          insertActionLogForDelete(ctx.drizzle, ctx, entry),
         ]);
         await outdateProposalsFor(
           ctx.drizzle,
@@ -1294,10 +1151,7 @@ export const questsRouter = createTRPCRouter({
   getPetTask: protectedProcedure
     .input(petSelectionSchema.optional())
     .query(async ({ ctx, input }) => {
-      const owner = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        with: { pets: true },
-      });
+      const owner = await findUserDataForGetPetTask(ctx.drizzle, ctx);
       if (!owner) throw serverError("NOT_FOUND", "User not found");
       const task = owner.petTask;
       const [contract, history] = await Promise.all([
@@ -1330,9 +1184,7 @@ export const questsRouter = createTRPCRouter({
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId, forceRegen: true }),
         fetchQuest(ctx.drizzle, input.questId),
         fetchUserQuestByQuestId(ctx.drizzle, ctx.userId, input.questId),
-        ctx.drizzle.query.userPet.findFirst({
-          where: and(eq(userPet.id, input.petId), eq(userPet.userId, ctx.userId)),
-        }),
+        findUserPetForStartPetTask(ctx.drizzle, input, ctx),
       ]);
       if (!user) return errorResponse("User not found");
       const blocked = petTaskDispatchBlockMessage(user, pet);
@@ -1431,16 +1283,8 @@ export const questsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [{ user, settings }, history, pet] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.questHistory.findFirst({
-          where: and(
-            eq(questHistory.id, input.questHistoryId),
-            eq(questHistory.userId, ctx.userId),
-          ),
-          with: { quest: true },
-        }),
-        ctx.drizzle.query.userPet.findFirst({
-          where: and(eq(userPet.id, input.petId), eq(userPet.userId, ctx.userId)),
-        }),
+        findQuestHistoryForCollectPetTask(ctx.drizzle, input, ctx),
+        findUserPetForStartPetTask(ctx.drizzle, input, ctx),
       ]);
       if (!user) return errorResponse("User not found");
       const task = user.petTask;
@@ -1502,9 +1346,7 @@ export const questsRouter = createTRPCRouter({
     .input(petTaskActionSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const owner = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-      });
+      const owner = await findUserById(ctx.drizzle, ctx.userId);
       const task = owner?.petTask;
       if (
         !owner ||
@@ -1518,20 +1360,14 @@ export const questsRouter = createTRPCRouter({
       // A LEFT JOIN permits recovery after content/history deletion. The exact start
       // guard prevents cancellation from closing a restarted attempt in a reused row.
       const cancelled = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-        UPDATE ${userData}
-        LEFT JOIN ${questHistory} ON ${questHistory.userId} = ${userData.userId}
-          AND ${questHistory.id} = ${task.questHistoryId}
-          AND ${questHistory.questId} = ${task.questId}
-          AND ${questHistory.startedAt} = ${new Date(task.startedAt)}
-          AND ${questHistory.completed} = 0 AND ${questHistory.endAt} IS NULL
-        SET ${userData.petTask} = NULL,
-            ${userData.updatedAt} = ${getNextUserSnapshotAt(owner.updatedAt, now)},
-            ${questHistory.endAt} = ${now}
-        WHERE ${userData.userId} = ${ctx.userId}
-          AND ${userData.updatedAt} = ${owner.updatedAt}
-          AND ${petTaskReceiptCondition(task)}
-      `),
+        executeCancelledForCancelPetTask(
+          ctx.drizzle,
+          task,
+          owner,
+          now,
+          ctx,
+          petTaskReceiptCondition,
+        ),
       );
       return cancelled.rowsAffected > 0
         ? { success: true, message: "Your companion returned without task rewards." }
@@ -1561,15 +1397,7 @@ export const questsRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.questHistory.findFirst({
-          where: and(
-            eq(questHistory.questId, input.questId),
-            eq(questHistory.userId, ctx.userId),
-          ),
-          // Hidden attempts are omitted from profile hydration; retain rejection metadata
-          // in this already-parallel history read without loading the definition content.
-          with: { quest: { columns: { hidden: true, updatedAt: true } } },
-        }),
+        findQuestHistoryForCheckRewards(ctx.drizzle, input, ctx),
       ]);
 
       // Guards
@@ -1746,18 +1574,8 @@ export const questsRouter = createTRPCRouter({
     .output(z.array(RewardChoiceDisplaySchema))
     .query(async ({ ctx }) => {
       const [user, rows] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          columns: { userId: true, sageModeId: true, masteryRanks: true },
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.questHistory.findMany({
-          columns: { questId: true, pendingRewardChoice: true },
-          where: and(
-            eq(questHistory.userId, ctx.userId),
-            isNotNull(questHistory.pendingRewardChoice),
-          ),
-          with: { quest: { columns: { name: true } } },
-        }),
+        findUserDataForGetPendingRewardChoices(ctx.drizzle, ctx),
+        listQuestHistoryForGetPendingRewardChoices(ctx.drizzle, ctx),
       ]);
       if (!user) return [];
       return await resolveRewardChoiceDisplays(ctx.drizzle, user, rows);
@@ -1769,14 +1587,7 @@ export const questsRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, history] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.questHistory.findFirst({
-          columns: { id: true, pendingRewardChoice: true },
-          where: and(
-            eq(questHistory.userId, ctx.userId),
-            eq(questHistory.questId, input.questId),
-          ),
-          with: { quest: { columns: { name: true } } },
-        }),
+        findQuestHistoryForClaimRewardChoice(ctx.drizzle, ctx, input),
       ]);
       // Guards
       if (user.isBanned) {
@@ -1807,16 +1618,12 @@ export const questsRouter = createTRPCRouter({
       if (examBlock) return errorResponse(examBlock);
       // Consume exactly the offer that was validated; a parallel claim or a newer offer
       // leaves zero rows affected, so the picked rewards are granted at most once.
-      const consumed = await ctx.drizzle
-        .update(questHistory)
-        .set({ pendingRewardChoice: null })
-        .where(
-          and(
-            eq(questHistory.id, history.id),
-            eq(questHistory.userId, ctx.userId),
-            sql`JSON_UNQUOTE(JSON_EXTRACT(${questHistory.pendingRewardChoice}, '$.id')) = ${offer.data.id}`,
-          ),
-        );
+      const consumed = await updateQuestHistoryForClaimRewardChoice(
+        ctx.drizzle,
+        history,
+        ctx,
+        offer,
+      );
       if (consumed.rowsAffected === 0) {
         return errorResponse("This reward choice was already claimed");
       }
@@ -1840,16 +1647,7 @@ export const questsRouter = createTRPCRouter({
       );
       if (!trackersSaved) {
         // Hand the offer back (unless something newer took its place) so a retry can claim it.
-        await ctx.drizzle
-          .update(questHistory)
-          .set({ pendingRewardChoice: offer.data })
-          .where(
-            and(
-              eq(questHistory.id, history.id),
-              eq(questHistory.userId, ctx.userId),
-              isNull(questHistory.pendingRewardChoice),
-            ),
-          );
+        await updateQuestHistoryForClaimRewardChoice2(ctx.drizzle, offer, history, ctx);
         return errorResponse("Your character changed while claiming, please try again");
       }
       // Payout leaves questData to the snapshot claim above instead of writing back this read.
@@ -2017,11 +1815,7 @@ export const questsRouter = createTRPCRouter({
       // rather than erroring.
       if (!canEditQuests(user.role)) return [];
       // Get all quests for the user
-      const quests = await ctx.drizzle.query.questHistory.findMany({
-        where: eq(questHistory.userId, input.userId),
-        with: { quest: true },
-        orderBy: [asc(questHistory.startedAt)],
-      });
+      const quests = await listQuestHistoryForGetUserQuests(ctx.drizzle, input);
       return quests.filter((q) => q.quest);
     }),
   deleteUserQuest: protectedProcedure
@@ -2052,27 +1846,9 @@ export const questsRouter = createTRPCRouter({
       );
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .delete(questHistory)
-          .where(
-            and(
-              eq(questHistory.userId, input.userId),
-              eq(questHistory.questId, input.questId),
-            ),
-          ),
-        ctx.drizzle
-          .update(userData)
-          .set({ questData })
-          .where(eq(userData.userId, input.userId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`Deleted quest ${input.questId}`],
-          relatedId: input.userId,
-          relatedMsg: `Deleted quest ${input.questId}`,
-          relatedImage: user.avatarLight,
-        }),
+        deleteQuestHistoryForDeleteUserQuest(ctx.drizzle, input),
+        updateUserDataForDeleteUserQuest(ctx.drizzle, questData, input),
+        insertActionLogForDeleteUserQuest(ctx.drizzle, ctx, input, user),
       ]);
       return { success: true, message: "Quest deleted successfully" };
     }),
@@ -2231,113 +2007,41 @@ export const updateRewards = async (info: {
         : undefined,
     () =>
       hasRecruiterPrestige && user.recruiterId
-        ? client.query.userData.findFirst({
-            columns: {
-              pvpExperience: true,
-              weeklyPvpKills: true,
-              weeklyPvpKillsAt: true,
-              isAi: true,
-            },
-            where: eq(userData.userId, user.recruiterId),
-          })
+        ? findUserDataForUpdateRewards(client, { recruiterId: user.recruiterId })
         : undefined,
     () =>
       rewards.reward_village_membership !== "NONE"
-        ? client
-            .select({ id: village.id, name: village.name })
-            .from(village)
-            .where(eq(village.name, rewards.reward_village_membership))
-            .then((v) => v[0])
+        ? selectVillageForUpdateRewards(client, {
+            reward_village_membership: rewards.reward_village_membership,
+          }).then((v) => v[0])
         : undefined,
     () =>
       rewards.reward_hunter_items && user.occupation === "HUNTER"
-        ? client
-            .select({ id: item.id, name: item.name, rarity: item.rarity })
-            .from(item)
-            .where(eq(item.canBeHunted, true))
+        ? selectItemForUpdateRewards(client)
         : undefined,
     () =>
       rewards.reward_gathering_items && user.occupation === "GATHERING"
-        ? client
-            .select({ id: item.id, name: item.name, rarity: item.rarity })
-            .from(item)
-            .where(eq(item.canBeGathered, true))
+        ? selectItemForUpdateRewards2(client)
         : undefined,
     () =>
       uniqueItemIds.length > 0
-        ? client
-            .select({
-              id: item.id,
-              name: item.name,
-              rarity: item.rarity,
-              canStack: item.canStack,
-              stackSize: item.stackSize,
-            })
-            .from(item)
-            .where(inArray(item.id, uniqueItemIds))
+        ? selectItemForUpdateRewards3(client, uniqueItemIds)
         : [],
     () =>
       (rewards.reward_jutsus?.length ?? 0) > 0
-        ? client
-            .select({ id: jutsu.id, name: jutsu.name })
-            .from(jutsu)
-            .leftJoin(
-              userJutsu,
-              and(eq(jutsu.id, userJutsu.jutsuId), eq(userJutsu.userId, user.userId)),
-            )
-            .where(
-              and(inArray(jutsu.id, rewards.reward_jutsus), isNull(userJutsu.userId)),
-            )
+        ? selectJutsuForUpdateRewards(client, user, rewards)
         : [],
     () =>
       (rewards.reward_bloodlines?.length ?? 0) > 0
-        ? client
-            .select({ id: bloodline.id, name: bloodline.name, rank: bloodline.rank })
-            .from(bloodline)
-            .leftJoin(
-              bloodlineRolls,
-              and(
-                eq(bloodline.id, bloodlineRolls.bloodlineId),
-                eq(bloodlineRolls.userId, user.userId),
-              ),
-            )
-            .where(
-              and(
-                inArray(bloodline.id, rewards.reward_bloodlines),
-                isNull(bloodlineRolls.userId),
-              ),
-            )
+        ? selectBloodlineForUpdateRewards(client, user, rewards)
         : [],
     () =>
       (rewards.reward_badges?.length ?? 0) > 0
-        ? client
-            .select({ id: badge.id, name: badge.name, image: badge.image })
-            .from(badge)
-            .leftJoin(
-              userBadge,
-              and(eq(badge.id, userBadge.badgeId), eq(userBadge.userId, user.userId)),
-            )
-            .where(
-              and(inArray(badge.id, rewards.reward_badges), isNull(userBadge.userId)),
-            )
+        ? selectBadgeForUpdateRewards(client, user, rewards)
         : [],
     () =>
       (rewards.reward_titles?.length ?? 0) > 0
-        ? client
-            .select({ id: title.id, name: title.name, effects: title.effects })
-            .from(title)
-            .leftJoin(
-              userTitle,
-              and(eq(userTitle.titleId, title.id), eq(userTitle.userId, user.userId)),
-            )
-            .where(
-              and(
-                inArray(title.id, rewards.reward_titles),
-                eq(title.archived, false),
-                isNull(title.legacyOwnerId),
-                isNull(userTitle.userId),
-              ),
-            )
+        ? selectTitleForUpdateRewards(client, user, rewards)
         : [],
     () =>
       hasWarRewards && user.villageId
@@ -2345,22 +2049,7 @@ export const updateRewards = async (info: {
         : undefined,
     () =>
       (rewards.reward_sage_modes?.length ?? 0) > 0
-        ? client
-            .select({ id: sageMode.id, name: sageMode.name })
-            .from(sageMode)
-            .leftJoin(
-              sageModeRolls,
-              and(
-                eq(sageMode.id, sageModeRolls.sageModeId),
-                eq(sageModeRolls.userId, user.userId),
-              ),
-            )
-            .where(
-              and(
-                inArray(sageMode.id, rewards.reward_sage_modes),
-                isNull(sageModeRolls.userId),
-              ),
-            )
+        ? selectSageModeForUpdateRewards(client, user, rewards)
         : [],
   ]);
 
@@ -2515,119 +2204,48 @@ export const updateRewards = async (info: {
 
   // Update database
   await runRewardTasks(inTransaction)([
-    () =>
-      client
-        .update(userData)
-        .set(updatedUserData)
-        .where(eq(userData.userId, user.userId)),
+    () => updateUserDataForUpdateRewards(client, updatedUserData, user),
     ...(user.recruiterId && prestigeReward > 0
       ? [
-          client
-            .update(userData)
-            .set({
-              villagePrestige: sql`${userData.villagePrestige} + ${prestigeReward}`,
-            })
-            .where(eq(userData.userId, user.recruiterId)),
-          client.insert(recruitmentRewards).values({
-            id: nanoid(),
-            userId: user.recruiterId,
-            recruitedUserId: user.userId,
-            amount: prestigeReward,
-            type: "PRESTIGE",
+          updateUserDataForUpdateRewards2(client, prestigeReward, {
+            recruiterId: user.recruiterId,
           }),
+          insertRecruitmentRewardsForUpdateRewards(
+            client,
+            { recruiterId: user.recruiterId, userId: user.userId },
+            prestigeReward,
+          ),
         ]
       : []
     ).map((task) => () => task),
     () => (getNewRank ? deleteRequests(client, user.userId) : undefined),
     () =>
       rewards.reward_reputation > 0 &&
-      client.insert(userRewards).values({
-        id: nanoid(),
-        awardedById: user.userId,
-        receiverId: user.userId,
-        reputationAmount: rewards.reward_reputation,
-        reason: reason,
-      }),
+      insertUserRewardsForUpdateRewards(client, user, rewards, reason),
     () =>
       rewards.reward_tokens > 0 && user.villageId
-        ? client
-            .update(village)
-            .set({ tokens: sql`${village.tokens} + ${rewards.reward_tokens}` })
-            .where(eq(village.id, user.villageId))
+        ? updateVillageForUpdateRewards(client, rewards, { villageId: user.villageId })
         : undefined,
     () =>
       rewards.reward_clanpoints > 0 && user.clanId
-        ? client
-            .update(clan)
-            .set({
-              points: sql`${clan.points} + ${rewards.reward_clanpoints}`,
-              activityPoints: sql`${clan.activityPoints} + ${rewards.reward_clanpoints}`,
-            })
-            .where(eq(clan.id, user.clanId))
+        ? updateClanForUpdateRewards(client, rewards, { clanId: user.clanId })
         : undefined,
     () =>
       rewards.reward_anbupoints > 0 && user.anbuId
-        ? client
-            .update(anbuSquad)
-            .set({ points: sql`${anbuSquad.points} + ${rewards.reward_anbupoints}` })
-            .where(eq(anbuSquad.id, user.anbuId))
+        ? updateAnbuSquadForUpdateRewards(client, rewards, { anbuId: user.anbuId })
         : undefined,
-    () =>
-      jutsus.length > 0 &&
-      client
-        .insert(userJutsu)
-        .values(
-          jutsus.map(({ id }) => ({
-            id: nanoid(),
-            userId: user.userId,
-            jutsuId: id,
-          })),
-        )
-        .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
+    () => jutsus.length > 0 && insertUserJutsuForUpdateRewards(client, jutsus, user),
     () =>
       bloodlines.length > 0 &&
-      client.insert(bloodlineRolls).values(
-        bloodlines.map(
-          ({ id, rank }) =>
-            ({
-              id: nanoid(),
-              userId: user.userId,
-              type: "QUEST",
-              bloodlineId: id,
-              goal: rank,
-              used: 1,
-              pityRolls: 0,
-            }) as const,
-        ),
-      ),
+      insertBloodlineRollsForUpdateRewards(client, bloodlines, user),
     () =>
       rolledSageMode
-        ? client.insert(sageModeRolls).values({
-            id: nanoid(),
-            userId: user.userId,
-            type: "QUEST",
-            sageModeId: rolledSageMode.id,
-          })
+        ? insertSageModeRollsForUpdateRewards(client, user, rolledSageMode)
         : undefined,
     () =>
       itemsToInsert.length > 0 &&
-      client.insert(userItem).values(
-        itemsToInsert.map(({ id, quantity }) => ({
-          id: nanoid(),
-          userId: user.userId,
-          itemId: id,
-          quantity: quantity,
-        })),
-      ),
-    () =>
-      badges.length > 0 &&
-      client.insert(userBadge).values(
-        badges.map(({ id }) => ({
-          id: nanoid(),
-          userId: user.userId,
-          badgeId: id,
-        })),
-      ),
+      insertUserItemForUpdateRewards(client, itemsToInsert, user),
+    () => badges.length > 0 && insertUserBadgeForUpdateRewards(client, badges, user),
     () =>
       grantTitles(
         client,
@@ -2658,36 +2276,10 @@ export const updateRewards = async (info: {
         if (rewards.reward_war_damage > 0) {
           if (isOnAttackerSide) {
             // Attacker damages defender's war health
-            warUpdates.push(
-              client
-                .update(war)
-                .set({
-                  defenderWarHealth: sql`GREATEST(defenderWarHealth - ${rewards.reward_war_damage}, 0)`,
-                })
-                .where(
-                  and(
-                    eq(war.id, activeWar.id),
-                    isNull(war.endedAt),
-                    warRaidCombatGuard(),
-                  ),
-                ),
-            );
+            warUpdates.push(updateWarForUpdateRewards(client, rewards, activeWar));
           } else {
             // Defender damages attacker's war health
-            warUpdates.push(
-              client
-                .update(war)
-                .set({
-                  attackerWarHealth: sql`GREATEST(attackerWarHealth - ${rewards.reward_war_damage}, 0)`,
-                })
-                .where(
-                  and(
-                    eq(war.id, activeWar.id),
-                    isNull(war.endedAt),
-                    warRaidCombatGuard(),
-                  ),
-                ),
-            );
+            warUpdates.push(updateWarForUpdateRewards2(client, rewards, activeWar));
           }
         }
 
@@ -2695,36 +2287,10 @@ export const updateRewards = async (info: {
         if (rewards.reward_war_healing > 0) {
           if (isOnAttackerSide) {
             // Attacker heals attacker's war health
-            warUpdates.push(
-              client
-                .update(war)
-                .set({
-                  attackerWarHealth: sql`LEAST(attackerWarHealth + ${rewards.reward_war_healing}, attackerWarHealthMax)`,
-                })
-                .where(
-                  and(
-                    eq(war.id, activeWar.id),
-                    isNull(war.endedAt),
-                    warRaidCombatGuard(),
-                  ),
-                ),
-            );
+            warUpdates.push(updateWarForUpdateRewards3(client, rewards, activeWar));
           } else {
             // Defender heals defender's war health
-            warUpdates.push(
-              client
-                .update(war)
-                .set({
-                  defenderWarHealth: sql`LEAST(defenderWarHealth + ${rewards.reward_war_healing}, defenderWarHealthMax)`,
-                })
-                .where(
-                  and(
-                    eq(war.id, activeWar.id),
-                    isNull(war.endedAt),
-                    warRaidCombatGuard(),
-                  ),
-                ),
-            );
+            warUpdates.push(updateWarForUpdateRewards4(client, rewards, activeWar));
           }
         }
       }
@@ -2755,18 +2321,6 @@ export const updateRewards = async (info: {
   };
 };
 
-/**
- * Fetch a quest by id
- * @param client - The database client
- * @param id - The id of the quest
- * @returns The quest
- */
-export const fetchQuest = async (client: DrizzleClient, id: string) => {
-  return await client.query.quest.findFirst({
-    where: eq(quest.id, id),
-  });
-};
-
 /** True when a quest type can only ever be acquired from its assigned overworld NPC. */
 const isNpcOnlyQuestType = (questType: QuestType) =>
   (NPC_ONLY_QUEST_TYPES as readonly QuestType[]).includes(questType);
@@ -2774,22 +2328,6 @@ const isNpcOnlyQuestType = (questType: QuestType) =>
 /** These quests require their dedicated acquisition flow, including when linked by content. */
 const isRestrictedQuestType = (questType: QuestType) =>
   isNpcOnlyQuestType(questType) || questType === "special";
-
-/**
- * Role of the (possibly signed-out) caller of a public content-browsing endpoint. Defaults to
- * "USER" so an unauthenticated visitor is redacted exactly like an ordinary player.
- */
-const fetchViewerRole = async (
-  client: DrizzleClient,
-  userId: string | null | undefined,
-) => {
-  if (!userId) return "USER" as UserRole;
-  const viewer = await client.query.userData.findFirst({
-    columns: { role: true },
-    where: eq(userData.userId, userId),
-  });
-  return viewer?.role ?? ("USER" as UserRole);
-};
 
 /**
  * Hide quests with dedicated acquisition flows from public content listings.
@@ -2802,17 +2340,6 @@ const hideRestrictedQuestsFrom = <T extends { questType: QuestType }>(
   canChangeContent(viewerRole)
     ? quests
     : quests.filter((q) => !isRestrictedQuestType(q.questType));
-
-/**
- * Find quests whose objectives start `questId` through a new_quest consequence. Retyping a
- * referenced quest to an NPC-only or item-only type would strand the referring chain,
- * so the update endpoint rejects the retype until the reference is removed.
- */
-const fetchQuestsStartingQuest = async (client: DrizzleClient, questId: string) =>
-  client.query.quest.findMany({
-    columns: { id: true, name: true },
-    where: sql`JSON_CONTAINS(JSON_EXTRACT(${quest.content}, '$.objectives[*].newQuestIds[*]'), JSON_QUOTE(${questId})) = 1`,
-  });
 
 /**
  * Reason a quest save must be rejected because of a new_quest edge involving a restricted quest,
@@ -2872,30 +2399,6 @@ export const restrictedNewQuestEdgeError = async (
   return null;
 };
 
-/** Resolve quests referenced by new_quest objectives whose acquisition flow cannot be bypassed. */
-const fetchRestrictedNewQuestTargets = async (
-  client: DrizzleClient,
-  objectives: AllObjectivesType[],
-) => {
-  const targetIds = [
-    ...new Set(
-      objectives.flatMap((objective) =>
-        objective.task === "new_quest" && "newQuestIds" in objective
-          ? objective.newQuestIds
-          : [],
-      ),
-    ),
-  ];
-  if (targetIds.length === 0) return [];
-  return client.query.quest.findMany({
-    columns: { id: true, name: true },
-    where: and(
-      inArray(quest.id, targetIds),
-      inArray(quest.questType, [...NPC_ONLY_QUEST_TYPES, "special"]),
-    ),
-  });
-};
-
 /**
  * Fetch uncompleted quests for a user
  * @param client - The database client
@@ -2910,38 +2413,14 @@ export const fetchUncompletedQuests = async (
 ) => {
   const availableLetters = availableQuestLetterRanks(user.rank);
   const now = new Date().toISOString();
-  const history = await client
-    .select()
-    .from(quest)
-    .leftJoin(
-      questHistory,
-      and(eq(quest.id, questHistory.questId), eq(questHistory.userId, user.userId)),
-    )
-    .where(
-      and(
-        eq(quest.questType, type),
-        ...questLevelFilters(user.level),
-        ...(type === "daily"
-          ? []
-          : [lte(quest.requiredFarmingLevel, getFarmingLevel(user.farmingExperience))]),
-        or(isNull(quest.startsAt), lte(quest.startsAt, now)),
-        or(isNull(quest.endsAt), gte(quest.endsAt, now)),
-        ...(availableLetters.length > 0
-          ? [inArray(quest.questRank, availableLetters)]
-          : [eq(quest.questRank, "D")]),
-        isNull(questHistory.completed),
-        or(
-          isNull(quest.requiredVillage),
-          eq(quest.requiredVillage, user.villageId ?? ""),
-        ),
-        or(
-          isNull(quest.requiredBloodlineId),
-          eq(quest.requiredBloodlineId, user.bloodlineId ?? ""),
-        ),
-        ...sageQuestFilters(user),
-      ),
-    )
-    .orderBy((table) => [asc(table.Quest.requiredLevel), asc(table.Quest.tierLevel)]);
+  const history = await selectQuestForFetchUncompletedQuests(
+    client,
+    user,
+    type,
+    now,
+    availableLetters,
+    sageQuestFilters,
+  );
   return history
     .map((quest) => quest.Quest)
     .filter((q) => !q.hidden || canPlayHiddenQuests(user.role));
@@ -2978,31 +2457,16 @@ export const upsertQuestEntries = async (
   // One pass over the selector for both branches: the LEFT JOIN already tells us who lacks a
   // QuestHistory row, so splitting the rows in JS costs one extra column instead of a second
   // round-trip that re-scans the same users.
-  const candidates = await client
-    .select({ userId: userData.userId, historyId: questHistory.id })
-    .from(userData)
-    .leftJoin(
-      questHistory,
-      and(eq(questHistory.userId, userData.userId), eq(questHistory.questId, quest.id)),
-    )
-    .where(updateSelector);
+  const candidates = await selectUserDataForUpsertQuestEntries(
+    client,
+    quest,
+    updateSelector,
+  );
   const missingHistory = candidates.filter((row) => row.historyId === null);
   if (missingHistory.length > 0) {
     // Idempotent through the unique (userId, questId) key, so a deadlock victim can rerun.
     await retryOnDeadlock(() =>
-      client
-        .insert(questHistory)
-        .values(
-          missingHistory.map((row) => ({
-            id: nanoid(),
-            userId: row.userId,
-            questId: quest.id,
-            questType: quest.questType,
-          })),
-        )
-        .onDuplicateKeyUpdate({
-          set: { completed: 0, endAt: null, startedAt: new Date() },
-        }),
+      insertQuestHistoryForUpsertQuestEntries(client, missingHistory, quest),
     );
   }
   // Users to update for (including those we just inserted for)
@@ -3045,20 +2509,7 @@ export const upsertQuestEntries = async (
       let cleared = false;
       for (let pass = 0; pass < QUEST_RESET_MAX_TRACKER_PASSES; pass++) {
         const removed = await retryOnDeadlock(() =>
-          client
-            .update(userData)
-            .set({
-              questData: sql`JSON_REMOVE(
-                ${userData.questData},
-                TRIM(TRAILING '.id' FROM ${trackerPath})
-              )`,
-            })
-            .where(
-              and(
-                inArray(userData.userId, batchUserIds),
-                sql`${trackerPath} IS NOT NULL`,
-              ),
-            ),
+          updateUserDataForUpsertQuestEntries(client, trackerPath, batchUserIds),
         );
         if (removed.rowsAffected === 0) {
           cleared = true;
@@ -3073,15 +2524,12 @@ export const upsertQuestEntries = async (
       if (!cleared) continue;
 
       await retryOnDeadlock(() =>
-        client
-          .update(questHistory)
-          .set({ completed: 0, endAt: null, startedAt })
-          .where(
-            and(
-              inArray(questHistory.userId, batchUserIds),
-              eq(questHistory.questId, questId),
-            ),
-          ),
+        updateQuestHistoryForUpsertQuestEntries(
+          client,
+          startedAt,
+          batchUserIds,
+          questId,
+        ),
       );
     }
   }
@@ -3107,19 +2555,14 @@ export const claimDailyQuestSlot = async (
             ? "dailyWarMissions"
             : "dailyMissions";
   const counter = userData[field];
-  const result = await client
-    .update(userData)
-    .set({
-      [field]: sql`${counter} + 1`,
-      ...(questType === "war"
-        ? {
-            warParticipantUntil: extendWarParticipantSql(),
-            bracketImmunityLiftedUntil: liftBracketImmunitySql(),
-            immunityUntil: new Date(0),
-          }
-        : {}),
-    })
-    .where(and(eq(userData.userId, user.userId), lt(counter, quota.limit)));
+  const result = await updateUserDataForClaimDailyQuestSlot(
+    client,
+    field,
+    counter,
+    questType,
+    user,
+    quota,
+  );
   if (result.rowsAffected === 0) return false;
   user[field] += 1;
   return true;
@@ -3241,13 +2684,11 @@ export const assignQuestToUser = async (args: {
     if (!overworldPlacementId) {
       return errorResponse("This quest is not assigned to this overworld NPC.");
     }
-    const placementQuest = await client.query.overworldAiPlacementQuest.findFirst({
-      columns: { questId: true },
-      where: and(
-        eq(overworldAiPlacementQuest.placementId, overworldPlacementId),
-        eq(overworldAiPlacementQuest.questId, questData.id),
-      ),
-    });
+    const placementQuest = await findOverworldAiPlacementQuestForAssignQuestToUser(
+      client,
+      overworldPlacementId,
+      questData,
+    );
     if (!placementQuest) {
       return errorResponse("This quest is not assigned to this overworld NPC.");
     }
@@ -3335,13 +2776,7 @@ export const assignQuestToUser = async (args: {
       await fetchQuestEntryInventory(client, user.userId),
     );
     if (!charges) {
-      const names = await client.query.item.findMany({
-        columns: { id: true, name: true },
-        where: inArray(
-          item.id,
-          entryRequirements.map((required) => required.itemId),
-        ),
-      });
+      const names = await listItemForAssignQuestToUser(client, entryRequirements);
       const cost = formatQuestEntryCost(
         entryRequirements.map((required) => ({
           quantity: required.quantity,
@@ -3482,21 +2917,7 @@ export const assignQuestToUser = async (args: {
           where: [
             eq(userData.status, "AWAKE"),
             ...(questData.questType === "battlepyramid"
-              ? [
-                  notExists(
-                    database
-                      .select({ one: sql`1` })
-                      .from(questHistory)
-                      .where(
-                        and(
-                          eq(questHistory.userId, user.userId),
-                          eq(questHistory.questType, "battlepyramid"),
-                          isNull(questHistory.endAt),
-                          eq(questHistory.completed, 0),
-                        ),
-                      ),
-                  ),
-                ]
+              ? [notExists(selectQuestHistoryForWhere(database, user))]
               : []),
           ],
         });
@@ -3612,12 +3033,7 @@ export const upsertQuestEntry = async (
   let entry =
     prevEntry !== undefined
       ? prevEntry
-      : await client.query.questHistory.findFirst({
-          where: and(
-            eq(questHistory.questId, quest.id),
-            eq(questHistory.userId, user.userId),
-          ),
-        });
+      : await findQuestHistoryForUpsertQuestEntry(client, quest, user);
   // Promises to be executed
   const promises: Promise<unknown>[] = [];
   const professionContract =
@@ -3688,29 +3104,15 @@ export const upsertQuestEntry = async (
   if (entry) {
     const startedAt = new Date();
     promises.push(
-      client
-        .update(questHistory)
-        .set({
-          startedAt,
-          endAt: null,
-          completed: 0,
-          // Atomic increment so a concurrent restart of the same row can't lose a count to a
-          // stale JS-side base; matches the insert branch's onDuplicateKeyUpdate below.
-          previousAttempts: sql`${questHistory.previousAttempts} + 1`,
-          ...(!isOpenAttempt
-            ? {
-                entryPaid: false,
-                isolated: quest.content.isolated ?? false,
-                questVersion: quest.updatedAt,
-              }
-            : {}),
-        })
-        .where(
-          and(
-            eq(questHistory.id, entry.id),
-            professionContract ? noDelegatedAttempt : undefined,
-          ),
-        ),
+      updateQuestHistoryForUpsertQuestEntry(
+        client,
+        startedAt,
+        isOpenAttempt,
+        quest,
+        entry,
+        professionContract,
+        noDelegatedAttempt,
+      ),
     );
     entry = {
       ...entry,
@@ -3759,19 +3161,13 @@ export const upsertQuestEntry = async (
       questVersion: quest.updatedAt,
     };
     promises.push(
-      client
-        .insert(questHistory)
-        .values(entry)
-        .onDuplicateKeyUpdate({
-          set: Object.fromEntries(
-            Object.entries(duplicateUpdates).map(([key, value]) => [
-              key,
-              professionContract
-                ? sql`IF(${noDelegatedAttempt}, ${value}, ${questHistory[key as keyof typeof duplicateUpdates]})`
-                : value,
-            ]),
-          ),
-        }),
+      insertQuestHistoryForUpsertQuestEntry(
+        client,
+        entry,
+        duplicateUpdates,
+        professionContract,
+        noDelegatedAttempt,
+      ),
     );
   }
   // Get updated trackers and update user
@@ -3785,21 +3181,15 @@ export const upsertQuestEntry = async (
     { task: "any" },
   ]);
   promises.push(
-    client
-      .update(userData)
-      .set({
-        questData: filterQuestTrackersForDbPersist(trackers, user),
-        ...recoveryUpdate,
-        ...(entry.isolated ? { status: "BATTLE" as const } : {}),
-      })
-      .where(
-        and(
-          eq(userData.userId, user.userId),
-          professionContract
-            ? sql`COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${userData.petTask}, '$.questId')), '') <> ${quest.id}`
-            : undefined,
-        ),
-      ),
+    updateUserDataForUpsertQuestEntry(
+      client,
+      trackers,
+      user,
+      recoveryUpdate,
+      entry,
+      professionContract,
+      quest,
+    ),
   );
   // Drizzle builders are lazy; await them in order on PlanetScale's shared transaction session.
   if (inTransaction) {
@@ -3832,16 +3222,6 @@ export const insertNextQuest = async (
     return { ...logEntry.entry, quest: nextQuest };
   }
   return undefined;
-};
-
-export const fetchUserQuestByQuestId = async (
-  client: DrizzleClient,
-  userId: string,
-  questId: string,
-) => {
-  return await client.query.questHistory.findFirst({
-    where: and(eq(questHistory.userId, userId), eq(questHistory.questId, questId)),
-  });
 };
 
 /** Compare the complete accepted receipt, including its deadline and content revision. */
@@ -3938,40 +3318,6 @@ const petTaskReturnBlockMessage = (
 };
 
 type UserQuestFromGetReward = ReturnType<typeof getReward>["userQuest"];
-
-/** Used by checkRewards when claimUserSnapshot fails after questHistory was marked completed. */
-const revertQuestCompletionAfterFailedClaim = async (
-  client: DrizzleClient,
-  userId: string,
-  questId: string,
-  completedEndAt: Date,
-  wrotePeriodCounter: boolean,
-  wroteRewardChoice: boolean,
-) => {
-  await client
-    .update(questHistory)
-    .set({
-      completed: 0,
-      previousCompletes: sql`GREATEST(${questHistory.previousCompletes} - 1, 0)`,
-      // Only roll back the period counter when the completion CAS actually incremented it (it
-      // writes periodCompletes only for retryDelay !== "none"). Decrementing it otherwise would
-      // corrupt a stale non-zero counter the failed completion never touched.
-      ...(wrotePeriodCounter
-        ? { periodCompletes: sql`GREATEST(${questHistory.periodCompletes} - 1, 0)` }
-        : {}),
-      // The offer belongs to the reverted completion; the retry stores a fresh one.
-      ...(wroteRewardChoice ? { pendingRewardChoice: null } : {}),
-      endAt: null,
-    })
-    .where(
-      and(
-        eq(questHistory.questId, questId),
-        eq(questHistory.userId, userId),
-        eq(questHistory.completed, 1),
-        eq(questHistory.endAt, completedEndAt),
-      ),
-    );
-};
 
 /** Tier quest bootstrap plus achievement log; tasks are independent and run together. */
 const runCheckRewardsPrepInParallel = async (
@@ -4151,17 +3497,7 @@ export const commitQuestObjectiveRewards = async (info: {
       ? user.senseiId
       : null;
   const [sensei, pvpAverage] = await Promise.all([
-    senseiId
-      ? client.query.userData.findFirst({
-          columns: {
-            pvpExperience: true,
-            weeklyPvpKills: true,
-            weeklyPvpKillsAt: true,
-            isAi: true,
-          },
-          where: eq(userData.userId, senseiId),
-        })
-      : undefined,
+    senseiId ? findUserDataForCommitQuestObjectiveRewards(client, senseiId) : undefined,
     senseiId ? fetchPvpExperienceAverage(client) : undefined,
   ]);
   const senseiReward = Math.floor(
@@ -4241,20 +3577,10 @@ export const commitQuestObjectiveRewards = async (info: {
         // Must finish before the completion UPDATE below: that CAS requires an existing row with
         // completed=0. Running insert and update in parallel can let the UPDATE run first and
         // match zero rows.
-        await client
-          .insert(questHistory)
-          .values({
-            id: nanoid(),
-            userId,
-            questId: userQuest.questId,
-            questType: userQuest.quest.questType,
-            startedAt: new Date(),
-            endAt: null,
-            completed: 0,
-            previousCompletes: 0,
-            previousAttempts: 0,
-          })
-          .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+        await insertQuestHistoryForCommitQuestObjectiveRewards(client, userId, {
+          questId: userQuest.questId,
+          quest: { questType: userQuest.quest.questType },
+        });
       }
     }
 
@@ -4287,50 +3613,34 @@ export const commitQuestObjectiveRewards = async (info: {
         // Drizzle has no joined UPDATE builder. This single guarded write closes the run
         // and removes its tracker atomically; no payout can precede a successful claim.
         const result = await retryOnDeadlock(() =>
-          client.execute(sql`
-            UPDATE ${userData}
-            INNER JOIN ${questHistory} ON ${questHistory.userId} = ${userData.userId}
-            SET ${userData.updatedAt} = ${completedAt},
-                ${userData.questData} = CAST(${JSON.stringify(set?.questData ?? [])} AS JSON),
-                ${petTask ? sql`${userData.petTask} = NULL,` : sql``}
-                ${questHistory.completed} = 1,
-                ${questHistory.previousCompletes} = ${questHistory.previousCompletes} + 1,
-                ${questHistory.endAt} = ${completedAt}
-                ${rewardChoice ? sql`, ${questHistory.pendingRewardChoice} = CAST(${JSON.stringify(rewardChoice)} AS JSON)` : sql``}
-                ${
-                  cps
-                    ? sql`, ${questHistory.periodCompletes} = ${startsNewPeriod ? 1 : sql`${questHistory.periodCompletes} + 1`},
-                  ${questHistory.periodStartAt} = ${startsNewPeriod ? cps : sql`${questHistory.periodStartAt}`}`
-                    : sql``
-                }
-            WHERE ${userData.userId} = ${userId}
-              AND ${userData.updatedAt} = ${user.updatedAt}
-              AND ${questHistory.id} = ${managedRun.id}
-              AND ${completionConditions}
-              ${petTask ? sql`AND ${petTaskReceiptCondition(petTask)} AND ${questHistory.startedAt} = ${new Date(petTask.startedAt)} AND ${questHistory.questVersion} = ${new Date(petTask.questVersion)} AND ${petTaskOwnerReturnCondition(userId, petTask)}` : sql``}
-              ${cps ? sql`AND ${questHistory.periodCompletes} = ${managedRun.periodCompletes ?? 0} AND ${questHistory.periodStartAt} <=> ${managedRun.periodStartAt ?? null}` : sql``}
-              AND ${and(...where.filter(Boolean)) ?? sql`TRUE`}
-          `),
+          executeResultForCommitQuestObjectiveRewards(
+            client,
+            completedAt,
+            set,
+            petTask,
+            rewardChoice,
+            cps,
+            startsNewPeriod,
+            userId,
+            user,
+            managedRun,
+            completionConditions,
+            petTaskReceiptCondition,
+            petTaskOwnerReturnCondition,
+            where,
+          ),
         );
         return { success: result.rowsAffected > 0, claimedAt: completedAt };
       };
     } else {
-      const questCompletionResult = await client
-        .update(questHistory)
-        .set({
-          completed: 1,
-          previousCompletes: sql`${questHistory.previousCompletes} + 1`,
-          endAt: completedEndAt,
-          ...(rewardChoice ? { pendingRewardChoice: rewardChoice } : {}),
-          // Reset the period counter when this completion opens a new period, else increment.
-          ...(cps
-            ? {
-                periodCompletes: sql`CASE WHEN ${questHistory.periodStartAt} IS NULL OR ${questHistory.periodStartAt} < ${cps} THEN 1 ELSE ${questHistory.periodCompletes} + 1 END`,
-                periodStartAt: sql`CASE WHEN ${questHistory.periodStartAt} IS NULL OR ${questHistory.periodStartAt} < ${cps} THEN ${cps} ELSE ${questHistory.periodStartAt} END`,
-              }
-            : {}),
-        })
-        .where(completionConditions);
+      const questCompletionResult =
+        await updateQuestHistoryForCommitQuestObjectiveRewards(
+          client,
+          completedEndAt,
+          rewardChoice,
+          cps,
+          completionConditions,
+        );
 
       if (questCompletionResult.rowsAffected === 0) {
         const historyRow = await fetchUserQuestByQuestId(
@@ -4541,18 +3851,13 @@ export const commitQuestObjectiveRewards = async (info: {
     // Credit the sensei their per-mission ryo bonus
     ...(senseiId
       ? [
-          client
-            .update(userData)
-            .set({
-              money: sql`${userData.money} + ${senseiReward}`,
-            })
-            .where(eq(userData.userId, senseiId)),
-          client.insert(bankTransfers).values({
-            senderId: userId,
-            receiverId: senseiId,
-            amount: senseiReward,
-            type: "sensei",
-          }),
+          incrementUserMoney(client, senseiReward, senseiId),
+          insertBankTransfersForCommitQuestObjectiveRewards(
+            client,
+            userId,
+            senseiId,
+            senseiReward,
+          ),
         ]
       : []),
   ]);
@@ -4685,24 +3990,12 @@ const executeClaimedQuestConsequences = async ({
     )?.id;
   const closeQuests =
     endedQuestIds.length > 0
-      ? client
-          .update(questHistory)
-          .set({ completed: 0, endAt: new Date() })
-          .where(
-            and(
-              inArray(questHistory.questId, endedQuestIds),
-              eq(questHistory.userId, user.userId),
-              // Team helpers and finished members retain their personal reward receipts.
-              ...(partyQuestId
-                ? [
-                    or(
-                      ne(questHistory.questId, partyQuestId),
-                      eq(questHistory.completed, 0),
-                    ),
-                  ]
-                : []),
-            ),
-          )
+      ? updateQuestHistoryForExecuteClaimedQuestConsequences(
+          client,
+          endedQuestIds,
+          user,
+          partyQuestId,
+        )
       : undefined;
   // Ending a run frees its Pyramid slot before a replacement can claim it. Completed
   // history may already be closed while the caller's quest projection is still open.
@@ -4712,9 +4005,7 @@ const executeClaimedQuestConsequences = async ({
     ...(startedQuestIds.length > 0
       ? [
           (async () => {
-            const quests = await client.query.quest.findMany({
-              where: inArray(quest.id, startedQuestIds),
-            });
+            const quests = await listQuestsByIds(client, startedQuestIds);
             // Runs after the user snapshot is already committed, so a throw here would burn the
             // objective without starting the quest. Content edits or migrations can strand
             // edges to quests that cannot be personally assigned; skip those destinations.
@@ -4752,18 +4043,7 @@ const executeClaimedQuestConsequences = async ({
                         inArray(userData.status, ["AWAKE", "BATTLE"]),
                         isNull(userData.battleId),
                         notExists(
-                          database
-                            .select({ one: sql`1` })
-                            .from(questHistory)
-                            .where(
-                              and(
-                                eq(questHistory.userId, user.userId),
-                                eq(questHistory.questType, "battlepyramid"),
-                                ne(questHistory.questId, nextQuest.id),
-                                eq(questHistory.completed, 0),
-                                isNull(questHistory.endAt),
-                              ),
-                            ),
+                          selectQuestHistoryForWhere2(database, user, nextQuest),
                         ),
                       ],
                     });
@@ -4796,30 +4076,13 @@ const executeClaimedQuestConsequences = async ({
         ]
       : []),
     ...(collectedItems.length > 0
-      ? [
-          client.insert(userItem).values(
-            collectedItems.map(
-              (id) =>
-                ({
-                  id: nanoid(),
-                  userId: user.userId,
-                  itemId: id,
-                  quantity: 1,
-                  equipped: "NONE",
-                }) as const,
-            ),
-          ),
-        ]
+      ? [insertUserItemForExecuteClaimedQuestConsequences(client, collectedItems, user)]
       : []),
     ...(removedUserItemIds.length > 0
       ? [
           // The quantity guard refuses rows held by a stack-merge claim (negative quantity), so
           // this delete can never break an in-flight merge publish and duplicate the stack.
-          client
-            .delete(userItem)
-            .where(
-              and(inArray(userItem.id, removedUserItemIds), gt(userItem.quantity, 0)),
-            ),
+          deleteUserItemsWithPositiveQuantity(client, removedUserItemIds),
         ]
       : []),
     ...[
@@ -4935,20 +4198,7 @@ export const handleQuestConsequences = async (
   // unequipped quest copies. Read additional rows only when the snapshot lacks enough.
   const additionalItems =
     missingItemIds.length > 0
-      ? await client.query.userItem.findMany({
-          where: and(
-            eq(userItem.userId, user.userId),
-            inArray(userItem.itemId, missingItemIds),
-            gt(userItem.quantity, 0),
-            eq(userItem.isInAuction, false),
-            eq(userItem.storedAtHome, false),
-            or(
-              isNull(userItem.craftingFinishedAt),
-              lte(userItem.craftingFinishedAt, new Date()),
-            ),
-          ),
-          columns: { id: true, itemId: true },
-        })
+      ? await listUserItemForHandleQuestConsequences(client, user, missingItemIds)
       : [];
   const ownedItems = [...user.items, ...additionalItems];
   const removedUserItemIds = [...removedItemCounts].flatMap(([id, count]) =>
@@ -5062,39 +4312,6 @@ export const handleQuestConsequences = async (
 };
 
 /**
- * Returns the DB state of every overworld placement referenced by the user's active objectives.
- * Each map value is `true` for an active placement and `false` for a deactivated placement; a
- * referenced id absent from the map was deleted. Callers pass the map to `getNewTrackers`.
- * Cheap-path: if no active objectives carry a bound placement id the DB is not
- * queried and an empty map is returned.
- */
-export const fetchBoundPlacementStatus = async (
-  client: DrizzleClient,
-  user: NonNullable<UserWithRelations>,
-): Promise<Map<string, boolean>> => {
-  // Collect distinct placement ids referenced by the user's active objectives.
-  const boundIds = new Set<string>();
-  for (const q of getUserQuests(user)) {
-    for (const obj of q.content.objectives) {
-      if (obj.overworldPlacementId && isSupportedOverworldBindingTask(obj.task)) {
-        boundIds.add(obj.overworldPlacementId);
-      }
-    }
-  }
-
-  // Cheap-path: no bound objectives → nothing to verify.
-  if (boundIds.size === 0) return new Map();
-
-  // One query with NO isActive filter so we can distinguish deleted vs deactivated.
-  const rows = await client.query.overworldAiPlacement.findMany({
-    where: inArray(overworldAiPlacement.id, [...boundIds]),
-    columns: { id: true, isActive: true },
-  });
-
-  return new Map(rows.map((row) => [row.id, row.isActive]));
-};
-
-/**
  * Resolve and validate all overworld bindings in one place for both update and clone. Defeat
  * objectives derive their opponent AI from the placement; friendly interactions must bind to a
  * FRIENDLY placement. Save-shape validation has already rejected unsupported task bindings.
@@ -5115,10 +4332,10 @@ const prepareOverworldBindings = async (
   ];
   if (placementIds.length === 0) return { success: true, objectives };
 
-  const placements = await client.query.overworldAiPlacement.findMany({
-    columns: { id: true, aiTemplateUserId: true, interactionType: true },
-    where: inArray(overworldAiPlacement.id, placementIds),
-  });
+  const placements = await listOverworldAiPlacementForPrepareOverworldBindings(
+    client,
+    placementIds,
+  );
   const { objectives: derived, missing } = deriveOverworldOpponents(
     objectives,
     new Map(placements.map((placement) => [placement.id, placement.aiTemplateUserId])),
@@ -5209,73 +4426,22 @@ export const resolveRewardChoiceDisplays = async (
   const [items, jutsus, bloodlines, sageModes, badges, titles, ownership] =
     await Promise.all([
       itemIds.length > 0
-        ? client
-            .select({
-              id: item.id,
-              name: item.name,
-              image: item.image,
-              rarity: item.rarity,
-              description: item.description,
-            })
-            .from(item)
-            .where(inArray(item.id, itemIds))
+        ? selectItemForResolveRewardChoiceDisplays(client, itemIds)
         : [],
       jutsuIds.length > 0
-        ? client
-            .select({
-              id: jutsu.id,
-              name: jutsu.name,
-              image: jutsu.image,
-              rarity: jutsu.jutsuRank,
-              description: jutsu.description,
-            })
-            .from(jutsu)
-            .where(inArray(jutsu.id, jutsuIds))
+        ? selectJutsuForResolveRewardChoiceDisplays(client, jutsuIds)
         : [],
       bloodlineIds.length > 0
-        ? client
-            .select({
-              id: bloodline.id,
-              name: bloodline.name,
-              image: bloodline.image,
-              rarity: bloodline.rank,
-              description: bloodline.description,
-            })
-            .from(bloodline)
-            .where(inArray(bloodline.id, bloodlineIds))
+        ? selectBloodlineForResolveRewardChoiceDisplays(client, bloodlineIds)
         : [],
       sageModeIds.length > 0
-        ? client
-            .select({
-              id: sageMode.id,
-              name: sageMode.name,
-              image: sageMode.image,
-              description: sageMode.description,
-            })
-            .from(sageMode)
-            .where(inArray(sageMode.id, sageModeIds))
+        ? selectSageModeForResolveRewardChoiceDisplays(client, sageModeIds)
         : [],
       badgeIds.length > 0
-        ? client
-            .select({
-              id: badge.id,
-              name: badge.name,
-              image: badge.image,
-              description: badge.description,
-            })
-            .from(badge)
-            .where(inArray(badge.id, badgeIds))
+        ? selectBadgeForResolveRewardChoiceDisplays(client, badgeIds)
         : [],
       titleIds.length
-        ? client
-            .select({
-              id: title.id,
-              name: title.name,
-              description: title.description,
-              image: sql<string>`''`.as("image"),
-            })
-            .from(title)
-            .where(inArray(title.id, titleIds))
+        ? selectTitleForResolveRewardChoiceDisplays(client, titleIds)
         : [],
       fetchRewardChoiceOwnership(
         client,
@@ -5352,117 +4518,6 @@ export const resolveRewardChoiceDisplays = async (
       }),
     };
   });
-};
-
-/**
- * Which of the offered jutsus, bloodlines, badges and sage modes the player already holds, using
- * the same ownership tables `updateRewards` checks before granting them. Package children
- * participate in those queries; stored mastery ranks supply promotion eligibility.
- */
-export const fetchRewardChoiceOwnership = async (
-  client: DrizzleClient,
-  user: Pick<UserData, "userId" | "sageModeId" | "masteryRanks">,
-  cards: RewardChoiceCard[],
-): Promise<RewardChoiceOwnership> => {
-  const expandedCards = cards.flatMap((card) =>
-    card.rewards ? buildRewardChoiceCards(card.rewards) : [card],
-  );
-  const idsFor = (field: RewardChoiceCard["field"]) => [
-    ...new Set(
-      expandedCards.flatMap((card) =>
-        card.field === field && card.contentId ? [card.contentId] : [],
-      ),
-    ),
-  ];
-  const jutsuIds = idsFor("reward_jutsus");
-  const bloodlineIds = idsFor("reward_bloodlines");
-  const badgeIds = idsFor("reward_badges");
-  const titleIds = idsFor("reward_titles");
-  const sageModeIds = idsFor("reward_sage_modes");
-  const [jutsus, bloodlines, badges, sageModes, ownedTitles, availableTitles] =
-    await Promise.all([
-      jutsuIds.length > 0
-        ? client
-            .select({ id: userJutsu.jutsuId })
-            .from(userJutsu)
-            .where(
-              and(
-                eq(userJutsu.userId, user.userId),
-                inArray(userJutsu.jutsuId, jutsuIds),
-              ),
-            )
-        : [],
-      bloodlineIds.length > 0
-        ? client
-            .select({ id: bloodlineRolls.bloodlineId })
-            .from(bloodlineRolls)
-            .where(
-              and(
-                eq(bloodlineRolls.userId, user.userId),
-                inArray(bloodlineRolls.bloodlineId, bloodlineIds),
-              ),
-            )
-        : [],
-      badgeIds.length > 0
-        ? client
-            .select({ id: userBadge.badgeId })
-            .from(userBadge)
-            .where(
-              and(
-                eq(userBadge.userId, user.userId),
-                inArray(userBadge.badgeId, badgeIds),
-              ),
-            )
-        : [],
-      sageModeIds.length > 0 && !user.sageModeId
-        ? client
-            .select({ id: sageModeRolls.sageModeId })
-            .from(sageModeRolls)
-            .where(
-              and(
-                eq(sageModeRolls.userId, user.userId),
-                inArray(sageModeRolls.sageModeId, sageModeIds),
-              ),
-            )
-        : [],
-      titleIds.length
-        ? client
-            .select({ id: userTitle.titleId })
-            .from(userTitle)
-            .where(
-              and(
-                eq(userTitle.userId, user.userId),
-                inArray(userTitle.titleId, titleIds),
-              ),
-            )
-        : [],
-      titleIds.length
-        ? client
-            .select({ id: title.id })
-            .from(title)
-            .where(
-              and(
-                inArray(title.id, titleIds),
-                isNull(title.legacyOwnerId),
-                eq(title.archived, false),
-              ),
-            )
-        : [],
-    ]);
-  const toSet = (rows: { id: string | null }[]) =>
-    new Set(rows.flatMap((row) => (row.id ? [row.id] : [])));
-  return {
-    jutsuIds: toSet(jutsus),
-    bloodlineIds: toSet(bloodlines),
-    badgeIds: toSet(badges),
-    titleIds: toSet(ownedTitles),
-    unavailableTitleIds: new Set(
-      titleIds.filter((id) => !availableTitles.some((entry) => entry.id === id)),
-    ),
-    sageModeIds: toSet(sageModes),
-    hasSageMode: !!user.sageModeId,
-    masteryRanks: user.masteryRanks,
-  };
 };
 
 /**

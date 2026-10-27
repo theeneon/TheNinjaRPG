@@ -1,12 +1,20 @@
-import { and, eq, ne } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { DiscordTokenSource, DiscordUnlinkReason } from "@/drizzle/constants";
-import { discordLink, userData } from "@/drizzle/schema";
 import {
   type DiscordLinkResult,
   type DiscordLinkResultDetails,
   discordSnowflakeCreatedAt,
 } from "@/libs/discordLink";
+import {
+  findDiscordLinkForRemoveDiscordLink2,
+  findDiscordLinkForRemoveDiscordLink3,
+  findDiscordLinkForUser,
+  findUserDataForRemoveDiscordLink,
+  logDiscordAction,
+  setDiscordPrimary,
+  updateDiscordLinkForCompleteDiscordLink,
+} from "@/queries/discord";
+
 import type { DrizzleClient } from "@/server/db";
 import { fetchClerkDiscordToken } from "@/server/utils/discord/clerk";
 import type { DiscordConfig } from "@/server/utils/discord/config";
@@ -16,8 +24,6 @@ import {
   findClerkDiscordFlags,
   insertDiscordLink,
   loadLinkCandidate,
-  logDiscordAction,
-  setDiscordPrimary,
 } from "@/server/utils/discord/links";
 import {
   DISCORD_OAUTH_SCOPES,
@@ -166,15 +172,13 @@ export const completeDiscordLink = async (
       // fresh token source and re-apply everything. A replaced OAuth pair is not revoked:
       // Discord may end the whole authorization, which the new token and Clerk's share.
       if (existing)
-        await client
-          .update(discordLink)
-          .set({
-            ...tokenColumns,
-            discordUsername: handle,
-            clerkDiscordId,
-            syncedAt: null,
-          })
-          .where(eq(discordLink.id, existing.id));
+        await updateDiscordLinkForCompleteDiscordLink(
+          client,
+          tokenColumns,
+          handle,
+          clerkDiscordId,
+          existing,
+        );
       await syncDiscordMember(client, input.userId, { force: true });
       return { result: "relinked" };
     }
@@ -291,17 +295,11 @@ export const removeDiscordLink = async (
   },
 ) => {
   const [link, character] = await Promise.all([
-    client.query.discordLink.findFirst({ where: eq(discordLink.userId, input.userId) }),
-    client.query.userData.findFirst({
-      columns: { username: true, avatarLight: true },
-      where: eq(userData.userId, input.userId),
-    }),
+    findDiscordLinkForUser(client, input),
+    findUserDataForRemoveDiscordLink(client, input),
   ]);
   if (!link) return false;
-  const sibling = await client.query.discordLink.findFirst({
-    columns: { id: true, userId: true, discordId: true },
-    where: and(eq(discordLink.discordId, link.discordId), ne(discordLink.id, link.id)),
-  });
+  const sibling = await findDiscordLinkForRemoveDiscordLink2(client, link);
   const cleanup = sibling
     ? []
     : await releaseDiscordMember(client, link, character?.username ?? "");
@@ -312,10 +310,7 @@ export const removeDiscordLink = async (
   // Re-read after archiving: a concurrent unlink may have removed the sibling too, and the
   // last link out must undo the Discord side.
   const remaining = removed
-    ? await client.query.discordLink.findFirst({
-        columns: { id: true, userId: true, discordId: true },
-        where: eq(discordLink.discordId, link.discordId),
-      })
+    ? await findDiscordLinkForRemoveDiscordLink3(client, link)
     : undefined;
   if (remaining) {
     await setDiscordPrimary(client, remaining);

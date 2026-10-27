@@ -1,27 +1,35 @@
-import { and, asc, eq, isNull, notExists, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
   TERRITORY_WAR_INTERVAL_HOURS,
   TERRITORY_WAR_TEAM_SIZE,
 } from "@/drizzle/constants";
-import {
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  territoryWar,
-  territoryWarScore,
-  userData,
-} from "@/drizzle/schema";
 import { getServerPusher } from "@/libs/pusher";
 import { getTerritoryCompetitor, getTerritoryWarBoostUntil } from "@/libs/territoryWar";
+import { deleteClanBattleMemberById } from "@/queries/clan";
+import { wakeQueuedUser } from "@/queries/profile";
+import {
+  deleteMpvpBattleQueueForCreateTeam,
+  executeClaimedForJoinTeam,
+  executeInsertedForJoinTeam,
+  executeRemovedForLeaveTeam,
+  executeRowsForStartBattle,
+  fetchActiveTerritoryWar,
+  fetchLatestTerritoryWar,
+  findMpvpBattleQueueForStartBattle,
+  findTerritoryWarForCreateTeam,
+  findTerritoryWarForStartBattle,
+  insertMpvpBattleQueueForCreateTeam,
+  listMpvpBattleQueueForGetCurrent,
+  listMpvpBattleUserForStartBattle,
+  listTerritoryWarScoreForGetCurrent,
+  updateMpvpBattleQueueForStartBattle,
+} from "@/queries/territoryWar";
+
 import { initiateBattle } from "@/server/api/routers/combat";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import {
-  fetchActiveTerritoryWar,
-  fetchLatestTerritoryWar,
-  fetchTerritoryWarUser as fetchUser,
-} from "@/server/utils/territoryWar";
+import { fetchTerritoryWarUser as fetchUser } from "@/server/utils/territoryWar";
 
 /** Read the global competition and manage same-competitor guardian lobbies. */
 export const territoryWarRouter = createTRPCRouter({
@@ -47,22 +55,8 @@ export const territoryWarRouter = createTRPCRouter({
         nextStartsAt: null,
       };
     const [scores, teams] = await Promise.all([
-      ctx.drizzle.query.territoryWarScore.findMany({
-        where: eq(territoryWarScore.warId, event.id),
-        orderBy: (row, { desc }) => [desc(row.points), asc(row.name)],
-      }),
-      ctx.drizzle.query.mpvpBattleQueue.findMany({
-        where: and(
-          eq(mpvpBattleQueue.territoryWarId, event.id),
-          isNull(mpvpBattleQueue.battleId),
-        ),
-        with: {
-          queue: {
-            orderBy: asc(mpvpBattleUser.slot),
-            with: { user: { columns: { userId: true, username: true } } },
-          },
-        },
-      }),
+      listTerritoryWarScoreForGetCurrent(ctx.drizzle, event),
+      listMpvpBattleQueueForGetCurrent(ctx.drizzle, event),
     ]);
     const endedAt =
       event.resolvedAt ?? (event.endsAt <= new Date() ? event.endsAt : null);
@@ -83,9 +77,7 @@ export const territoryWarRouter = createTRPCRouter({
     .input(z.object({ eventId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const [event, user] = await Promise.all([
-        ctx.drizzle.query.territoryWar.findFirst({
-          where: eq(territoryWar.id, input.eventId),
-        }),
+        findTerritoryWarForCreateTeam(ctx.drizzle, input),
         fetchUser(ctx.drizzle, ctx.userId),
       ]);
       if (!event || event.resolvedAt || event.endsAt <= new Date())
@@ -94,32 +86,12 @@ export const territoryWarRouter = createTRPCRouter({
         return errorResponse("You must be awake in the event sector");
       const competitor = getTerritoryCompetitor(user);
       const id = nanoid();
-      await ctx.drizzle.insert(mpvpBattleQueue).values({
-        id,
-        battleType: "TERRITORY_WAR",
-        territoryWarId: event.id,
-        attackerEntityId: competitor.id,
-        defenderEntityId: event.guardianId,
-        sector: event.sector,
-      });
+      await insertMpvpBattleQueueForCreateTeam(ctx.drizzle, id, event, competitor);
       const result = await joinTeam(ctx.drizzle, user, id, competitor.id);
       if (!result.success)
         // Another member may have joined or reserved launch while the creator lost eligibility.
         await retryOnDeadlock(() =>
-          ctx.drizzle
-            .delete(mpvpBattleQueue)
-            .where(
-              and(
-                eq(mpvpBattleQueue.id, id),
-                isNull(mpvpBattleQueue.battleId),
-                notExists(
-                  ctx.drizzle
-                    .select({ id: mpvpBattleUser.id })
-                    .from(mpvpBattleUser)
-                    .where(eq(mpvpBattleUser.clanBattleId, id)),
-                ),
-              ),
-            ),
+          deleteMpvpBattleQueueForCreateTeam(ctx.drizzle, id),
         );
       return result;
     }),
@@ -139,17 +111,11 @@ export const territoryWarRouter = createTRPCRouter({
     .input(z.object({ teamId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const removed = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-      DELETE ${mpvpBattleUser} FROM ${mpvpBattleUser} INNER JOIN ${mpvpBattleQueue} ON ${mpvpBattleQueue.id} = ${mpvpBattleUser.clanBattleId}
-      WHERE ${mpvpBattleUser.userId} = ${ctx.userId} AND ${mpvpBattleQueue.id} = ${input.teamId} AND ${mpvpBattleQueue.battleType} = 'TERRITORY_WAR' AND ${mpvpBattleQueue.battleId} IS NULL
-    `),
+        executeRemovedForLeaveTeam(ctx.drizzle, ctx, input),
       );
       if (!removed.rowsAffected)
         return errorResponse("This team has already started or you have left it");
-      await ctx.drizzle
-        .update(userData)
-        .set({ status: "AWAKE" })
-        .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED")));
+      await wakeQueuedUser(ctx.drizzle, ctx);
       return { success: true, message: "Left the team" };
     }),
 
@@ -157,38 +123,31 @@ export const territoryWarRouter = createTRPCRouter({
   startBattle: protectedProcedure
     .input(z.object({ teamId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const team = await ctx.drizzle.query.mpvpBattleQueue.findFirst({
-        where: and(
-          eq(mpvpBattleQueue.id, input.teamId),
-          eq(mpvpBattleQueue.battleType, "TERRITORY_WAR"),
-        ),
-        with: { queue: true },
-      });
+      const team = await findMpvpBattleQueueForStartBattle(ctx.drizzle, input);
       if (
         !team?.territoryWarId ||
         team.battleId ||
         !team.queue.some((member) => member.userId === ctx.userId)
       )
         return errorResponse("This team is no longer available");
-      const event = await ctx.drizzle.query.territoryWar.findFirst({
-        where: eq(territoryWar.id, team.territoryWarId),
+      const event = await findTerritoryWarForStartBattle(ctx.drizzle, {
+        territoryWarId: team.territoryWarId,
       });
       if (!event || event.resolvedAt || event.endsAt <= new Date())
         return errorResponse("This Territory War has ended");
       if (!team.queue.length || team.queue.length > TERRITORY_WAR_TEAM_SIZE)
         return errorResponse("Invalid team size");
       const battleId = nanoid();
-      const claimed = await ctx.drizzle
-        .update(mpvpBattleQueue)
-        .set({ battleId })
-        .where(and(eq(mpvpBattleQueue.id, team.id), isNull(mpvpBattleQueue.battleId)));
+      const claimed = await updateMpvpBattleQueueForStartBattle(
+        ctx.drizzle,
+        battleId,
+        team,
+      );
       if (!claimed.rowsAffected)
         return errorResponse("Another teammate already started this battle");
       try {
         // Reservation excludes further successful joins; reload members after it commits.
-        const roster = await ctx.drizzle.query.mpvpBattleUser.findMany({
-          where: eq(mpvpBattleUser.clanBattleId, team.id),
-        });
+        const roster = await listMpvpBattleUserForStartBattle(ctx.drizzle, team);
         if (
           !roster.some((member) => member.userId === ctx.userId) ||
           roster.length < 1 ||
@@ -223,9 +182,7 @@ export const territoryWarRouter = createTRPCRouter({
       } finally {
         // Failed launches restore the lobby; a real battle keeps its membership until settlement.
         await retryOnDeadlock(() =>
-          ctx.drizzle.execute(
-            sql`UPDATE ${mpvpBattleQueue} SET ${mpvpBattleQueue.battleId} = NULL WHERE ${mpvpBattleQueue.id} = ${team.id} AND ${mpvpBattleQueue.battleId} = ${battleId} AND NOT EXISTS (SELECT 1 FROM Battle WHERE Battle.id = ${battleId})`,
-          ),
+          executeRowsForStartBattle(ctx.drizzle, team, battleId),
         );
       }
     }),
@@ -246,17 +203,7 @@ const joinTeam = async (
   let joined = false;
   try {
     const inserted = await retryOnDeadlock(() =>
-      client.execute(sql`
-      INSERT IGNORE INTO MpvpBattleUser (id, clanBattleId, userId, side, slot)
-      SELECT ${memberId}, q.id, ${user.userId}, 'ATTACKER', slots.slot
-      FROM MpvpBattleQueue q INNER JOIN TerritoryWar w ON w.id = q.territoryWarId
-      CROSS JOIN (SELECT 0 AS slot UNION ALL SELECT 1 UNION ALL SELECT 2) slots
-      WHERE q.id = ${teamId} AND q.battleType = 'TERRITORY_WAR' AND q.battleId IS NULL
-        AND q.attackerEntityId = ${competitorId} AND q.sector = ${user.sector}
-        AND w.resolvedAt IS NULL AND w.startsAt <= NOW(3) AND w.endsAt > NOW(3)
-        AND NOT EXISTS (SELECT 1 FROM MpvpBattleUser m WHERE m.clanBattleId = q.id AND m.slot = slots.slot AND m.side = 'ATTACKER')
-      ORDER BY slots.slot LIMIT 1
-    `),
+      executeInsertedForJoinTeam(client, memberId, user, teamId, competitorId),
     );
     if (!inserted.rowsAffected)
       return errorResponse(
@@ -265,23 +212,13 @@ const joinTeam = async (
     // Updating q in the same statement serializes this admission against startBattle's reservation.
     // A missing-row/slot race is reversible, so no transaction or locking read is needed.
     const claimed = await retryOnDeadlock(() =>
-      client.execute(sql`
-      UPDATE UserData u INNER JOIN MpvpBattleUser m ON m.userId = u.userId
-      INNER JOIN MpvpBattleQueue q ON q.id = m.clanBattleId
-      INNER JOIN TerritoryWar w ON w.id = q.territoryWarId
-      SET u.status = 'QUEUED', q.createdAt = q.createdAt
-      WHERE u.userId = ${user.userId} AND m.id = ${memberId} AND q.battleId IS NULL
-        AND u.status = 'AWAKE' AND u.isBanned = false AND u.sector = ${user.sector}
-        AND u.isOutlaw = ${user.isOutlaw} AND u.clanId <=> ${user.clanId} AND u.villageId <=> ${user.villageId}
-        AND w.resolvedAt IS NULL AND w.endsAt > NOW(3)
-    `),
+      executeClaimedForJoinTeam(client, user, memberId),
     );
     joined = claimed.rowsAffected > 0;
     return joined
       ? { success: true, message: "Joined the team. Start solo or wait for teammates" }
       : errorResponse("Your status or this team changed. Try again");
   } finally {
-    if (!joined)
-      await client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.id, memberId));
+    if (!joined) await deleteClanBattleMemberById(client, memberId);
   }
 };

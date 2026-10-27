@@ -1,16 +1,38 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import {
-  actionLog,
-  huntingHabitat,
-  huntingProgress,
-  huntingSession,
-  item,
-  sectorMap,
-  userData,
-} from "@/drizzle/schema";
+import { huntingHabitat, huntingSession } from "@/drizzle/schema";
 import { huntingAllowance, huntingEligibility } from "@/libs/hunting/contracts";
 import { findNearestReachableCoordinate } from "@/libs/sector-map/validation";
+import { listAiUserIds } from "@/queries/ai";
+import {
+  deleteHuntingHabitatForDelete,
+  deleteHuntingSessionForSessionAction,
+  executeSavedForAccept,
+  findHuntingHabitatForDelete,
+  findHuntingHabitatForReconcileInactiveAllowance,
+  findHuntingProgressForAccept,
+  findHuntingSessionForUser,
+  findUserDataForGetBoard,
+  insertActionLogForDelete,
+  insertActionLogForSave,
+  insertHuntingHabitatForSave,
+  insertHuntingProgressForAccept,
+  listHuntingHabitats,
+  listHuntingProgressForGetBoard,
+  listItemForGetBoard,
+  listItemForSave,
+  listItemForStart,
+  listSectorMapForAccept,
+  listSectorMapForSave,
+  listSectorMapForStart,
+  listUserDataForGetBoard,
+  selectHuntingSessionForGetSession,
+  updateHuntingHabitatForSave,
+  updateHuntingProgressForReconcileInactiveAllowance,
+  updateHuntingProgressForSave,
+  updateHuntingSessionForSessionAction,
+} from "@/queries/hunting";
+import { findUserById, findUserRoleById } from "@/queries/profile";
 import { initiateBattle } from "@/routers/combat";
 import {
   createTRPCRouter,
@@ -35,20 +57,7 @@ export const huntingRouter = createTRPCRouter({
    * Missing accepted terms leave a null contract so legacy sessions can still be finished.
    */
   getSession: protectedProcedure.query(async ({ ctx }) => {
-    const [row] = await ctx.drizzle
-      .select({
-        session: huntingSession,
-        progress: huntingProgress,
-      })
-      .from(huntingSession)
-      .leftJoin(
-        huntingProgress,
-        and(
-          eq(huntingProgress.userId, huntingSession.userId),
-          eq(huntingProgress.contractId, huntingSession.contractId),
-        ),
-      )
-      .where(eq(huntingSession.userId, ctx.userId));
+    const [row] = await selectHuntingSessionForGetSession(ctx.drizzle, ctx);
     if (!row) return null;
     const contract = row.session.content?.contracts.find(
       (c) => c.id === row.session.contractId,
@@ -67,30 +76,12 @@ export const huntingRouter = createTRPCRouter({
   getBoard: protectedProcedure.query(async ({ ctx }) => {
     const [user, habitats, session, progress, materials, creatures] = await Promise.all(
       [
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: {
-            occupation: true,
-            huntingExperience: true,
-            sector: true,
-            status: true,
-          },
-        }),
-        ctx.drizzle.query.huntingHabitat.findMany(),
-        ctx.drizzle.query.huntingSession.findFirst({
-          where: eq(huntingSession.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.huntingProgress.findMany({
-          where: eq(huntingProgress.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.item.findMany({
-          columns: { id: true, name: true, canStack: true, stackSize: true },
-          where: eq(item.canBeHunted, true),
-        }),
-        ctx.drizzle.query.userData.findMany({
-          where: eq(userData.isAi, true),
-          columns: { userId: true, username: true, level: true },
-        }),
+        findUserDataForGetBoard(ctx.drizzle, ctx),
+        listHuntingHabitats(ctx.drizzle),
+        findHuntingSessionForUser(ctx.drizzle, ctx),
+        listHuntingProgressForGetBoard(ctx.drizzle, ctx),
+        listItemForGetBoard(ctx.drizzle),
+        listUserDataForGetBoard(ctx.drizzle),
       ],
     );
     const visibleHabitats =
@@ -124,13 +115,8 @@ export const huntingRouter = createTRPCRouter({
   }),
   /** Return disabled and enabled definitions only to staff with content-edit permission. */
   getAll: protectedProcedure.query(async ({ ctx }) => {
-    const user = await ctx.drizzle.query.userData.findFirst({
-      where: eq(userData.userId, ctx.userId),
-      columns: { role: true },
-    });
-    return user && canChangeContent(user.role)
-      ? ctx.drizzle.query.huntingHabitat.findMany()
-      : [];
+    const user = await findUserRoleById(ctx.drizzle, ctx.userId);
+    return user && canChangeContent(user.role) ? listHuntingHabitats(ctx.drizzle) : [];
   }),
   /** Validate authored references and locations before publishing rules to future contracts. */
   save: protectedProcedure
@@ -144,29 +130,11 @@ export const huntingRouter = createTRPCRouter({
         ),
       ];
       const [user, ais, materials, maps, habitats] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { role: true },
-        }),
-        aiIds.length
-          ? ctx.drizzle.query.userData.findMany({
-              where: and(inArray(userData.userId, aiIds), eq(userData.isAi, true)),
-              columns: { userId: true },
-            })
-          : [],
-        itemIds.length
-          ? ctx.drizzle.query.item.findMany({
-              where: and(inArray(item.id, itemIds), eq(item.canBeHunted, true)),
-              columns: { id: true },
-            })
-          : [],
-        ctx.drizzle.query.sectorMap.findMany({
-          where: and(
-            inArray(sectorMap.sector, input.content.sectors),
-            eq(sectorMap.status, "PUBLISHED"),
-          ),
-        }),
-        ctx.drizzle.query.huntingHabitat.findMany(),
+        findUserRoleById(ctx.drizzle, ctx.userId),
+        aiIds.length ? listAiUserIds(ctx.drizzle, aiIds) : [],
+        itemIds.length ? listItemForSave(ctx.drizzle, itemIds) : [],
+        listSectorMapForSave(ctx.drizzle, input),
+        listHuntingHabitats(ctx.drizzle),
       ]);
       if (!user || !canChangeContent(user.role))
         return errorResponse("You cannot edit hunting habitats.");
@@ -213,36 +181,12 @@ export const huntingRouter = createTRPCRouter({
         await retryOnDeadlock(() =>
           ctx.drizzle.transaction(async (tx) => {
             if (input.id) {
-              const saved = await tx
-                .update(huntingHabitat)
-                .set({
-                  content,
-                  // Same-millisecond saves must invalidate admission's captured revision.
-                  updatedAt: sql`GREATEST(CURRENT_TIMESTAMP(3), TIMESTAMPADD(MICROSECOND, 1000, ${huntingHabitat.updatedAt}))`,
-                })
-                .where(eq(huntingHabitat.id, id));
+              const saved = await updateHuntingHabitatForSave(tx, content, id);
               if (saved.rowsAffected !== 1) throw missing;
-            } else
-              await tx
-                .insert(huntingHabitat)
-                .values({ id, content, updatedAt: new Date() });
+            } else await insertHuntingHabitatForSave(tx, id, content);
             for (const contract of content.contracts) {
               // A reduced allowance that is already exhausted must replenish after its cooldown.
-              await tx
-                .update(huntingProgress)
-                .set({
-                  cooldownUntil: new Date(Date.now() + contract.cooldownSeconds * 1000),
-                  version: sql`${huntingProgress.version} + 1`,
-                })
-                .where(
-                  and(
-                    eq(huntingProgress.contractId, contract.id),
-                    sql`${huntingProgress.used} >= ${contract.hunts}`,
-                    isNull(huntingProgress.cooldownUntil),
-                    // Active contracts keep their allowance and settlement version.
-                    sql`NOT EXISTS (SELECT 1 FROM ${huntingSession} WHERE ${huntingSession.userId} = ${huntingProgress.userId} AND ${huntingSession.contractId} = ${huntingProgress.contractId})`,
-                  ),
-                );
+              await updateHuntingProgressForSave(tx, contract);
             }
           }),
         );
@@ -250,51 +194,24 @@ export const huntingRouter = createTRPCRouter({
         if (error === missing) return errorResponse(missing.message);
         throw error;
       }
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        relatedId: id,
-        tableName: "huntingHabitat",
-        relatedMsg: "Updated hunting habitat",
-        changes: [JSON.stringify(content)],
-      });
+      await insertActionLogForSave(ctx.drizzle, ctx, id, content);
       return { success: true, message: "Habitat saved.", id, content };
     }),
   /** Active sessions retain their habitat; staff can disable it instead of deleting it. */
   delete: protectedProcedure.input(huntingIdSchema).mutation(async ({ ctx, input }) => {
-    const user = await ctx.drizzle.query.userData.findFirst({
-      where: eq(userData.userId, ctx.userId),
-      columns: { role: true },
-    });
+    const user = await findUserRoleById(ctx.drizzle, ctx.userId);
     if (!user || !canChangeContent(user.role))
       return errorResponse("You cannot edit hunting habitats.");
-    const removed = await ctx.drizzle
-      .delete(huntingHabitat)
-      .where(
-        and(
-          eq(huntingHabitat.id, input.id),
-          sql`NOT EXISTS (SELECT 1 FROM ${huntingSession} WHERE ${huntingSession.habitatId} = ${input.id})`,
-        ),
-      );
+    const removed = await deleteHuntingHabitatForDelete(ctx.drizzle, input);
     if (!removed.rowsAffected) {
-      const exists = await ctx.drizzle.query.huntingHabitat.findFirst({
-        where: eq(huntingHabitat.id, input.id),
-        columns: { id: true },
-      });
+      const exists = await findHuntingHabitatForDelete(ctx.drizzle, input);
       return errorResponse(
         exists
           ? "This habitat has active sessions. Disable it instead."
           : "Habitat not found. Refresh the editor.",
       );
     }
-    await ctx.drizzle.insert(actionLog).values({
-      id: nanoid(),
-      userId: ctx.userId,
-      relatedId: input.id,
-      tableName: "huntingHabitat",
-      relatedMsg: "Deleted hunting habitat",
-      changes: [],
-    });
+    await insertActionLogForDelete(ctx.drizzle, ctx, input);
     return { success: true, message: "Habitat deleted." };
   }),
   /** Capture accepted terms and a reachable sector; atomically reconcile usage when switching. */
@@ -303,19 +220,10 @@ export const huntingRouter = createTRPCRouter({
     .input(acceptHuntingContractSchema)
     .mutation(async ({ ctx, input }) => {
       const [user, habitats, session, progress] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.huntingHabitat.findMany(),
-        ctx.drizzle.query.huntingSession.findFirst({
-          where: eq(huntingSession.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.huntingProgress.findFirst({
-          where: and(
-            eq(huntingProgress.userId, ctx.userId),
-            eq(huntingProgress.contractId, input.contractId),
-          ),
-        }),
+        findUserById(ctx.drizzle, ctx.userId),
+        listHuntingHabitats(ctx.drizzle),
+        findHuntingSessionForUser(ctx.drizzle, ctx),
+        findHuntingProgressForAccept(ctx.drizzle, ctx, input),
       ]);
       const habitat = habitats.find((h) => h.id === input.habitatId);
       const contract = habitat?.content.contracts.find(
@@ -341,13 +249,7 @@ export const huntingRouter = createTRPCRouter({
         return { success: true, message: "Your existing encounter is still assigned." };
       // Maps carry large JSON payloads; load only the contract's sectors after
       // eligibility and session guards pass.
-      const maps = await ctx.drizzle.query.sectorMap.findMany({
-        columns: { sector: true, normalizedJson: true },
-        where: and(
-          inArray(sectorMap.sector, contract.sectors),
-          eq(sectorMap.status, "PUBLISHED"),
-        ),
-      });
+      const maps = await listSectorMapForAccept(ctx.drizzle, contract);
       const locations = contract.sectors.filter(
         (s) =>
           habitat.content.sectors.includes(s) &&
@@ -373,10 +275,7 @@ export const huntingRouter = createTRPCRouter({
         version: (session?.version ?? -1) + 1,
       };
       // An unused zero-allowance row is harmless if another session wins the following CAS.
-      await ctx.drizzle
-        .insert(huntingProgress)
-        .values({ userId: ctx.userId, contractId: contract.id })
-        .onDuplicateKeyUpdate({ set: { contractId: contract.id } });
+      await insertHuntingProgressForAccept(ctx.drizzle, ctx, contract);
       const previousHabitat = habitats.find((h) => h.id === session?.habitatId);
       const previousContract = previousHabitat?.content.contracts.find(
         (c) => c.id === session?.contractId,
@@ -390,42 +289,14 @@ export const huntingRouter = createTRPCRouter({
       try {
         // Switching and reconciling the old allowance share one guarded statement.
         const saved = await retryOnDeadlock(() =>
-          ctx.drizzle.execute(
-            session
-              ? sql`
-              UPDATE ${huntingSession} AS s
-              LEFT JOIN ${huntingProgress} AS p
-                ON p.userId = s.userId AND p.contractId = s.contractId
-              SET s.id = ${next.id}, s.habitatId = ${next.habitatId},
-                  s.contractId = ${next.contractId}, s.content = ${JSON.stringify(next.content)},
-                  s.sector = ${next.sector}, s.readyAt = NULL, s.battleId = NULL,
-                  s.lastResult = NULL, s.startedAt = ${next.startedAt}, s.version = ${next.version},
-                  p.version = p.version + 1,
-                  p.cooldownUntil = ${
-                    previousContract
-                      ? sql`CASE WHEN p.used >= ${previousContract.hunts} AND p.cooldownUntil IS NULL
-                        THEN ${new Date(Date.now() + previousContract.cooldownSeconds * 1000)}
-                        ELSE p.cooldownUntil END`
-                      : sql`p.cooldownUntil`
-                  }
-              WHERE s.userId = ${ctx.userId} AND s.id = ${session.id}
-                AND s.version = ${session.version} AND s.battleId IS NULL
-                AND EXISTS (SELECT 1 FROM ${huntingHabitat} WHERE ${targetHabitatGuard})
-                AND ${
-                  previousHabitat
-                    ? sql`EXISTS (SELECT 1 FROM ${huntingHabitat} WHERE ${huntingHabitat.id} = ${session.habitatId} AND ${huntingHabitat.updatedAt} = ${previousHabitat.updatedAt})`
-                    : sql`NOT EXISTS (SELECT 1 FROM ${huntingHabitat} WHERE ${huntingHabitat.id} = ${session.habitatId})`
-                }
-            `
-              : sql`
-                INSERT INTO ${huntingSession}
-                  (userId, id, habitatId, contractId, content, sector, readyAt,
-                   battleId, version, startedAt, lastResult)
-                SELECT ${ctx.userId}, ${next.id}, ${next.habitatId}, ${next.contractId},
-                       ${JSON.stringify(next.content)}, ${next.sector}, NULL, NULL,
-                       ${next.version}, ${next.startedAt}, NULL
-                FROM ${huntingHabitat} WHERE ${targetHabitatGuard}
-              `,
+          executeSavedForAccept(
+            ctx.drizzle,
+            session,
+            next,
+            previousContract,
+            ctx,
+            targetHabitatGuard,
+            previousHabitat,
           ),
         );
         if (saved.rowsAffected === 0)
@@ -444,12 +315,8 @@ export const huntingRouter = createTRPCRouter({
     .input(huntingSessionActionSchema)
     .mutation(async ({ ctx, input }) => {
       const [user, session] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.huntingSession.findFirst({
-          where: eq(huntingSession.userId, ctx.userId),
-        }),
+        findUserById(ctx.drizzle, ctx.userId),
+        findHuntingSessionForUser(ctx.drizzle, ctx),
       ]);
       if (
         !session ||
@@ -473,7 +340,7 @@ export const huntingRouter = createTRPCRouter({
         // Keep this transaction confined to finish so both writes commit or retry together.
         const saved = await retryOnDeadlock(() =>
           ctx.drizzle.transaction(async (tx) => {
-            const deleted = await tx.delete(huntingSession).where(guard);
+            const deleted = await deleteHuntingSessionForSessionAction(tx, guard);
             if (deleted.rowsAffected === 1)
               await reconcileInactiveAllowance(
                 tx as unknown as DrizzleClient,
@@ -507,13 +374,11 @@ export const huntingRouter = createTRPCRouter({
         );
       if (session.readyAt)
         return { success: true, message: "Preparation has already started." };
-      const saved = await ctx.drizzle
-        .update(huntingSession)
-        .set({
-          readyAt: new Date(Date.now() + contract.preparationSeconds * 1000),
-          version: sql`${huntingSession.version} + 1`,
-        })
-        .where(guard);
+      const saved = await updateHuntingSessionForSessionAction(
+        ctx.drizzle,
+        contract,
+        guard,
+      );
       return saved.rowsAffected === 1
         ? { success: true, message: "Preparation started." }
         : errorResponse("Your session changed.");
@@ -524,19 +389,10 @@ export const huntingRouter = createTRPCRouter({
     .input(huntingIdSchema)
     .mutation(async ({ ctx, input }) => {
       const [user, session, progressRows, materials] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.huntingSession.findFirst({
-          where: eq(huntingSession.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.huntingProgress.findMany({
-          where: eq(huntingProgress.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.item.findMany({
-          where: eq(item.canBeHunted, true),
-          columns: { id: true, name: true, canStack: true, stackSize: true },
-        }),
+        findUserById(ctx.drizzle, ctx.userId),
+        findHuntingSessionForUser(ctx.drizzle, ctx),
+        listHuntingProgressForGetBoard(ctx.drizzle, ctx),
+        listItemForStart(ctx.drizzle),
       ]);
       const contract = session?.content?.contracts.find(
         (c) => c.id === session?.contractId,
@@ -563,13 +419,7 @@ export const huntingRouter = createTRPCRouter({
         return errorResponse("This contract is on cooldown.");
       // Maps carry large JSON payloads; load only the assigned sector after
       // eligibility and session guards pass.
-      const maps = await ctx.drizzle.query.sectorMap.findMany({
-        columns: { sector: true, normalizedJson: true },
-        where: and(
-          eq(sectorMap.sector, session.sector),
-          eq(sectorMap.status, "PUBLISHED"),
-        ),
-      });
+      const maps = await listSectorMapForStart(ctx.drizzle, session);
       if (
         !contract.sectors.includes(session.sector) ||
         !maps.some(
@@ -628,25 +478,17 @@ const reconcileInactiveAllowance = async (
 ) => {
   // This read depends on releasing the session: a concurrent save must see the
   // allowance as inactive, or finish before we read its updated terms.
-  const habitat = await client.query.huntingHabitat.findFirst({
-    where: eq(huntingHabitat.id, habitatId),
-  });
+  const habitat = await findHuntingHabitatForReconcileInactiveAllowance(
+    client,
+    habitatId,
+  );
   const contract = habitat?.content.contracts.find((c) => c.id === contractId);
   if (!habitat || !contract) return;
-  await client
-    .update(huntingProgress)
-    .set({
-      cooldownUntil: new Date(Date.now() + contract.cooldownSeconds * 1000),
-      version: sql`${huntingProgress.version} + 1`,
-    })
-    .where(
-      and(
-        eq(huntingProgress.userId, userId),
-        sql`EXISTS (SELECT 1 FROM ${huntingHabitat} WHERE ${huntingHabitat.id} = ${habitatId} AND ${huntingHabitat.updatedAt} = ${habitat.updatedAt})`,
-        eq(huntingProgress.contractId, contract.id),
-        sql`${huntingProgress.used} >= ${contract.hunts}`,
-        isNull(huntingProgress.cooldownUntil),
-        sql`NOT EXISTS (SELECT 1 FROM ${huntingSession} WHERE ${huntingSession.userId} = ${userId} AND ${huntingSession.contractId} = ${contract.id})`,
-      ),
-    );
+  await updateHuntingProgressForReconcileInactiveAllowance(
+    client,
+    contract,
+    userId,
+    habitatId,
+    habitat,
+  );
 };

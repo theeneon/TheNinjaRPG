@@ -1,22 +1,31 @@
-import { and, asc, eq, exists, isNull, lt, or, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { exists } from "drizzle-orm";
 import { after } from "next/server";
 import {
   DISCORD_INDEFINITE_SANCTION_DAYS,
   DISCORD_SYNC_BATCH_SIZE,
   DISCORD_SYNC_REFRESH_DAYS,
 } from "@/drizzle/constants";
-import { type DiscordLink, discordLink, userData, userReport } from "@/drizzle/schema";
+import type { DiscordLink, discordLink } from "@/drizzle/schema";
 import { DISCORD_RELINK_REQUIRED, discordNicknameFor } from "@/libs/discordLink";
+import {
+  fetchDiscordAccountLinks,
+  findDiscordAccountIdForUser,
+  saveSyncState,
+  selectDiscordLinkForFetchLinksNeedingSync,
+  selectLinkedForFetchLinksNeedingSync,
+  selectPrimaryForFetchLinksNeedingSync,
+  setDiscordPrimary,
+  updateDiscordLinkForGetClerkLinkAccessToken,
+  updateDiscordLinkForGetLinkAccessToken,
+} from "@/queries/discord";
+
+import { fetchActiveSanctionTombstones } from "@/queries/reports";
 import type { DrizzleClient } from "@/server/db";
 import { fetchClerkDiscordToken } from "@/server/utils/discord/clerk";
 import { type DiscordConfig, getDiscordConfig } from "@/server/utils/discord/config";
 import {
   discordTombstoneHash,
-  fetchDiscordAccountLinks,
   fetchDiscordAccountSanctions,
-  indefiniteSanctionWhere,
-  setDiscordPrimary,
 } from "@/server/utils/discord/links";
 import {
   addGuildMember,
@@ -33,8 +42,7 @@ import {
   setNickname,
   unbanMember,
 } from "@/server/utils/discord/rest";
-import { decryptToken, encryptToken } from "@/server/utils/discord/secrets";
-import { fetchActiveSanctionTombstones } from "@/server/utils/sanctionTombstone";
+import { decryptToken } from "@/server/utils/discord/secrets";
 
 /**
  * Discord side of a link: Linked Roles metadata, server membership, nickname, village role
@@ -106,15 +114,7 @@ export const getLinkAccessToken = async (
       throw relinkRequired("refresh token rejected");
     throw error;
   }
-  await client
-    .update(discordLink)
-    .set({
-      accessToken: encryptToken(tokens.access_token, config.tokenKey),
-      refreshToken: encryptToken(tokens.refresh_token, config.tokenKey),
-      tokenExpiresAt: new Date(Date.now() + tokens.expires_in * 1000),
-      scopes: tokens.scope,
-    })
-    .where(eq(discordLink.id, link.id));
+  await updateDiscordLinkForGetLinkAccessToken(client, tokens, config, link);
   return tokens.access_token;
 };
 
@@ -133,10 +133,7 @@ const getClerkLinkAccessToken = async (
     throw relinkRequired("Clerk token lacks role_connections.write");
   const scopes = token.scopes.join(" ");
   if (scopes !== link.scopes)
-    await client
-      .update(discordLink)
-      .set({ scopes: scopes.slice(0, 191) })
-      .where(eq(discordLink.id, link.id));
+    await updateDiscordLinkForGetClerkLinkAccessToken(client, scopes, link);
   // The caller's guilds.join check reads the same object.
   link.scopes = scopes;
   return token.accessToken;
@@ -166,10 +163,7 @@ export const syncDiscordMember = async (
   options: { force?: boolean } = {},
 ) => {
   if (!getDiscordConfig()) return { synced: false, errors: ["disabled"] };
-  const link = await client.query.discordLink.findFirst({
-    columns: { discordId: true },
-    where: eq(discordLink.userId, userId),
-  });
+  const link = await findDiscordAccountIdForUser(client, userId);
   if (!link) return { synced: false, errors: ["not linked"] };
   return syncDiscordAccount(client, link.discordId, options);
 };
@@ -365,21 +359,6 @@ const guildJoinToken = async (
   return null;
 };
 
-const saveSyncState = (
-  client: DrizzleClient,
-  discordId: string,
-  update: Partial<typeof discordLink.$inferInsert>,
-  errors: string[],
-) =>
-  client
-    .update(discordLink)
-    .set({
-      ...update,
-      syncedAt: new Date(),
-      syncError: errors.length ? errors.join("; ").slice(0, 500) : null,
-    })
-    .where(eq(discordLink.discordId, discordId));
-
 /**
  * Undo the Discord side before the last link of a Discord account is removed: report the role
  * connection as unlinked so Discord drops the Linked Role, remove managed roles and the
@@ -457,52 +436,17 @@ export const scheduleDiscordSync = (client: DrizzleClient, userId: string | null
  */
 export const fetchLinksNeedingSync = (client: DrizzleClient, limit: number) => {
   const refreshBefore = new Date(Date.now() - DISCORD_SYNC_REFRESH_DAYS * 86_400_000);
-  const linked = alias(discordLink, "linked");
-  const primary = alias(discordLink, "primaryLink");
+
   // Any character linked to the same Discord account has an indefinite sanction.
-  const sanctioned = exists(
-    client
-      .select({ id: userReport.id })
-      .from(linked)
-      .innerJoin(userReport, indefiniteSanctionWhere(linked.userId))
-      .where(eq(linked.discordId, discordLink.discordId)),
+  const sanctioned = exists(selectLinkedForFetchLinksNeedingSync(client));
+  const hasPrimary = exists(selectPrimaryForFetchLinksNeedingSync(client));
+  return selectDiscordLinkForFetchLinksNeedingSync(
+    client,
+    refreshBefore,
+    sanctioned,
+    hasPrimary,
+    limit,
   );
-  const hasPrimary = exists(
-    client
-      .select({ id: primary.id })
-      .from(primary)
-      .where(
-        and(eq(primary.discordId, discordLink.discordId), eq(primary.isPrimary, true)),
-      ),
-  );
-  return client
-    .select({
-      userId: discordLink.userId,
-      discordId: discordLink.discordId,
-      syncedAt: discordLink.syncedAt,
-    })
-    .from(discordLink)
-    .innerJoin(userData, eq(userData.userId, discordLink.userId))
-    .where(
-      or(
-        isNull(discordLink.syncedAt),
-        lt(discordLink.syncedAt, refreshBefore),
-        sql`${discordLink.syncedBanned} <> (${sanctioned})`,
-        sql`NOT (${hasPrimary})`,
-        // While banned, nickname, roles and metadata are not applied, so they cannot differ.
-        and(
-          sql`NOT (${sanctioned})`,
-          eq(discordLink.isPrimary, true),
-          or(
-            sql`NOT (${discordLink.syncedUsername} <=> ${userData.username})`,
-            sql`NOT (${discordLink.syncedVillageId} <=> ${userData.villageId})`,
-            sql`NOT (${discordLink.syncedLevel} <=> ${userData.level})`,
-          ),
-        ),
-      ),
-    )
-    .orderBy(asc(discordLink.syncedAt))
-    .limit(limit);
 };
 
 /** One cron batch, processed sequentially to stay inside Discord's rate limits. */

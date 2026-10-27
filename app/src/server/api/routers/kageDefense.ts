@@ -1,4 +1,3 @@
-import { eq, inArray, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   KAGE_CHALLENGER_DAILY_LIMIT,
@@ -9,8 +8,25 @@ import {
   KAGE_DEFENSE_NOTICE_HOURS,
   KAGE_DEFENSE_SLOT_MINUTES,
 } from "@/drizzle/constants";
-import { kageDefendedChallenges, userData, village, war } from "@/drizzle/schema";
 import { getServerPusher } from "@/libs/pusher";
+import {
+  executeResultForDismissInstantDefense,
+  executeResultForRequestInstantDefense,
+  executeResultForSetDefenseAi,
+  executeResultForWithdrawDefense,
+  findKageDefendedChallengesForWithdrawDefense,
+  findVillageForSetDefenseAi,
+  findVillageForWithdrawDefense,
+  insertKageDefendedChallengesForJoinDefenseQueue,
+  listKageDefendedChallengesForStartDefense,
+  saveKageSchedule,
+  updateKageDefendedChallengesForCheckInDefense,
+  updateKageDefendedChallengesForRescheduleDefense,
+  updateKageDefendedChallengesForRescheduleDefense2,
+  updateKageDefendedChallengesForResetFailedLaunch,
+} from "@/queries/kageDefense";
+import { findUserById } from "@/queries/profile";
+
 import { initiateBattle } from "@/routers/combat";
 import {
   baseServerResponse,
@@ -20,7 +36,6 @@ import {
 import {
   assignKageMatches,
   getKageDefensePublic,
-  saveKageSchedule,
   syncLockedKageDefense,
   withinKageChallengeLimits,
   withKageDefense,
@@ -47,9 +62,7 @@ export const kageDefenseProcedures = {
     .query(async ({ ctx, input }) => {
       const [hall, user] = await Promise.all([
         getKageDefensePublic(ctx.drizzle, input.villageId),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
+        findUserById(ctx.drizzle, ctx.userId),
       ]);
       return {
         hall,
@@ -96,9 +109,7 @@ export const kageDefenseProcedures = {
     .mutation(async ({ ctx, input }) => {
       return (
         (await withKageDefense(ctx.drizzle, input.villageId, async (tx, hall) => {
-          const user = await tx.query.userData.findFirst({
-            where: eq(userData.userId, ctx.userId),
-          });
+          const user = await findUserById(tx, ctx.userId);
           if (!user) return errorResponse("Character not found");
           if (hall.rows.some((r) => r.match.userId === ctx.userId))
             return errorResponse("You already have an active queue entry");
@@ -110,21 +121,15 @@ export const kageDefenseProcedures = {
             return errorResponse("The village is awaiting a new Kage");
           if (!(await syncLockedKageDefense(tx, hall)))
             return errorResponse("Leadership changed. Refresh the defense schedule.");
-          const result = await tx
-            .insert(kageDefendedChallenges)
-            .values({
-              id: nanoid(),
-              villageId: input.villageId,
-              userId: ctx.userId,
-              kageId: hall.village.kageId,
-              tenure: hall.village.leaderUpdatedAt,
-              aiRequested: input.aiRequested,
-              notBefore: secondsFromDate(KAGE_DEFENSE_NOTICE_HOURS * 3600, hall.now),
-            })
-            .catch((error: unknown) => {
-              if (isMysqlDuplicateKeyError(error)) return null;
-              throw error;
-            });
+          const result = await insertKageDefendedChallengesForJoinDefenseQueue(
+            tx,
+            input,
+            ctx,
+            hall,
+          ).catch((error: unknown) => {
+            if (isMysqlDuplicateKeyError(error)) return null;
+            throw error;
+          });
           if (!result?.rowsAffected)
             return errorResponse("You already have an active queue entry");
           // Assignment uses the newly inserted row on the next authoritative sync, without blocking play.
@@ -142,34 +147,20 @@ export const kageDefenseProcedures = {
     .input(kageMatchSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       // Drizzle has no multi-table UPDATE builder. STRAIGHT_JOIN keeps the village
       // first, matching schedule/launch locks so a loaded assignment cannot revive this entry.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${village}
-          STRAIGHT_JOIN ${kageDefendedChallenges} ON ${kageDefendedChallenges.villageId} = ${village.id}
-          SET ${village.kageScheduleVersion} = ${village.kageScheduleVersion} + 1,
-              ${kageDefendedChallenges.status} = 'CANCELLED',
-              ${kageDefendedChallenges.resolvedAt} = ${new Date()},
-              ${kageDefendedChallenges.outcome} = 'Challenger withdrew; no prestige charged'
-          WHERE ${village.id} = ${match.villageId}
-            AND ${village.type} = 'VILLAGE'
-            AND ${kageDefendedChallenges.id} = ${input.id}
-            AND ${kageDefendedChallenges.userId} = ${ctx.userId}
-            AND ${kageDefendedChallenges.status} IN ('QUEUED', 'SCHEDULED')
-        `),
+        executeResultForWithdrawDefense(ctx.drizzle, match, input, ctx),
       );
       // Joined writes count both changed rows rather than one queue receipt.
       if (result.rowsAffected > 0)
         return { success: true, message: "Withdrawn from the queue" };
-      const home = await ctx.drizzle.query.village.findFirst({
-        columns: { type: true },
-        where: eq(village.id, match.villageId),
-      });
+      const home = await findVillageForWithdrawDefense(ctx.drizzle, match);
       return errorResponse(
         home?.type === "VILLAGE"
           ? "Only your waiting entry can be withdrawn"
@@ -181,9 +172,10 @@ export const kageDefenseProcedures = {
     .input(kageMatchSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       return (
         (await withKageDefense(ctx.drizzle, match.villageId, async (tx, hall) => {
@@ -214,19 +206,8 @@ export const kageDefenseProcedures = {
               secondsFromDate(KAGE_DEFENSE_SLOT_MINUTES * 60, m.scheduledAt).getTime(),
             ),
           );
-          await tx
-            .update(kageDefendedChallenges)
-            .set({ status: "QUEUED", scheduledAt: null, checkedInAt: null, notBefore })
-            .where(
-              inArray(
-                kageDefendedChallenges.id,
-                later.map((r) => r.match.id),
-              ),
-            );
-          await tx
-            .update(kageDefendedChallenges)
-            .set({ rescheduled: true })
-            .where(eq(kageDefendedChallenges.id, input.id));
+          await updateKageDefendedChallengesForRescheduleDefense(tx, notBefore, later);
+          await updateKageDefendedChallengesForRescheduleDefense2(tx, input);
           return {
             success: true,
             message: "Match rescheduled once; queue priority preserved",
@@ -239,28 +220,15 @@ export const kageDefenseProcedures = {
     .input(kageAiSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       // Share the village-first atomic boundary with reconciliation and launch. Consent
       // is checked against the locked incumbent/request, never the initial match snapshot.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${village}
-          STRAIGHT_JOIN ${kageDefendedChallenges} ON ${kageDefendedChallenges.villageId} = ${village.id}
-          SET ${village.kageScheduleVersion} = ${village.kageScheduleVersion} + 1,
-              ${kageDefendedChallenges.aiRequested} = IF(${village.kageId} = ${ctx.userId}, ${kageDefendedChallenges.aiRequested}, ${input.consent}),
-              ${kageDefendedChallenges.aiAccepted} = IF(${village.kageId} = ${ctx.userId}, ${input.consent}, FALSE)
-          WHERE ${village.id} = ${match.villageId}
-            AND ${village.type} = 'VILLAGE'
-            AND ${kageDefendedChallenges.id} = ${input.id}
-            AND ${kageDefendedChallenges.status} IN ('QUEUED', 'SCHEDULED')
-            AND (
-              (${village.kageId} = ${ctx.userId} AND (${!input.consent} OR ${kageDefendedChallenges.aiRequested} = TRUE))
-              OR (${kageDefendedChallenges.userId} = ${ctx.userId} AND ${village.kageId} != ${ctx.userId})
-            )
-        `),
+        executeResultForSetDefenseAi(ctx.drizzle, ctx, input, match),
       );
       // The village increment also makes an unchanged preference a successful guarded write.
       if (result.rowsAffected > 0)
@@ -272,13 +240,8 @@ export const kageDefenseProcedures = {
         };
       // Diagnose only rejected writes; successful preference saves need no hall reload.
       const [home, current] = await Promise.all([
-        ctx.drizzle.query.village.findFirst({
-          columns: { type: true, kageId: true },
-          where: eq(village.id, match.villageId),
-        }),
-        ctx.drizzle.query.kageDefendedChallenges.findFirst({
-          where: eq(kageDefendedChallenges.id, input.id),
-        }),
+        findVillageForSetDefenseAi(ctx.drizzle, match),
+        findKageDefendedChallengesForWithdrawDefense(ctx.drizzle, input),
       ]);
       if (home?.type !== "VILLAGE") return errorResponse("Village not found");
       if (!current || !["QUEUED", "SCHEDULED"].includes(current.status))
@@ -295,9 +258,10 @@ export const kageDefenseProcedures = {
     .input(kageMatchSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       return (
         (await withKageDefense(ctx.drizzle, match.villageId, async (tx, hall) => {
@@ -325,10 +289,7 @@ export const kageDefenseProcedures = {
             return errorResponse(
               `Check in during the ${KAGE_DEFENSE_CHECK_IN_MINUTES} minutes before the match or its start grace period`,
             );
-          await tx
-            .update(kageDefendedChallenges)
-            .set({ checkedInAt: hall.now })
-            .where(eq(kageDefendedChallenges.id, input.id));
+          await updateKageDefendedChallengesForCheckInDefense(tx, hall, input);
           return {
             success: true,
             message: hall.village.kage?.isAi
@@ -346,9 +307,10 @@ export const kageDefenseProcedures = {
     .input(kageMatchSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       if (match.kageId !== ctx.userId)
         return errorResponse("Only the current Kage can send an instant challenge");
@@ -370,35 +332,16 @@ export const kageDefenseProcedures = {
       // JSON_SET preserves other schedule fields, and live guards reject stale snapshots
       // without a transaction or an attendance obligation for either participant.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${village}
-          STRAIGHT_JOIN ${kageDefendedChallenges} ON ${kageDefendedChallenges.villageId} = ${village.id}
-          INNER JOIN ${userData} ON ${userData.userId} = ${village.kageId}
-          SET ${village.kageScheduleVersion} = ${village.kageScheduleVersion} + 1,
-              ${village.kageSchedule} = JSON_SET(${village.kageSchedule}, '$.instantChallenge', JSON_EXTRACT(${JSON.stringify(invitation)}, '$'))
-          WHERE ${village.id} = ${match.villageId}
-            AND ${village.type} = 'VILLAGE'
-            AND ${village.kageId} = ${ctx.userId}
-            AND ${eq(village.leaderUpdatedAt, tenure)}
-            AND JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.kageId')) = ${ctx.userId}
-            AND JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.tenure')) = ${tenure.toISOString()}
-            AND JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.paused')) = 'false'
-            AND ${userData.status} = 'AWAKE' AND ${userData.isAi} = FALSE
-            AND ${kageDefendedChallenges.id} = ${input.id}
-            AND ${kageDefendedChallenges.status} = 'SCHEDULED'
-            AND ${kageDefendedChallenges.kageId} = ${ctx.userId}
-            AND ${eq(kageDefendedChallenges.tenure, tenure)}
-            AND ${eq(kageDefendedChallenges.scheduledAt, scheduledAt)}
-            AND ${kageDefendedChallenges.scheduledAt} >= ${secondsFromDate(-KAGE_DEFENSE_GRACE_MINUTES * 60, now)}
-            AND ${kageDefendedChallenges.hospitalDeferred} = FALSE
-            AND ${kageDefendedChallenges.aiRequested} = ${match.aiRequested}
-            AND ${kageDefendedChallenges.aiAccepted} = ${match.aiAccepted}
-            AND (JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge') IS NULL
-              OR JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.expiresAt')) <= ${now.toISOString()})
-            AND NOT EXISTS (SELECT 1 FROM ${war}
-              WHERE ${war.type} = 'VILLAGE_WAR' AND ${war.status} = 'ACTIVE'
-                AND (${war.attackerVillageId} = ${village.id} OR ${war.defenderVillageId} = ${village.id}))
-        `),
+        executeResultForRequestInstantDefense(
+          ctx.drizzle,
+          invitation,
+          match,
+          ctx,
+          tenure,
+          input,
+          scheduledAt,
+          now,
+        ),
       );
       if (result.rowsAffected !== 1)
         return errorResponse(
@@ -425,25 +368,15 @@ export const kageDefenseProcedures = {
     .input(kageInstantResponseSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       // The village-first guard serializes with reconciliation and battle launch. Only
       // this JSON field changes, so dismissal needs neither a transaction nor a hall read.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${village}
-          STRAIGHT_JOIN ${kageDefendedChallenges} ON ${kageDefendedChallenges.villageId} = ${village.id}
-          SET ${village.kageScheduleVersion} = ${village.kageScheduleVersion} + 1,
-              ${village.kageSchedule} = JSON_REMOVE(${village.kageSchedule}, '$.instantChallenge')
-          WHERE ${village.id} = ${match.villageId}
-            AND ${village.type} = 'VILLAGE'
-            AND ${kageDefendedChallenges.id} = ${input.id}
-            AND (${village.kageId} = ${ctx.userId} OR ${kageDefendedChallenges.userId} = ${ctx.userId})
-            AND JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.id')) = ${input.instantRequestId}
-            AND JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.matchId')) = ${input.id}
-        `),
+        executeResultForDismissInstantDefense(ctx.drizzle, match, input, ctx),
       );
       if (result.rowsAffected !== 1)
         return errorResponse(
@@ -460,9 +393,10 @@ export const kageDefenseProcedures = {
     .input(kageStartSchema)
     .output(kageBattleResponseSchema)
     .mutation(async ({ ctx, input }) => {
-      const match = await ctx.drizzle.query.kageDefendedChallenges.findFirst({
-        where: eq(kageDefendedChallenges.id, input.id),
-      });
+      const match = await findKageDefendedChallengesForWithdrawDefense(
+        ctx.drizzle,
+        input,
+      );
       if (!match) return errorResponse("Match not found");
       const admission = await withKageDefense(
         ctx.drizzle,
@@ -516,9 +450,7 @@ export const kageDefenseProcedures = {
           if (reason) return errorResponse(reason);
           if (hall.rows.some((r) => r.match.status === "BATTLE"))
             return errorResponse("Finish the current defense first");
-          const history = await tx.query.kageDefendedChallenges.findMany({
-            where: eq(kageDefendedChallenges.userId, m.userId),
-          });
+          const history = await listKageDefendedChallengesForStartDefense(tx, m);
           if (!withinKageChallengeLimits(history, hall.now))
             return errorResponse(
               `Challengers may fight ${KAGE_CHALLENGER_DAILY_LIMIT} time per UTC day and ${KAGE_CHALLENGER_WEEKLY_LIMIT} times per UTC week`,
@@ -603,22 +535,5 @@ const resetFailedLaunch = (
     if (index < 0) return;
     // A running/finished match is never reset. Waiting followers move together so a
     // service failure preserves queue order and cannot become an attendance penalty.
-    await tx
-      .update(kageDefendedChallenges)
-      .set({
-        status: "QUEUED",
-        scheduledAt: null,
-        checkedInAt: null,
-        notBefore: secondsFromDate(KAGE_DEFENSE_NOTICE_HOURS * 3600, hall.now),
-        outcome: "Battle could not start; queue priority retained without penalty",
-      })
-      .where(
-        inArray(
-          kageDefendedChallenges.id,
-          hall.rows
-            .slice(index)
-            .filter((r) => ["QUEUED", "SCHEDULED"].includes(r.match.status))
-            .map((r) => r.match.id),
-        ),
-      );
+    await updateKageDefendedChallengesForResetFailedLaunch(tx, hall, index);
   });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { and, eq } from "drizzle-orm";
-import type { UserItem } from "@/drizzle/schema";
-import { aiProfile, battle, battleHistory, quest, questHistory, questParty, overworldAiPlacement, item, userItem, userData, user2conversation, village, villageStructure } from "@/drizzle/schema";
+import { type UserItem, aiProfile, battle, battleHistory, quest, questHistory, questParty, overworldAiPlacement, item, userItem, userData, user2conversation, village, villageStructure } from "@/drizzle/schema";
+
 import * as Sentry from "@sentry/nextjs";
 import { getNewTrackers, getReward, verifyQuestContentForSave } from "@/libs/quest";
 import { projectPartyTracker } from "@/libs/questParty";
@@ -11,7 +11,8 @@ import { questPartyRouter } from "@/routers/questParty";
 import { overworldAiRouter } from "@/routers/overworldAi";
 import { commitQuestObjectiveRewards, handleQuestConsequences, questsRouter } from "@/routers/quests";
 import type { DrizzleClient } from "@/server/db";
-import { type LoadedQuestParty, questPartyRelations, synchronizeQuestParty } from "@/server/utils/questParty";
+import { type LoadedQuestParty, synchronizeQuestParty } from "@/server/utils/questParty";
+import { questPartyRelations } from "@/queries/questParty";
 import { AllObjectives, QuestTracker, QuestValidator } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
 import { insertItems, insertQuestHistory, insertQuests, insertUsers, insertUserItems } from "../../setup/factories";

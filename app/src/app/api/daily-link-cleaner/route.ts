@@ -1,7 +1,11 @@
-import { eq, like, or } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { forumPost, userNindo } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
+import {
+  listForumPostForGET,
+  listUserNindoForGET,
+  updateTableForProcessContentUrls,
+} from "@/queries/cleaner";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { isFetchOriginError } from "@/utils/error";
@@ -50,10 +54,7 @@ function processContentUrls<T extends { id: string; content: string }>(
 
       // Only update if content changed
       if (newContent !== item.content) {
-        await drizzleDB
-          .update(table)
-          .set({ content: newContent })
-          .where(eq(table.id, item.id));
+        await updateTableForProcessContentUrls(drizzleDB, table, newContent, item);
       }
     }),
   );
@@ -74,18 +75,8 @@ export const GET = async (request: Request) => {
     // Find all content with URLs
     const urlRegex = /(https?:\/\/[^\s"]+)/g;
     const [nindos, posts] = await Promise.all([
-      drizzleDB.query.userNindo.findMany({
-        where: or(
-          like(userNindo.content, "%http://%"),
-          like(userNindo.content, "%https://%"),
-        ),
-      }),
-      drizzleDB.query.forumPost.findMany({
-        where: or(
-          like(forumPost.content, "%http://%"),
-          like(forumPost.content, "%https://%"),
-        ),
-      }),
+      listUserNindoForGET(drizzleDB),
+      listForumPostForGET(drizzleDB),
     ]);
 
     // Process nindos and forum posts in parallel

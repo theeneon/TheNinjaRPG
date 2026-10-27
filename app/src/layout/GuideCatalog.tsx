@@ -1,8 +1,6 @@
 import Link from "@/layout/Link";
-import type {
-  fetchBloodlineCatalog,
-  fetchFarmCatalog,
-} from "@/server/api/routers/guide";
+import type { fetchBloodlineCatalog, fetchFarmCatalog } from "@/queries/guide";
+
 import { formatSecondsToTimeDisplay } from "@/utils/time";
 
 type FarmRow = Awaited<ReturnType<typeof fetchFarmCatalog>>[number];

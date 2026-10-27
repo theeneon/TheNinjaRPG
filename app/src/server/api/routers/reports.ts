@@ -1,46 +1,67 @@
-import {
-  and,
-  desc,
-  eq,
-  getTableColumns,
-  gt,
-  gte,
-  inArray,
-  isNull,
-  like,
-  lte,
-  ne,
-  notExists,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { notExists } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { AutomoderationCategory, BanState } from "@/drizzle/constants";
-import {
-  MODERATION_PROMPT_VERSION,
-  OPENAI_MODERATION_MODEL,
-} from "@/drizzle/constants";
-import {
-  automatedModeration,
-  battleAction,
-  conversation,
-  conversationComment,
-  forumPost,
-  historicalAvatar,
-  moderationScan,
-  reportLog,
-  userData,
-  userNindo,
-  userReport,
-  userReportComment,
-  userReview,
-} from "@/drizzle/schema";
+import type { BanState } from "@/drizzle/constants";
 import { buildModerationEvidence } from "@/libs/moderation/evidence";
 import { getRelatedReports } from "@/libs/moderation/reportSearch";
 import { buildModBotStats } from "@/libs/moderation/stats";
 import { generateModerationDecision, getAdditionalContext } from "@/libs/moderator";
 import { getServerPusher } from "@/libs/pusher";
+import { fetchImage } from "@/queries/conceptart";
+import { fetchUser } from "@/queries/profile";
+import {
+  deleteUserNindoForClearNindo,
+  findConversationCommentForGetInfraction,
+  findConversationForGetInfraction,
+  findForumPostForGetInfraction,
+  findUserReviewForUpsertStaffReview,
+  insertHistoricalAvatarForUpdateUserAvatar,
+  insertReportLogForClearNindo,
+  insertReportLogForUpdateUserAvatar,
+  insertUserReportCommentForBan,
+  insertUserReportCommentForClear,
+  insertUserReportCommentForEscalate,
+  insertUserReportCommentForSilence,
+  insertUserReportCommentForTimeout,
+  insertUserReportCommentForTradeBan,
+  insertUserReportCommentForWarn,
+  insertUserReportForInsertUserReport,
+  insertUserReviewForUpsertStaffReview,
+  listUserReportForClear,
+  listUserReportForClear2,
+  listUserReportForClear3,
+  listUserReportForGetUserReports,
+  listUserReportForLoadReports,
+  listUserReviewForGetUserStaffReviews,
+  selectAutomatedModerationForGetUserModerationSummary,
+  selectDistinctUserReportForGetReportSystemNames,
+  selectModerationScanForGetModBotPerformance,
+  selectUserDataForGetReportStatistics,
+  selectUserReportCommentForGetReportStatistics,
+  selectUserReportForGetAll,
+  selectUserReportForGetModBotPerformance,
+  selectUserReportForGetReportStatistics,
+  selectUserReportForGetReportStatistics2,
+  selectUserReportForNoActiveReport,
+  selectUserReportForNoActiveReport2,
+  updateBattleActionForCreate,
+  updateConversationCommentForCreate,
+  updateForumPostForCreate,
+  updateUserDataForAcceptWarning,
+  updateUserDataForBan,
+  updateUserDataForClear,
+  updateUserDataForClear2,
+  updateUserDataForClear3,
+  updateUserDataForGetBan,
+  updateUserDataForGetBan2,
+  updateUserDataForSilence,
+  updateUserDataForTradeBan,
+  updateUserDataForUpdateUserAvatar,
+  updateUserDataForWarn,
+  updateUserReportForCreate,
+  updateUserReportForEscalate,
+  updateUserReviewForUpsertStaffReview,
+} from "@/queries/reports";
 import { createUserAvatar } from "@/routers/avatar";
 import {
   baseServerResponse,
@@ -50,6 +71,7 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import { scheduleDiscordSync } from "@/server/utils/discord/sync";
+import { fetchUserReport } from "@/server/utils/reports";
 import { updateSanctionReport } from "@/server/utils/sanctionTombstone";
 import {
   canBanUsers,
@@ -66,12 +88,7 @@ import {
   canWarnUsers,
   isStaffRole,
 } from "@/utils/permissions";
-import sanitize from "@/utils/sanitize";
-import {
-  getMillisecondsFromTimeUnit,
-  getUtcDayWindowStart,
-  secondsFromNow,
-} from "@/utils/time";
+import { getMillisecondsFromTimeUnit, getUtcDayWindowStart } from "@/utils/time";
 import { idSchema } from "@/validators/misc";
 import type { AdditionalContext, ReportCommentSchema } from "@/validators/reports";
 import {
@@ -83,52 +100,20 @@ import {
   userReviewSchema,
 } from "@/validators/reports";
 import type { DrizzleClient } from "../../db";
-import { fetchImage } from "./conceptart";
-import { fetchUser } from "./profile";
 
 const pusher = getServerPusher();
 
 export const reportsRouter = createTRPCRouter({
   getReportSystemNames: protectedProcedure.query(async ({ ctx }) => {
-    return await ctx.drizzle
-      .selectDistinct({ system: userReport.system })
-      .from(userReport);
+    return await selectDistinctUserReportForGetReportSystemNames(ctx.drizzle);
   }),
   getReportStatistics: protectedProcedure.query(async ({ ctx }) => {
     const [user, staff, timesReported, timesReporting, decisions] = await Promise.all([
       fetchUser(ctx.drizzle, ctx.userId),
-      await ctx.drizzle
-        .select({
-          userId: userData.userId,
-          username: userData.username,
-          avatar: userData.avatar,
-        })
-        .from(userData)
-        .where(ne(userData.role, "USER")),
-      await ctx.drizzle
-        .select({
-          userId: userData.userId,
-          count: sql`COUNT(${userReport.id})`.mapWith(Number),
-        })
-        .from(userReport)
-        .innerJoin(userData, eq(userData.userId, userReport.reportedUserId))
-        .groupBy(sql`${userReport.reportedUserId}`),
-      await ctx.drizzle
-        .select({
-          userId: userData.userId,
-          count: sql`COUNT(${userReport.id})`.mapWith(Number),
-        })
-        .from(userReport)
-        .innerJoin(userData, eq(userData.userId, userReport.reporterUserId))
-        .groupBy(sql`${userReport.reporterUserId}`),
-      await ctx.drizzle
-        .select({
-          userId: userReportComment.userId,
-          count: sql`COUNT(${userReportComment.id})`.mapWith(Number),
-          decision: userReportComment.decision,
-        })
-        .from(userReportComment)
-        .groupBy(sql`${userReportComment.userId}, ${userReportComment.decision}`),
+      await selectUserDataForGetReportStatistics(ctx.drizzle),
+      await selectUserReportForGetReportStatistics(ctx.drizzle),
+      await selectUserReportForGetReportStatistics2(ctx.drizzle),
+      await selectUserReportCommentForGetReportStatistics(ctx.drizzle),
     ]);
     if (user.role === "USER") {
       throw serverError("UNAUTHORIZED", "You cannot view this page");
@@ -144,43 +129,8 @@ export const reportsRouter = createTRPCRouter({
       const now = new Date();
       const start = getUtcDayWindowStart(input.days, now);
       const [reports, scans] = await Promise.all([
-        ctx.drizzle
-          .select({
-            createdAt: userReport.createdAt,
-            reporterUserId: userReport.reporterUserId,
-            status: userReport.status,
-            system: userReport.system,
-            predictedStatus: userReport.predictedStatus,
-            predictedAt: userReport.predictedAt,
-            promptVersion: userReport.promptVersion,
-          })
-          .from(userReport)
-          .where(and(gte(userReport.createdAt, start), lte(userReport.createdAt, now))),
-        ctx.drizzle
-          .select({
-            createdAt: sql<Date>`MIN(${moderationScan.createdAt})`.mapWith(
-              moderationScan.createdAt,
-            ),
-            count: sql`COUNT(*)`.mapWith(Number),
-            relationType: moderationScan.relationType,
-            outcome: moderationScan.outcome,
-            flagged: moderationScan.flagged,
-            promptVersion: moderationScan.promptVersion,
-          })
-          .from(moderationScan)
-          .where(
-            and(
-              gte(moderationScan.createdAt, start),
-              lte(moderationScan.createdAt, now),
-            ),
-          )
-          .groupBy(
-            sql`DATE(${moderationScan.createdAt})`,
-            moderationScan.relationType,
-            moderationScan.outcome,
-            moderationScan.flagged,
-            moderationScan.promptVersion,
-          ),
+        selectUserReportForGetModBotPerformance(ctx.drizzle, start, now),
+        selectModerationScanForGetModBotPerformance(ctx.drizzle, start, now),
       ]);
       return buildModBotStats(reports, scans, input, now);
     }),
@@ -190,21 +140,7 @@ export const reportsRouter = createTRPCRouter({
       // Query
       const [user, reports] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userReport.findMany({
-          where: and(
-            eq(userReport.reportedUserId, input.userId),
-            ne(userReport.status, "REPORT_CLEARED"),
-          ),
-          with: {
-            reporterUser: {
-              columns: {
-                userId: true,
-                username: true,
-                avatar: true,
-              },
-            },
-          },
-        }),
+        listUserReportForGetUserReports(ctx.drizzle, input),
       ]);
       // Guard
       if (!canSeeSecretData(user.role)) {
@@ -225,66 +161,17 @@ export const reportsRouter = createTRPCRouter({
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
       const user = await fetchUser(ctx.drizzle, ctx.userId);
-      const reportedUser = alias(userData, "reportedUser");
-      const reporterUser = alias(userData, "reporterUser");
+
       const staffUser = canModerateRoles.includes(user.role);
       const timeoutOnlyStaff = canTimeoutUsers(user);
-      const { reporterUserId, ...rest } = getTableColumns(userReport);
-      const reports = await ctx.drizzle
-        .select({
-          UserReport: !staffUser ? { ...rest } : getTableColumns(userReport),
-          reportedUser: { ...getTableColumns(reportedUser) },
-        })
-        .from(userReport)
-        .where(
-          and(
-            ...(input.system !== undefined
-              ? [eq(userReport.system, input.system)]
-              : []),
-            ...(input.startDate !== undefined
-              ? [gte(userReport.createdAt, new Date(input.startDate))]
-              : []),
-            ...(input.endDate !== undefined
-              ? [lte(userReport.createdAt, new Date(input.endDate))]
-              : []),
-            ...(!staffUser
-              ? [
-                  and(
-                    eq(userReport.reportedUserId, ctx.userId),
-                    inArray(userReport.status, [
-                      "BAN_ACTIVATED",
-                      "OFFICIAL_WARNING",
-                      "SILENCE_ACTIVATED",
-                      "TIMEOUT_ACTIVATED",
-                    ]),
-                  ),
-                ]
-              : timeoutOnlyStaff
-                ? [inArray(userReport.status, ["UNVIEWED", "TIMEOUT_ACTIVATED"])] // Aligned with canSeeReport: no reporter/reported exception
-                : [input.status ? eq(userReport.status, input.status) : undefined]),
-          ),
-        )
-        .innerJoin(
-          reportedUser,
-          and(
-            eq(reportedUser.userId, userReport.reportedUserId),
-            ...(input.reportedUser !== undefined
-              ? [like(reportedUser.username, `%${input.reportedUser}%`)]
-              : []),
-          ),
-        )
-        .leftJoin(
-          reporterUser,
-          and(
-            eq(reporterUser.userId, userReport.reporterUserId),
-            ...(input.reporterUser !== undefined
-              ? [like(reporterUser.username, `%${input.reporterUser}%`)]
-              : []),
-          ),
-        )
-        .limit(input.limit)
-        .orderBy(desc(userReport.updatedAt))
-        .offset(skip);
+      const reports = await selectUserReportForGetAll(
+        ctx.drizzle,
+        staffUser,
+        input,
+        ctx,
+        timeoutOnlyStaff,
+        skip,
+      );
 
       const nextCursor = reports.length < input.limit ? null : currentCursor + 1;
       return {
@@ -294,44 +181,7 @@ export const reportsRouter = createTRPCRouter({
     }),
   // Get user report
   getBan: protectedProcedure.query(async ({ ctx }) => {
-    const loadReports = () =>
-      ctx.drizzle.query.userReport.findMany({
-        where: and(
-          inArray(userReport.status, [
-            "BAN_ACTIVATED",
-            "SILENCE_ACTIVATED",
-            "TIMEOUT_ACTIVATED",
-            "OFFICIAL_WARNING",
-          ]),
-          eq(userReport.reportedUserId, ctx.userId),
-        ),
-        with: {
-          reporterUser: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-              rank: true,
-              isOutlaw: true,
-              level: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-          reportedUser: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-              rank: true,
-              isOutlaw: true,
-              level: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-        },
-      });
+    const loadReports = () => listUserReportForLoadReports(ctx.drizzle, ctx);
     const [user, initialReports] = await Promise.all([
       fetchUser(ctx.drizzle, ctx.userId),
       loadReports(),
@@ -345,48 +195,16 @@ export const reportsRouter = createTRPCRouter({
     // Parallel reads can straddle registration or moderation. Recheck in the write;
     // a rejected reset reloads the cases so the sanction screen has a current report.
     const noActiveReport = (statuses: BanState[]) =>
-      notExists(
-        ctx.drizzle
-          .select({ id: userReport.id })
-          .from(userReport)
-          .where(
-            and(
-              eq(userReport.reportedUserId, ctx.userId),
-              inArray(userReport.status, statuses),
-              gt(userReport.banEnd, sql`CURRENT_TIMESTAMP(3)`),
-            ),
-          ),
-      );
+      notExists(selectUserReportForNoActiveReport(ctx.drizzle, ctx, statuses));
     const resets = await Promise.all([
       ...(!activeReport("SILENCE_ACTIVATED") &&
       !activeReport("TIMEOUT_ACTIVATED") &&
       !activeReport("BAN_ACTIVATED") &&
       user.isSilenced
-        ? [
-            ctx.drizzle
-              .update(userData)
-              .set({ isSilenced: false })
-              .where(
-                and(
-                  eq(userData.userId, ctx.userId),
-                  noActiveReport([
-                    "SILENCE_ACTIVATED",
-                    "TIMEOUT_ACTIVATED",
-                    "BAN_ACTIVATED",
-                  ]),
-                ),
-              ),
-          ]
+        ? [updateUserDataForGetBan(ctx.drizzle, ctx, noActiveReport)]
         : []),
       ...(!activeReport("BAN_ACTIVATED") && user.isBanned
-        ? [
-            ctx.drizzle
-              .update(userData)
-              .set({ isBanned: false })
-              .where(
-                and(eq(userData.userId, ctx.userId), noActiveReport(["BAN_ACTIVATED"])),
-              ),
-          ]
+        ? [updateUserDataForGetBan2(ctx.drizzle, ctx, noActiveReport)]
         : []),
     ]);
     if (
@@ -410,10 +228,7 @@ export const reportsRouter = createTRPCRouter({
   acceptWarning: protectedProcedure
     .output(baseServerResponse)
     .mutation(async ({ ctx }) => {
-      await ctx.drizzle
-        .update(userData)
-        .set({ isWarned: false })
-        .where(eq(userData.userId, ctx.userId));
+      await updateUserDataForAcceptWarning(ctx.drizzle, ctx);
       return { success: true, message: "Warning accepted" };
     }),
   // Get a single report
@@ -442,9 +257,10 @@ export const reportsRouter = createTRPCRouter({
       const getInfraction = async (system: typeof input.system) => {
         switch (system) {
           case "forum_comment": {
-            const forumPostData = await ctx.drizzle.query.forumPost.findFirst({
-              where: eq(forumPost.id, input.system_id),
-            });
+            const forumPostData = await findForumPostForGetInfraction(
+              ctx.drizzle,
+              input,
+            );
             const threadContext = await getAdditionalContext(
               ctx.drizzle,
               system,
@@ -454,9 +270,10 @@ export const reportsRouter = createTRPCRouter({
             return { infraction: forumPostData, context: threadContext };
           }
           case "conversation_comment": {
-            const commentData = await ctx.drizzle.query.conversationComment.findFirst({
-              where: eq(conversationComment.id, input.system_id),
-            });
+            const commentData = await findConversationCommentForGetInfraction(
+              ctx.drizzle,
+              input,
+            );
             const [convoContext, sourceConversation] = await Promise.all([
               getAdditionalContext(
                 ctx.drizzle,
@@ -465,9 +282,8 @@ export const reportsRouter = createTRPCRouter({
                 commentData?.conversationId,
               ),
               commentData?.conversationId
-                ? ctx.drizzle.query.conversation.findFirst({
-                    columns: { isPublic: true },
-                    where: eq(conversation.id, commentData.conversationId),
+                ? findConversationForGetInfraction(ctx.drizzle, {
+                    conversationId: commentData.conversationId,
                   })
                 : Promise.resolve(undefined),
             ]);
@@ -539,35 +355,17 @@ export const reportsRouter = createTRPCRouter({
         additionalContext: context,
       });
       if (input.system === "forum_comment") {
-        await ctx.drizzle
-          .update(forumPost)
-          .set({ isReported: true })
-          .where(eq(forumPost.id, input.system_id));
+        await updateForumPostForCreate(ctx.drizzle, input);
       } else if (input.system === "conversation_comment") {
-        await ctx.drizzle
-          .update(conversationComment)
-          .set({ isReported: true })
-          .where(eq(conversationComment.id, input.system_id));
+        await updateConversationCommentForCreate(ctx.drizzle, input);
       } else if (input.system === "battle_log") {
-        await ctx.drizzle
-          .update(battleAction)
-          .set({ updatedAt: secondsFromNow(72 * 3600) })
-          .where(eq(battleAction.id, input.system_id));
+        await updateBattleActionForCreate(ctx.drizzle, input);
       }
       try {
         const prediction = await generateModerationDecision(ctx.drizzle, evidence, {
           excludeReportId: reportId,
         });
-        await ctx.drizzle
-          .update(userReport)
-          .set({
-            aiInterpretation: prediction.aiInterpretation,
-            predictedStatus: prediction.decision.createReport,
-            predictedAt: new Date(),
-            predictionModel: OPENAI_MODERATION_MODEL,
-            promptVersion: MODERATION_PROMPT_VERSION,
-          })
-          .where(and(eq(userReport.id, reportId), isNull(userReport.predictedAt)));
+        await updateUserReportForCreate(ctx.drizzle, prediction, reportId);
       } catch (error) {
         console.error("Could not enrich saved report with AI prediction", error);
       }
@@ -612,19 +410,12 @@ export const reportsRouter = createTRPCRouter({
       await Promise.all([
         ...(report.reportedUserId
           ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ isBanned: true, status: "AWAKE", travelFinishAt: null })
-                .where(eq(userData.userId, report.reportedUserId)),
+              updateUserDataForBan(ctx.drizzle, {
+                reportedUserId: report.reportedUserId,
+              }),
             ]
           : []),
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: input.object_id,
-          content: sanitize(input.comment),
-          decision: "BAN_ACTIVATED",
-        }),
+        insertUserReportCommentForBan(ctx.drizzle, ctx, input),
       ]);
       // An indefinite ban or silence also bans the linked Discord account.
       scheduleDiscordSync(ctx.drizzle, report.reportedUserId);
@@ -665,19 +456,12 @@ export const reportsRouter = createTRPCRouter({
       await Promise.all([
         ...(report.reportedUserId
           ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ isSilenced: true, status: "AWAKE" })
-                .where(eq(userData.userId, report.reportedUserId)),
+              updateUserDataForSilence(ctx.drizzle, {
+                reportedUserId: report.reportedUserId,
+              }),
             ]
           : []),
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: input.object_id,
-          content: sanitize(input.comment),
-          decision: "SILENCE_ACTIVATED",
-        }),
+        insertUserReportCommentForSilence(ctx.drizzle, ctx, input),
       ]);
       // An indefinite ban or silence also bans the linked Discord account.
       scheduleDiscordSync(ctx.drizzle, report.reportedUserId);
@@ -712,19 +496,12 @@ export const reportsRouter = createTRPCRouter({
       await Promise.all([
         ...(report.reportedUserId
           ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ isSilenced: true, status: "AWAKE" })
-                .where(eq(userData.userId, report.reportedUserId)),
+              updateUserDataForSilence(ctx.drizzle, {
+                reportedUserId: report.reportedUserId,
+              }),
             ]
           : []),
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: input.object_id,
-          content: sanitize(input.comment),
-          decision: "TIMEOUT_ACTIVATED",
-        }),
+        insertUserReportCommentForTimeout(ctx.drizzle, ctx, input),
       ]);
       return { success: true, message: "User timed out (1 hour)" };
     }),
@@ -758,17 +535,8 @@ export const reportsRouter = createTRPCRouter({
           "Report or account is no longer available for this decision. Please refresh.",
         );
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({ isWarned: true })
-          .where(eq(userData.userId, report.reportedUserId ?? "")),
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: input.object_id,
-          content: sanitize(input.comment),
-          decision: "OFFICIAL_WARNING",
-        }),
+        updateUserDataForWarn(ctx.drizzle, { reportedUserId: report.reportedUserId }),
+        insertUserReportCommentForWarn(ctx.drizzle, ctx, input),
       ]);
       if (report.reportedUserId) {
         void pusher.trigger(report.reportedUserId, "event", {
@@ -797,17 +565,8 @@ export const reportsRouter = createTRPCRouter({
       if (canEscalateBan(user, report)) return errorResponse("You cannot escalate");
       // Update
       await Promise.all([
-        ctx.drizzle
-          .update(userReport)
-          .set({ status: "BAN_ESCALATED", updatedAt: new Date() })
-          .where(eq(userReport.id, input.object_id)),
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: input.object_id,
-          content: sanitize(input.comment),
-          decision: "BAN_ESCALATED",
-        }),
+        updateUserReportForEscalate(ctx.drizzle, input),
+        insertUserReportCommentForEscalate(ctx.drizzle, ctx, input),
       ]);
       return { success: true, message: "Report escalated" };
     }),
@@ -839,97 +598,29 @@ export const reportsRouter = createTRPCRouter({
       if (report.reportedUserId) {
         const reportedUserId = report.reportedUserId;
         const [bans, activeSilenceOrTimeout, activeTradeBans] = await Promise.all([
-          ctx.drizzle.query.userReport.findMany({
-            where: and(
-              eq(userReport.reportedUserId, reportedUserId),
-              eq(userReport.status, "BAN_ACTIVATED"),
-              gte(userReport.banEnd, new Date()),
-              ne(userReport.id, report.id),
-            ),
-          }),
-          ctx.drizzle.query.userReport.findMany({
-            where: and(
-              eq(userReport.reportedUserId, reportedUserId),
-              inArray(userReport.status, ["SILENCE_ACTIVATED", "TIMEOUT_ACTIVATED"]),
-              gte(userReport.banEnd, new Date()),
-              ne(userReport.id, report.id),
-            ),
-          }),
-          ctx.drizzle.query.userReport.findMany({
-            where: and(
-              eq(userReport.reportedUserId, reportedUserId),
-              eq(userReport.status, "TRADE_BAN_ACTIVATED"),
-              gte(userReport.banEnd, new Date()),
-              ne(userReport.id, report.id),
-            ),
-          }),
+          listUserReportForClear(ctx.drizzle, reportedUserId, report),
+          listUserReportForClear2(ctx.drizzle, reportedUserId, report),
+          listUserReportForClear3(ctx.drizzle, reportedUserId, report),
         ]);
         // A character can be recreated after these reads; only reset flags while
         // no current report still enforces that restriction.
         const noActiveReport = (statuses: BanState[]) =>
           notExists(
-            ctx.drizzle
-              .select({ id: userReport.id })
-              .from(userReport)
-              .where(
-                and(
-                  eq(userReport.reportedUserId, reportedUserId),
-                  inArray(userReport.status, statuses),
-                  gte(userReport.banEnd, sql`CURRENT_TIMESTAMP(3)`),
-                ),
-              ),
+            selectUserReportForNoActiveReport2(ctx.drizzle, reportedUserId, statuses),
           );
         mutations.push(
           ...(bans.length === 0
-            ? [
-                ctx.drizzle
-                  .update(userData)
-                  .set({ isBanned: false })
-                  .where(
-                    and(
-                      eq(userData.userId, reportedUserId),
-                      noActiveReport(["BAN_ACTIVATED"]),
-                    ),
-                  ),
-              ]
+            ? [updateUserDataForClear(ctx.drizzle, reportedUserId, noActiveReport)]
             : []),
           ...(activeSilenceOrTimeout.length === 0
-            ? [
-                ctx.drizzle
-                  .update(userData)
-                  .set({ isSilenced: false })
-                  .where(
-                    and(
-                      eq(userData.userId, reportedUserId),
-                      noActiveReport(["SILENCE_ACTIVATED", "TIMEOUT_ACTIVATED"]),
-                    ),
-                  ),
-              ]
+            ? [updateUserDataForClear2(ctx.drizzle, reportedUserId, noActiveReport)]
             : []),
           ...(activeTradeBans.length === 0
-            ? [
-                ctx.drizzle
-                  .update(userData)
-                  .set({ isTradeBanned: false })
-                  .where(
-                    and(
-                      eq(userData.userId, reportedUserId),
-                      noActiveReport(["TRADE_BAN_ACTIVATED"]),
-                    ),
-                  ),
-              ]
+            ? [updateUserDataForClear3(ctx.drizzle, reportedUserId, noActiveReport)]
             : []),
         );
       }
-      mutations.push(
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: report.id,
-          content: sanitize(input.comment),
-          decision: "REPORT_CLEARED",
-        }),
-      );
+      mutations.push(insertUserReportCommentForClear(ctx.drizzle, ctx, report, input));
       await Promise.all(mutations);
       // Lifts the Discord ban once no other indefinite sanction remains.
       scheduleDiscordSync(ctx.drizzle, report.reportedUserId);
@@ -957,23 +648,14 @@ export const reportsRouter = createTRPCRouter({
       if (!avatarUrl) return errorResponse("Failed to create avatar");
       // Mutate
       await Promise.all([
-        ctx.drizzle.insert(reportLog).values({
-          id: nanoid(),
-          staffUserId: ctx.userId,
-          action: "AVATAR_CHANGE",
-          targetUserId: input.userId,
-        }),
-        ctx.drizzle
-          .update(userData)
-          .set({ avatar: avatarUrl, avatarLight: thumbnailUrl ?? null })
-          .where(eq(userData.userId, input.userId)),
-        ctx.drizzle.insert(historicalAvatar).values({
-          userId: input.userId,
-          avatar: avatarUrl,
-          avatarLight: thumbnailUrl ?? null,
-          status: "success",
-          done: true,
-        }),
+        insertReportLogForUpdateUserAvatar(ctx.drizzle, ctx, input),
+        updateUserDataForUpdateUserAvatar(ctx.drizzle, avatarUrl, thumbnailUrl, input),
+        insertHistoricalAvatarForUpdateUserAvatar(
+          ctx.drizzle,
+          input,
+          avatarUrl,
+          thumbnailUrl,
+        ),
       ]);
       return { success: true, message: "Avatar update request sent" };
     }),
@@ -992,20 +674,13 @@ export const reportsRouter = createTRPCRouter({
       if (!canClearUserNindo(user)) return errorResponse("You cannot clear nindos");
       // Mutate
       await Promise.all([
-        ctx.drizzle.insert(reportLog).values({
-          id: nanoid(),
-          staffUserId: ctx.userId,
-          action: "NINDO_CLEARED",
-          targetUserId: input.userId,
-        }),
-        ctx.drizzle.delete(userNindo).where(eq(userNindo.userId, target.userId)),
+        insertReportLogForClearNindo(ctx.drizzle, ctx, input),
+        deleteUserNindoForClearNindo(ctx.drizzle, target),
       ]);
       return { success: true, message: "Nindo cleared" };
     }),
   getUserStaffReviews: protectedProcedure.query(async ({ ctx }) => {
-    return await ctx.drizzle.query.userReview.findMany({
-      where: eq(userReview.authorUserId, ctx.userId),
-    });
+    return await listUserReviewForGetUserStaffReviews(ctx.drizzle, ctx);
   }),
   upsertStaffReview: protectedProcedure
     .input(userReviewSchema)
@@ -1015,36 +690,17 @@ export const reportsRouter = createTRPCRouter({
       const [user, target, review] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, input.staffUserId),
-        ctx.drizzle.query.userReview.findFirst({
-          where: and(
-            eq(userReview.targetUserId, input.staffUserId),
-            eq(userReview.authorUserId, ctx.userId),
-          ),
-        }),
+        findUserReviewForUpsertStaffReview(ctx.drizzle, input, ctx),
       ]);
       // Guard
       if (user.isBanned) return errorResponse("You are banned and cannot post reviews");
       if (target.role === "USER") return errorResponse("You cannot review users");
       // Mutate
       if (review) {
-        await ctx.drizzle
-          .update(userReview)
-          .set({
-            positive: input.positive,
-            review: input.review,
-            createdAt: new Date(),
-          })
-          .where(eq(userReview.id, review.id));
+        await updateUserReviewForUpsertStaffReview(ctx.drizzle, input, review);
         return { success: true, message: "Staff review updated" };
       } else {
-        await ctx.drizzle.insert(userReview).values({
-          id: nanoid(),
-          targetUserId: input.staffUserId,
-          authorUserId: ctx.userId,
-          authorIp: ctx.userIp ?? "unknown",
-          positive: input.positive,
-          review: input.review,
-        });
+        await insertUserReviewForUpsertStaffReview(ctx.drizzle, input, ctx);
         return { success: true, message: "Staff review created" };
       }
     }),
@@ -1055,63 +711,7 @@ export const reportsRouter = createTRPCRouter({
       const targetUserId = input.userId ?? ctx.userId;
       const [user, results] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle
-          .select({
-            totalEntries: sql`COUNT(*)`.mapWith(Number),
-            sexual:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.sexual} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            sexual_minors:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.sexual_minors} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            harassment:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.harassment} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            harassment_threatening:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.harassment_threatening} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            hate: sql<number>`SUM(CASE WHEN ${automatedModeration.hate} = true THEN 1 ELSE 0 END)`.mapWith(
-              Number,
-            ),
-            hate_threatening:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.hate_threatening} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            illicit:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.illicit} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            illicit_violent:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.illicit_violent} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            self_harm:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.self_harm} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            self_harm_intent:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.self_harm_intent} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            self_harm_instructions:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.self_harm_instructions} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            violence:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.violence} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-            violence_graphic:
-              sql<number>`SUM(CASE WHEN ${automatedModeration.violence_graphic} = true THEN 1 ELSE 0 END)`.mapWith(
-                Number,
-              ),
-          })
-          .from(automatedModeration)
-          .where(eq(automatedModeration.userId, targetUserId)),
+        selectAutomatedModerationForGetUserModerationSummary(ctx.drizzle, targetUserId),
       ]);
 
       // Only allow users to see their own moderation data or staff to see anyone's
@@ -1157,66 +757,16 @@ export const reportsRouter = createTRPCRouter({
       await Promise.all([
         ...(report.reportedUserId
           ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ isTradeBanned: true })
-                .where(eq(userData.userId, report.reportedUserId)),
+              updateUserDataForTradeBan(ctx.drizzle, {
+                reportedUserId: report.reportedUserId,
+              }),
             ]
           : []),
-        ctx.drizzle.insert(userReportComment).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          reportId: input.object_id,
-          content: sanitize(input.comment),
-          decision: "TRADE_BAN_ACTIVATED",
-        }),
+        insertUserReportCommentForTradeBan(ctx.drizzle, ctx, input),
       ]);
       return { success: true, message: "User trade banned" };
     }),
 });
-
-export const fetchUserReport = async (
-  client: DrizzleClient,
-  userReportId: string,
-  fetcherUserId: string,
-) => {
-  const entry = await client.query.userReport.findFirst({
-    where: eq(userReport.id, userReportId),
-    with: {
-      reporterUser: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          rank: true,
-          isOutlaw: true,
-          level: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-      reportedUser: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          rank: true,
-          isOutlaw: true,
-          level: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-    },
-  });
-  if (!entry) return null;
-  // If fetching report on yourself, hide reporter
-  if (fetcherUserId === entry.reportedUserId) {
-    entry.reporterUser = null;
-    entry.reporterUserId = null;
-  }
-  return entry;
-};
 
 export const getBanEndDate = (input: ReportCommentSchema) => {
   return input.banTime !== undefined && input.banTimeUnit !== undefined
@@ -1240,68 +790,6 @@ export const insertUserReport = async (
   },
 ) => {
   const id = nanoid();
-  await client.insert(userReport).values({
-    id,
-    reporterUserId: info.userId,
-    reportedUserId: info.reportedUserId,
-    system: info.system,
-    infraction: info.infraction,
-    aiInterpretation: info.aiInterpretation,
-    reason: sanitize(info.reason),
-    predictedStatus: info.predictedStatus,
-    predictedAt: info.predictedStatus ? new Date() : null,
-    predictionModel: info.predictedStatus ? OPENAI_MODERATION_MODEL : null,
-    promptVersion: info.predictedStatus ? MODERATION_PROMPT_VERSION : null,
-    additionalContext: info.additionalContext,
-  });
+  await insertUserReportForInsertUserReport(client, id, info);
   return id;
-};
-
-/**
- * Insert an automated moderation report
- * @param client - The database client
- * @param info - The information to insert
- */
-export const insertAutomatedModeration = async (
-  client: DrizzleClient,
-  info: {
-    userId: string;
-    content: string;
-    relationType: AutomoderationCategory;
-    categories: {
-      sexual: boolean;
-      sexual_minors: boolean;
-      harassment: boolean;
-      harassment_threatening: boolean;
-      hate: boolean;
-      hate_threatening: boolean;
-      illicit: boolean;
-      illicit_violent: boolean;
-      self_harm: boolean;
-      self_harm_intent: boolean;
-      self_harm_instructions: boolean;
-      violence: boolean;
-      violence_graphic: boolean;
-    };
-  },
-) => {
-  await client.insert(automatedModeration).values({
-    id: nanoid(),
-    userId: info.userId,
-    content: info.content,
-    relationType: info.relationType,
-    sexual: info.categories.sexual,
-    sexual_minors: info.categories.sexual_minors,
-    harassment: info.categories.harassment,
-    harassment_threatening: info.categories.harassment_threatening,
-    hate: info.categories.hate,
-    hate_threatening: info.categories.hate_threatening,
-    illicit: info.categories.illicit,
-    illicit_violent: info.categories.illicit_violent,
-    self_harm: info.categories.self_harm,
-    self_harm_intent: info.categories.self_harm_intent,
-    self_harm_instructions: info.categories.self_harm_instructions,
-    violence: info.categories.violence,
-    violence_graphic: info.categories.violence_graphic,
-  });
 };

@@ -1,10 +1,11 @@
+import { fetchEventNoticeState } from "@/queries/tournamentEvents";
 import { describe, expect, it, mock } from "bun:test";
 import {
   beginEventRound,
   createEventState,
   generateEventBracket,
 } from "@/libs/tournament/events";
-import { fetchEventNoticeState } from "@/server/api/routers/tournamentEvents";
+
 import type { DrizzleClient } from "@/server/db";
 import {
   type EventParticipant,

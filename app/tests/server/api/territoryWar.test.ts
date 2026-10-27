@@ -1,9 +1,10 @@
+import { fetchBattle } from "@/queries/combat";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { VILLAGE_SYNDICATE_ID } from "@/drizzle/constants";
 import { aiProfile, battle, battleHistory, clan, mpvpBattleQueue, mpvpBattleUser, territoryWar, userData, userVote, village } from "@/drizzle/schema";
 import { Pusher } from "@/libs/pusher";
-import { fetchBattle } from "@/server/api/routers/combat";
+
 import { clanRouter } from "@/server/api/routers/clan";
 import { homeRouter } from "@/server/api/routers/home";
 import { territoryWarRouter } from "@/server/api/routers/territoryWar";

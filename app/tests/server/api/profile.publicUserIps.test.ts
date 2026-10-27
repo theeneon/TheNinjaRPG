@@ -2,7 +2,7 @@
 import { beforeEach, expect, it } from "bun:test";
 import { userData } from "@/drizzle/schema";
 import type { GetPublicUsersSchema } from "@/validators/user";
-import { fetchPublicUsers } from "../../../src/server/api/routers/profile";
+import { fetchPublicUsers } from "@/server/utils/profile";
 import { insertUsers } from "../../setup/factories";
 import { describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
 

@@ -1,32 +1,14 @@
-import {
-  and,
-  asc,
-  eq,
-  getTableColumns,
-  gte,
-  inArray,
-  isNull,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
-import {
-  type LetterRank,
-  MAX_EXPERIENCE_LEVEL,
-  type QuestType,
-  UserRoles,
-} from "@/drizzle/constants";
-import { quest, questHistory, userData } from "@/drizzle/schema";
-import type { DrizzleClient } from "@/server/db";
-import { canPlayHiddenQuests } from "@/utils/permissions";
-import type { QuestContentType } from "@/validators/objectives";
+import { and, eq, inArray, isNull, or } from "drizzle-orm";
 
-interface QuestDiscoveryOptions {
-  questTypes: QuestType[];
-  villageId?: string;
-  level?: number;
-  ranks?: LetterRank[];
-}
+import { quest } from "@/drizzle/schema";
+import {
+  type QuestDiscoveryOptions,
+  questLevelFilters,
+  selectQuestForFetchQuestDiscoveryCandidates,
+  selectQuestForFetchQuestDiscoverySummaryCandidates,
+} from "@/queries/quests";
+
+import type { DrizzleClient } from "@/server/db";
 
 /**
  * Shared candidate query for quest discovery screens. Availability remains the caller's
@@ -39,22 +21,12 @@ export const fetchQuestDiscoveryCandidates = async (
   userId: string,
   options: QuestDiscoveryOptions,
 ) =>
-  client
-    .select({
-      ...getTableColumns(quest),
-      previousAttempts: questHistory.previousAttempts,
-      previousCompletes: questHistory.previousCompletes,
-      completed: questHistory.completed,
-      periodCompletes: questHistory.periodCompletes,
-      periodStartAt: questHistory.periodStartAt,
-    })
-    .from(quest)
-    .leftJoin(
-      questHistory,
-      and(eq(quest.id, questHistory.questId), eq(questHistory.userId, userId)),
-    )
-    .where(buildQuestDiscoveryWhere(options))
-    .orderBy(asc(quest.name));
+  selectQuestForFetchQuestDiscoveryCandidates(
+    client,
+    userId,
+    buildQuestDiscoveryWhere,
+    options,
+  );
 
 /**
  * Discovery inputs without objective JSON. Authorize hidden summaries in the join,
@@ -65,67 +37,12 @@ export const fetchQuestDiscoverySummaryCandidates = async (
   userId: string,
   options: QuestDiscoveryOptions,
 ) =>
-  client
-    .select({
-      id: quest.id,
-      name: quest.name,
-      image: quest.image,
-      description: quest.description,
-      questRank: quest.questRank,
-      medicalRank: quest.medicalRank,
-      huntingRank: quest.huntingRank,
-      gatheringRank: quest.gatheringRank,
-      requiredLevel: quest.requiredLevel,
-      requiredFarmingLevel: quest.requiredFarmingLevel,
-      prerequisiteQuestId: quest.prerequisiteQuestId,
-      questType: quest.questType,
-      hidden: quest.hidden,
-      requiredVillage: quest.requiredVillage,
-      requiredBloodlineId: quest.requiredBloodlineId,
-      requiredSageModeId: quest.requiredSageModeId,
-      requiredSageRank: quest.requiredSageRank,
-      requiredNinjutsuMastery: quest.requiredNinjutsuMastery,
-      requiredGenjutsuMastery: quest.requiredGenjutsuMastery,
-      requiredTaijutsuMastery: quest.requiredTaijutsuMastery,
-      requiredBukijutsuMastery: quest.requiredBukijutsuMastery,
-      requiredBloodlineMastery: quest.requiredBloodlineMastery,
-      requiredSageMastery: quest.requiredSageMastery,
-      // Eligibility needs the fixed promotion and reward mode, but not objective JSON.
-      content:
-        sql`JSON_OBJECT('reward', JSON_EXTRACT(${quest.content}, '$.reward'), 'rewardMode', JSON_EXTRACT(${quest.content}, '$.rewardMode'))`.mapWith(
-          (value: string) =>
-            quest.content.mapFromDriverValue(value) as Pick<
-              QuestContentType,
-              "reward" | "rewardMode"
-            >,
-        ),
-      maxLevel: quest.maxLevel,
-      maxAttempts: quest.maxAttempts,
-      maxCompletes: quest.maxCompletes,
-      retryDelay: quest.retryDelay,
-      startsAt: quest.startsAt,
-      endsAt: quest.endsAt,
-      previousAttempts: questHistory.previousAttempts,
-      previousCompletes: questHistory.previousCompletes,
-      periodCompletes: questHistory.periodCompletes,
-      periodStartAt: questHistory.periodStartAt,
-    })
-    .from(quest)
-    .leftJoin(
-      questHistory,
-      and(eq(quest.id, questHistory.questId), eq(questHistory.userId, userId)),
-    )
-    .innerJoin(userData, eq(userData.userId, userId))
-    .where(
-      and(
-        buildQuestDiscoveryWhere(options),
-        or(
-          eq(quest.hidden, false),
-          inArray(userData.role, UserRoles.filter(canPlayHiddenQuests)),
-        ),
-      ),
-    )
-    .orderBy(asc(quest.name));
+  selectQuestForFetchQuestDiscoverySummaryCandidates(
+    client,
+    userId,
+    buildQuestDiscoveryWhere,
+    options,
+  );
 
 const buildQuestDiscoveryWhere = (options: QuestDiscoveryOptions) =>
   and(
@@ -136,15 +53,3 @@ const buildQuestDiscoveryWhere = (options: QuestDiscoveryOptions) =>
     options.ranks?.length ? inArray(quest.questRank, options.ranks) : undefined,
     ...(options.level !== undefined ? questLevelFilters(options.level) : []),
   );
-
-/**
- * Include legacy endgame content in SQL candidates above the XP cap. The availability
- * layer still enforces each milestone's exact level and rank requirements.
- */
-export const questLevelFilters = (level: number) => [
-  lte(quest.requiredLevel, level),
-  or(
-    gte(quest.maxLevel, level),
-    level > MAX_EXPERIENCE_LEVEL ? eq(quest.maxLevel, MAX_EXPERIENCE_LEVEL) : undefined,
-  ),
-];

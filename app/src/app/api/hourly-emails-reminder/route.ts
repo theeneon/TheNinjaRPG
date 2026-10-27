@@ -1,14 +1,15 @@
 import sgMail from "@sendgrid/mail";
-import { and, asc, eq, isNull, lte, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { EMAIL_REMINDER_EXPERIENCE_REWARD } from "@/drizzle/constants";
-import { emailReminder, userData } from "@/drizzle/schema";
 import { env } from "@/env/server.mjs";
 import { handleEndpointError, lockWithHourlyTimer } from "@/libs/gamesettings";
-import { petExperienceGainSql } from "@/libs/pets/experience";
+import {
+  listEmailReminderForGET,
+  updateEmailReminderForGET,
+  updateEmailReminderForGET2,
+  updateUserDataForGET,
+} from "@/queries/emailReminder";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
-import { MONTH_S, secondsFromNow } from "@/utils/time";
 
 const ENDPOINT_NAME = "hourly-emails-reminder";
 
@@ -28,19 +29,7 @@ export async function GET(request: Request) {
 
   try {
     // Fetch all the emails currently in the database
-    const reminders = await drizzleDB.query.emailReminder.findMany({
-      where: and(
-        eq(emailReminder.validated, true),
-        eq(emailReminder.disabled, false),
-        lte(emailReminder.lastActivity, secondsFromNow(-MONTH_S)),
-        or(
-          lte(emailReminder.latestRejoinRequest, emailReminder.lastActivity),
-          isNull(emailReminder.latestRejoinRequest),
-        ),
-      ),
-      orderBy: [asc(emailReminder.lastActivity)],
-      limit: 10,
-    });
+    const reminders = await listEmailReminderForGET(drizzleDB);
 
     // Send email for each reminder
     await Promise.all(
@@ -60,34 +49,15 @@ export async function GET(request: Request) {
           .then(async (response: any) => {
             console.log("RESPONSE: ", response);
             await Promise.all([
-              drizzleDB
-                .update(emailReminder)
-                .set({ latestRejoinRequest: new Date() })
-                .where(eq(emailReminder.id, reminder.id)),
+              updateEmailReminderForGET(drizzleDB, reminder),
               ...(reminder.userId
-                ? [
-                    drizzleDB
-                      .update(userData)
-                      .set({
-                        earnedExperience: sql`${userData.earnedExperience} + ${EMAIL_REMINDER_EXPERIENCE_REWARD}`,
-                        petExperience: petExperienceGainSql(
-                          EMAIL_REMINDER_EXPERIENCE_REWARD,
-                        ),
-                      })
-                      .where(eq(userData.userId, reminder.userId)),
-                  ]
+                ? [updateUserDataForGET(drizzleDB, { userId: reminder.userId })]
                 : []),
             ]);
           })
           .catch(async (error: any) => {
             console.log("ERROR: ", error);
-            await drizzleDB
-              .update(emailReminder)
-              .set({
-                latestRejoinRequest: new Date(),
-                validated: false,
-              })
-              .where(eq(emailReminder.id, reminder.id));
+            await updateEmailReminderForGET2(drizzleDB, reminder);
           });
       }),
     );

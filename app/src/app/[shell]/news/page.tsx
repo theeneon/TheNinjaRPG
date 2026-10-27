@@ -1,7 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
 import { IMG_BUILDING_NEWS } from "@/drizzle/constants";
 import { FancyForumThreads } from "@/layout/FancyForumThreads";
-import { fetchForumPageData, readNews } from "@/libs/forum";
+import { fetchForumPageData } from "@/libs/forum";
+import { readNews } from "@/queries/forum";
 import { drizzleDB } from "@/server/db";
 
 // Force dynamic rendering to avoid static generation errors with headers

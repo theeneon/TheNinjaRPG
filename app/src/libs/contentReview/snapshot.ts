@@ -1,5 +1,4 @@
 import alea from "alea";
-import { and, count, eq, gte, inArray, or, sum } from "drizzle-orm";
 import { z } from "zod";
 import {
   CONTENT_AUDIT_INTERVAL_HOURS,
@@ -10,13 +9,12 @@ import {
   IMG_AVATAR_DEFAULT,
 } from "@/drizzle/constants";
 import {
-  contentProposal,
-  contentProposalChange,
-  dataBattleAction,
-  gameAsset,
-  userItem,
-  userJutsu,
-} from "@/drizzle/schema";
+  selectContentProposalForRecentSuggestions,
+  selectDataBattleActionForUsageStats,
+  selectGameAssetForBuildAuditSnapshot,
+  selectUserItemForOwnerCounts,
+  selectUserJutsuForOwnerCounts,
+} from "@/queries/contentReview";
 import type { DrizzleClient } from "@/server/db";
 import { DAY_S, HOUR_S, secondsFromNow } from "@/utils/time";
 import { agentAuditOutputSchema, visualCheckSchema } from "@/validators/contentReview";
@@ -48,10 +46,7 @@ export const buildAuditSnapshot = async (
       ? ownerCounts(client)
       : Promise.resolve(new Map<string, number>()),
     view.assets.length
-      ? client
-          .select()
-          .from(gameAsset)
-          .where(and(inArray(gameAsset.type, view.assets), eq(gameAsset.hidden, false)))
+      ? selectGameAssetForBuildAuditSnapshot(client, view)
       : Promise.resolve([]),
     recentSuggestions(client),
   ]);
@@ -190,20 +185,7 @@ const strict = (node: unknown): unknown => {
  * `entityKey`.
  */
 const usageStats = async (client: DrizzleClient) => {
-  const rows = await client
-    .select({
-      type: dataBattleAction.type,
-      contentId: dataBattleAction.contentId,
-      battleWon: dataBattleAction.battleWon,
-      n: sum(dataBattleAction.count).mapWith(Number),
-    })
-    .from(dataBattleAction)
-    .where(inArray(dataBattleAction.type, ["jutsu", "item", "bloodline"]))
-    .groupBy(
-      dataBattleAction.type,
-      dataBattleAction.contentId,
-      dataBattleAction.battleWon,
-    );
+  const rows = await selectDataBattleActionForUsageStats(client);
   const totals = new Map<string, { casts: number; wins: number; decided: number }>();
   const typeOf = { jutsu: "JUTSU", item: "ITEM", bloodline: "BLOODLINE" } as const;
   for (const row of rows) {
@@ -233,14 +215,8 @@ const usageStats = async (client: DrizzleClient) => {
 /** How many players hold each jutsu and item, by id: the reach of a balance change. */
 const ownerCounts = async (client: DrizzleClient) => {
   const [jutsus, items] = await Promise.all([
-    client
-      .select({ id: userJutsu.jutsuId, n: count() })
-      .from(userJutsu)
-      .groupBy(userJutsu.jutsuId),
-    client
-      .select({ id: userItem.itemId, n: count() })
-      .from(userItem)
-      .groupBy(userItem.itemId),
+    selectUserJutsuForOwnerCounts(client),
+    selectUserItemForOwnerCounts(client),
   ]);
   return new Map([...jutsus, ...items].map((row) => [row.id, row.n]));
 };
@@ -281,30 +257,7 @@ const countAssetUse = (entities: ContentEntity[]) => {
  */
 const recentSuggestions = async (client: DrizzleClient) => {
   const since = secondsFromNow(-CONTENT_PROPOSAL_RETENTION_DAYS * DAY_S);
-  const rows = await client
-    .select({
-      id: contentProposal.id,
-      title: contentProposal.title,
-      category: contentProposal.category,
-      status: contentProposal.status,
-      rejectReason: contentProposal.rejectReason,
-      reviewNote: contentProposal.reviewNote,
-      outdatedReason: contentProposal.outdatedReason,
-      entityType: contentProposalChange.entityType,
-      entityId: contentProposalChange.entityId,
-      after: contentProposalChange.after,
-    })
-    .from(contentProposal)
-    .innerJoin(
-      contentProposalChange,
-      eq(contentProposalChange.proposalId, contentProposal.id),
-    )
-    .where(
-      or(
-        eq(contentProposal.status, "PENDING"),
-        gte(contentProposal.statusChangedAt, since),
-      ),
-    );
+  const rows = await selectContentProposalForRecentSuggestions(client, since);
   const shape = (status: string) =>
     rows
       .filter((row) => row.status === status)

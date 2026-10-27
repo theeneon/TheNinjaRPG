@@ -1,8 +1,18 @@
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
-import { userData, villageAlliance } from "@/drizzle/schema";
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { getPvpBoost } from "@/libs/pvpExperience";
 import { getTerritoryWarPeriodBoost } from "@/libs/territoryWar";
+import {
+  listUserDataForUseSensory,
+  selectVillageAllianceForUseSensory,
+  updateUserDataForActivateStealth,
+  updateUserDataForBreakStealth,
+  updateUserDataForCancelCovertTraining,
+  updateUserDataForDeactivateStealth,
+  updateUserDataForStopCovertTraining,
+  updateUserDataForTrainCovert,
+  updateUserDataForUseSensory,
+  updateUserDataForUseSensory2,
+} from "@/queries/stealth";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
@@ -80,13 +90,11 @@ export const stealthRouter = createTRPCRouter({
       const stealthActivatedAt = new Date();
 
       // Mutation
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          stealthActive: true,
-          stealthActivatedAt,
-        })
-        .where(eq(userData.userId, ctx.userId));
+      const result = await updateUserDataForActivateStealth(
+        ctx.drizzle,
+        stealthActivatedAt,
+        ctx,
+      );
 
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to activate stealth");
@@ -135,13 +143,7 @@ export const stealthRouter = createTRPCRouter({
       if (!user.stealthActive) return errorResponse("Stealth is not active");
 
       // Mutation
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          stealthActive: false,
-          stealthActivatedAt: null,
-        })
-        .where(and(eq(userData.userId, ctx.userId), eq(userData.stealthActive, true)));
+      const result = await updateUserDataForDeactivateStealth(ctx.drizzle, ctx);
 
       if (result.rowsAffected === 0) {
         return errorResponse("Stealth is not active");
@@ -185,30 +187,8 @@ export const stealthRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.userData.findMany({
-          where: and(
-            eq(userData.sector, input.sector),
-            eq(userData.stealthActive, true),
-            sql`${userData.userId} != ${ctx.userId}`,
-          ),
-          columns: {
-            userId: true,
-            username: true,
-            longitude: true,
-            latitude: true,
-            sector: true,
-            avatar: true,
-            avatarLight: true,
-            location: true,
-            villageId: true,
-            battleId: true,
-            level: true,
-            experience: true,
-            rank: true,
-            status: true,
-          },
-        }),
-        ctx.drizzle.select().from(villageAlliance),
+        listUserDataForUseSensory(ctx.drizzle, input, ctx),
+        selectVillageAllianceForUseSensory(ctx.drizzle),
       ]);
 
       // Guard
@@ -248,19 +228,11 @@ export const stealthRouter = createTRPCRouter({
 
       // Mutation
       const updates: Promise<unknown>[] = [
-        ctx.drizzle
-          .update(userData)
-          .set({ lastSensoryAt })
-          .where(eq(userData.userId, ctx.userId)),
+        updateUserDataForUseSensory(ctx.drizzle, lastSensoryAt, ctx),
       ];
 
       if (detectedUserIds.length > 0) {
-        updates.push(
-          ctx.drizzle
-            .update(userData)
-            .set({ stealthActive: false, stealthActivatedAt: null })
-            .where(inArray(userData.userId, detectedUserIds)),
-        );
+        updates.push(updateUserDataForUseSensory2(ctx.drizzle, detectedUserIds));
       }
 
       await Promise.all(updates);
@@ -365,20 +337,7 @@ export const stealthRouter = createTRPCRouter({
       const finishAt = new Date(Date.now() + input.minutes * 60 * 1000);
 
       // Mutation
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          covertTrainingType: input.type,
-          covertTrainingStartedAt: new Date(),
-          covertTrainingMinutes: input.minutes,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            isNull(userData.covertTrainingType),
-            eq(userData.status, "AWAKE"),
-          ),
-        );
+      const result = await updateUserDataForTrainCovert(ctx.drizzle, input, ctx);
 
       if (result.rowsAffected === 0) {
         return errorResponse(`Failed to start ${input.type} training`);
@@ -446,21 +405,12 @@ export const stealthRouter = createTRPCRouter({
       const newValue = Math.min(currentStat + gained, STEALTH_SENSORY_CAP);
 
       // Mutation
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          covertTrainingType: null,
-          covertTrainingStartedAt: null,
-          covertTrainingMinutes: null,
-          ...(user.covertTrainingType === "stealth"
-            ? {
-                stealth: sql`LEAST(${userData.stealth} + ${gained}, ${STEALTH_SENSORY_CAP})`,
-              }
-            : {
-                sensory: sql`LEAST(${userData.sensory} + ${gained}, ${STEALTH_SENSORY_CAP})`,
-              }),
-        })
-        .where(eq(userData.userId, ctx.userId));
+      const result = await updateUserDataForStopCovertTraining(
+        ctx.drizzle,
+        { covertTrainingType: user.covertTrainingType },
+        gained,
+        ctx,
+      );
 
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to complete training");
@@ -479,16 +429,7 @@ export const stealthRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx }) => {
       // Mutation (with guard in WHERE clause)
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          covertTrainingType: null,
-          covertTrainingStartedAt: null,
-          covertTrainingMinutes: null,
-        })
-        .where(
-          and(eq(userData.userId, ctx.userId), isNotNull(userData.covertTrainingType)),
-        );
+      const result = await updateUserDataForCancelCovertTraining(ctx.drizzle, ctx);
 
       if (result.rowsAffected === 0) {
         return errorResponse("Not currently training covert skills");
@@ -520,9 +461,6 @@ export const breakStealth = async (
   }
 
   // Break stealth
-  await drizzle
-    .update(userData)
-    .set({ stealthActive: false, stealthActivatedAt: null })
-    .where(eq(userData.userId, userId));
+  await updateUserDataForBreakStealth(drizzle, userId);
   return true;
 };

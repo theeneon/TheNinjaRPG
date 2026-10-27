@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 import ContentDetail from "@/layout/ContentDetail";
 import { buildMetadata, metaDescription } from "@/libs/seo";
-import { fetchBloodline } from "@/server/api/routers/bloodline";
-import { fetchGuideForBloodline } from "@/server/api/routers/guide";
+import { fetchBloodline } from "@/queries/bloodline";
+import { fetchGuideForBloodline } from "@/queries/guide";
+
 import { drizzleDB } from "@/server/db";
 
 type Props = { params: Promise<{ bloodlineid: string }> };

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { FORUM_THREAD_POSTS_PER_PAGE } from "@/drizzle/constants";
-import { fetchForumThreadPage } from "@/routers/comments";
+import { fetchForumThreadPage } from "@/queries/comments";
+
 import { drizzleDB } from "@/server/db";
 import Thread from "./thread";
 

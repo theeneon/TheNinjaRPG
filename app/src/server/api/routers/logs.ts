@@ -1,13 +1,13 @@
-import { and, eq, inArray, isNotNull, like } from "drizzle-orm";
 import { z } from "zod";
 import {
-  actionLog,
-  bloodline,
-  bloodlineRolls,
-  userData,
-  village,
-} from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
+  findUserDataForGetContentChanges,
+  listActionLogForGetContentChanges,
+  listBloodlineForGetContentChanges,
+  listBloodlineRollsForGetBloodlineHistory,
+  listVillageForGetContentChanges,
+} from "@/queries/logs";
+import { fetchUser } from "@/queries/profile";
+
 import {
   createTRPCRouter,
   protectedProcedure,
@@ -34,41 +34,17 @@ export const logsRouter = createTRPCRouter({
       const [user, target] = await Promise.all([
         ctx.userId ? fetchUser(ctx.drizzle, ctx.userId) : null,
         ctx.userId && input.username
-          ? ctx.drizzle.query.userData.findFirst({
-              where: like(userData.username, `%${input.username}%`),
-            })
+          ? findUserDataForGetContentChanges(ctx.drizzle, { username: input.username })
           : null,
       ]);
       // Get entries
-      const entries = await ctx.drizzle.query.actionLog.findMany({
-        where: and(
-          eq(actionLog.tableName, input.logtype),
-          ...(input.relatedId ? [eq(actionLog.relatedId, input.relatedId)] : []),
-          ...(input.search ? [like(actionLog.changes, `%${input.search}%`)] : []),
-          // Username filtering if allowed
-          ...(input.username && user && target && canSeeSecretData(user.role)
-            ? [eq(actionLog.userId, target.userId)]
-            : []),
-        ),
-        columns: {
-          userId: true,
-          createdAt: true,
-          changes: true,
-          relatedId: true,
-          relatedMsg: true,
-          relatedImage: true,
-        },
-        with: {
-          user: {
-            columns: {
-              username: true,
-            },
-          },
-        },
-        offset: skip,
-        orderBy: (table, { desc }) => desc(table.createdAt),
-        limit: input.limit,
-      });
+      const entries = await listActionLogForGetContentChanges(
+        ctx.drizzle,
+        input,
+        user,
+        target,
+        skip,
+      );
       // Overwrite all villageIds, bloodlineIds, etc. with their names
       const villageIds = new Set<string>();
       const bloodlineIds = new Set<string>();
@@ -82,16 +58,10 @@ export const logsRouter = createTRPCRouter({
       });
       const [bloodlines, villages] = await Promise.all([
         bloodlineIds.size > 0
-          ? ctx.drizzle.query.bloodline.findMany({
-              where: inArray(bloodline.id, [...bloodlineIds]),
-              columns: { id: true, name: true },
-            })
+          ? listBloodlineForGetContentChanges(ctx.drizzle, bloodlineIds)
           : [],
         villageIds.size > 0
-          ? ctx.drizzle.query.village.findMany({
-              where: inArray(village.id, [...villageIds]),
-              columns: { id: true, name: true },
-            })
+          ? listVillageForGetContentChanges(ctx.drizzle, villageIds)
           : [],
       ]);
       // If user is not set, or not allowed to see secret data, hide username
@@ -132,14 +102,10 @@ export const logsRouter = createTRPCRouter({
         return [];
       }
       // Get bloodline history
-      const userRolls = await ctx.drizzle.query.bloodlineRolls.findMany({
-        where: and(
-          eq(bloodlineRolls.userId, input.userId),
-          isNotNull(bloodlineRolls.bloodlineId),
-        ),
-        with: { bloodline: true },
-        orderBy: (table, { desc }) => desc(table.createdAt),
-      });
+      const userRolls = await listBloodlineRollsForGetBloodlineHistory(
+        ctx.drizzle,
+        input,
+      );
 
       return userRolls
         .map((roll) => {

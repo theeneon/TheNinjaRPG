@@ -1,7 +1,4 @@
-import { and, asc, desc, eq, exists, gte, inArray, or, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import {
-  ACTION_LOG_RELATED_MSG_MAX_LENGTH,
   KAGE_CHALLENGER_DAILY_LIMIT,
   KAGE_CHALLENGER_WEEKLY_LIMIT,
   KAGE_DEFENSE_CHECK_IN_MINUTES,
@@ -11,18 +8,37 @@ import {
   KAGE_DEFENSE_PUBLIC_SYNC_SECONDS,
   KAGE_DEFENSE_SETUP_HOURS,
   KAGE_DEFENSE_SLOT_MINUTES,
-  TERR_BOT_ID,
 } from "@/drizzle/constants";
+import type { KageDefendedChallenge } from "@/drizzle/schema";
+import { setKageCandidateToJonin } from "@/queries/kage";
 import {
-  actionLog,
-  battle,
-  type KageDefendedChallenge,
-  kageDefendedChallenges,
-  notification,
-  userData,
-  village,
-  war,
-} from "@/drizzle/schema";
+  findVillageForLoadKageDefense,
+  findVillageForReadKageDefensePublic,
+  insertActionLogForRemoveAbsentKage,
+  insertNotificationForRemoveAbsentKage,
+  listKageDefendedChallengesForAssignKageMatches,
+  listUserDataForRemoveAbsentKage,
+  listWarForLoadKageDefense,
+  saveKageSchedule,
+  selectKageDefendedChallengesForLoadKageDefense,
+  selectKageDefendedChallengesForReadKageDefensePublic,
+  selectKageDefendedChallengesForReadKageDefensePublic2,
+  selectVillageForMaintainKageDefenses,
+  updateKageDefendedChallengesForAssignKageMatches,
+  updateKageDefendedChallengesForRemoveAbsentKage,
+  updateKageDefendedChallengesForResetMatch,
+  updateKageDefendedChallengesForSyncLockedKageDefense,
+  updateKageDefendedChallengesForSyncLockedKageDefense2,
+  updateKageDefendedChallengesForSyncLockedKageDefense3,
+  updateKageDefendedChallengesForSyncLockedKageDefense4,
+  updateKageDefendedChallengesForSyncLockedKageDefense5,
+  updateKageDefendedChallengesForSyncLockedKageDefense6,
+  updateKageDefendedChallengesForSyncLockedKageDefense7,
+  updateUserDataForRemoveAbsentKage2,
+  updateVillageForMaintainKageDefenses,
+  updateVillageForRemoveAbsentKage,
+  updateVillageForWithKageDefense,
+} from "@/queries/kageDefense";
 import type { DrizzleClient } from "@/server/db";
 import { queryInTransaction } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -53,10 +69,7 @@ export const withKageDefense = async <T>(
   retryOnDeadlock(() =>
     client.transaction(async (transaction) => {
       const tx = transaction as unknown as DrizzleClient;
-      await tx
-        .update(village)
-        .set({ kageScheduleVersion: sql`${village.kageScheduleVersion} + 1` })
-        .where(eq(village.id, villageId));
+      await updateVillageForWithKageDefense(tx, villageId);
       const hall = await loadKageDefense(tx, villageId);
       if (hall?.village.type !== "VILLAGE") return null;
       return callback(tx, hall);
@@ -67,33 +80,13 @@ export const withKageDefense = async <T>(
 const loadKageDefense = async (client: DrizzleClient, villageId: string) => {
   const now = new Date();
   const [v, rows, wars] = await queryInTransaction([
-    client.query.village.findFirst({
-      where: eq(village.id, villageId),
-      with: { kage: true },
-    }),
-    client
-      .select({
-        match: kageDefendedChallenges,
-        user: userData,
-        liveBattleId: battle.id,
-      })
-      .from(kageDefendedChallenges)
-      .innerJoin(userData, eq(kageDefendedChallenges.userId, userData.userId))
-      .leftJoin(battle, eq(kageDefendedChallenges.battleId, battle.id))
-      .where(
-        and(
-          eq(kageDefendedChallenges.villageId, villageId),
-          inArray(kageDefendedChallenges.status, activeKageMatchStatuses),
-        ),
-      )
-      .orderBy(asc(kageDefendedChallenges.createdAt), asc(kageDefendedChallenges.id)),
-    client.query.war.findMany({
-      columns: { id: true, status: true, startedAt: true, endedAt: true },
-      where: and(
-        eq(war.type, "VILLAGE_WAR"),
-        or(eq(war.attackerVillageId, villageId), eq(war.defenderVillageId, villageId)),
-      ),
-    }),
+    findVillageForLoadKageDefense(client, villageId),
+    selectKageDefendedChallengesForLoadKageDefense(
+      client,
+      villageId,
+      activeKageMatchStatuses,
+    ),
+    listWarForLoadKageDefense(client, villageId),
   ]);
   if (!v) return null;
   const sameTenure =
@@ -141,19 +134,6 @@ const loadKageDefense = async (client: DrizzleClient, villageId: string) => {
 };
 /** Mutable snapshot shared by reconciliation and assignments within one village transaction. */
 export type KageDefenseHall = NonNullable<Awaited<ReturnType<typeof loadKageDefense>>>;
-
-/** Persist schedule JSON only for the tenure loaded under the village lock. */
-export const saveKageSchedule = (client: DrizzleClient, hall: KageDefenseHall) =>
-  client
-    .update(village)
-    .set({ kageSchedule: hall.state })
-    .where(
-      and(
-        eq(village.id, hall.village.id),
-        eq(village.kageId, hall.village.kageId),
-        eq(village.leaderUpdatedAt, hall.village.leaderUpdatedAt),
-      ),
-    );
 
 /** Reconcile deadlines and assign waiting matches in one village transaction. */
 export const syncKageDefense = (client: DrizzleClient, villageId: string) =>
@@ -214,34 +194,17 @@ export const syncLockedKageDefense = async (
       // Terminal combat deletes its battle and records completion atomically; a missing
       // battle with an active receipt therefore represents an interrupted launch/result.
       if (!row.liveBattleId) {
-        const resolved = await client
-          .update(kageDefendedChallenges)
-          .set({
-            status: "CANCELLED",
-            resolvedAt: now,
-            // Neutral system recovery releases the start-based daily and weekly allowance.
-            startedAt: null,
-            outcome: "Battle ended without a recorded result; no prestige charged",
-          })
-          .where(
-            and(
-              eq(kageDefendedChallenges.id, m.id),
-              eq(kageDefendedChallenges.status, m.status),
-            ),
-          );
+        const resolved = await updateKageDefendedChallengesForSyncLockedKageDefense(
+          client,
+          now,
+          { id: m.id, status: m.status },
+        );
         if (resolved.rowsAffected) m.status = "CANCELLED";
       }
       continue;
     }
     if (getKageEligibility(row.user, v.id) || row.user.userId === v.kageId) {
-      await client
-        .update(kageDefendedChallenges)
-        .set({
-          status: "CANCELLED",
-          resolvedAt: now,
-          outcome: "Challenger no longer eligible",
-        })
-        .where(eq(kageDefendedChallenges.id, m.id));
+      await updateKageDefendedChallengesForSyncLockedKageDefense2(client, now, m);
       m.status = "CANCELLED";
       continue;
     }
@@ -256,10 +219,7 @@ export const syncLockedKageDefense = async (
           m.scheduledAt.getTime() - KAGE_DEFENSE_CHECK_IN_MINUTES * 60_000) &&
       (row.user.status === "HOSPITALIZED" || v.kage?.status === "HOSPITALIZED")
     ) {
-      await client
-        .update(kageDefendedChallenges)
-        .set({ hospitalDeferred: true, checkedInAt: null })
-        .where(eq(kageDefendedChallenges.id, m.id));
+      await updateKageDefendedChallengesForSyncLockedKageDefense3(client, m);
       m.hospitalDeferred = true;
       continue;
     }
@@ -289,17 +249,14 @@ export const syncLockedKageDefense = async (
           later.match.notBefore = new Date(
             Math.max(later.match.notBefore.getTime(), blockedUntil.getTime()),
           );
-          await client
-            .update(kageDefendedChallenges)
-            .set({ notBefore: later.match.notBefore })
-            .where(eq(kageDefendedChallenges.id, later.match.id));
+          await updateKageDefendedChallengesForSyncLockedKageDefense4(client, later);
         }
       }
 
-      await client
-        .update(kageDefendedChallenges)
-        .set({ scheduledAt: m.scheduledAt, hospitalDeferred: false, checkedInAt: null })
-        .where(eq(kageDefendedChallenges.id, m.id));
+      await updateKageDefendedChallengesForSyncLockedKageDefense5(client, {
+        scheduledAt: m.scheduledAt,
+        id: m.id,
+      });
     }
     if (now.getTime() <= m.scheduledAt.getTime() + KAGE_DEFENSE_GRACE_MINUTES * 60_000)
       continue;
@@ -331,26 +288,12 @@ export const syncLockedKageDefense = async (
         );
       else {
         m.status = "FORFEITED";
-        await client
-          .update(kageDefendedChallenges)
-          .set({
-            status: "FORFEITED",
-            resolvedAt: now,
-            outcome: "Challenger absent or unavailable; no prestige charged",
-          })
-          .where(eq(kageDefendedChallenges.id, m.id));
+        await updateKageDefendedChallengesForSyncLockedKageDefense6(client, now, m);
       }
     } else {
       state.missedStarts += 1;
       m.status = "FORFEITED";
-      await client
-        .update(kageDefendedChallenges)
-        .set({
-          status: "FORFEITED",
-          resolvedAt: now,
-          outcome: "Kage did not start the attended match; attendance strike recorded",
-        })
-        .where(eq(kageDefendedChallenges.id, m.id));
+      await updateKageDefendedChallengesForSyncLockedKageDefense7(client, now, m);
       if (state.missedStarts >= KAGE_DEFENSE_MAX_NO_SHOWS) {
         await removeAbsentKage(client, hall);
         return false;
@@ -401,10 +344,7 @@ const resetMatch = async (
     outcome,
   };
   Object.assign(m, update);
-  await client
-    .update(kageDefendedChallenges)
-    .set(update)
-    .where(eq(kageDefendedChallenges.id, m.id));
+  await updateKageDefendedChallengesForResetMatch(client, update, m);
 };
 
 /**
@@ -443,15 +383,11 @@ export const assignKageMatches = async (
       );
     }
     // Preserved appointments need no calendar-limit history; share one read for new slots.
-    history ??= await client.query.kageDefendedChallenges.findMany({
-      where: and(
-        inArray(
-          kageDefendedChallenges.userId,
-          pending.map((r) => r.match.userId),
-        ),
-        gte(kageDefendedChallenges.startedAt, periodStart("weekly", hall.now)),
-      ),
-    });
+    history ??= await listKageDefendedChallengesForAssignKageMatches(
+      client,
+      pending,
+      hall,
+    );
     const challengerHistory = history.filter((h) => h.userId === m.userId);
     const slots = getKageSlots(
       hall.state.windows,
@@ -479,10 +415,7 @@ export const assignKageMatches = async (
     Object.assign(m, update);
     occupied.add(assigned.getTime());
     after = secondsFromDate(KAGE_DEFENSE_SLOT_MINUTES * 60, assigned);
-    await client
-      .update(kageDefendedChallenges)
-      .set(update)
-      .where(eq(kageDefendedChallenges.id, m.id));
+    await updateKageDefendedChallengesForAssignKageMatches(client, update, m);
   }
 };
 
@@ -509,10 +442,7 @@ export const withinKageChallengeLimits = (
  */
 const removeAbsentKage = async (client: DrizzleClient, hall: KageDefenseHall) => {
   const { now, village: v } = hall;
-  const candidates = await client.query.userData.findMany({
-    where: and(eq(userData.villageId, v.id), eq(userData.rank, "ELDER")),
-    orderBy: [asc(userData.isAi), asc(userData.userId)],
-  });
+  const candidates = await listUserDataForRemoveAbsentKage(client, v);
   const replacement = candidates.find(
     (u) => u.userId !== v.kageId && (u.isAi || !getKageEligibility(u, v.id)),
   );
@@ -538,82 +468,37 @@ const removeAbsentKage = async (client: DrizzleClient, hall: KageDefenseHall) =>
       ? { predecessor: removal }
       : { vacancy: { removedUserId: removal.removedUserId, reason: removal.reason } }),
   };
-  const succession = await client
-    .update(village)
-    .set({
-      kageId: replacement?.userId ?? "",
-      leaderUpdatedAt: now,
-      kageSchedule: nextSchedule,
-    })
-    .where(
-      and(
-        eq(village.id, v.id),
-        eq(village.kageId, v.kageId),
-        eq(village.leaderUpdatedAt, v.leaderUpdatedAt),
-      ),
-    );
+  const succession = await updateVillageForRemoveAbsentKage(
+    client,
+    replacement,
+    now,
+    nextSchedule,
+    v,
+  );
   if (!succession.rowsAffected) return;
   if (replacement?.rank === "ELDER" && !replacement.isAi)
-    await client
-      .update(userData)
-      .set({ rank: "JONIN" })
-      .where(eq(userData.userId, replacement.userId));
-  await client
-    .update(kageDefendedChallenges)
-    .set({
-      status: "QUEUED",
-      scheduledAt: null,
-      checkedInAt: null,
-      aiAccepted: false,
-      notBefore: secondsFromDate(KAGE_DEFENSE_NOTICE_HOURS * 3600, now),
-      outcome: "Kage removed for attendance or missing schedule; priority retained",
-    })
-    .where(
-      and(
-        eq(kageDefendedChallenges.villageId, v.id),
-        inArray(kageDefendedChallenges.status, ["QUEUED", "SCHEDULED"]),
-      ),
-    );
+    await setKageCandidateToJonin(client, replacement);
+  await updateKageDefendedChallengesForRemoveAbsentKage(client, now, v);
   const successor = replacement
     ? `${replacement.username} of the Elder Council is now Kage.`
     : "Elders may nominate an eligible successor at Town Hall.";
-  await client.insert(actionLog).values({
-    id: nanoid(),
-    userId: v.kageId,
-    tableName: "village",
-    relatedId: v.id,
-    relatedMsg: `${removedUsername} removed as Kage of ${v.name}`.slice(
-      0,
-      ACTION_LOG_RELATED_MSG_MAX_LENGTH,
-    ),
-    changes: [
-      `Removed Kage: ${removedUsername} (${v.kageId})`,
-      `Reason: ${removal.reason}`,
-      `Tenure started: ${v.leaderUpdatedAt.toISOString()}`,
-      hall.state.publishedAt
-        ? `Missed attended defenses: ${hall.state.missedStarts}`
-        : `Schedule deadline: ${hall.state.setupDueAt ?? "unknown"}`,
-      replacement
-        ? `Replacement: ${replacement.username} (${replacement.userId})`
-        : "Replacement: none; village left vacant",
-    ],
-  });
+  await insertActionLogForRemoveAbsentKage(
+    client,
+    v,
+    removedUsername,
+    removal,
+    hall,
+    replacement,
+  );
   // Publish one system announcement; unread counters determine who receives it.
-  await client.insert(notification).values({
-    userId: TERR_BOT_ID,
-    content: `${removedUsername} was removed as Kage of ${v.name} ${removal.reason.replace(/^Kage removed /, "")}. ${successor}`,
-  });
-  await client
-    .update(userData)
-    .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-    .where(
-      inArray(
-        userData.userId,
-        [v.kageId, replacement && !replacement.isAi ? replacement.userId : ""].filter(
-          Boolean,
-        ),
-      ),
-    );
+  await insertNotificationForRemoveAbsentKage(
+    client,
+    removedUsername,
+    v,
+    removal,
+    successor,
+  );
+  await updateUserDataForRemoveAbsentKage2(client, v, replacement);
 };
 
 /** Reuse fresh public state, reconciling stale deadlines or unassigned challengers before display. */
@@ -644,53 +529,13 @@ export const getKageDefensePublic = async (
 /** Read the public schedule, FIFO queue and bounded outcome history in parallel. */
 const readKageDefensePublic = async (client: DrizzleClient, villageId: string) => {
   const [v, queue, history] = await Promise.all([
-    client.query.village.findFirst({
-      where: eq(village.id, villageId),
-      with: { kage: { columns: { userId: true, username: true, isAi: true } } },
-    }),
-    client
-      .select({
-        id: kageDefendedChallenges.id,
-        challengerId: kageDefendedChallenges.userId,
-        username: userData.username,
-        status: kageDefendedChallenges.status,
-        scheduledAt: kageDefendedChallenges.scheduledAt,
-        checkedInAt: kageDefendedChallenges.checkedInAt,
-        rescheduled: kageDefendedChallenges.rescheduled,
-        aiRequested: kageDefendedChallenges.aiRequested,
-        aiAccepted: kageDefendedChallenges.aiAccepted,
-        hospitalDeferred: kageDefendedChallenges.hospitalDeferred,
-        battleId: kageDefendedChallenges.battleId,
-      })
-      .from(kageDefendedChallenges)
-      .innerJoin(userData, eq(userData.userId, kageDefendedChallenges.userId))
-      .where(
-        and(
-          eq(kageDefendedChallenges.villageId, villageId),
-          inArray(kageDefendedChallenges.status, activeKageMatchStatuses),
-        ),
-      )
-      .orderBy(asc(kageDefendedChallenges.createdAt), asc(kageDefendedChallenges.id)),
-    client
-      .select({
-        id: kageDefendedChallenges.id,
-        challengerId: kageDefendedChallenges.userId,
-        outcome: kageDefendedChallenges.outcome,
-        resolvedAt: kageDefendedChallenges.resolvedAt,
-      })
-      .from(kageDefendedChallenges)
-      .where(
-        and(
-          eq(kageDefendedChallenges.villageId, villageId),
-          inArray(kageDefendedChallenges.status, [
-            "COMPLETED",
-            "CANCELLED",
-            "FORFEITED",
-          ]),
-        ),
-      )
-      .orderBy(desc(kageDefendedChallenges.resolvedAt))
-      .limit(10),
+    findVillageForReadKageDefensePublic(client, villageId),
+    selectKageDefendedChallengesForReadKageDefensePublic(
+      client,
+      villageId,
+      activeKageMatchStatuses,
+    ),
+    selectKageDefendedChallengesForReadKageDefensePublic2(client, villageId),
   ]);
   if (!v) return null;
   return {
@@ -719,42 +564,11 @@ const readKageDefensePublic = async (client: DrizzleClient, villageId: string) =
 export const maintainKageDefenses = async (client: DrizzleClient) => {
   const now = new Date();
   const uninterruptedSince = secondsFromDate(-KAGE_DEFENSE_GRACE_MINUTES * 60, now);
-  const villages = await client
-    .select({
-      id: village.id,
-      kageId: village.kageId,
-      leaderUpdatedAt: village.leaderUpdatedAt,
-      version: village.kageScheduleVersion,
-      state: village.kageSchedule,
-      hasMatches: exists(
-        client
-          .select({ id: kageDefendedChallenges.id })
-          .from(kageDefendedChallenges)
-          .where(
-            and(
-              eq(kageDefendedChallenges.villageId, village.id),
-              inArray(kageDefendedChallenges.status, activeKageMatchStatuses),
-            ),
-          ),
-      ).mapWith(Boolean),
-      hasWar: exists(
-        client
-          .select({ id: war.id })
-          .from(war)
-          .where(
-            and(
-              eq(war.type, "VILLAGE_WAR"),
-              or(
-                eq(war.attackerVillageId, village.id),
-                eq(war.defenderVillageId, village.id),
-              ),
-              or(eq(war.status, "ACTIVE"), gte(war.startedAt, uninterruptedSince)),
-            ),
-          ),
-      ).mapWith(Boolean),
-    })
-    .from(village)
-    .where(eq(village.type, "VILLAGE"));
+  const villages = await selectVillageForMaintainKageDefenses(
+    client,
+    activeKageMatchStatuses,
+    uninterruptedSince,
+  );
   await Promise.all(
     villages.map(async (v) => {
       const state = v.state;
@@ -772,20 +586,7 @@ export const maintainKageDefenses = async (client: DrizzleClient) => {
         await syncKageDefense(client, v.id);
         return;
       }
-      await client
-        .update(village)
-        .set({
-          kageSchedule: { ...state, observedAt: now.toISOString() },
-          kageScheduleVersion: sql`${village.kageScheduleVersion} + 1`,
-        })
-        .where(
-          and(
-            eq(village.id, v.id),
-            eq(village.kageScheduleVersion, v.version),
-            eq(village.kageId, v.kageId),
-            eq(village.leaderUpdatedAt, v.leaderUpdatedAt),
-          ),
-        );
+      await updateVillageForMaintainKageDefenses(client, state, now, v);
     }),
   );
 };

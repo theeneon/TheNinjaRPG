@@ -1,8 +1,13 @@
-import { and, gt, inArray, lt } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { userData, userReport } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
+import {
+  listUserReportForGET,
+  listUserReportForGET2,
+  updateUserDataForGET,
+  updateUserDataForGET2,
+  updateUserDataForGET3,
+} from "@/queries/reports";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 
@@ -21,27 +26,7 @@ export async function GET(request: Request) {
 
   try {
     // Get all active bans, silences, and trade bans that have expired
-    const expiredReports = await drizzleDB.query.userReport.findMany({
-      where: and(
-        inArray(userReport.status, [
-          "BAN_ACTIVATED",
-          "SILENCE_ACTIVATED",
-          "TIMEOUT_ACTIVATED",
-          "TRADE_BAN_ACTIVATED",
-        ]),
-        lt(userReport.banEnd, new Date()),
-      ),
-      with: {
-        reportedUser: {
-          columns: {
-            userId: true,
-            isBanned: true,
-            isSilenced: true,
-            isTradeBanned: true,
-          },
-        },
-      },
-    });
+    const expiredReports = await listUserReportForGET(drizzleDB);
 
     if (expiredReports.length === 0) {
       return NextResponse.json({
@@ -92,22 +77,12 @@ export async function GET(request: Request) {
     }
 
     // Get all active reports for these users in a single query
-    const activeReports = await drizzleDB.query.userReport.findMany({
-      where: and(
-        inArray(userReport.reportedUserId, [
-          ...bannedUsers.keys(),
-          ...silencedUsers.keys(),
-          ...tradeBannedUsers.keys(),
-        ]),
-        inArray(userReport.status, [
-          "BAN_ACTIVATED",
-          "SILENCE_ACTIVATED",
-          "TIMEOUT_ACTIVATED",
-          "TRADE_BAN_ACTIVATED",
-        ]),
-        gt(userReport.banEnd, new Date()),
-      ),
-    });
+    const activeReports = await listUserReportForGET2(
+      drizzleDB,
+      bannedUsers,
+      silencedUsers,
+      tradeBannedUsers,
+    );
 
     // Group active reports by user and type
     const userHasActiveBan = new Map<string, boolean>();
@@ -166,30 +141,15 @@ export async function GET(request: Request) {
     const updates = [];
 
     if (usersToUnban.length > 0) {
-      updates.push(
-        drizzleDB
-          .update(userData)
-          .set({ isBanned: false })
-          .where(inArray(userData.userId, usersToUnban)),
-      );
+      updates.push(updateUserDataForGET(drizzleDB, usersToUnban));
     }
 
     if (usersToUnsilence.length > 0) {
-      updates.push(
-        drizzleDB
-          .update(userData)
-          .set({ isSilenced: false })
-          .where(inArray(userData.userId, usersToUnsilence)),
-      );
+      updates.push(updateUserDataForGET2(drizzleDB, usersToUnsilence));
     }
 
     if (usersToUntradeBan.length > 0) {
-      updates.push(
-        drizzleDB
-          .update(userData)
-          .set({ isTradeBanned: false })
-          .where(inArray(userData.userId, usersToUntradeBan)),
-      );
+      updates.push(updateUserDataForGET3(drizzleDB, usersToUntradeBan));
     }
 
     if (updates.length > 0) {

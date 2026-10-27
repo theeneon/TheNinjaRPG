@@ -1,16 +1,23 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { z } from "zod";
 import type { ContentProposalEntityType, ContentType } from "@/drizzle/constants";
 import {
-  badge,
-  bloodline,
-  gameAsset,
-  item,
-  jutsu,
-  quest,
-  title,
-  userData,
-} from "@/drizzle/schema";
+  listItemForLoad,
+  listTitleForLoad,
+  listUserDataForLoad,
+  selectBadgeForFindNames,
+  selectBadgeForLoad,
+  selectBloodlineForFindNames,
+  selectBloodlineForLoad,
+  selectGameAssetForFindNames,
+  selectGameAssetForLoad,
+  selectItemForFindNames,
+  selectJutsuForFindNames,
+  selectJutsuForLoad,
+  selectQuestForFindNames,
+  selectQuestForLoad,
+  selectTitleForFindNames,
+  selectUserDataForFindNames,
+} from "@/queries/contentReview";
 import type { DrizzleClient } from "@/server/db";
 import { insertAiSchema } from "@/validators/aiInput";
 import { gameAssetValidator } from "@/validators/asset";
@@ -144,10 +151,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: JutsuValidator,
     detailHref: (id) => `/manual/jutsu/${id}`,
     load: async (client, ids) => {
-      const rows = await client
-        .select()
-        .from(jutsu)
-        .where(ids ? inArray(jutsu.id, ids) : undefined);
+      const rows = await selectJutsuForLoad(client, ids);
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -157,12 +161,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: jutsu.name })
-          .from(jutsu)
-          .where(inArray(jutsu.name, names))
-      ).map((row) => row.name),
+      (await selectJutsuForFindNames(client, names)).map((row) => row.name),
   },
   ITEM: {
     contentType: "item",
@@ -171,10 +170,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: ItemValidator,
     detailHref: (id) => `/manual/item/${id}`,
     load: async (client, ids) => {
-      const rows = await client.query.item.findMany({
-        where: ids ? inArray(item.id, ids) : undefined,
-        with: { craftingRequirements: true },
-      });
+      const rows = await listItemForLoad(client, ids);
       // Same projection as useItemEditForm: item.update replaces the crafting recipe with
       // whatever the payload carries, so it must always travel with the row.
       return rows.map(({ craftingRequirements, ...row }) => ({
@@ -195,12 +191,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: item.name })
-          .from(item)
-          .where(inArray(item.name, names))
-      ).map((row) => row.name),
+      (await selectItemForFindNames(client, names)).map((row) => row.name),
   },
   BLOODLINE: {
     contentType: "bloodline",
@@ -209,10 +200,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: BloodlineValidator,
     detailHref: (id) => `/manual/bloodline/${id}`,
     load: async (client, ids) => {
-      const rows = await client
-        .select()
-        .from(bloodline)
-        .where(ids ? inArray(bloodline.id, ids) : undefined);
+      const rows = await selectBloodlineForLoad(client, ids);
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -222,12 +210,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: bloodline.name })
-          .from(bloodline)
-          .where(inArray(bloodline.name, names))
-      ).map((row) => row.name),
+      (await selectBloodlineForFindNames(client, names)).map((row) => row.name),
   },
   QUEST: {
     contentType: "quest",
@@ -239,10 +222,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: QuestValidator,
     detailHref: (id) => `/manual/quest/edit/${id}`,
     load: async (client, ids) => {
-      const rows = await client
-        .select()
-        .from(quest)
-        .where(ids ? inArray(quest.id, ids) : undefined);
+      const rows = await selectQuestForLoad(client, ids);
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -252,12 +232,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: quest.name })
-          .from(quest)
-          .where(inArray(quest.name, names))
-      ).map((row) => row.name),
+      (await selectQuestForFindNames(client, names)).map((row) => row.name),
   },
   BADGE: {
     contentType: "badge",
@@ -266,10 +241,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: BadgeValidator,
     detailHref: (id) => `/manual/badge/edit/${id}`,
     load: async (client, ids) => {
-      const rows = await client
-        .select()
-        .from(badge)
-        .where(ids ? inArray(badge.id, ids) : undefined);
+      const rows = await selectBadgeForLoad(client, ids);
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -279,12 +251,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: badge.name })
-          .from(badge)
-          .where(inArray(badge.name, names))
-      ).map((row) => row.name),
+      (await selectBadgeForFindNames(client, names)).map((row) => row.name),
   },
   TITLE: {
     contentType: "title",
@@ -293,12 +260,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: TitleValidator,
     detailHref: (id) => `/manual/title/edit/${id}`,
     load: async (client, ids) => {
-      const rows = await client.query.title.findMany({
-        where: and(
-          isNull(title.legacyOwnerId),
-          ids ? inArray(title.id, ids) : undefined,
-        ),
-      });
+      const rows = await listTitleForLoad(client, ids);
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -308,12 +270,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: title.name })
-          .from(title)
-          .where(and(isNull(title.legacyOwnerId), inArray(title.name, names)))
-      ).map((row) => row.name),
+      (await selectTitleForFindNames(client, names)).map((row) => row.name),
   },
   GAME_ASSET: {
     contentType: "asset",
@@ -322,10 +279,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: gameAssetValidator,
     detailHref: (id) => `/manual/asset/edit/${id}`,
     load: async (client, ids) => {
-      const rows = await client
-        .select()
-        .from(gameAsset)
-        .where(ids ? inArray(gameAsset.id, ids) : undefined);
+      const rows = await selectGameAssetForLoad(client, ids);
       return rows.map((row) => ({
         id: row.id,
         name: row.name,
@@ -335,12 +289,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
       }));
     },
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: gameAsset.name })
-          .from(gameAsset)
-          .where(inArray(gameAsset.name, names))
-      ).map((row) => row.name),
+      (await selectGameAssetForFindNames(client, names)).map((row) => row.name),
   },
   AI: {
     contentType: "ai",
@@ -349,16 +298,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     validator: insertAiSchema,
     detailHref: (id) => `/manual/ai/edit/${id}`,
     load: async (client, ids) => {
-      const rows = await client.query.userData.findMany({
-        where: and(
-          ids ? inArray(userData.userId, ids) : undefined,
-          eq(userData.isAi, true),
-        ),
-        with: {
-          jutsus: { with: { jutsu: { columns: { id: true } } } },
-          items: { with: { item: { columns: { id: true } } } },
-        },
-      });
+      const rows = await listUserDataForLoad(client, ids);
       // Same projection as useAiEditForm, minus relations whose content was deleted.
       return rows.map(({ jutsus, items, ...row }) => ({
         id: row.userId,
@@ -383,12 +323,7 @@ export const ENTITY_CONFIG: Record<ContentProposalEntityType, EntityConfig> = {
     },
     // Usernames are unique across players and AI, so a new AI cannot take a player's either.
     findNames: async (client, names) =>
-      (
-        await client
-          .select({ name: userData.username })
-          .from(userData)
-          .where(inArray(userData.username, names))
-      ).map((row) => row.name),
+      (await selectUserDataForFindNames(client, names)).map((row) => row.name),
   },
 };
 

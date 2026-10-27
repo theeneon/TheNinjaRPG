@@ -1,16 +1,4 @@
-import {
-  and,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  notInArray,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { UserStatus } from "@/drizzle/constants";
 import {
   HOME_FURNITURE_STORAGE_CAPACITY,
@@ -20,7 +8,7 @@ import {
   HomeTypes,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
 } from "@/drizzle/constants";
-import { item, userData, userHome, userItem, userRequest } from "@/drizzle/schema";
+import { userData, userItem } from "@/drizzle/schema";
 import { applyActiveVariant } from "@/libs/combat/util";
 import {
   getHomeLayout,
@@ -43,15 +31,26 @@ import {
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { ISOLATED_PYRAMID_MESSAGE } from "@/libs/questRun";
 import { calcIsInVillage, getBiomeFromTileType } from "@/libs/travel";
+import {
+  executeResultForSetHomeSharing,
+  executeResultForToggleStoreItem,
+  executeResultForUpgradeHome,
+  executeRowsForPublishHomeFurnitureLayout,
+  fetchHomeFurnitureUser,
+  findUserDataForInviteHomeVisitor,
+  findUserDataForInviteHomeVisitor2,
+  findUserHomeForUpgradeHome,
+  findUserRequestForGetVisitedHome,
+  insertUserHomeForEnsureUserHome,
+  updateUserDataForToggleSleep,
+  updateUserDataForUpgradeHome,
+} from "@/queries/home";
+import { fetchRequests, insertRequest } from "@/queries/sparring";
+import { fetchSectorVillage } from "@/queries/village";
 import { fetchUserItems } from "@/routers/item";
 import { fetchUpdatedUser } from "@/routers/profile";
-import {
-  fetchRequest,
-  fetchRequests,
-  insertRequest,
-  updateRequestState,
-} from "@/routers/sparring";
-import { fetchSectorVillage } from "@/routers/village";
+import { fetchRequest, updateRequestState } from "@/routers/sparring";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -59,7 +58,6 @@ import {
   protectedProcedure,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { getSectorTileType } from "@/server/utils/sectorMap";
 import { secondsFromNow } from "@/utils/time";
@@ -84,15 +82,7 @@ export const homeRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [owner, invitation] = await Promise.all([
         fetchHomeFurnitureUser(ctx.drizzle, input.userId),
-        ctx.drizzle.query.userRequest.findFirst({
-          where: and(
-            eq(userRequest.senderId, input.userId),
-            eq(userRequest.receiverId, ctx.userId),
-            eq(userRequest.type, "HOME"),
-            eq(userRequest.status, "ACCEPTED"),
-          ),
-          columns: { id: true },
-        }),
+        findUserRequestForGetVisitedHome(ctx.drizzle, input, ctx),
       ]);
       if (
         !owner ||
@@ -137,14 +127,8 @@ export const homeRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       const [owner, invitee, requests] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { isBanned: true, isAi: true, deletionAt: true },
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.username, input.username),
-          columns: { userId: true, isAi: true, isBanned: true, deletionAt: true },
-        }),
+        findUserDataForInviteHomeVisitor(ctx.drizzle, ctx),
+        findUserDataForInviteHomeVisitor2(ctx.drizzle, input),
         fetchRequests(ctx.drizzle, ["HOME"], undefined, ctx.userId),
       ]);
       if (!owner || owner.isBanned || owner.isAi || owner.deletionAt)
@@ -274,11 +258,7 @@ export const homeRouter = createTRPCRouter({
       if (owner.homeFurnitureRevision !== input.revision)
         return errorResponse("Your home changed. Refresh and try again");
       await ensureUserHome(ctx.drizzle, ctx.userId, owner.home);
-      const result = await ctx.drizzle.execute(sql`
-        UPDATE ${userData} INNER JOIN ${userHome} ON ${userHome.userId} = ${userData.userId}
-        SET ${userHome.isPublic} = ${input.isPublic}, ${userData.homeFurnitureRevision} = ${userData.homeFurnitureRevision} + 1
-        WHERE ${and(eq(userData.userId, ctx.userId), eq(userData.isBanned, false), eq(userData.homeFurnitureRevision, input.revision))}
-      `);
+      const result = await executeResultForSetHomeSharing(ctx.drizzle, input, ctx);
       return result.rowsAffected
         ? { success: true, message: "Home access updated" }
         : errorResponse("Your home changed. Refresh and try again");
@@ -329,16 +309,12 @@ export const homeRouter = createTRPCRouter({
       }
       // Mutate
       // Combat can change status after the profile read; neither direction may replace it.
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ status: newStatus })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.status, user.status),
-            gte(userData.curHealth, 0),
-          ),
-        );
+      const result = await updateUserDataForToggleSleep(
+        ctx.drizzle,
+        newStatus,
+        ctx,
+        user,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse("Your status changed. Refresh and try again.");
       }
@@ -502,9 +478,7 @@ export const homeRouter = createTRPCRouter({
       if (!user) return errorResponse("User not found");
       const [useritems, home] = await Promise.all([
         fetchUserItems(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userHome.findFirst({
-          where: eq(userHome.userId, ctx.userId),
-        }),
+        findUserHomeForUpgradeHome(ctx.drizzle, ctx),
       ]);
       const storedItems = useritems.filter((ui) => ui.storedAtHome);
       // Guard
@@ -518,23 +492,13 @@ export const homeRouter = createTRPCRouter({
       // Upgrading or downgrading
       if (HomeTypes.indexOf(input.homeType) > HomeTypes.indexOf(user.homeType)) {
         if (user.money < upgradeCost) return errorResponse("Not enough Ryo");
-        const result = await ctx.drizzle
-          .update(userData)
-          .set({
-            homeFurnitureRevision: sql`${userData.homeFurnitureRevision} + 1`,
-            money: sql`${userData.money} - ${upgradeCost}`,
-            homeType: input.homeType,
-            updatedAt: getNextUserSnapshotAt(user.updatedAt),
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              eq(userData.homeType, user.homeType),
-              eq(userData.homeFurnitureRevision, user.homeFurnitureRevision),
-              eq(userData.updatedAt, user.updatedAt),
-              gte(userData.money, upgradeCost),
-            ),
-          );
+        const result = await updateUserDataForUpgradeHome(
+          ctx.drizzle,
+          upgradeCost,
+          input,
+          user,
+          ctx,
+        );
         if (result.rowsAffected === 0) {
           return errorResponse(
             "Not enough Ryo or home inventory changed. Refresh and try again",
@@ -596,30 +560,15 @@ export const homeRouter = createTRPCRouter({
         // Escrow keeps its storage state so active furniture trades remain fulfillable.
         await ensureUserHome(ctx.drizzle, ctx.userId, home);
         const result = await retryOnDeadlock(() =>
-          ctx.drizzle.execute(sql`
-            UPDATE ${userData}
-            LEFT JOIN ${userItem} ON ${userItem.userId} = ${userData.userId}
-              AND ${isNotNull(userItem.homeX)}
-              AND ${notInArray(userItem.homeRoom, [...retainedRooms])}
-            INNER JOIN ${userHome} ON ${userHome.userId} = ${userData.userId}
-            SET ${userData.homeFurnitureRevision} = ${userData.homeFurnitureRevision} + 1,
-                ${userHome.roomStyles} = ${JSON.stringify((home?.roomStyles ?? []).filter(({ room }) => retainedRooms.has(room)))},
-                ${userData.homeType} = ${input.homeType},
-                ${userData.money} = ${userData.money} + ${downgradeRefund},
-                ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt)},
-                ${userItem.homeX} = NULL,
-                ${userItem.homeY} = NULL,
-                ${userItem.homeRoom} = ${"main"},
-                ${userItem.homeRotation} = 0,
-                ${userItem.storedAtHome} = CASE WHEN ${userItem.isInAuction}
-                  THEN ${userItem.storedAtHome} ELSE ${true} END
-            WHERE ${and(
-              eq(userData.userId, ctx.userId),
-              eq(userData.homeType, user.homeType),
-              eq(userData.homeFurnitureRevision, user.homeFurnitureRevision),
-              eq(userData.updatedAt, user.updatedAt),
-            )}
-          `),
+          executeResultForUpgradeHome(
+            ctx.drizzle,
+            retainedRooms,
+            home,
+            input,
+            downgradeRefund,
+            user,
+            ctx,
+          ),
         );
         if (result.rowsAffected === 0) {
           return errorResponse("Home inventory changed. Refresh and try again");
@@ -676,19 +625,7 @@ export const homeRouter = createTRPCRouter({
       // Publish the item move and capacity snapshot together. Literal assignments avoid
       // depending on MySQL's unspecified joined-UPDATE assignment order.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${userData}
-          INNER JOIN ${userItem} ON ${userItem.userId} = ${userData.userId}
-          SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt)},
-              ${userItem.storedAtHome} = ${!userItemResult.storedAtHome}
-          WHERE ${and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.updatedAt, user.updatedAt),
-            eq(userItem.id, input.userItemId),
-            eq(userItem.storedAtHome, userItemResult.storedAtHome),
-            gt(userItem.quantity, 0),
-          )}
-        `),
+        executeResultForToggleStoreItem(ctx.drizzle, user, userItemResult, ctx, input),
       );
       if (result.rowsAffected === 0) {
         return errorResponse("Inventory changed, please refresh and try again");
@@ -701,36 +638,6 @@ export const homeRouter = createTRPCRouter({
       };
     }),
 });
-
-/** Cosmetic home writes need account state and its home sector without advancing gameplay timers. */
-const fetchHomeFurnitureUser = async (client: DrizzleClient, userId: string) => {
-  const user = await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    columns: {
-      homeType: true,
-      homeFurnitureRevision: true,
-      updatedAt: true,
-      username: true,
-      isAi: true,
-      deletionAt: true,
-      isBanned: true,
-      status: true,
-      sector: true,
-      villageId: true,
-      isOutlaw: true,
-    },
-    with: {
-      home: true,
-      village: { columns: { sector: true } },
-      items: {
-        where: gt(userItem.quantity, 0),
-        with: { item: { with: { variants: true } } },
-      },
-    },
-  });
-  // Deleted item definitions can leave inventory rows behind, as in fetchUserItems.
-  return user && { ...user, items: user.items.filter((owned) => owned.item) };
-};
 
 type HomeFurnitureUser = NonNullable<
   Awaited<ReturnType<typeof fetchHomeFurnitureUser>>
@@ -780,30 +687,17 @@ const publishHomeFurnitureLayout = async (
   // Join settings after inventory so MySQL applies the guarded revision to every placement.
   await ensureUserHome(client, userId, user.home);
   return retryOnDeadlock(() =>
-    client.execute(sql`
-    UPDATE ${userData}
-    LEFT JOIN (${userItem} INNER JOIN ${item} ON ${item.id} = ${userItem.itemId})
-      ON ${userItem.userId} = ${userData.userId}
-      AND ${availableHomeFurnitureItems()}
-      AND ${item.itemType} = ${"FURNITURE"} AND ${item.hidden} = ${false}
-    INNER JOIN ${userHome} ON ${userHome.userId} = ${userData.userId}
-    SET ${userData.homeFurnitureRevision} = ${userData.homeFurnitureRevision} + 1,
-        ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt)},
-        ${userHome.roomStyles} = ${JSON.stringify(styles ?? user.home?.roomStyles ?? [])},
-        ${userItem.storedAtHome} = CASE WHEN (${userItem.homeX} IS NOT NULL ${
-          placements.length
-            ? sql`OR ${inArray(
-                userItem.id,
-                placements.map(({ id }) => id),
-              )}`
-            : sql``
-        }) THEN ${true} ELSE ${userItem.storedAtHome} END,
-        ${userItem.homeRoom} = ${placementCase("room")},
-        ${userItem.homeX} = ${placementCase("x")},
-        ${userItem.homeY} = ${placementCase("y")},
-        ${userItem.homeRotation} = ${placementCase("rotation")}
-    WHERE ${homeFurnitureWriteGuard(user, userId, revision)}
-  `),
+    executeRowsForPublishHomeFurnitureLayout(
+      client,
+      availableHomeFurnitureItems,
+      user,
+      styles,
+      placements,
+      placementCase,
+      homeFurnitureWriteGuard,
+      userId,
+      revision,
+    ),
   );
 };
 
@@ -879,5 +773,5 @@ const ensureUserHome = async (
   userId: string,
   home: { userId: string } | null | undefined,
 ) => {
-  if (!home) await client.insert(userHome).ignore().values({ userId });
+  if (!home) await insertUserHomeForEnsureUserHome(client, userId);
 };

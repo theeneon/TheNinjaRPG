@@ -1,5 +1,5 @@
 import path from "node:path";
-import { and, desc, eq, gt, gte, inArray, like, lt, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import TextToSVG from "text-to-svg";
 import { z } from "zod";
@@ -7,21 +7,7 @@ import {
   DMG_SETTING_NAMES,
   Sentiment,
   TRAINING_CAPTCHA_REFRESHES_PER_MINUTE,
-  TRAINING_CAPTCHA_SOLVED_GRACE_MINUTES,
 } from "@/drizzle/constants";
-import {
-  abEvent,
-  captcha,
-  conversation,
-  emailReminder,
-  gameAsset,
-  gameSetting,
-  notification,
-  supportReview,
-  userData,
-  userRewards,
-  visitorLog,
-} from "@/drizzle/schema";
 import {
   captchaAnswerMatches,
   randomCaptchaValue,
@@ -30,7 +16,39 @@ import {
 import { fetchDmgConfig, getGameSetting, updateGameSetting } from "@/libs/gamesettings";
 import { getLayoutExperimentAssignments } from "@/libs/layoutPreference";
 import { hasEnergyQueue } from "@/libs/queue";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteEmailReminderForDeleteEmailReminder,
+  fetchEmailReminder,
+  findUserEmailReminder,
+  updateEmailReminderForToggleEmailReminder,
+} from "@/queries/emailReminder";
+import {
+  countCaptchaForRefreshCaptcha,
+  fetchGameAssets,
+  findCaptchaForGenerateCaptcha,
+  findCaptchaForSolvedCaptchaRecently,
+  findConversationForGetGlobalTavernEnabled,
+  findGameSettingForGetSetting,
+  insertAbEventForTrackVisitor,
+  insertCaptchaForGenerateCaptcha,
+  insertNotificationForSubmitNotification,
+  insertSupportReviewForReviewSupportWithAI,
+  insertUserRewardsForAwardReputation,
+  insertVisitorLogForTrackVisitor,
+  listNotificationForGetPreviousNotifications,
+  listSupportReviewForReviewSupportWithAI,
+  listUserDataForAwardReputation,
+  listUserDataForGetAllAwards,
+  listUserDataForGetAllAwards2,
+  listUserRewardsForGetAllAwards,
+  updateCaptchaForRefreshCaptcha,
+  updateCaptchaForValidateCaptcha,
+  updateConversationForToggleGlobalTavern,
+  updateUserDataForAwardReputation,
+  updateUserDataForSubmitNotification,
+} from "@/queries/misc";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -40,7 +58,6 @@ import {
   ratelimitMiddleware,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import { hashIp } from "@/server/utils/ipHash";
 import {
   canAwardReputation,
   canEnableGlobalTavern,
@@ -48,7 +65,7 @@ import {
   canModifyEventGains,
   canSubmitNotification,
 } from "@/utils/permissions";
-import { DAY_S, secondsFromNow } from "@/utils/time";
+import { secondsFromNow } from "@/utils/time";
 import { trackVisitorSchema } from "@/validators/analytics";
 import { confSchema } from "@/validators/combat";
 import { changeSettingSchema } from "@/validators/misc";
@@ -76,33 +93,9 @@ export const miscRouter = createTRPCRouter({
 
       // Insert new visitor and log AB test loaded events (if applicable) in parallel
       await Promise.all([
-        ctx.drizzle
-          .insert(visitorLog)
-          .values({
-            id: nanoid(),
-            ipHash: hashIp(ip),
-            ref: input.ref,
-            utmSource: input.utmSource,
-            userAgent: String(ctx.userAgent).slice(0, 180),
-          })
-          .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
+        insertVisitorLogForTrackVisitor(ctx.drizzle, ip, input, ctx),
         ...experiments.map((experiment) =>
-          ctx.drizzle
-            .insert(abEvent)
-            .values({
-              id: nanoid(),
-              userId: null,
-              experiment: experiment.experiment,
-              variant: experiment.variant,
-              event: "loaded",
-              source: input.utmSource,
-              ipHash: hashIp(ip),
-              userAgent:
-                typeof ctx.userAgent === "string"
-                  ? ctx.userAgent.slice(0, 180)
-                  : undefined,
-            })
-            .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
+          insertAbEventForTrackVisitor(ctx.drizzle, experiment, input, ip, ctx),
         ),
       ]);
       return { success: true, message: "Visitor tracked" };
@@ -154,13 +147,8 @@ export const miscRouter = createTRPCRouter({
       }
       // Update database
       const [result] = await Promise.all([
-        ctx.drizzle.insert(notification).values({
-          userId: sender.userId,
-          content: input.content,
-        }),
-        ctx.drizzle
-          .update(userData)
-          .set({ unreadNotifications: sql`unreadNotifications + 1` }),
+        insertNotificationForSubmitNotification(ctx.drizzle, sender, input),
+        updateUserDataForSubmitNotification(ctx.drizzle),
       ]);
       if (result.rowsAffected === 0) {
         return { success: false, message: "Could insert notificaiton in db" };
@@ -181,12 +169,11 @@ export const miscRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const currentCursor = input.cursor ? input.cursor : 0;
       const skip = currentCursor * input.limit;
-      const results = await ctx.drizzle.query.notification.findMany({
-        offset: skip,
-        limit: input.limit,
-        with: { user: true },
-        orderBy: [desc(notification.createdAt)],
-      });
+      const results = await listNotificationForGetPreviousNotifications(
+        ctx.drizzle,
+        skip,
+        input,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return {
         data: results,
@@ -197,17 +184,13 @@ export const miscRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a game setting by name" } })
     .input(z.object({ name: z.string() }))
     .query(async ({ ctx, input }) => {
-      const setting = await ctx.drizzle.query.gameSetting.findFirst({
-        where: eq(gameSetting.name, input.name),
-      });
+      const setting = await findGameSettingForGetSetting(ctx.drizzle, input);
       return setting ?? null;
     }),
   getGlobalTavernEnabled: publicProcedure
     .meta({ mcp: { description: "Check if global tavern is enabled" } })
     .query(async ({ ctx }) => {
-      const convo = await ctx.drizzle.query.conversation.findFirst({
-        where: eq(conversation.title, "Global"),
-      });
+      const convo = await findConversationForGetGlobalTavernEnabled(ctx.drizzle);
       // Default to enabled if conversation not found
       return convo?.isEnabled ?? true;
     }),
@@ -218,18 +201,13 @@ export const miscRouter = createTRPCRouter({
       // Query
       const [user, convo] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.conversation.findFirst({
-          where: eq(conversation.title, "Global"),
-        }),
+        findConversationForGetGlobalTavernEnabled(ctx.drizzle),
       ]);
       // Guards
       if (!canEnableGlobalTavern(user.role)) return errorResponse("Not allowed");
       if (!convo) return errorResponse("Global conversation not found");
       // Update the Global conversation's isEnabled field
-      await ctx.drizzle
-        .update(conversation)
-        .set({ isEnabled: input.enabled })
-        .where(eq(conversation.id, convo.id));
+      await updateConversationForToggleGlobalTavern(ctx.drizzle, input, convo);
       return {
         success: true,
         message: `Global tavern ${input.enabled ? "enabled" : "disabled"}`,
@@ -307,9 +285,7 @@ export const miscRouter = createTRPCRouter({
       }
 
       // Fetch all target users in a single query
-      const users = await ctx.drizzle.query.userData.findMany({
-        where: inArray(userData.userId, input.userIds),
-      });
+      const users = await listUserDataForAwardReputation(ctx.drizzle, input);
 
       // Check if any users are missing
       if (users.length !== input.userIds.length) {
@@ -329,17 +305,10 @@ export const miscRouter = createTRPCRouter({
       // Execute both operations in parallel
       const [, credited] = await Promise.all([
         // Batch insert all rewards
-        ctx.drizzle.insert(userRewards).values(rewardsToInsert),
+        insertUserRewardsForAwardReputation(ctx.drizzle, rewardsToInsert),
 
         // Update all users in a single query
-        ctx.drizzle
-          .update(userData)
-          .set({
-            reputationPoints: sql`reputationPoints + ${input.reputationAmount || 0}`,
-            reputationPointsTotal: sql`reputationPointsTotal + ${input.reputationAmount || 0}`,
-            money: sql`money + ${input.moneyAmount || 0}`,
-          })
-          .where(inArray(userData.userId, input.userIds)),
+        updateUserDataForAwardReputation(ctx.drizzle, input),
       ]);
 
       return {
@@ -373,20 +342,14 @@ export const miscRouter = createTRPCRouter({
       // Resolve username filters to userId arrays (done upfront to keep main query simple)
       const [receiverIds, awardedByIds] = await Promise.all([
         input.awardedTo
-          ? ctx.drizzle.query.userData
-              .findMany({
-                where: like(userData.username, `%${input.awardedTo}%`),
-                columns: { userId: true },
-              })
-              .then((rows) => rows.map((r) => r.userId))
+          ? listUserDataForGetAllAwards(ctx.drizzle, {
+              awardedTo: input.awardedTo,
+            }).then((rows) => rows.map((r) => r.userId))
           : Promise.resolve<string[]>([]),
         input.awardedBy
-          ? ctx.drizzle.query.userData
-              .findMany({
-                where: like(userData.username, `%${input.awardedBy}%`),
-                columns: { userId: true },
-              })
-              .then((rows) => rows.map((r) => r.userId))
+          ? listUserDataForGetAllAwards2(ctx.drizzle, {
+              awardedBy: input.awardedBy,
+            }).then((rows) => rows.map((r) => r.userId))
           : Promise.resolve<string[]>([]),
       ]);
 
@@ -395,50 +358,16 @@ export const miscRouter = createTRPCRouter({
       const dayEnd = dayStart ? new Date(dayStart) : undefined;
       if (dayEnd) dayEnd.setDate(dayEnd.getDate() + 1);
 
-      const results = await ctx.drizzle.query.userRewards.findMany({
-        offset: skip,
-        limit: limit,
-        with: {
-          awardedBy: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-            },
-          },
-          receiver: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-            },
-          },
-        },
-        where: and(
-          // Reward type conditions
-          ...(input.rewardType === "reputation"
-            ? [gt(userRewards.reputationAmount, 0), eq(userRewards.moneyAmount, 0)]
-            : []),
-          ...(input.rewardType === "money"
-            ? [gt(userRewards.moneyAmount, 0), eq(userRewards.reputationAmount, 0)]
-            : []),
-          ...(input.rewardType === "both"
-            ? [gt(userRewards.reputationAmount, 0), gt(userRewards.moneyAmount, 0)]
-            : []),
-          // Date range conditions for a specific day (UTC)
-          ...(dayStart && dayEnd
-            ? [gte(userRewards.createdAt, dayStart), lt(userRewards.createdAt, dayEnd)]
-            : []),
-          // Username-derived id filters
-          ...(receiverIds.length > 0
-            ? [inArray(userRewards.receiverId, receiverIds)]
-            : []),
-          ...(awardedByIds.length > 0
-            ? [inArray(userRewards.awardedById, awardedByIds)]
-            : []),
-        ),
-        orderBy: [desc(userRewards.createdAt)],
-      });
+      const results = await listUserRewardsForGetAllAwards(
+        ctx.drizzle,
+        skip,
+        limit,
+        input,
+        dayStart,
+        dayEnd,
+        receiverIds,
+        awardedByIds,
+      );
 
       const nextCursor = results.length < limit ? null : currentCursor + 1;
       return { data: results, nextCursor: nextCursor };
@@ -447,9 +376,7 @@ export const miscRouter = createTRPCRouter({
   getPersonalEmailReminder: protectedProcedure
     .meta({ mcp: { description: "Get user's email reminder settings" } })
     .query(async ({ ctx }) => {
-      const reminder = await ctx.drizzle.query.emailReminder.findFirst({
-        where: eq(emailReminder.userId, ctx.userId),
-      });
+      const reminder = await findUserEmailReminder(ctx.drizzle, ctx);
       return reminder ?? null;
     }),
 
@@ -480,15 +407,10 @@ export const miscRouter = createTRPCRouter({
       }
 
       // Update the disabled status
-      const result = await ctx.drizzle
-        .update(emailReminder)
-        .set({ disabled: input.disabled })
-        .where(
-          and(
-            eq(emailReminder.email, input.email),
-            eq(emailReminder.secret, input.secret),
-          ),
-        );
+      const result = await updateEmailReminderForToggleEmailReminder(
+        ctx.drizzle,
+        input,
+      );
 
       if (result.rowsAffected === 0) {
         return { success: false, message: "Failed to update email reminder" };
@@ -518,14 +440,10 @@ export const miscRouter = createTRPCRouter({
       }
 
       // Delete the email reminder
-      const result = await ctx.drizzle
-        .delete(emailReminder)
-        .where(
-          and(
-            eq(emailReminder.email, input.email),
-            eq(emailReminder.secret, input.secret),
-          ),
-        );
+      const result = await deleteEmailReminderForDeleteEmailReminder(
+        ctx.drizzle,
+        input,
+      );
 
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to delete email reminder");
@@ -549,9 +467,7 @@ export const miscRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Query
-      const reviewsToday = await ctx.drizzle.query.supportReview.findMany({
-        where: gte(supportReview.createdAt, secondsFromNow(-DAY_S)),
-      });
+      const reviewsToday = await listSupportReviewForReviewSupportWithAI(ctx.drizzle);
       // Guard
       if (reviewsToday.length >= 5) {
         return errorResponse(
@@ -559,13 +475,7 @@ export const miscRouter = createTRPCRouter({
         );
       }
       // Insert
-      await ctx.drizzle.insert(supportReview).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        apiRoute: input.apiRoute,
-        chatHistory: input.chatHistory,
-        sentiment: input.sentiment,
-      });
+      await insertSupportReviewForReviewSupportWithAI(ctx.drizzle, ctx, input);
       return { success: true, message: "Review submitted" };
     }),
 });
@@ -580,17 +490,7 @@ const captchaNow = sql`CURRENT_TIMESTAMP(3) + INTERVAL 1 DAY`;
  * Whether the user solved a captcha within `TRAINING_CAPTCHA_SOLVED_GRACE_MINUTES`.
  */
 export const solvedCaptchaRecently = async (client: DrizzleClient, userId: string) => {
-  const solved = await client.query.captcha.findFirst({
-    columns: { id: true },
-    where: and(
-      eq(captcha.userId, userId),
-      eq(captcha.success, true),
-      gt(
-        captcha.createdAt,
-        sql`${captchaNow} - INTERVAL ${TRAINING_CAPTCHA_SOLVED_GRACE_MINUTES} MINUTE`,
-      ),
-    ),
-  });
+  const solved = await findCaptchaForSolvedCaptchaRecently(client, userId, captchaNow);
   return Boolean(solved);
 };
 
@@ -601,9 +501,7 @@ export const solvedCaptchaRecently = async (client: DrizzleClient, userId: strin
 export const generateCaptcha = async (client: DrizzleClient, userId: string) => {
   // Fetch
   const [current, recentlySolved] = await Promise.all([
-    client.query.captcha.findFirst({
-      where: and(eq(captcha.userId, userId), eq(captcha.used, false)),
-    }),
+    findCaptchaForGenerateCaptcha(client, userId),
     solvedCaptchaRecently(client, userId),
   ]);
   if (recentlySolved) return { svg: null };
@@ -613,7 +511,7 @@ export const generateCaptcha = async (client: DrizzleClient, userId: string) => 
   // Insert into database
   if (!current) {
     // Create a new captcha
-    await client.insert(captcha).values({ userId, value });
+    await insertCaptchaForGenerateCaptcha(client, userId, value);
   }
   // Return svg & hash
   return { svg };
@@ -645,22 +543,13 @@ const renderCaptchaSvg = (value: string) => {
  */
 export const refreshCaptcha = async (client: DrizzleClient, userId: string) => {
   // Query
-  const recent = await client.$count(
-    captcha,
-    and(
-      eq(captcha.userId, userId),
-      gt(captcha.createdAt, sql`${captchaNow} - INTERVAL 1 MINUTE`),
-    ),
-  );
+  const recent = await countCaptchaForRefreshCaptcha(client, userId, captchaNow);
   // Guard
   if (recent >= TRAINING_CAPTCHA_REFRESHES_PER_MINUTE) {
     return errorResponse("Too many new captchas, wait a minute and try again");
   }
   // Mutate
-  await client
-    .update(captcha)
-    .set({ used: true, success: false })
-    .where(and(eq(captcha.userId, userId), eq(captcha.used, false)));
+  await updateCaptchaForRefreshCaptcha(client, userId);
   await generateCaptcha(client, userId);
   return { success: true, message: "New captcha generated" };
 };
@@ -675,16 +564,11 @@ export const validateCaptcha = async (
   guess: string,
 ) => {
   // Fetch
-  const current = await client.query.captcha.findFirst({
-    where: and(eq(captcha.userId, userId), eq(captcha.used, false)),
-  });
+  const current = await findCaptchaForGenerateCaptcha(client, userId);
   // Check
   if (current) {
     const success = captchaAnswerMatches(current.value, guess);
-    await client
-      .update(captcha)
-      .set({ used: true, success, ...(success ? { createdAt: captchaNow } : {}) })
-      .where(eq(captcha.id, current.id));
+    await updateCaptchaForValidateCaptcha(client, success, captchaNow, current);
     return success;
   }
   return false;
@@ -705,37 +589,4 @@ export const trainingCaptchaMessage = async (
   if (!guess) return "Captcha required";
   if (!(await validateCaptcha(client, user.userId, guess))) return "Invalid captcha";
   return null;
-};
-
-/**
- * Fetches game assets from the database.
- *
- * @param client - The DrizzleClient instance used to query the database.
- * @returns A promise that resolves to an array of game assets, each containing the id, name, and image.
- */
-export const fetchGameAssets = async (client: DrizzleClient, ids?: string[]) => {
-  return await client.query.gameAsset.findMany({
-    where: and(
-      eq(gameAsset.hidden, false),
-      ...(ids ? [inArray(gameAsset.id, ids)] : []),
-    ),
-    orderBy: [desc(gameAsset.name)],
-  });
-};
-
-/**
- * Fetches an email reminder by email and secret
- * @param client - The DrizzleClient instance
- * @param email - The email address
- * @param secret - The secret token
- * @returns The email reminder or null if not found
- */
-export const fetchEmailReminder = async (
-  client: DrizzleClient,
-  email: string,
-  secret: string,
-) => {
-  return await client.query.emailReminder.findFirst({
-    where: and(eq(emailReminder.email, email), eq(emailReminder.secret, secret)),
-  });
 };

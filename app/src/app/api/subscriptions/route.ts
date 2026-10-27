@@ -1,7 +1,10 @@
-import { and, eq, isNotNull, isNull, lte } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { paypalSubscription } from "@/drizzle/schema";
 import { handleEndpointError } from "@/libs/gamesettings";
+import {
+  listPaypalSubscriptionForGET,
+  listPaypalSubscriptionForGET2,
+  updatePaypalSubscriptionForGET,
+} from "@/queries/paypal";
 import {
   getPaypalAccessToken,
   getPaypalSubscription,
@@ -22,26 +25,8 @@ export async function GET(request: Request) {
   try {
     // PayPal subscriptions have orderIds; reputation subscriptions do not.
     const [paypalSubscriptions, repSubscriptions] = await Promise.all([
-      drizzleDB.query.paypalSubscription.findMany({
-        where: and(
-          eq(paypalSubscription.status, "ACTIVE"),
-          isNotNull(paypalSubscription.orderId),
-          lte(
-            paypalSubscription.updatedAt,
-            new Date(Date.now() - 1000 * 60 * 60 * 24 * 31),
-          ),
-        ),
-      }),
-      drizzleDB.query.paypalSubscription.findMany({
-        where: and(
-          eq(paypalSubscription.status, "ACTIVE"),
-          isNull(paypalSubscription.orderId),
-          lte(
-            paypalSubscription.updatedAt,
-            new Date(Date.now() - 1000 * 60 * 60 * 24 * 31),
-          ),
-        ),
-      }),
+      listPaypalSubscriptionForGET(drizzleDB),
+      listPaypalSubscriptionForGET2(drizzleDB),
     ]);
     const token = paypalSubscriptions.length
       ? getPaypalAccessToken()
@@ -78,15 +63,7 @@ export async function GET(request: Request) {
       const isDone =
         new Date(subscription.updatedAt) <
         new Date(Date.now() - 1000 * 60 * 60 * 24 * 31);
-      await drizzleDB
-        .update(paypalSubscription)
-        .set({
-          status: isDone ? "CANCELLED" : "ACTIVE",
-          // As above: the reputation-funded row's last-payment marker has to survive being
-          // cancelled, or the tier outlives what was paid for.
-          ...(isDone ? {} : { updatedAt: new Date() }),
-        })
-        .where(eq(paypalSubscription.id, subscription.id));
+      await updatePaypalSubscriptionForGET(drizzleDB, isDone, subscription);
       await setFederalStatusWithStoreFloor(
         drizzleDB,
         subscription.affectedUserId,

@@ -1,4 +1,3 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { z } from "zod";
 import {
@@ -8,12 +7,27 @@ import {
   CONTENT_PROPOSAL_RATIONALE_LENGTH,
   type ContentProposalEntityType,
 } from "@/drizzle/constants";
+import type { contentProposalMedia } from "@/drizzle/schema";
 import {
-  contentProposal,
-  contentProposalBasis,
-  contentProposalChange,
-  contentProposalMedia,
-} from "@/drizzle/schema";
+  deleteContentProposalBasisForReviseAgentProposal,
+  deleteContentProposalChangeForReviseAgentProposal,
+  deleteContentProposalMediaForReviseAgentProposal,
+  insertContentProposalBasisForInsertRows,
+  insertContentProposalBasisForReviseAgentProposal,
+  insertContentProposalChangeForInsertRows,
+  insertContentProposalChangeForReviseAgentProposal,
+  insertContentProposalForInsertRows,
+  insertContentProposalMediaForInsertRows,
+  insertContentProposalMediaForReviseAgentProposal,
+  type MediaInsert,
+  type Rows,
+  readAgentProposal,
+  rejectedChanges,
+  selectContentProposalChangeForOpenTargets,
+  selectContentProposalChangeForTakenNames,
+  updateContentProposalForReviseAgentProposal,
+} from "@/queries/contentReview";
+
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { DAY_S, secondsFromNow } from "@/utils/time";
@@ -129,13 +143,6 @@ export const ingestAgentSubmission = async (
   result.summary = submissionSummary(submission, result);
   return result;
 };
-
-/** Fetch a draft and its current optimistic revision token without altering freshness. */
-export const readAgentProposal = (client: DrizzleClient, id: string) =>
-  client.query.contentProposal.findFirst({
-    where: eq(contentProposal.id, id),
-    with: { changes: true, basis: true, media: true },
-  });
 
 /**
  * Refine a suggestion without changing its identity or approving content. Media preparation
@@ -327,42 +334,24 @@ export const reviseAgentProposal = async (
       row.proposalId = id;
     saved = await retryOnDeadlock(() =>
       client.transaction(async (tx) => {
-        const claim = await tx
-          .update(contentProposal)
-          .set({
-            title: plan.proposal.title,
-            rationale: plan.proposal.rationale,
-            category: plan.proposal.category,
-            confidence: plan.proposal.confidence,
-            expiresAt: plan.proposal.expiresAt,
-            runUrl: input.runUrl ?? existing.runUrl,
-            focus: input.focus ?? existing.focus,
-            status: "PENDING",
-            statusChangedAt: nextAt,
-            // Retain the decision metadata so staff can see the feedback that prompted a revision.
-          })
-          .where(
-            and(
-              eq(contentProposal.id, id),
-              eq(contentProposal.source, "AGENT"),
-              eq(contentProposal.status, existing.status),
-              eq(contentProposal.statusChangedAt, existing.statusChangedAt),
-            ),
-          );
+        const claim = await updateContentProposalForReviseAgentProposal(
+          tx,
+          plan,
+          input,
+          existing,
+          nextAt,
+          id,
+        );
         if (claim.rowsAffected !== 1) return false;
-        await tx
-          .delete(contentProposalMedia)
-          .where(eq(contentProposalMedia.proposalId, id));
-        await tx
-          .delete(contentProposalBasis)
-          .where(eq(contentProposalBasis.proposalId, id));
-        await tx
-          .delete(contentProposalChange)
-          .where(eq(contentProposalChange.proposalId, id));
+        await deleteContentProposalMediaForReviseAgentProposal(tx, id);
+        await deleteContentProposalBasisForReviseAgentProposal(tx, id);
+        await deleteContentProposalChangeForReviseAgentProposal(tx, id);
         if (plan.changes.length)
-          await tx.insert(contentProposalChange).values(plan.changes);
-        if (plan.basis.length) await tx.insert(contentProposalBasis).values(plan.basis);
-        if (plan.media.length) await tx.insert(contentProposalMedia).values(plan.media);
+          await insertContentProposalChangeForReviseAgentProposal(tx, plan);
+        if (plan.basis.length)
+          await insertContentProposalBasisForReviseAgentProposal(tx, plan);
+        if (plan.media.length)
+          await insertContentProposalMediaForReviseAgentProposal(tx, plan);
         return true;
       }),
     );
@@ -733,54 +722,13 @@ const openTargets = async (
   ids: string[],
   excludeId?: string,
 ) => {
-  const rows = await client
-    .select({
-      entityType: contentProposalChange.entityType,
-      entityId: contentProposalChange.entityId,
-    })
-    .from(contentProposalChange)
-    .innerJoin(
-      contentProposal,
-      eq(contentProposal.id, contentProposalChange.proposalId),
-    )
-    .where(
-      and(
-        eq(contentProposal.status, "PENDING"),
-        excludeId ? ne(contentProposal.id, excludeId) : undefined,
-        inArray(contentProposalChange.entityId, ids),
-      ),
-    );
+  const rows = await selectContentProposalChangeForOpenTargets(client, excludeId, ids);
   return new Set(
     rows.flatMap((row) =>
       row.entityId ? [entityKey(row.entityType, row.entityId)] : [],
     ),
   );
 };
-
-/** Rejected changes still within retention, so the audit cannot resubmit them unchanged. */
-const rejectedChanges = async (
-  client: DrizzleClient,
-  ids: string[],
-  excludeId?: string,
-) =>
-  client
-    .select({
-      entityType: contentProposalChange.entityType,
-      entityId: contentProposalChange.entityId,
-      after: contentProposalChange.after,
-    })
-    .from(contentProposalChange)
-    .innerJoin(
-      contentProposal,
-      eq(contentProposal.id, contentProposalChange.proposalId),
-    )
-    .where(
-      and(
-        eq(contentProposal.status, "REJECTED"),
-        excludeId ? ne(contentProposal.id, excludeId) : undefined,
-        inArray(contentProposalChange.entityId, ids),
-      ),
-    );
 
 /**
  * Which drafted names new content cannot take, as `nameKey`s: names a live entity of the type
@@ -802,24 +750,7 @@ const takenNames = async (
         return found.map((name) => nameKey(type, name));
       }),
     ),
-    client
-      .select({
-        entityType: contentProposalChange.entityType,
-        after: contentProposalChange.after,
-      })
-      .from(contentProposalChange)
-      .innerJoin(
-        contentProposal,
-        eq(contentProposal.id, contentProposalChange.proposalId),
-      )
-      .where(
-        and(
-          eq(contentProposal.status, "PENDING"),
-          eq(contentProposalChange.operation, "CREATE"),
-          excludeId ? ne(contentProposal.id, excludeId) : undefined,
-          inArray(contentProposalChange.entityType, types),
-        ),
-      ),
+    selectContentProposalChangeForTakenNames(client, excludeId, types),
   ]);
   return new Set([
     ...live.flat(),
@@ -850,10 +781,10 @@ const insertRows = async (client: DrizzleClient, rows: Rows[]) => {
   const media = rows.flatMap((row) => row.media);
   await retryOnDeadlock(() =>
     client.transaction(async (tx) => {
-      await tx.insert(contentProposal).values(rows.map((row) => row.proposal));
-      if (changes.length) await tx.insert(contentProposalChange).values(changes);
-      if (basis.length) await tx.insert(contentProposalBasis).values(basis);
-      if (media.length) await tx.insert(contentProposalMedia).values(media);
+      await insertContentProposalForInsertRows(tx, rows);
+      if (changes.length) await insertContentProposalChangeForInsertRows(tx, changes);
+      if (basis.length) await insertContentProposalBasisForInsertRows(tx, basis);
+      if (media.length) await insertContentProposalMediaForInsertRows(tx, media);
     }),
   );
 };
@@ -896,19 +827,6 @@ type Guards = {
   /** Names new content cannot take, from `takenNames` and the drafts accepted so far. */
   names: Set<string>;
 };
-
-/** The rows one suggestion writes, across its four tables. */
-type Rows = {
-  proposal: ProposalInsert;
-  changes: ChangeInsert[];
-  basis: BasisInsert[];
-  media: MediaInsert[];
-};
-
-type ProposalInsert = typeof contentProposal.$inferInsert;
-type ChangeInsert = typeof contentProposalChange.$inferInsert;
-type BasisInsert = typeof contentProposalBasis.$inferInsert;
-type MediaInsert = typeof contentProposalMedia.$inferInsert;
 
 /** A candidate is tied to its original target and field when refining the same draft. */
 const mediaRequestKey = (

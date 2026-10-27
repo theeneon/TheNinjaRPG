@@ -1,109 +1,251 @@
 import { Client as PlanetScaleClient } from "@planetscale/database";
 import * as Sentry from "@sentry/nextjs";
-import type { inferRouterOutputs } from "@trpc/server";
-import { TRPCError } from "@trpc/server";
-import { and, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { type inferRouterOutputs, TRPCError } from "@trpc/server";
+
 import { after } from "next/server";
 import { z } from "zod";
 import type { UserStatus } from "@/drizzle/constants";
-import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
-import {
-  actionLog,
-  aiProfile,
-  anbuSquad,
-  auctionOffer,
-  automatedModeration,
-  bankTransfers,
-  battle,
-  bloodlineRolls,
-  captcha,
-  conceptImage,
-  contentBackup,
-  conversation,
-  conversationComment,
-  damageSimulation,
-  discordLink,
-  discordLinkHistory,
-  farmCollectionLog,
-  farmExtraction,
-  farmPlot,
-  forumPost,
-  forumThread,
-  historicalAvatar,
-  historicalIp,
-  huntingProgress,
-  huntingReceipt,
-  huntingSession,
-  itemLoadout,
-  jutsuLoadout,
-  kageDefendedChallenges,
-  linkPromotion,
-  moderationScan,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  notification,
-  overworldAiPlacement,
-  overworldAiPlacementQuest,
-  parentalControl,
-  paypalSubscription,
-  paypalTransaction,
-  poll,
-  pollOption,
-  questHistory,
-  raidParticipation,
-  rankedPvpQueue,
-  rankedUserRewards,
-  recruitReferral,
-  reportLog,
-  ryoTrade,
-  sector,
-  staffApplication,
-  storePurchase,
-  storeUserIdAlias,
-  stripeCheckout,
-  stripePayment,
-  supportReview,
-  title,
-  trainingLog,
-  user2conversation,
-  userActivityEvent,
-  userAttribute,
-  userBadge,
-  userBlackList,
-  userCookingJob,
-  userData,
-  userDevice,
-  userHome,
-  userItem,
-  userJutsu,
-  userLikes,
-  userLiveActivity,
-  userNindo,
-  userPet,
-  userPollVote,
-  userPushPreference,
-  userQuestAttempt,
-  userQueue,
-  userRaidBuff,
-  userReport,
-  userReportComment,
-  userRequest,
-  userReview,
-  userRewards,
-  userSkill,
-  userTitle,
-  userUpload,
-  userVote,
-  village,
-  warKill,
-  webStoreOrder,
-} from "@/drizzle/schema";
+import { huntingProgress, huntingReceipt, huntingSession } from "@/drizzle/schema";
 import { deleteUserReportEmbeddings } from "@/libs/moderation/reportSearch";
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
-import { fetchBadge } from "@/routers/badge";
-import { fetchAttributes, fetchUpdatedUser, fetchUser } from "@/routers/profile";
-import { fetchVillages } from "@/routers/village";
+import { deleteRowsForUser } from "@/queries/accountDeletion";
+import { fetchBadge } from "@/queries/badge";
+import { deleteClanBattleMembersForUser } from "@/queries/clan";
+import { deleteBattleById } from "@/queries/combat";
+import { findHuntingSessionForUser } from "@/queries/hunting";
+import { renameParentalContact } from "@/queries/parentalControls";
+import {
+  deleteUserAttributes,
+  fetchAttributes,
+  fetchUser,
+  findUserById,
+} from "@/queries/profile";
+import { findStoreUserIdAlias } from "@/queries/purchases";
+import { deleteRankedQueueForUser } from "@/queries/pvprank";
+import { clearQueueBattleId, deleteQueueById, listQueueMembers } from "@/queries/raids";
+import {
+  applyDevelopmentBackup,
+  clearDevelopmentBackupTarget,
+  deleteActionLogForDeleteUserInternal,
+  deleteAiProfileForDeleteUserInternal,
+  deleteAutomatedModerationForDeleteUserInternal,
+  deleteBankTransfersForDeleteUserInternal,
+  deleteBankTransfersForDeleteUserInternal2,
+  deleteBloodlineRollsForDeleteUserInternal,
+  deleteCaptchaForDeleteUserInternal,
+  deleteConceptImageForDeleteUserInternal,
+  deleteConversationCommentForDeleteUserInternal,
+  deleteConversationForDeleteUserInternal,
+  deleteDamageSimulationForDeleteUserInternal,
+  deleteFarmCollectionLogForDeleteUserInternal,
+  deleteFarmExtractionForDeleteUserInternal,
+  deleteFarmPlotForDeleteUserInternal,
+  deleteForumPostForDeleteUserInternal,
+  deleteForumThreadForDeleteUserInternal,
+  deleteHistoricalAvatarForDeleteUserInternal,
+  deleteHistoricalIpForDeleteUserInternal,
+  deleteJutsuLoadoutForDeleteUserInternal,
+  deleteKageDefendedChallengesForDeleteUserInternal,
+  deleteKageDefendedChallengesForDeleteUserInternal2,
+  deleteLinkPromotionForDeleteUserInternal,
+  deleteLinkPromotionForDeleteUserInternal2,
+  deleteModerationScanForDeleteUserInternal,
+  deleteMpvpBattleUserForForceAwake,
+  deleteNotificationForDeleteUserInternal,
+  deleteOverworldAiPlacementForDeleteUserInternal,
+  deleteOverworldAiPlacementQuestForDeleteUserInternal,
+  deletePollForDeleteUserInternal,
+  deletePollOptionForDeleteUserInternal,
+  deletePollOptionForDeleteUserInternal2,
+  deleteQuestHistoryForCloneUserForDebug,
+  deleteQuestHistoryForDeleteUserInternal,
+  deleteRaidParticipationForDeleteUserInternal,
+  deleteRankedPvpQueueForForceAwake,
+  deleteRankedUserRewardsForCloneUserForDebug,
+  deleteRankedUserRewardsForDeleteUserInternal,
+  deleteRecruitReferralForDeleteUserInternal,
+  deleteReportLogForDeleteUserInternal,
+  deleteReportLogForDeleteUserInternal2,
+  deleteSectorForReleaseSector,
+  deleteStaffApplicationForDeleteUserInternal,
+  deleteSupportReviewForDeleteUserInternal,
+  deleteTitleForDeleteUserInternal,
+  deleteTrainingLogForDeleteUserInternal,
+  deleteUser2conversationForDeleteUserInternal,
+  deleteUserActivityEventForDeleteUserInternal,
+  deleteUserAttributeForDeleteUserInternal,
+  deleteUserBadgeForDeleteUserInternal,
+  deleteUserBadgeForRemoveUserBadge,
+  deleteUserBlackListForDeleteUserInternal,
+  deleteUserBlackListForDeleteUserInternal2,
+  deleteUserCookingJobForCloneUserForDebug,
+  deleteUserCookingJobForDeleteUserInternal,
+  deleteUserDataForDeleteUserInternal,
+  deleteUserDeviceForDeleteUserInternal,
+  deleteUserHomeForDeleteUserInternal,
+  deleteUserItemForCloneUserForDebug,
+  deleteUserItemForDeleteUserInternal,
+  deleteUserJutsuForCloneUserForDebug,
+  deleteUserJutsuForDeleteUserInternal,
+  deleteUserLikesForDeleteUserInternal,
+  deleteUserLiveActivityForDeleteUserInternal,
+  deleteUserNindoForDeleteUserInternal,
+  deleteUserPetForDeleteUserInternal,
+  deleteUserPollVoteForDeleteUserInternal,
+  deleteUserPushPreferenceForDeleteUserInternal,
+  deleteUserQuestAttemptForDeleteUserInternal,
+  deleteUserQueueForCloneUserForDebug,
+  deleteUserQueueForDeleteUserInternal,
+  deleteUserRaidBuffForDeleteUserInternal,
+  deleteUserReportCommentForDeleteUserInternal,
+  deleteUserReportForDeleteUserInternal,
+  deleteUserReportForDeleteUserInternal2,
+  deleteUserRequestForDeleteUserInternal,
+  deleteUserRequestForDeleteUserInternal2,
+  deleteUserReviewForDeleteUserInternal,
+  deleteUserReviewForDeleteUserInternal2,
+  deleteUserRewardsForDeleteUserInternal,
+  deleteUserRewardsForDeleteUserInternal2,
+  deleteUserSkillForDeleteUserInternal,
+  deleteUserTitleForDeleteUserInternal,
+  deleteUserUploadForDeleteUserInternal,
+  deleteUserVoteForDeleteUserInternal,
+  deleteWarKillForDeleteUserInternal,
+  deleteWarKillForDeleteUserInternal2,
+  executeRecoverySqlForForceAwake,
+  executeSelectSqlForCreateBackup,
+  findContentBackupForPushBackupToDev,
+  findHuntingSessionForDeleteUser,
+  findMpvpBattleQueueForForceAwake,
+  findMpvpBattleUserForForceAwake,
+  findStoreUserIdAliasForUpdateUserId2,
+  findUserBadgeForRemoveUserBadge,
+  findUserDataForUpdateUserId2,
+  insertActionLogForDeleteReferral,
+  insertActionLogForForceAwake,
+  insertActionLogForInsertUserBadge,
+  insertActionLogForReleaseSector,
+  insertActionLogForRemoveUserBadge,
+  insertContentBackupForCreateBackup,
+  insertContentBackupForCreateBackup2,
+  insertQuestHistoryForCloneUserForDebug,
+  insertRankedUserRewardsForCloneUserForDebug,
+  insertStoreUserIdAliasForUpdateUserId,
+  insertUserAttributeForCloneUserForDebug,
+  insertUserBadgeForInsertUserBadge,
+  insertUserItemForCloneUserForDebug,
+  insertUserJutsuForCloneUserForDebug,
+  listContentBackupForGetBackups,
+  listHistoricalIpForGetUserHistoricalIps,
+  listQuestHistoryForCloneUserForDebug,
+  listRankedUserRewardsForCloneUserForDebug,
+  listUserActivityEventForGetUserActivityEvents,
+  listUserItemForCloneUserForDebug,
+  listUserJutsuForCloneUserForDebug,
+  selectOverworldAiPlacementForDeleteUserInternal,
+  updateActionLogForUpdateUserId,
+  updateAiProfileForUpdateUserId,
+  updateAnbuSquadForCloneUserForDebug,
+  updateAnbuSquadForCloneUserForDebug2,
+  updateAuctionOfferForDeleteUserInternal,
+  updateAuctionOfferForUpdateUserId,
+  updateAuctionOfferForUpdateUserId2,
+  updateAutomatedModerationForUpdateUserId,
+  updateBankTransfersForUpdateUserId,
+  updateBankTransfersForUpdateUserId2,
+  updateBloodlineRollsForUpdateUserId,
+  updateCaptchaForUpdateUserId,
+  updateConceptImageForUpdateUserId,
+  updateConversationCommentForUpdateUserId,
+  updateConversationForUpdateUserId,
+  updateDamageSimulationForUpdateUserId,
+  updateDiscordLinkForUpdateUserId,
+  updateDiscordLinkHistoryForUpdateUserId,
+  updateForumPostForUpdateUserId,
+  updateForumThreadForUpdateUserId,
+  updateHistoricalAvatarForUpdateUserId,
+  updateHistoricalIpForUpdateUserId,
+  updateItemLoadoutForUnequipAllGear,
+  updateJutsuLoadoutForUnequipAllJutsus,
+  updateJutsuLoadoutForUpdateUserId,
+  updateKageDefendedChallengesForUpdateUserId,
+  updateKageDefendedChallengesForUpdateUserId2,
+  updateLinkPromotionForUpdateUserId,
+  updateLinkPromotionForUpdateUserId2,
+  updateModerationScanForUpdateUserId,
+  updateMpvpBattleUserForUpdateUserId,
+  updateNotificationForUpdateUserId,
+  updateParentalControlForUpdateUserId,
+  updatePaypalSubscriptionForUpdateUserId,
+  updatePaypalSubscriptionForUpdateUserId2,
+  updatePaypalTransactionForUpdateUserId,
+  updatePaypalTransactionForUpdateUserId2,
+  updatePollForUpdateUserId,
+  updatePollOptionForUpdateUserId,
+  updatePollOptionForUpdateUserId2,
+  updateQuestHistoryForUpdateUserId,
+  updateReportLogForUpdateUserId,
+  updateReportLogForUpdateUserId2,
+  updateRyoTradeForUpdateUserId,
+  updateRyoTradeForUpdateUserId2,
+  updateRyoTradeForUpdateUserId3,
+  updateStorePurchaseForUpdateUserId,
+  updateStorePurchaseForUpdateUserId2,
+  updateStoreUserIdAliasForUpdateUserId,
+  updateStripeCheckoutForUpdateUserId,
+  updateStripeCheckoutForUpdateUserId2,
+  updateStripePaymentForUpdateUserId,
+  updateStripePaymentForUpdateUserId2,
+  updateSupportReviewForUpdateUserId,
+  updateTableForUpdateUserId,
+  updateTitleForUpdateUserId,
+  updateTrainingLogForUpdateUserId,
+  updateUser2conversationForUpdateUserId,
+  updateUserActivityEventForUpdateUserId,
+  updateUserAttributeForUpdateUserId,
+  updateUserBadgeForUpdateUserId,
+  updateUserBlackListForUpdateUserId,
+  updateUserBlackListForUpdateUserId2,
+  updateUserCookingJobForUpdateUserId,
+  updateUserDataForCloneUserForDebug,
+  updateUserDataForDeleteReferral,
+  updateUserDataForDeleteReferral2,
+  updateUserDataForDeleteUserInternal,
+  updateUserDataForUpdateUserId,
+  updateUserDeviceForUpdateUserId,
+  updateUserHomeForUpdateUserId,
+  updateUserItemForUnequipAllGear,
+  updateUserItemForUpdateUserId,
+  updateUserJutsuForUnequipAllJutsus,
+  updateUserJutsuForUpdateUserId,
+  updateUserLikesForUpdateUserId,
+  updateUserLiveActivityForUpdateUserId,
+  updateUserNindoForUpdateUserId,
+  updateUserPetForUpdateUserId,
+  updateUserPollVoteForUpdateUserId,
+  updateUserPushPreferenceForUpdateUserId,
+  updateUserQueueForUpdateUserId,
+  updateUserRaidBuffForUpdateUserId,
+  updateUserReportCommentForUpdateUserId,
+  updateUserReportForUpdateUserId,
+  updateUserReportForUpdateUserId2,
+  updateUserRequestForUpdateUserId,
+  updateUserRequestForUpdateUserId2,
+  updateUserReviewForUpdateUserId,
+  updateUserReviewForUpdateUserId2,
+  updateUserRewardsForUpdateUserId,
+  updateUserRewardsForUpdateUserId2,
+  updateUserTitleForUpdateUserId,
+  updateUserUploadForUpdateUserId,
+  updateUserVoteForUpdateUserId,
+  updateVillageForUpdateUserId,
+  updateWebStoreOrderForDeleteUserInternal,
+  updateWebStoreOrderForUpdateUserId,
+  updateWebStoreOrderForUpdateUserId2,
+  validateDevelopmentBackup,
+} from "@/queries/staff";
+import { fetchSector, fetchVillages } from "@/queries/village";
+import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -113,10 +255,7 @@ import {
 import type { DrizzleClient } from "@/server/db";
 import { removeDiscordLink } from "@/server/utils/discord/linking";
 import { isMysqlDeadlockError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
-import { renameParentalContact } from "@/server/utils/parentalControls";
 import {
-  DELETED_STORE_USER_PREFIX,
   isDeletedStoreUserId,
   migrateStoreEntitlementRevocations,
   migrateStoreEntitlementStates,
@@ -137,7 +276,6 @@ import {
   canUseMonitoringTests,
 } from "@/utils/permissions";
 import { idSchema } from "@/validators/misc";
-import { fetchSector } from "./village";
 
 export const staffRouter = createTRPCRouter({
   // Content Backups
@@ -146,10 +284,7 @@ export const staffRouter = createTRPCRouter({
     if (!canControlBackups(user.role)) {
       throw new TRPCError({ code: "FORBIDDEN", message: "Not allowed for you" });
     }
-    return ctx.drizzle.query.contentBackup.findMany({
-      orderBy: (table, { desc }) => [desc(table.createdAt)],
-      limit: 200,
-    });
+    return listContentBackupForGetBackups(ctx.drizzle);
   }),
   createBackup: protectedProcedure
     .input(z.object({ type: z.enum(["bloodline", "jutsu", "item", "ai"]) }))
@@ -173,23 +308,17 @@ export const staffRouter = createTRPCRouter({
 
       const tableName = tableMap[input.type];
 
-      // Build SELECT query
-      const selectSql =
-        input.type === "ai"
-          ? sql`SELECT * FROM ${sql.raw(tableName)} WHERE isAi = true`
-          : sql`SELECT * FROM ${sql.raw(tableName)}`;
-
-      const result = (await ctx.drizzle.execute(selectSql)) as unknown as {
+      const result = (await executeSelectSqlForCreateBackup(
+        ctx.drizzle,
+        input,
+        tableName,
+      )) as unknown as {
         rows: Record<string, unknown>[];
       };
 
       const rows: Record<string, unknown>[] = result?.rows ?? [];
       if (rows.length === 0) {
-        await ctx.drizzle.insert(contentBackup).values({
-          id: nanoid(),
-          type: input.type,
-          sqlText: `/* Empty backup for ${tableName} at ${new Date().toISOString()} */`,
-        });
+        await insertContentBackupForCreateBackup(ctx.drizzle, input, tableName);
         return { success: true, message: "Backup created (empty dataset)" };
       }
 
@@ -212,11 +341,7 @@ export const staffRouter = createTRPCRouter({
 
       const insertSql = `INSERT INTO \`${tableName}\` (${columns.map((c) => `\`${c}\``).join(", ")}) VALUES\n${valuesSql};`;
 
-      await ctx.drizzle.insert(contentBackup).values({
-        id: nanoid(),
-        type: input.type,
-        sqlText: insertSql,
-      });
+      await insertContentBackupForCreateBackup2(ctx.drizzle, input, insertSql);
 
       return { success: true, message: "Backup created" };
     }),
@@ -228,9 +353,7 @@ export const staffRouter = createTRPCRouter({
       // Query
       const [user, backup] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.contentBackup.findFirst({
-          where: eq(contentBackup.id, input.id),
-        }),
+        findContentBackupForPushBackupToDev(ctx.drizzle, input),
       ]);
       // Derived
       const devUrl = process.env.DEV_DATABASE_URL;
@@ -258,18 +381,14 @@ export const staffRouter = createTRPCRouter({
 
       // Validate the backup against the destination schema before deleting content.
       try {
-        await client.execute(`EXPLAIN ${backup.sqlText}`);
+        await validateDevelopmentBackup(client, backup.sqlText);
       } catch {
         return errorResponse(
           "Backup could not be validated against the development schema. No content was changed",
         );
       }
-      const deleteQuery =
-        backup.type === "ai"
-          ? `DELETE FROM \`${tableName}\` WHERE isAi = 1`
-          : `DELETE FROM \`${tableName}\``;
-      await client.execute(deleteQuery);
-      await client.execute(backup.sqlText);
+      await clearDevelopmentBackupTarget(client, tableName, backup.type === "ai");
+      await applyDevelopmentBackup(client, backup.sqlText);
 
       return { success: true, message: "Backup pushed to dev" };
     }),
@@ -320,25 +439,8 @@ export const staffRouter = createTRPCRouter({
       // Orphan userJutsu/loadout rows (userId missing from UserData) are included —
       // harmless for unequip-all.
       await Promise.all([
-        ctx.drizzle
-          .update(userJutsu)
-          .set({ equipped: false })
-          .where(
-            and(
-              ne(userJutsu.equipped, false),
-              sql`${userJutsu.userId} NOT IN (
-                SELECT ${userData.userId} FROM ${userData} WHERE ${userData.isAi} = true
-              )`,
-            ),
-          ),
-        ctx.drizzle
-          .update(jutsuLoadout)
-          .set({ jutsuIds: [] })
-          .where(
-            sql`${jutsuLoadout.userId} NOT IN (
-              SELECT ${userData.userId} FROM ${userData} WHERE ${userData.isAi} = true
-            )`,
-          ),
+        updateUserJutsuForUnequipAllJutsus(ctx.drizzle),
+        updateJutsuLoadoutForUnequipAllJutsus(ctx.drizzle),
       ]);
       return {
         success: true,
@@ -358,28 +460,8 @@ export const staffRouter = createTRPCRouter({
       // Clear every item loadout (not only the active pointer), matching unequipAllJutsus.
       // Same NOT IN (isAi = true) pattern as unequipAllJutsus (small AI set vs all humans).
       await Promise.all([
-        ctx.drizzle
-          .update(userItem)
-          .set({ equipped: "NONE" })
-          .where(
-            and(
-              ne(userItem.equipped, "NONE"),
-              // Skip rows held by a stack-merge claim (negative quantity) so this bulk write
-              // cannot change a claimed row's equipped slot mid-merge-publish.
-              gt(userItem.quantity, 0),
-              sql`${userItem.userId} NOT IN (
-                SELECT ${userData.userId} FROM ${userData} WHERE ${userData.isAi} = true
-              )`,
-            ),
-          ),
-        ctx.drizzle
-          .update(itemLoadout)
-          .set({ itemData: [] })
-          .where(
-            sql`${itemLoadout.userId} NOT IN (
-              SELECT ${userData.userId} FROM ${userData} WHERE ${userData.isAi} = true
-            )`,
-          ),
+        updateUserItemForUnequipAllGear(ctx.drizzle),
+        updateItemLoadoutForUnequipAllGear(ctx.drizzle),
       ]);
       return {
         success: true,
@@ -402,92 +484,45 @@ export const staffRouter = createTRPCRouter({
       const [user, targetUser, queueEntry, hunt] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, input.userId),
-        ctx.drizzle.query.mpvpBattleUser.findFirst({
-          where: eq(mpvpBattleUser.userId, input.userId),
-        }),
-        ctx.drizzle.query.huntingSession.findFirst({
-          where: eq(huntingSession.userId, input.userId),
-        }),
+        findMpvpBattleUserForForceAwake(ctx.drizzle, input),
+        findHuntingSessionForUser(ctx.drizzle, input),
       ]);
       // Guard
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
       if (!canUnstuckVillage(user.role)) return errorResponse("Not allowed for you");
-      const recoverySql = sql`
-          UPDATE ${userData}
-          LEFT JOIN ${questHistory} ON ${and(
-            eq(questHistory.userId, userData.userId),
-            eq(questHistory.questType, "battlepyramid"),
-            eq(questHistory.completed, 0),
-            isNull(questHistory.endAt),
-          )}
-          LEFT JOIN ${huntingSession} ON ${huntingSession.userId} = ${userData.userId}
-          SET ${userData.status} = 'AWAKE', ${userData.travelFinishAt} = NULL,
-              ${huntingSession.battleId} = NULL, ${huntingSession.version} = COALESCE(${huntingSession.version}, 0) + 1,
-              ${userData.bracketImmunityLiftedUntil} = ${resumeBracketImmunitySql()}, ${userData.bracketImmunityPausedAt} = NULL, ${userData.battleId} = NULL, ${questHistory.completed} = 0,
-              ${questHistory.endAt} = ${new Date()},
-              ${userData.updatedAt} = GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))
-          WHERE ${userData.userId} = ${targetUser.userId}
-            AND ${userData.battleId} <=> ${targetUser.battleId}
-            AND ${huntingSession.id} <=> ${hunt?.id ?? null}
-            AND ${huntingSession.battleId} <=> ${hunt?.battleId ?? null}
-            AND ${huntingSession.version} <=> ${hunt?.version ?? null}
-        `;
+      const endedAt = new Date();
       // Drizzle has no joined UPDATE builder. Cancel the captured run and release its
       // status together, only while neither the character nor its hunt has changed.
       // LEFT JOIN also recovers players without any Pyramid history or hunting session.
-      const recovered = await retryOnDeadlock(() => ctx.drizzle.execute(recoverySql));
+      const recovered = await retryOnDeadlock(() =>
+        executeRecoverySqlForForceAwake(ctx.drizzle, targetUser, hunt, endedAt),
+      );
       if (recovered.rowsAffected === 0)
         return errorResponse("The character's battle changed. Refresh and try again.");
       // Mutate - update status and clean up all queue entries
       await Promise.all([
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          relatedId: input.userId,
-          relatedMsg: `Force updated status to awake from status: ${targetUser.status}`,
-          changes: [
-            `Previous BattleId: ${targetUser.battleId}`,
-            `Reason: ${input.reason}`,
-            `Cleared queue entries: mpvpBattleUser=${queueEntry ? "yes" : "no"}`,
-          ],
-        }),
+        insertActionLogForForceAwake(ctx.drizzle, ctx, input, targetUser, queueEntry),
         // Delete only the fight captured before recovery; a newly admitted fight must survive.
         // Cleanup failure leaves a support-removable orphan. Old tabs may advance it, but
         // its cancelled session/version guard rejects terminal settlement before any payout.
-        ...(hunt?.battleId
-          ? [ctx.drizzle.delete(battle).where(eq(battle.id, hunt.battleId))]
-          : []),
+        ...(hunt?.battleId ? [deleteBattleById(ctx.drizzle, hunt.battleId)] : []),
         // Clean up raid/clan/shrine battle queue
-        ctx.drizzle
-          .delete(mpvpBattleUser)
-          .where(eq(mpvpBattleUser.userId, input.userId)),
+        deleteMpvpBattleUserForForceAwake(ctx.drizzle, input),
         // Clean up ranked PVP queue
-        ctx.drizzle
-          .delete(rankedPvpQueue)
-          .where(eq(rankedPvpQueue.userId, input.userId)),
+        deleteRankedPvpQueueForForceAwake(ctx.drizzle, input),
       ]);
       // Clean up empty teams or stuck claiming states if user was in a team
       if (queueEntry) {
-        const remainingMembers = await ctx.drizzle.query.mpvpBattleUser.findMany({
-          where: eq(mpvpBattleUser.clanBattleId, queueEntry.clanBattleId),
-        });
+        const remainingMembers = await listQueueMembers(ctx.drizzle, queueEntry);
         if (remainingMembers.length === 0) {
           // Delete the queue entry - team is now empty
-          await ctx.drizzle
-            .delete(mpvpBattleQueue)
-            .where(eq(mpvpBattleQueue.id, queueEntry.clanBattleId));
+          await deleteQueueById(ctx.drizzle, queueEntry.clanBattleId);
         } else {
           // If there are remaining members but battleId is a claiming ID, reset it
-          const team = await ctx.drizzle.query.mpvpBattleQueue.findFirst({
-            where: eq(mpvpBattleQueue.id, queueEntry.clanBattleId),
-          });
+          const team = await findMpvpBattleQueueForForceAwake(ctx.drizzle, queueEntry);
           if (team?.battleId?.startsWith("claiming-")) {
-            await ctx.drizzle
-              .update(mpvpBattleQueue)
-              .set({ battleId: null })
-              .where(eq(mpvpBattleQueue.id, queueEntry.clanBattleId));
+            await clearQueueBattleId(ctx.drizzle, queueEntry);
           }
         }
       }
@@ -530,18 +565,8 @@ export const staffRouter = createTRPCRouter({
       if (!canModifyUserBadges(user.role)) return errorResponse("Not allowed for you");
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .insert(userBadge)
-          .values([{ userId: input.userId, badgeId: input.badgeId }]),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`Insert badge: ${badge.name}`],
-          relatedId: input.userId,
-          relatedMsg: `Insert badge: ${badge.name}`,
-          relatedImage: user.avatarLight,
-        }),
+        insertUserBadgeForInsertUserBadge(ctx.drizzle, input),
+        insertActionLogForInsertUserBadge(ctx.drizzle, ctx, badge, input, user),
       ]);
       return { success: true, message: "Badge added" };
     }),
@@ -553,12 +578,7 @@ export const staffRouter = createTRPCRouter({
       const [user, badge, userbadge] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchBadge(ctx.drizzle, input.badgeId),
-        ctx.drizzle.query.userBadge.findFirst({
-          where: and(
-            eq(userBadge.userId, input.userId),
-            eq(userBadge.badgeId, input.badgeId),
-          ),
-        }),
+        findUserBadgeForRemoveUserBadge(ctx.drizzle, input),
       ]);
       // Guard
       if (!badge) return errorResponse("Badge not found");
@@ -566,23 +586,8 @@ export const staffRouter = createTRPCRouter({
       if (!canModifyUserBadges(user.role)) return errorResponse("Not allowed for you");
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .delete(userBadge)
-          .where(
-            and(
-              eq(userBadge.userId, input.userId),
-              eq(userBadge.badgeId, input.badgeId),
-            ),
-          ),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`Remove badge: ${badge.name}`],
-          relatedId: input.userId,
-          relatedMsg: `Remove badge: ${badge.name}`,
-          relatedImage: user.avatarLight,
-        }),
+        deleteUserBadgeForRemoveUserBadge(ctx.drizzle, input),
+        insertActionLogForRemoveUserBadge(ctx.drizzle, ctx, badge, input, user),
       ]);
 
       return { success: true, message: "Badge removed" };
@@ -605,152 +610,63 @@ export const staffRouter = createTRPCRouter({
       }
       const [targetJutsus, targetItems, targetQuestHistory, targetRankedUserRewards] =
         await Promise.all([
-          ctx.drizzle.query.userJutsu.findMany({
-            where: eq(userJutsu.userId, input.userId),
-          }),
-          ctx.drizzle.query.userItem.findMany({
-            where: eq(userItem.userId, input.userId),
-          }),
-          ctx.drizzle.query.questHistory.findMany({
-            where: eq(questHistory.userId, input.userId),
-          }),
-          ctx.drizzle.query.rankedUserRewards.findMany({
-            where: eq(rankedUserRewards.userId, input.userId),
-          }),
+          listUserJutsuForCloneUserForDebug(ctx.drizzle, input),
+          listUserItemForCloneUserForDebug(ctx.drizzle, input),
+          listQuestHistoryForCloneUserForDebug(ctx.drizzle, input),
+          listRankedUserRewardsForCloneUserForDebug(ctx.drizzle, input),
         ]);
       await Promise.all([
-        ctx.drizzle.delete(userJutsu).where(eq(userJutsu.userId, user.userId)),
-        ctx.drizzle.delete(userItem).where(eq(userItem.userId, user.userId)),
-        ctx.drizzle.delete(userQueue).where(eq(userQueue.userId, user.userId)),
-        ctx.drizzle
-          .delete(userCookingJob)
-          .where(eq(userCookingJob.userId, user.userId)),
-        ctx.drizzle.delete(questHistory).where(eq(questHistory.userId, user.userId)),
-        ctx.drizzle.delete(userAttribute).where(eq(userAttribute.userId, user.userId)),
-        ctx.drizzle
-          .delete(rankedUserRewards)
-          .where(eq(rankedUserRewards.userId, user.userId)),
+        deleteUserJutsuForCloneUserForDebug(ctx.drizzle, user),
+        deleteUserItemForCloneUserForDebug(ctx.drizzle, user),
+        deleteUserQueueForCloneUserForDebug(ctx.drizzle, user),
+        deleteUserCookingJobForCloneUserForDebug(ctx.drizzle, user),
+        deleteQuestHistoryForCloneUserForDebug(ctx.drizzle, user),
+        deleteUserAttributes(ctx.drizzle, user),
+        deleteRankedUserRewardsForCloneUserForDebug(ctx.drizzle, user),
         ...(user.anbuId !== target.anbuId && user.anbuId
-          ? [
-              ctx.drizzle
-                .update(anbuSquad)
-                .set({
-                  memberCount: sql`GREATEST(${anbuSquad.memberCount} - 1, 0)`,
-                })
-                .where(eq(anbuSquad.id, user.anbuId)),
-            ]
+          ? [updateAnbuSquadForCloneUserForDebug(ctx.drizzle, { anbuId: user.anbuId })]
           : []),
         ...(user.anbuId !== target.anbuId && target.anbuId
           ? [
-              ctx.drizzle
-                .update(anbuSquad)
-                .set({ memberCount: sql`${anbuSquad.memberCount} + 1` })
-                .where(eq(anbuSquad.id, target.anbuId)),
+              updateAnbuSquadForCloneUserForDebug2(ctx.drizzle, {
+                anbuId: target.anbuId,
+              }),
             ]
           : []),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            curHealth: target.curHealth,
-            maxHealth: target.maxHealth,
-            curStamina: target.curStamina,
-            maxStamina: target.maxStamina,
-            curChakra: target.curChakra,
-            maxChakra: target.maxChakra,
-            money: target.money,
-            bank: target.bank,
-            // Clone the balance and saved purchase prices together, replacing the staff path.
-            seichiSilver: target.seichiSilver,
-            bloodright: target.bloodright,
-            bloodrightSpent: target.bloodrightSpent,
-            experience: target.experience,
-            earnedExperience: target.earnedExperience,
-            rank: target.rank,
-            level: target.level,
-            status: target.status,
-            villageId: target.villageId,
-            bloodlineId: target.bloodlineId,
-            strength: target.strength,
-            speed: target.speed,
-            intelligence: target.intelligence,
-            willpower: target.willpower,
-            gender: target.gender,
-            offence: target.offence,
-            defence: target.defence,
-            ninjutsuMastery: target.ninjutsuMastery,
-            genjutsuMastery: target.genjutsuMastery,
-            taijutsuMastery: target.taijutsuMastery,
-            bukijutsuMastery: target.bukijutsuMastery,
-            bloodlineMastery: target.bloodlineMastery,
-            sageMastery: target.sageMastery,
-            questData: target.questData,
-            isOutlaw: target.isOutlaw,
-            sector: target.sector,
-            latitude: target.latitude,
-            longitude: target.longitude,
-            location: target.location,
-            tutorialStep: target.tutorialStep,
-            tutorialOn: target.tutorialOn,
-            battleId: target.battleId,
-            clanId: target.clanId,
-            anbuId: target.anbuId,
-          })
-          .where(eq(userData.userId, ctx.userId)),
+        updateUserDataForCloneUserForDebug(ctx.drizzle, target, ctx),
       ]);
       // Insert data
       await Promise.all([
         ...(targetJutsus.length > 0
-          ? [
-              ctx.drizzle.insert(userJutsu).values(
-                targetJutsus.map((userjutsu) => ({
-                  ...userjutsu,
-                  userId: ctx.userId,
-                  id: nanoid(),
-                })),
-              ),
-            ]
+          ? [insertUserJutsuForCloneUserForDebug(ctx.drizzle, targetJutsus, ctx)]
           : []),
         ...(targetItems.length > 0
-          ? [
-              ctx.drizzle.insert(userItem).values(
-                targetItems.map((useritem) => ({
-                  ...useritem,
-                  userId: ctx.userId,
-                  id: nanoid(),
-                })),
-              ),
-            ]
+          ? [insertUserItemForCloneUserForDebug(ctx.drizzle, targetItems, ctx)]
           : []),
         ...(targetQuestHistory.length > 0
           ? [
-              ctx.drizzle.insert(questHistory).values(
-                targetQuestHistory.map((questhistory) => ({
-                  ...questhistory,
-                  userId: ctx.userId,
-                  id: nanoid(),
-                })),
+              insertQuestHistoryForCloneUserForDebug(
+                ctx.drizzle,
+                targetQuestHistory,
+                ctx,
               ),
             ]
           : []),
         ...(targetRankedUserRewards.length > 0
           ? [
-              ctx.drizzle.insert(rankedUserRewards).values(
-                targetRankedUserRewards.map((rankedUserReward) => ({
-                  ...rankedUserReward,
-                  userId: ctx.userId,
-                  id: nanoid(),
-                })),
+              insertRankedUserRewardsForCloneUserForDebug(
+                ctx.drizzle,
+                targetRankedUserRewards,
+                ctx,
               ),
             ]
           : []),
         ...(targetAttributes.length > 0
           ? [
-              ctx.drizzle.insert(userAttribute).values(
-                targetAttributes.map((attribute) => ({
-                  ...attribute,
-                  userId: ctx.userId,
-                  id: nanoid(),
-                })),
+              insertUserAttributeForCloneUserForDebug(
+                ctx.drizzle,
+                targetAttributes,
+                ctx,
               ),
             ]
           : []),
@@ -770,11 +686,10 @@ export const staffRouter = createTRPCRouter({
         });
       }
       // Fetch historical IPs
-      const historicalIps = await ctx.drizzle.query.historicalIp.findMany({
-        where: eq(historicalIp.userId, input.userId),
-        orderBy: [desc(historicalIp.usedAt)],
-        limit: 100, // Limit to last 100 IP records
-      });
+      const historicalIps = await listHistoricalIpForGetUserHistoricalIps(
+        ctx.drizzle,
+        input,
+      );
       return historicalIps;
     }),
   releaseSector: protectedProcedure
@@ -798,16 +713,8 @@ export const staffRouter = createTRPCRouter({
 
       // Mutate
       await Promise.all([
-        ctx.drizzle.delete(sector).where(eq(sector.sector, input.sector)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "war",
-          changes: [`Released sector ${input.sector} from ${sectorData.village.name}`],
-          relatedId: sectorData.villageId,
-          relatedMsg: `Released sector ${input.sector}`,
-          relatedImage: IMG_AVATAR_DEFAULT,
-        }),
+        deleteSectorForReleaseSector(ctx.drizzle, input),
+        insertActionLogForReleaseSector(ctx.drizzle, ctx, input, sectorData),
       ]);
 
       // Return
@@ -826,11 +733,10 @@ export const staffRouter = createTRPCRouter({
         });
       }
       // Fetch activity events
-      const activityEvents = await ctx.drizzle.query.userActivityEvent.findMany({
-        where: eq(userActivityEvent.userId, input.userId),
-        orderBy: [desc(userActivityEvent.createdAt)],
-        limit: 100, // Limit to last 100 activity events
-      });
+      const activityEvents = await listUserActivityEventForGetUserActivityEvents(
+        ctx.drizzle,
+        input,
+      );
       return activityEvents;
     }),
   // Update all occurrences of a user ID in the database to another userId.
@@ -843,20 +749,10 @@ export const staffRouter = createTRPCRouter({
       const [user, fromUser, toUser, sourceAlias, destinationAlias] = await Promise.all(
         [
           fetchUser(ctx.drizzle, ctx.userId),
-          ctx.drizzle.query.userData.findFirst({
-            where: eq(userData.userId, input.userId),
-          }),
-          ctx.drizzle.query.userData.findFirst({
-            where: eq(userData.userId, input.newUserId),
-          }),
-          ctx.drizzle.query.storeUserIdAlias.findFirst({
-            columns: { newUserId: true },
-            where: eq(storeUserIdAlias.oldUserId, input.userId),
-          }),
-          ctx.drizzle.query.storeUserIdAlias.findFirst({
-            columns: { newUserId: true },
-            where: eq(storeUserIdAlias.oldUserId, input.newUserId),
-          }),
+          findUserById(ctx.drizzle, input.userId),
+          findUserDataForUpdateUserId2(ctx.drizzle, input),
+          findStoreUserIdAlias(ctx.drizzle, input),
+          findStoreUserIdAliasForUpdateUserId2(ctx.drizzle, input),
         ],
       );
       // Guard
@@ -906,18 +802,8 @@ export const staffRouter = createTRPCRouter({
       // write keeps its tombstone, and the rename stops here before moving anything.
       // A receipt that lands under the old id in between is re-homed by the ledger's
       // own owner reconciliation, so nothing here holds a lock.
-      await ctx.drizzle
-        .insert(storeUserIdAlias)
-        .values({
-          oldUserId: input.userId,
-          newUserId: input.newUserId,
-          updatedAt: new Date(),
-        })
-        .onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
-      const claim = await ctx.drizzle.query.storeUserIdAlias.findFirst({
-        columns: { newUserId: true },
-        where: eq(storeUserIdAlias.oldUserId, input.userId),
-      });
+      await insertStoreUserIdAliasForUpdateUserId(ctx.drizzle, input);
+      const claim = await findStoreUserIdAlias(ctx.drizzle, input);
       if (claim && isDeletedStoreUserId(claim.newUserId)) {
         return {
           success: false,
@@ -932,16 +818,7 @@ export const staffRouter = createTRPCRouter({
         // can no longer claim the retired ID. Related ownership moves start only after
         // this succeeds; the alias lets a retry finish any later partial failure.
         const renamed = await retryOnDeadlock(() =>
-          ctx.drizzle
-            .update(userData)
-            .set({ userId: input.newUserId })
-            .where(
-              and(
-                eq(userData.userId, input.userId),
-                ne(userData.status, "BATTLE"),
-                isNull(userData.battleId),
-              ),
-            ),
+          updateUserDataForUpdateUserId(ctx.drizzle, input),
         );
         if (renamed.rowsAffected !== 1)
           return errorResponse(
@@ -950,358 +827,97 @@ export const staffRouter = createTRPCRouter({
       }
       const moves = await Promise.allSettled([
         renameParentalContact(ctx.drizzle, input.userId, input.newUserId),
-        ctx.drizzle
-          .update(userTitle)
-          .set({ userId: input.newUserId })
-          .where(eq(userTitle.userId, input.userId)),
-        ctx.drizzle
-          .update(title)
-          .set({ legacyOwnerId: input.newUserId })
-          .where(eq(title.legacyOwnerId, input.userId)),
-        ctx.drizzle
-          .update(auctionOffer)
-          .set({ ownerId: input.newUserId })
-          .where(eq(auctionOffer.ownerId, input.userId)),
-        ctx.drizzle
-          .update(auctionOffer)
-          .set({ accepterId: input.newUserId })
-          .where(eq(auctionOffer.accepterId, input.userId)),
-        ctx.drizzle
-          .update(aiProfile)
-          .set({ userId: input.newUserId })
-          .where(eq(aiProfile.userId, input.userId)),
-        ctx.drizzle
-          .update(discordLink)
-          .set({ userId: input.newUserId })
-          .where(eq(discordLink.userId, input.userId)),
-        ctx.drizzle
-          .update(discordLinkHistory)
-          .set({ userId: input.newUserId })
-          .where(eq(discordLinkHistory.userId, input.userId)),
-        ctx.drizzle
-          .update(userBlackList)
-          .set({ creatorUserId: input.newUserId })
-          .where(eq(userBlackList.creatorUserId, input.userId)),
-        ctx.drizzle
-          .update(userBlackList)
-          .set({ targetUserId: input.newUserId })
-          .where(eq(userBlackList.targetUserId, input.userId)),
-        ctx.drizzle
-          .update(bloodlineRolls)
-          .set({ userId: input.newUserId })
-          .where(eq(bloodlineRolls.userId, input.userId)),
-        ctx.drizzle
-          .update(captcha)
-          .set({ userId: input.newUserId })
-          .where(eq(captcha.userId, input.userId)),
-        ctx.drizzle
-          .update(mpvpBattleUser)
-          .set({ userId: input.newUserId })
-          .where(eq(mpvpBattleUser.userId, input.userId)),
-        ctx.drizzle
-          .update(conversation)
-          .set({ createdById: input.newUserId })
-          .where(eq(conversation.createdById, input.userId)),
-        ctx.drizzle
-          .update(user2conversation)
-          .set({ userId: input.newUserId })
-          .where(eq(user2conversation.userId, input.userId)),
-        ctx.drizzle
-          .update(conversationComment)
-          .set({ userId: input.newUserId })
-          .where(eq(conversationComment.userId, input.userId)),
-        ctx.drizzle
-          .update(damageSimulation)
-          .set({ userId: input.newUserId })
-          .where(eq(damageSimulation.userId, input.userId)),
-        ctx.drizzle
-          .update(forumPost)
-          .set({ userId: input.newUserId })
-          .where(eq(forumPost.userId, input.userId)),
-        ctx.drizzle
-          .update(forumThread)
-          .set({ userId: input.newUserId })
-          .where(eq(forumThread.userId, input.userId)),
-        ctx.drizzle
-          .update(historicalAvatar)
-          .set({ userId: input.newUserId })
-          .where(eq(historicalAvatar.userId, input.userId)),
-        ctx.drizzle
-          .update(historicalIp)
-          .set({ userId: input.newUserId })
-          .where(eq(historicalIp.userId, input.userId)),
-        ctx.drizzle
-          .update(userActivityEvent)
-          .set({ userId: input.newUserId })
-          .where(eq(userActivityEvent.userId, input.userId)),
-        ctx.drizzle
-          .update(jutsuLoadout)
-          .set({ userId: input.newUserId })
-          .where(eq(jutsuLoadout.userId, input.userId)),
-        ctx.drizzle
-          .update(notification)
-          .set({ userId: input.newUserId })
-          .where(eq(notification.userId, input.userId)),
-        ctx.drizzle
-          .update(stripeCheckout)
-          .set({ createdById: input.newUserId })
-          .where(eq(stripeCheckout.createdById, input.userId)),
-        ctx.drizzle
-          .update(stripeCheckout)
-          .set({ affectedUserId: input.newUserId })
-          .where(eq(stripeCheckout.affectedUserId, input.userId)),
-        ctx.drizzle
-          .update(stripePayment)
-          .set({ createdById: input.newUserId })
-          .where(eq(stripePayment.createdById, input.userId)),
-        ctx.drizzle
-          .update(stripePayment)
-          .set({ affectedUserId: input.newUserId })
-          .where(eq(stripePayment.affectedUserId, input.userId)),
-        ctx.drizzle
-          .update(paypalSubscription)
-          .set({ createdById: input.newUserId })
-          .where(eq(paypalSubscription.createdById, input.userId)),
-        ctx.drizzle
-          .update(paypalSubscription)
-          .set({ affectedUserId: input.newUserId })
-          .where(eq(paypalSubscription.affectedUserId, input.userId)),
-        ctx.drizzle
-          .update(webStoreOrder)
-          .set({ buyerId: input.newUserId })
-          .where(eq(webStoreOrder.buyerId, input.userId)),
-        ctx.drizzle
-          .update(webStoreOrder)
-          .set({ recipientId: input.newUserId })
-          .where(eq(webStoreOrder.recipientId, input.userId)),
-        ctx.drizzle
-          .update(paypalTransaction)
-          .set({ affectedUserId: input.newUserId })
-          .where(eq(paypalTransaction.affectedUserId, input.userId)),
-        ctx.drizzle
-          .update(paypalTransaction)
-          .set({ createdById: input.newUserId })
-          .where(eq(paypalTransaction.createdById, input.userId)),
-        ctx.drizzle
-          .update(ryoTrade)
-          .set({ creatorUserId: input.newUserId })
-          .where(eq(ryoTrade.creatorUserId, input.userId)),
-        ctx.drizzle
-          .update(ryoTrade)
-          .set({ purchaserUserId: input.newUserId })
-          .where(eq(ryoTrade.purchaserUserId, input.userId)),
-        ctx.drizzle
-          .update(ryoTrade)
-          .set({ allowedPurchaserId: input.newUserId })
-          .where(eq(ryoTrade.allowedPurchaserId, input.userId)),
-        ctx.drizzle
-          .update(reportLog)
-          .set({ targetUserId: input.newUserId })
-          .where(eq(reportLog.targetUserId, input.userId)),
-        ctx.drizzle
-          .update(reportLog)
-          .set({ staffUserId: input.newUserId })
-          .where(eq(reportLog.staffUserId, input.userId)),
-        ctx.drizzle
-          .update(actionLog)
-          .set({ userId: input.newUserId })
-          .where(eq(actionLog.userId, input.userId)),
-        ctx.drizzle
-          .update(trainingLog)
-          .set({ userId: input.newUserId })
-          .where(eq(trainingLog.userId, input.userId)),
-        ctx.drizzle
-          .update(userAttribute)
-          .set({ userId: input.newUserId })
-          .where(eq(userAttribute.userId, input.userId)),
-        ctx.drizzle
-          .update(userReview)
-          .set({ authorUserId: input.newUserId })
-          .where(eq(userReview.authorUserId, input.userId)),
-        ctx.drizzle
-          .update(userRewards)
-          .set({ awardedById: input.newUserId })
-          .where(eq(userRewards.awardedById, input.userId)),
-        ctx.drizzle
-          .update(userRewards)
-          .set({ receiverId: input.newUserId })
-          .where(eq(userRewards.receiverId, input.userId)),
-        ctx.drizzle
-          .update(userReview)
-          .set({ targetUserId: input.newUserId })
-          .where(eq(userReview.targetUserId, input.userId)),
-        ctx.drizzle
-          .update(userNindo)
-          .set({ userId: input.newUserId })
-          .where(eq(userNindo.userId, input.userId)),
-        ctx.drizzle
-          .update(userItem)
-          .set({ userId: input.newUserId })
-          .where(eq(userItem.userId, input.userId)),
-        ctx.drizzle
-          .update(userHome)
-          .set({ userId: input.newUserId })
-          .where(eq(userHome.userId, input.userId)),
+        updateUserTitleForUpdateUserId(ctx.drizzle, input),
+        updateTitleForUpdateUserId(ctx.drizzle, input),
+        updateAuctionOfferForUpdateUserId(ctx.drizzle, input),
+        updateAuctionOfferForUpdateUserId2(ctx.drizzle, input),
+        updateAiProfileForUpdateUserId(ctx.drizzle, input),
+        updateDiscordLinkForUpdateUserId(ctx.drizzle, input),
+        updateDiscordLinkHistoryForUpdateUserId(ctx.drizzle, input),
+        updateUserBlackListForUpdateUserId(ctx.drizzle, input),
+        updateUserBlackListForUpdateUserId2(ctx.drizzle, input),
+        updateBloodlineRollsForUpdateUserId(ctx.drizzle, input),
+        updateCaptchaForUpdateUserId(ctx.drizzle, input),
+        updateMpvpBattleUserForUpdateUserId(ctx.drizzle, input),
+        updateConversationForUpdateUserId(ctx.drizzle, input),
+        updateUser2conversationForUpdateUserId(ctx.drizzle, input),
+        updateConversationCommentForUpdateUserId(ctx.drizzle, input),
+        updateDamageSimulationForUpdateUserId(ctx.drizzle, input),
+        updateForumPostForUpdateUserId(ctx.drizzle, input),
+        updateForumThreadForUpdateUserId(ctx.drizzle, input),
+        updateHistoricalAvatarForUpdateUserId(ctx.drizzle, input),
+        updateHistoricalIpForUpdateUserId(ctx.drizzle, input),
+        updateUserActivityEventForUpdateUserId(ctx.drizzle, input),
+        updateJutsuLoadoutForUpdateUserId(ctx.drizzle, input),
+        updateNotificationForUpdateUserId(ctx.drizzle, input),
+        updateStripeCheckoutForUpdateUserId(ctx.drizzle, input),
+        updateStripeCheckoutForUpdateUserId2(ctx.drizzle, input),
+        updateStripePaymentForUpdateUserId(ctx.drizzle, input),
+        updateStripePaymentForUpdateUserId2(ctx.drizzle, input),
+        updatePaypalSubscriptionForUpdateUserId(ctx.drizzle, input),
+        updatePaypalSubscriptionForUpdateUserId2(ctx.drizzle, input),
+        updateWebStoreOrderForUpdateUserId(ctx.drizzle, input),
+        updateWebStoreOrderForUpdateUserId2(ctx.drizzle, input),
+        updatePaypalTransactionForUpdateUserId(ctx.drizzle, input),
+        updatePaypalTransactionForUpdateUserId2(ctx.drizzle, input),
+        updateRyoTradeForUpdateUserId(ctx.drizzle, input),
+        updateRyoTradeForUpdateUserId2(ctx.drizzle, input),
+        updateRyoTradeForUpdateUserId3(ctx.drizzle, input),
+        updateReportLogForUpdateUserId(ctx.drizzle, input),
+        updateReportLogForUpdateUserId2(ctx.drizzle, input),
+        updateActionLogForUpdateUserId(ctx.drizzle, input),
+        updateTrainingLogForUpdateUserId(ctx.drizzle, input),
+        updateUserAttributeForUpdateUserId(ctx.drizzle, input),
+        updateUserReviewForUpdateUserId(ctx.drizzle, input),
+        updateUserRewardsForUpdateUserId(ctx.drizzle, input),
+        updateUserRewardsForUpdateUserId2(ctx.drizzle, input),
+        updateUserReviewForUpdateUserId2(ctx.drizzle, input),
+        updateUserNindoForUpdateUserId(ctx.drizzle, input),
+        updateUserItemForUpdateUserId(ctx.drizzle, input),
+        updateUserHomeForUpdateUserId(ctx.drizzle, input),
         ...[huntingSession, huntingProgress, huntingReceipt].map((table) =>
-          ctx.drizzle
-            .update(table)
-            .set({ userId: input.newUserId })
-            .where(eq(table.userId, input.userId)),
+          updateTableForUpdateUserId(ctx.drizzle, table, input),
         ),
-        ctx.drizzle
-          .update(userJutsu)
-          .set({ userId: input.newUserId })
-          .where(eq(userJutsu.userId, input.userId)),
-        ctx.drizzle
-          .update(userReport)
-          .set({ reporterUserId: input.newUserId })
-          .where(eq(userReport.reporterUserId, input.userId)),
-        ctx.drizzle
-          .update(userReport)
-          .set({ reportedUserId: input.newUserId })
-          .where(eq(userReport.reportedUserId, input.userId)),
-        ctx.drizzle
-          .update(userReportComment)
-          .set({ userId: input.newUserId })
-          .where(eq(userReportComment.userId, input.userId)),
-        ctx.drizzle
-          .update(bankTransfers)
-          .set({ senderId: input.newUserId })
-          .where(eq(bankTransfers.senderId, input.userId)),
-        ctx.drizzle
-          .update(bankTransfers)
-          .set({ receiverId: input.newUserId })
-          .where(eq(bankTransfers.receiverId, input.userId)),
-        ctx.drizzle
-          .update(moderationScan)
-          .set({ userId: input.newUserId })
-          .where(eq(moderationScan.userId, input.userId)),
-        ctx.drizzle
-          .update(automatedModeration)
-          .set({ userId: input.newUserId })
-          .where(eq(automatedModeration.userId, input.userId)),
-        ctx.drizzle
-          .update(supportReview)
-          .set({ userId: input.newUserId })
-          .where(eq(supportReview.userId, input.userId)),
-        ctx.drizzle
-          .update(kageDefendedChallenges)
-          .set({ userId: input.newUserId })
-          .where(eq(kageDefendedChallenges.userId, input.userId)),
-        ctx.drizzle
-          .update(kageDefendedChallenges)
-          .set({ kageId: input.newUserId })
-          .where(eq(kageDefendedChallenges.kageId, input.userId)),
-        ctx.drizzle
-          .update(questHistory)
-          .set({ userId: input.newUserId })
-          .where(eq(questHistory.userId, input.userId)),
-        ctx.drizzle
-          .update(userLikes)
-          .set({ userId: input.newUserId })
-          .where(eq(userLikes.userId, input.userId)),
-        ctx.drizzle
-          .update(conceptImage)
-          .set({ userId: input.newUserId })
-          .where(eq(conceptImage.userId, input.userId)),
-        ctx.drizzle
-          .update(userBadge)
-          .set({ userId: input.newUserId })
-          .where(eq(userBadge.userId, input.userId)),
-        ctx.drizzle
-          .update(userRequest)
-          .set({ senderId: input.newUserId })
-          .where(eq(userRequest.senderId, input.userId)),
-        ctx.drizzle
-          .update(userRequest)
-          .set({ receiverId: input.newUserId })
-          .where(eq(userRequest.receiverId, input.userId)),
-        ctx.drizzle
-          .update(linkPromotion)
-          .set({ userId: input.newUserId })
-          .where(eq(linkPromotion.userId, input.userId)),
-        ctx.drizzle
-          .update(linkPromotion)
-          .set({ reviewedBy: input.newUserId })
-          .where(eq(linkPromotion.reviewedBy, input.userId)),
-        ctx.drizzle
-          .update(userVote)
-          .set({ userId: input.newUserId })
-          .where(eq(userVote.userId, input.userId)),
-        ctx.drizzle
-          .update(poll)
-          .set({ createdByUserId: input.newUserId })
-          .where(eq(poll.createdByUserId, input.userId)),
-        ctx.drizzle
-          .update(pollOption)
-          .set({ targetUserId: input.newUserId })
-          .where(eq(pollOption.targetUserId, input.userId)),
-        ctx.drizzle
-          .update(pollOption)
-          .set({ createdByUserId: input.newUserId })
-          .where(eq(pollOption.createdByUserId, input.userId)),
-        ctx.drizzle
-          .update(village)
-          .set({ kageId: input.newUserId })
-          .where(eq(village.kageId, input.userId)),
-        ctx.drizzle
-          .update(userPollVote)
-          .set({ userId: input.newUserId })
-          .where(eq(userPollVote.userId, input.userId)),
-        ctx.drizzle
-          .update(userUpload)
-          .set({ userId: input.newUserId })
-          .where(eq(userUpload.userId, input.userId)),
-        ctx.drizzle
-          .update(userPet)
-          .set({ userId: input.newUserId })
-          .where(eq(userPet.userId, input.userId)),
-        ctx.drizzle
-          .update(parentalControl)
-          .set({ userId: input.newUserId })
-          .where(eq(parentalControl.userId, input.userId)),
-        ctx.drizzle
-          .update(userDevice)
-          .set({ userId: input.newUserId })
-          .where(eq(userDevice.userId, input.userId)),
-        ctx.drizzle
-          .update(userPushPreference)
-          .set({ userId: input.newUserId })
-          .where(eq(userPushPreference.userId, input.userId)),
-        ctx.drizzle
-          .update(userLiveActivity)
-          .set({ userId: input.newUserId })
-          .where(eq(userLiveActivity.userId, input.userId)),
-        ctx.drizzle
-          .update(storeUserIdAlias)
-          .set({ newUserId: input.newUserId, updatedAt: new Date() })
-          .where(eq(storeUserIdAlias.newUserId, input.userId)),
+        updateUserJutsuForUpdateUserId(ctx.drizzle, input),
+        updateUserReportForUpdateUserId(ctx.drizzle, input),
+        updateUserReportForUpdateUserId2(ctx.drizzle, input),
+        updateUserReportCommentForUpdateUserId(ctx.drizzle, input),
+        updateBankTransfersForUpdateUserId(ctx.drizzle, input),
+        updateBankTransfersForUpdateUserId2(ctx.drizzle, input),
+        updateModerationScanForUpdateUserId(ctx.drizzle, input),
+        updateAutomatedModerationForUpdateUserId(ctx.drizzle, input),
+        updateSupportReviewForUpdateUserId(ctx.drizzle, input),
+        updateKageDefendedChallengesForUpdateUserId(ctx.drizzle, input),
+        updateKageDefendedChallengesForUpdateUserId2(ctx.drizzle, input),
+        updateQuestHistoryForUpdateUserId(ctx.drizzle, input),
+        updateUserLikesForUpdateUserId(ctx.drizzle, input),
+        updateConceptImageForUpdateUserId(ctx.drizzle, input),
+        updateUserBadgeForUpdateUserId(ctx.drizzle, input),
+        updateUserRequestForUpdateUserId(ctx.drizzle, input),
+        updateUserRequestForUpdateUserId2(ctx.drizzle, input),
+        updateLinkPromotionForUpdateUserId(ctx.drizzle, input),
+        updateLinkPromotionForUpdateUserId2(ctx.drizzle, input),
+        updateUserVoteForUpdateUserId(ctx.drizzle, input),
+        updatePollForUpdateUserId(ctx.drizzle, input),
+        updatePollOptionForUpdateUserId(ctx.drizzle, input),
+        updatePollOptionForUpdateUserId2(ctx.drizzle, input),
+        updateVillageForUpdateUserId(ctx.drizzle, input),
+        updateUserPollVoteForUpdateUserId(ctx.drizzle, input),
+        updateUserUploadForUpdateUserId(ctx.drizzle, input),
+        updateUserPetForUpdateUserId(ctx.drizzle, input),
+        updateParentalControlForUpdateUserId(ctx.drizzle, input),
+        updateUserDeviceForUpdateUserId(ctx.drizzle, input),
+        updateUserPushPreferenceForUpdateUserId(ctx.drizzle, input),
+        updateUserLiveActivityForUpdateUserId(ctx.drizzle, input),
+        updateStoreUserIdAliasForUpdateUserId(ctx.drizzle, input),
         migrateStoreEntitlementStates(ctx.drizzle, input.userId, input.newUserId),
         migrateStoreEntitlementRevocations(ctx.drizzle, input.userId, input.newUserId),
         migrateStorePurchaseTransfers(ctx.drizzle, input.userId, input.newUserId),
-        ctx.drizzle
-          .update(storePurchase)
-          .set({ userId: input.newUserId })
-          .where(eq(storePurchase.userId, input.userId)),
-        ctx.drizzle
-          .update(storePurchase)
-          .set({ originalUserId: input.newUserId })
-          .where(eq(storePurchase.originalUserId, input.userId)),
-        ctx.drizzle
-          .update(userQueue)
-          .set({ userId: input.newUserId })
-          .where(eq(userQueue.userId, input.userId)),
-        ctx.drizzle
-          .update(userCookingJob)
-          .set({ userId: input.newUserId })
-          .where(eq(userCookingJob.userId, input.userId)),
-        ctx.drizzle
-          .update(userRaidBuff)
-          .set({
-            userId: input.newUserId,
-            id: sql`CASE WHEN ${userRaidBuff.itemId} IS NOT NULL THEN ${`meal-${input.newUserId}`} ELSE ${userRaidBuff.id} END`,
-          })
-          .where(eq(userRaidBuff.userId, input.userId)),
+        updateStorePurchaseForUpdateUserId(ctx.drizzle, input),
+        updateStorePurchaseForUpdateUserId2(ctx.drizzle, input),
+        updateUserQueueForUpdateUserId(ctx.drizzle, input),
+        updateUserCookingJobForUpdateUserId(ctx.drizzle, input),
+        updateUserRaidBuffForUpdateUserId(ctx.drizzle, input),
       ]);
       // Answer only once every move has settled, so the retry a failure invites never
       // races moves still in flight.
@@ -1331,23 +947,11 @@ export const staffRouter = createTRPCRouter({
       }
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({ recruiterId: null })
-          .where(eq(userData.userId, input.userId)),
-        ctx.drizzle
-          .update(userData)
-          .set({ nRecruited: sql`${userData.nRecruited} - 1` })
-          .where(eq(userData.userId, target.recruiterId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`Removed referral: ${target.username}`],
-          relatedId: input.userId,
-          relatedMsg: `Referral has been removed`,
-          relatedImage: target.avatarLight,
+        updateUserDataForDeleteReferral(ctx.drizzle, input),
+        updateUserDataForDeleteReferral2(ctx.drizzle, {
+          recruiterId: target.recruiterId,
         }),
+        insertActionLogForDeleteReferral(ctx.drizzle, ctx, target, input),
       ]);
       return { success: true, message: `Referral removed from ${target.username}` };
     }),
@@ -1371,10 +975,7 @@ const delay = (ms: number): Promise<void> =>
  */
 export const deleteUser = async (client: DrizzleClient, userId: string) => {
   // Only the selected contract is a dependency, even in a full-habitat legacy snapshot.
-  const activeHunt = await client.query.huntingSession.findFirst({
-    columns: { userId: true },
-    where: sql`JSON_CONTAINS(${huntingSession.content}, JSON_OBJECT('id', ${huntingSession.contractId}, 'aiId', ${userId}), '$.contracts') = 1`,
-  });
+  const activeHunt = await findHuntingSessionForDeleteUser(client, userId);
   if (activeHunt)
     return errorResponse(
       "This AI is used by an active hunting session. Wait for it to finish.",
@@ -1429,13 +1030,9 @@ const deleteUserInternal = async (client: DrizzleClient, userId: string) => {
     // The marker makes moderation require this source before cleanup can remove reports.
     await recordSanctionTombstone(lockedClient, userId);
     // Push writes check for the tombstone before they write; this removes what landed first.
-    await lockedClient.delete(userDevice).where(eq(userDevice.userId, userId));
-    await lockedClient
-      .delete(userLiveActivity)
-      .where(eq(userLiveActivity.userId, userId));
-    await lockedClient
-      .delete(userPushPreference)
-      .where(eq(userPushPreference.userId, userId));
+    await deleteUserDeviceForDeleteUserInternal(lockedClient, userId);
+    await deleteUserLiveActivityForDeleteUserInternal(lockedClient, userId);
+    await deleteUserPushPreferenceForDeleteUserInternal(lockedClient, userId);
   });
 
   // After the tombstone captured it: release and archive the Discord link. A Discord ban
@@ -1448,165 +1045,145 @@ const deleteUserInternal = async (client: DrizzleClient, userId: string) => {
 
   // Keep paid snapshots for support and retire recipients before inventory cleanup.
   // Delivery claims the same rows, so any in-flight grant finishes before cleanup.
-  await client
-    .update(webStoreOrder)
-    .set({ recipientId: `${DELETED_STORE_USER_PREFIX}${nanoid()}` })
-    .where(eq(webStoreOrder.recipientId, userId));
+  await updateWebStoreOrderForDeleteUserInternal(client, userId);
 
   // Close permanent offers before removing their escrow inventory. The status CAS
   // serializes deletion with acceptance, so cleanup cannot erase a supplier's payment.
-  await client
-    .update(auctionOffer)
-    .set({ status: "CANCELLED", updatedAt: new Date() })
-    .where(and(eq(auctionOffer.ownerId, userId), eq(auctionOffer.status, "ACTIVE")));
+  await updateAuctionOfferForDeleteUserInternal(client, userId);
 
   // Batch 1: AI templates may own placement rows. Their lookup is independent of the
   // prerequisite sensei-reference cleanup, so run both together before destructive deletes.
   const [aiPlacements] = await Promise.all([
-    client
-      .select({ id: overworldAiPlacement.id })
-      .from(overworldAiPlacement)
-      .where(eq(overworldAiPlacement.aiTemplateUserId, userId)),
-    client
-      .update(userData)
-      .set({ senseiId: null })
-      .where(eq(userData.senseiId, userId)),
+    selectOverworldAiPlacementForDeleteUserInternal(client, userId),
+    updateUserDataForDeleteUserInternal(client, userId),
   ]);
   const aiPlacementIds = aiPlacements.map((placement) => placement.id);
 
   // Batch 2: Communication & social relationships
   await Promise.all([
-    client.delete(conversation).where(eq(conversation.createdById, userId)),
-    client.delete(user2conversation).where(eq(user2conversation.userId, userId)),
-    client.delete(conversationComment).where(eq(conversationComment.userId, userId)),
-    client.delete(notification).where(eq(notification.userId, userId)),
+    deleteConversationForDeleteUserInternal(client, userId),
+    deleteUser2conversationForDeleteUserInternal(client, userId),
+    deleteConversationCommentForDeleteUserInternal(client, userId),
+    deleteNotificationForDeleteUserInternal(client, userId),
     // Account-level parental settings survive deleting and recreating a character.
-    client.delete(userBlackList).where(eq(userBlackList.creatorUserId, userId)),
-    client.delete(userBlackList).where(eq(userBlackList.targetUserId, userId)),
+    deleteUserBlackListForDeleteUserInternal(client, userId),
+    deleteUserBlackListForDeleteUserInternal2(client, userId),
   ]);
 
   // Batch 3: Forum & content
   await Promise.all([
-    client.delete(forumPost).where(eq(forumPost.userId, userId)),
-    client.delete(forumThread).where(eq(forumThread.userId, userId)),
-    client.delete(poll).where(eq(poll.createdByUserId, userId)),
-    client.delete(userPollVote).where(eq(userPollVote.userId, userId)),
-    client.delete(pollOption).where(eq(pollOption.targetUserId, userId)),
-    client.delete(pollOption).where(eq(pollOption.createdByUserId, userId)),
+    deleteForumPostForDeleteUserInternal(client, userId),
+    deleteForumThreadForDeleteUserInternal(client, userId),
+    deletePollForDeleteUserInternal(client, userId),
+    deleteUserPollVoteForDeleteUserInternal(client, userId),
+    deletePollOptionForDeleteUserInternal(client, userId),
+    deletePollOptionForDeleteUserInternal2(client, userId),
   ]);
 
   // Batch 4: Game progress & items
   await Promise.all([
     ...[huntingSession, huntingProgress, huntingReceipt].map((table) =>
-      client.delete(table).where(eq(table.userId, userId)),
+      deleteRowsForUser(client, table, userId),
     ),
-    client.delete(userItem).where(eq(userItem.userId, userId)),
-    client.delete(farmPlot).where(eq(farmPlot.userId, userId)),
-    client.delete(farmExtraction).where(eq(farmExtraction.userId, userId)),
-    client.delete(farmCollectionLog).where(eq(farmCollectionLog.userId, userId)),
-    client.delete(userJutsu).where(eq(userJutsu.userId, userId)),
-    client.delete(userQueue).where(eq(userQueue.userId, userId)),
-    client.delete(userCookingJob).where(eq(userCookingJob.userId, userId)),
-    client.delete(userSkill).where(eq(userSkill.userId, userId)),
-    client.delete(userAttribute).where(eq(userAttribute.userId, userId)),
-    client.delete(jutsuLoadout).where(eq(jutsuLoadout.userId, userId)),
-    client.delete(questHistory).where(eq(questHistory.userId, userId)),
-    client.delete(userQuestAttempt).where(eq(userQuestAttempt.userId, userId)),
-    client.delete(bloodlineRolls).where(eq(bloodlineRolls.userId, userId)),
+    deleteUserItemForDeleteUserInternal(client, userId),
+    deleteFarmPlotForDeleteUserInternal(client, userId),
+    deleteFarmExtractionForDeleteUserInternal(client, userId),
+    deleteFarmCollectionLogForDeleteUserInternal(client, userId),
+    deleteUserJutsuForDeleteUserInternal(client, userId),
+    deleteUserQueueForDeleteUserInternal(client, userId),
+    deleteUserCookingJobForDeleteUserInternal(client, userId),
+    deleteUserSkillForDeleteUserInternal(client, userId),
+    deleteUserAttributeForDeleteUserInternal(client, userId),
+    deleteJutsuLoadoutForDeleteUserInternal(client, userId),
+    deleteQuestHistoryForDeleteUserInternal(client, userId),
+    deleteUserQuestAttemptForDeleteUserInternal(client, userId),
+    deleteBloodlineRollsForDeleteUserInternal(client, userId),
   ]);
 
   // Batch 5: History, logs, AI & security
   await Promise.all([
-    client.delete(historicalAvatar).where(eq(historicalAvatar.userId, userId)),
-    client.delete(historicalIp).where(eq(historicalIp.userId, userId)),
+    deleteHistoricalAvatarForDeleteUserInternal(client, userId),
+    deleteHistoricalIpForDeleteUserInternal(client, userId),
     // The referral goes with the character; its RecruitRankMilestone ledger stays so a
     // recreated character cannot earn the same milestones again.
-    client.delete(recruitReferral).where(eq(recruitReferral.recruitUserId, userId)),
-    client.delete(userActivityEvent).where(eq(userActivityEvent.userId, userId)),
-    client.delete(actionLog).where(eq(actionLog.userId, userId)),
-    client.delete(trainingLog).where(eq(trainingLog.userId, userId)),
-    client.delete(aiProfile).where(eq(aiProfile.userId, userId)),
+    deleteRecruitReferralForDeleteUserInternal(client, userId),
+    deleteUserActivityEventForDeleteUserInternal(client, userId),
+    deleteActionLogForDeleteUserInternal(client, userId),
+    deleteTrainingLogForDeleteUserInternal(client, userId),
+    deleteAiProfileForDeleteUserInternal(client, userId),
     ...(aiPlacementIds.length > 0
       ? [
-          client
-            .delete(overworldAiPlacementQuest)
-            .where(inArray(overworldAiPlacementQuest.placementId, aiPlacementIds)),
-          client
-            .delete(overworldAiPlacement)
-            .where(inArray(overworldAiPlacement.id, aiPlacementIds)),
+          deleteOverworldAiPlacementQuestForDeleteUserInternal(client, aiPlacementIds),
+          deleteOverworldAiPlacementForDeleteUserInternal(client, aiPlacementIds),
         ]
       : []),
-    client.delete(captcha).where(eq(captcha.userId, userId)),
+    deleteCaptchaForDeleteUserInternal(client, userId),
   ]);
 
   // Batch 6: Reports & moderation
   await deleteUserReportEmbeddings(client, userId);
   await Promise.all([
-    client.delete(reportLog).where(eq(reportLog.targetUserId, userId)),
-    client.delete(reportLog).where(eq(reportLog.staffUserId, userId)),
-    client.delete(userReport).where(eq(userReport.reporterUserId, userId)),
-    client.delete(userReport).where(eq(userReport.reportedUserId, userId)),
-    client.delete(userReportComment).where(eq(userReportComment.userId, userId)),
-    client.delete(automatedModeration).where(eq(automatedModeration.userId, userId)),
-    client.delete(moderationScan).where(eq(moderationScan.userId, userId)),
+    deleteReportLogForDeleteUserInternal(client, userId),
+    deleteReportLogForDeleteUserInternal2(client, userId),
+    deleteUserReportForDeleteUserInternal(client, userId),
+    deleteUserReportForDeleteUserInternal2(client, userId),
+    deleteUserReportCommentForDeleteUserInternal(client, userId),
+    deleteAutomatedModerationForDeleteUserInternal(client, userId),
+    deleteModerationScanForDeleteUserInternal(client, userId),
   ]);
 
   // Batch 7: Staff & applications
   await Promise.all([
-    client.delete(staffApplication).where(eq(staffApplication.applicantUserId, userId)),
-    client.delete(supportReview).where(eq(supportReview.userId, userId)),
+    deleteStaffApplicationForDeleteUserInternal(client, userId),
+    deleteSupportReviewForDeleteUserInternal(client, userId),
   ]);
 
   // Batch 8: Financial & rewards
   await Promise.all([
-    client.delete(bankTransfers).where(eq(bankTransfers.senderId, userId)),
-    client.delete(bankTransfers).where(eq(bankTransfers.receiverId, userId)),
-    client.delete(userRewards).where(eq(userRewards.awardedById, userId)),
-    client.delete(userRewards).where(eq(userRewards.receiverId, userId)),
-    client.delete(userVote).where(eq(userVote.userId, userId)),
+    deleteBankTransfersForDeleteUserInternal(client, userId),
+    deleteBankTransfersForDeleteUserInternal2(client, userId),
+    deleteUserRewardsForDeleteUserInternal(client, userId),
+    deleteUserRewardsForDeleteUserInternal2(client, userId),
+    deleteUserVoteForDeleteUserInternal(client, userId),
   ]);
 
   // Batch 9: Reviews & social
   await Promise.all([
-    client.delete(userReview).where(eq(userReview.authorUserId, userId)),
-    client.delete(userReview).where(eq(userReview.targetUserId, userId)),
-    client.delete(userNindo).where(eq(userNindo.userId, userId)),
-    client.delete(userHome).where(eq(userHome.userId, userId)),
-    client.delete(userLikes).where(eq(userLikes.userId, userId)),
-    client.delete(userRequest).where(eq(userRequest.senderId, userId)),
-    client.delete(userRequest).where(eq(userRequest.receiverId, userId)),
+    deleteUserReviewForDeleteUserInternal(client, userId),
+    deleteUserReviewForDeleteUserInternal2(client, userId),
+    deleteUserNindoForDeleteUserInternal(client, userId),
+    deleteUserHomeForDeleteUserInternal(client, userId),
+    deleteUserLikesForDeleteUserInternal(client, userId),
+    deleteUserRequestForDeleteUserInternal(client, userId),
+    deleteUserRequestForDeleteUserInternal2(client, userId),
   ]);
 
   // Batch 10: Battle, war & ranked PVP
   await Promise.all([
-    client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.userId, userId)),
-    client.delete(rankedPvpQueue).where(eq(rankedPvpQueue.userId, userId)),
-    client.delete(rankedUserRewards).where(eq(rankedUserRewards.userId, userId)),
-    client
-      .delete(kageDefendedChallenges)
-      .where(eq(kageDefendedChallenges.userId, userId)),
-    client
-      .delete(kageDefendedChallenges)
-      .where(eq(kageDefendedChallenges.kageId, userId)),
-    client.delete(warKill).where(eq(warKill.killerId, userId)),
-    client.delete(warKill).where(eq(warKill.victimId, userId)),
-    client.delete(raidParticipation).where(eq(raidParticipation.userId, userId)),
-    client.delete(userRaidBuff).where(eq(userRaidBuff.userId, userId)),
+    deleteClanBattleMembersForUser(client, userId),
+    deleteRankedQueueForUser(client, userId),
+    deleteRankedUserRewardsForDeleteUserInternal(client, userId),
+    deleteKageDefendedChallengesForDeleteUserInternal(client, userId),
+    deleteKageDefendedChallengesForDeleteUserInternal2(client, userId),
+    deleteWarKillForDeleteUserInternal(client, userId),
+    deleteWarKillForDeleteUserInternal2(client, userId),
+    deleteRaidParticipationForDeleteUserInternal(client, userId),
+    deleteUserRaidBuffForDeleteUserInternal(client, userId),
   ]);
 
   // Batch 11: Misc
   await Promise.all([
-    client.delete(damageSimulation).where(eq(damageSimulation.userId, userId)),
-    client.delete(conceptImage).where(eq(conceptImage.userId, userId)),
-    client.delete(userBadge).where(eq(userBadge.userId, userId)),
-    client.delete(userTitle).where(eq(userTitle.userId, userId)),
-    client.delete(title).where(eq(title.legacyOwnerId, userId)),
-    client.delete(linkPromotion).where(eq(linkPromotion.userId, userId)),
-    client.delete(linkPromotion).where(eq(linkPromotion.reviewedBy, userId)),
-    client.delete(userUpload).where(eq(userUpload.userId, userId)),
-    client.delete(userPet).where(eq(userPet.userId, userId)),
+    deleteDamageSimulationForDeleteUserInternal(client, userId),
+    deleteConceptImageForDeleteUserInternal(client, userId),
+    deleteUserBadgeForDeleteUserInternal(client, userId),
+    deleteUserTitleForDeleteUserInternal(client, userId),
+    deleteTitleForDeleteUserInternal(client, userId),
+    deleteLinkPromotionForDeleteUserInternal(client, userId),
+    deleteLinkPromotionForDeleteUserInternal2(client, userId),
+    deleteUserUploadForDeleteUserInternal(client, userId),
+    deleteUserPetForDeleteUserInternal(client, userId),
   ]);
 
   // Final batch: Delete main userData record (must be last)
-  await client.delete(userData).where(eq(userData.userId, userId));
+  await deleteUserDataForDeleteUserInternal(client, userId);
 };

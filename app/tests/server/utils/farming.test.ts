@@ -1,9 +1,9 @@
+import { reduceActiveFarmPlotTimers } from "@/queries/farming";
 import { describe, expect, it, vi } from "bun:test";
 import type { DrizzleClient } from "@/server/db";
 import {
   buildFarmCollectionState,
   recordFirstFarmHarvests,
-  reduceActiveFarmPlotTimers,
 } from "@/server/utils/farming";
 
 const seed = (

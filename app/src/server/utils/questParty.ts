@@ -1,7 +1,15 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
-import type { Quest, QuestParty, UserData } from "@/drizzle/schema";
-import { questParty, userData } from "@/drizzle/schema";
+import { eq, ne } from "drizzle-orm";
+import { type Quest, type QuestParty, type UserData, userData } from "@/drizzle/schema";
+
 import { mergePartyProgress, projectPartyTracker } from "@/libs/questParty";
+import {
+  findQuestPartyForSynchronizeQuestParty,
+  findUserDataForSaveQuestPartyMember,
+  listUserDataForSynchronizeQuestParty,
+  questPartyRelations,
+  updateQuestPartyForResetQuestPartyProgress,
+  updateQuestPartyForSynchronizeQuestParty,
+} from "@/queries/questParty";
 import type { UserWithRelations } from "@/server/api/routers/profile";
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
@@ -25,25 +33,6 @@ export type LoadedQuestParty = QuestParty & {
   >[];
 };
 
-/** Preload synchronization inputs with the character query, avoiding per-member round trips. */
-export const questPartyRelations = {
-  quest: true,
-  members: {
-    columns: {
-      userId: true,
-      username: true,
-      questData: true,
-      updatedAt: true,
-      status: true,
-      sector: true,
-      longitude: true,
-      latitude: true,
-      defaultAutoCombat: true,
-      battleId: true,
-    },
-  },
-} as const;
-
 /**
  * Merge contributions through party CAS, confirming missing members before pruning.
  * A committed member may have departed since preload; include that accepted progress once
@@ -66,13 +55,12 @@ export const synchronizeQuestParty = async (
       (id) => !liveMembers.some((member) => member.userId === id),
     );
     const attached = missingIds.length
-      ? await client.query.userData.findMany({
-          where: and(
-            inArray(userData.userId, missingIds),
-            eq(userData.questPartyId, party.id),
-          ),
-          columns: questPartyRelations.members.columns,
-        })
+      ? await listUserDataForSynchronizeQuestParty(
+          client,
+          missingIds,
+          party,
+          questPartyRelations,
+        )
       : [];
     liveMembers.push(...attached);
     const members = committedMember
@@ -117,10 +105,14 @@ export const synchronizeQuestParty = async (
       JSON.stringify(next.contributions) === JSON.stringify(party.contributions)
     )
       return { ...party, members: liveMembers };
-    const saved = await client
-      .update(questParty)
-      .set({ ...next, battleId, memberIds, leaderId, version: party.version + 1 })
-      .where(and(eq(questParty.id, party.id), eq(questParty.version, party.version)));
+    const saved = await updateQuestPartyForSynchronizeQuestParty(
+      client,
+      next,
+      battleId,
+      memberIds,
+      leaderId,
+      party,
+    );
     if (saved.rowsAffected === 1)
       return {
         ...party,
@@ -131,10 +123,11 @@ export const synchronizeQuestParty = async (
         members: liveMembers,
         version: party.version + 1,
       };
-    const fresh = await client.query.questParty.findFirst({
-      where: eq(questParty.id, party.id),
-      with: questPartyRelations,
-    });
+    const fresh = await findQuestPartyForSynchronizeQuestParty(
+      client,
+      party,
+      questPartyRelations,
+    );
     if (!fresh) return party;
     party = fresh;
   }
@@ -198,10 +191,12 @@ export const resetQuestPartyProgress = async (
       user.questParty = current;
       return;
     }
-    const saved = await client
-      .update(questParty)
-      .set({ tracker, contributions: {}, version: current.version + 1 })
-      .where(and(eq(questParty.id, party.id), eq(questParty.version, current.version)));
+    const saved = await updateQuestPartyForResetQuestPartyProgress(
+      client,
+      tracker,
+      current,
+      party,
+    );
     if (saved.rowsAffected === 1) {
       user.questParty = {
         ...current,
@@ -211,10 +206,11 @@ export const resetQuestPartyProgress = async (
       };
       return;
     }
-    const fresh = await client.query.questParty.findFirst({
-      where: eq(questParty.id, party.id),
-      with: questPartyRelations,
-    });
+    const fresh = await findQuestPartyForSynchronizeQuestParty(
+      client,
+      party,
+      questPartyRelations,
+    );
     if (!fresh) return;
     current = fresh;
   }
@@ -274,10 +270,7 @@ export const saveQuestPartyMember = async (
   detach = false,
 ) => {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const member = await client.query.userData.findFirst({
-      where: eq(userData.userId, userId),
-      columns: { questData: true, questPartyId: true, updatedAt: true, status: true },
-    });
+    const member = await findUserDataForSaveQuestPartyMember(client, userId);
     if (!member || member.questPartyId !== party.id) return true;
     // Settlement would replace a detached tracker with the battle's older party copy.
     if (detach && member.status === "BATTLE") return false;

@@ -1,0 +1,139 @@
+/**
+ * Database access for sparring; authorization and transaction scopes stay in callers.
+ */
+import { and, eq, gt, inArray, or } from "drizzle-orm";
+import type { UserRequestState, UserRequestType } from "@/drizzle/constants";
+import { userRequest } from "@/drizzle/schema";
+import type { DrizzleClient } from "@/server/db";
+import { secondsFromNow } from "@/utils/time";
+
+/**
+ * Fetches user requests based on the specified criteria.
+ * @param client - The DrizzleClient instance used for querying the database.
+ * @param types - An array of user request types to fetch.
+ * @param [secondsBack] - Optional. The number of seconds in the past to consider when fetching requests.
+ * @param [id] - Optional. The ID of the user to filter requests by.
+ * @returns - A Promise that resolves to an array of user requests matching the specified criteria.
+ */
+export const fetchRequests = async (
+  client: DrizzleClient,
+  types: UserRequestType[],
+  secondsBack?: number,
+  id?: string | string[],
+  relatedId?: string,
+) => {
+  return await client.query.userRequest.findMany({
+    where: and(
+      ...(id
+        ? [
+            or(
+              inArray(userRequest.senderId, Array.isArray(id) ? id : [id]),
+              inArray(userRequest.receiverId, Array.isArray(id) ? id : [id]),
+            ),
+          ]
+        : []),
+      ...(relatedId ? [eq(userRequest.relatedId, relatedId)] : []),
+      ...(secondsBack ? [gt(userRequest.createdAt, secondsFromNow(-secondsBack))] : []),
+      inArray(userRequest.type, types),
+    ),
+    with: {
+      sender: {
+        columns: { username: true, level: true, rank: true },
+        with: { village: { columns: { name: true } } },
+      },
+      receiver: {
+        columns: { username: true, level: true, rank: true },
+        with: { village: { columns: { name: true } } },
+      },
+    },
+    orderBy: (table, { desc }) => [desc(table.createdAt)],
+  });
+};
+
+import { nanoid } from "nanoid";
+import { rankedLoadout } from "@/drizzle/schema";
+
+/** Build the `rankedLoadout` lookup for `acceptChallenge`, using predicates on `userId`. */
+export const findRankedLoadoutForAcceptChallenge = (
+  client: Pick<DrizzleClient, "query">,
+  challenge: { senderId: string },
+) =>
+  client.query.rankedLoadout.findFirst({
+    where: eq(rankedLoadout.userId, challenge.senderId),
+  });
+
+/** Build the `rankedLoadout` lookup for `acceptChallenge`, using predicates on `userId`. */
+export const findRankedLoadoutForAcceptChallenge2 = (
+  client: Pick<DrizzleClient, "query">,
+  challenge: { receiverId: string },
+) =>
+  client.query.rankedLoadout.findFirst({
+    where: eq(rankedLoadout.userId, challenge.receiverId),
+  });
+
+/** Build the `userRequest` lookup for `fetchRequest`, using predicates on `id` and `type`. */
+export const findUserRequestForFetchRequest = (
+  client: Pick<DrizzleClient, "query">,
+  id: string,
+  type: UserRequestType,
+) =>
+  client.query.userRequest.findFirst({
+    where: and(eq(userRequest.id, id), eq(userRequest.type, type)),
+  });
+
+/** Build the `userRequest` update for `updateRequestState`, setting `status`, using predicates on `id`, `type`, `status`. */
+export const updateUserRequestForUpdateRequestState = (
+  client: Pick<DrizzleClient, "update">,
+  status: UserRequestState,
+  relatedId: undefined | string,
+  challengeId: string,
+  type: UserRequestType,
+  expectedStatus: UserRequestState | undefined,
+) =>
+  client
+    .update(userRequest)
+    .set({
+      status,
+      ...(relatedId && { relatedId }),
+    })
+    .where(
+      and(
+        eq(userRequest.id, challengeId),
+        eq(userRequest.type, type),
+        ...(expectedStatus ? [eq(userRequest.status, expectedStatus)] : []),
+      ),
+    );
+
+/**
+ * Inserts a new request into the database.
+ *
+ * @param client - The DrizzleClient instance used to interact with the database.
+ * @param senderId - The ID of the sender.
+ * @param receiverId - The ID of the receiver.
+ * @param senderVillageId - The ID of the sender's village.
+ * @param receiverVillageId - The ID of the receiver's village.
+ * @param type - The type of the user request.
+ * @returns A Promise that resolves when the request is successfully inserted.
+ */
+export const insertRequest = async (
+  client: DrizzleClient,
+  senderId: string,
+  receiverId: string,
+  type: UserRequestType,
+  value?: number,
+  relatedId?: string,
+  useRankedRules?: boolean,
+  spectatable?: boolean,
+) => {
+  await client.insert(userRequest).values({
+    id: nanoid(),
+    senderId,
+    receiverId,
+    status: "PENDING",
+    type,
+    value: value || null,
+    relatedId: relatedId || null,
+    useRankedRules: useRankedRules || false,
+    spectatable: spectatable || false,
+  });
+};

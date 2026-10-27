@@ -1,9 +1,10 @@
+import { expireWarPoints } from "@/queries/war";
 import { beforeEach, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { warKill } from "@/drizzle/schema";
-import { questHistory, sector, userData, village, war, warAlly, warActionReceipt, warCamp, warContribution } from "@/drizzle/schema";
-import { applyObjectiveWarAction, applyObjectiveWarDecay, expireWarPoints, syncWarCamps, resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
+import { warKill, questHistory, sector, userData, village, war, warAlly, warActionReceipt, warCamp, warContribution } from "@/drizzle/schema";
+
+import { applyObjectiveWarAction, applyObjectiveWarDecay, syncWarCamps, resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 import { fetchUpdatedUser } from "@/server/api/routers/profile";
 import { warRouter } from "@/server/api/routers/war";
 import { defaultWarRules } from "@/validators/war";
