@@ -14,14 +14,22 @@ import {
   retryLink,
   splitLink,
   TRPCClientError,
+  type TRPCLink,
 } from "@trpc/client";
 import { getQueryKey } from "@trpc/react-query";
+import { observable } from "@trpc/server/observable";
 import { useEffect, useState } from "react";
 import superjson from "superjson";
+import type { AppRouter } from "@/api/root";
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/components/ui/use-toast";
 import { BOTID_BLOCKED_MESSAGE, BOTID_RELOAD_REQUIRED_MESSAGE } from "@/libs/botid";
-import { BUILD_ID_HEADER, noteServerBuild } from "@/libs/buildVersion";
+import {
+  BUILD_ID_HEADER,
+  isReloadPending,
+  noteServerBuild,
+  reloadIfProcedureRemoved,
+} from "@/libs/buildVersion";
 import {
   createQueryMetricsTracker,
   queryMetricsHeaders,
@@ -42,6 +50,25 @@ import {
   SIGN_IN_REQUIRED_MUTATION_MESSAGE,
   useGlobalOnMutateProtect,
 } from "./client";
+
+/**
+ * An outdated tab calling a procedure the newer deploy removed can never succeed, so
+ * reload it once onto the current bundle. Sees every operation, including mutations
+ * whose caller-provided onError bypasses the global handler.
+ */
+const removedProcedureReloadLink: TRPCLink<AppRouter> =
+  () =>
+  ({ op, next }) =>
+    observable((observer) =>
+      next(op).subscribe({
+        next: (value) => observer.next(value),
+        error(error) {
+          reloadIfProcedureRemoved(error);
+          observer.error(error);
+        },
+        complete: () => observer.complete(),
+      }),
+    );
 
 const getBaseUrl = () => {
   if (typeof window !== "undefined") return "";
@@ -110,6 +137,7 @@ const TrpcClientProvider = (props: {
       links: [
         queryMetricsLink(queryMetricsTracker),
         trpcSessionLink(session),
+        removedProcedureReloadLink,
         retryLink({
           retry(options) {
             if (
@@ -183,6 +211,9 @@ const handleTrpcError = (
   operation: "query" | "mutation",
   handlesTransportError = false,
 ) => {
+  // The page is reloading onto the current bundle; the failure is expected.
+  if (isReloadPending()) return;
+
   const trpcErrorCode =
     error instanceof TRPCClientError
       ? (error.data as { code?: string } | undefined)?.code
