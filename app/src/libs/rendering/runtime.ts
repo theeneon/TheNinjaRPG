@@ -10,6 +10,7 @@ import {
   registerRenderCanvas,
 } from "@/libs/rendering/browserMetrics";
 import { createFrameLoop } from "@/libs/rendering/frameLoop";
+import { createPixiMetrics } from "@/libs/rendering/pixiMetrics";
 import type { RenderScene } from "@/validators/renderingBenchmark";
 
 const frames = createFrameLoop(
@@ -54,6 +55,7 @@ export const createGameRenderer = async (options: {
     renderer.destroy({ removeView: true });
     throw new DOMException("Scene initialization cancelled", "AbortError");
   }
+  const metrics = createPixiMetrics(renderer);
   const stage = new Container();
   const animation = new UniformGroup({ uTime: { value: 0, type: "f32" } });
   stage.eventMode = "none";
@@ -82,6 +84,7 @@ export const createGameRenderer = async (options: {
     if (disposed) return;
     dirty = false;
     beginRenderMeasurement(scene);
+    metrics?.reset();
     try {
       animation.uniforms.uTime = motion.matches ? 0 : now / 1000;
       animation.update();
@@ -96,6 +99,7 @@ export const createGameRenderer = async (options: {
       const endRender = markRenderStage("render");
       renderer.render({ container: stage });
       endRender?.();
+      metrics?.record();
       recordRenderCounter("displayObjects", stage.children.length);
     } catch (error) {
       dispose();
@@ -180,6 +184,7 @@ export const createGameRenderer = async (options: {
     for (const cleanup of cleanups) cleanup();
     cleanups.clear();
     assets.dispose();
+    metrics?.dispose();
     renderer.destroy({ removeView: true });
   };
   signal.addEventListener("abort", dispose, { once: true });

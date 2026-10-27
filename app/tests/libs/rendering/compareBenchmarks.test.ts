@@ -5,7 +5,7 @@ const runs = (renderer: "three" | "pixi", cpu: number) => Array.from({ length: 5
   schemaVersion: 1, scene: "combat", renderer,
   options: { revision: renderer, deviceLabel: "same-device", fixture: "combat-dense", run: i + 1 },
   environment: { userAgent: "same-browser", viewport: { width: 800, height: 600 }, devicePixelRatio: 1, buildMode: "production", canvas: { width: 800, height: 600, cssWidth: 800, cssHeight: 600 } },
-  result: { valid: true, invalidReasons: [] as string[], raw: { frameIntervalMs: [16, 16, 16], cpuFrameMs: [cpu, cpu, cpu], stagesMs: { animation: [cpu / 2] }, counters: { drawCalls: [renderer === "three" ? 500 : 1] } } },
+  result: { valid: true, invalidReasons: [] as string[], raw: { frameIntervalMs: [16, 16, 16], cpuFrameMs: [cpu, cpu, cpu], stagesMs: { render: [cpu / 2], animation: [cpu / 2] }, counters: { drawCalls: [renderer === "three" ? 500 : 1] } } },
 }));
 
 describe("renderer benchmark comparison", () => {
@@ -42,6 +42,22 @@ describe("renderer benchmark comparison", () => {
     const report = compareRenderingBenchmarks(runs("three", 4), after);
     expect(report.comparable).toBe(false);
     expect(report.groups[0]?.issues).toContain("A metric is missing from one or more runs");
+  });
+
+  it("retains implementation-specific diagnostics without treating them as missing shared work", () => {
+    const after = runs("pixi", 1).map((run) => ({ ...run, result: { ...run.result, raw: { ...run.result.raw, stagesMs: { render: [0.5], update: [0.5] } } } }));
+    const report = compareRenderingBenchmarks(runs("three", 4), after);
+    expect(report.comparable).toBe(true);
+    expect(report.groups[0]?.metrics.find((row) => row.name === "stagesMs.animation.p95")).toMatchObject({ role: "diagnostic", after: { count: 0 } });
+  });
+
+  it("reports stopped idle rendering as less CPU work without calling it an FPS regression", () => {
+    const before = runs("three", 4).map((run) => ({ ...run, options: { ...run.options, scenario: { renderMode: "idle" } } }));
+    const after = runs("pixi", 1).map((run) => ({ ...run, options: { ...run.options, scenario: { renderMode: "idle" } }, result: { ...run.result, raw: { frameIntervalMs: [], cpuFrameMs: [], stagesMs: {}, counters: { drawCalls: [] } } } }));
+    const report = compareRenderingBenchmarks(before, after);
+    expect(report.comparable).toBe(true);
+    expect(report.groups[0]?.metrics.some((row) => row.name === "achievedFps")).toBe(false);
+    expect(report.groups[0]?.metrics.find((row) => row.name === "renderCpuMsPerSecond")).toMatchObject({ after: { median: 0 }, percentageChange: -100 });
   });
 
   it("can compare equal simulated conditions without claiming physical phone evidence", () => {

@@ -20,6 +20,19 @@ export const registerRenderCanvas = (
   };
 };
 
+const canvasIsVisible = (canvas: HTMLCanvasElement) => {
+  const bounds = canvas.getBoundingClientRect();
+  return (
+    canvas.isConnected &&
+    bounds.width > 0 &&
+    bounds.height > 0 &&
+    bounds.bottom > 0 &&
+    bounds.right > 0 &&
+    bounds.top < innerHeight &&
+    bounds.left < innerWidth
+  );
+};
+
 const canvasDimensions = (canvas: HTMLCanvasElement) => ({
   width: canvas.width,
   height: canvas.height,
@@ -41,12 +54,7 @@ export const installRenderCapture = () => {
       const options = renderCaptureSchema.parse(input);
       const registered = sceneCanvases.get(scene);
       const canvas = registered?.canvas;
-      if (
-        !registered ||
-        !canvas?.isConnected ||
-        !canvas.clientWidth ||
-        !canvas.clientHeight
-      ) {
+      if (!registered || !canvas || !canvasIsVisible(canvas)) {
         throw new Error(`The ${scene} canvas is not visible and ready`);
       }
       const dimensions = canvasDimensions(canvas);
@@ -58,6 +66,13 @@ export const installRenderCapture = () => {
           measurements.invalidate("Document was hidden during capture");
       };
       document.addEventListener("visibilitychange", onVisibility);
+      const onScroll = () => {
+        if (!canvasIsVisible(canvas))
+          measurements.invalidate("Canvas left the viewport during capture");
+      };
+      const onResize = () => measurements.invalidate("Viewport resized during capture");
+      window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+      window.addEventListener("resize", onResize);
       const onContextLoss = () => measurements.invalidate("WebGL context was lost");
       canvas.addEventListener("webglcontextlost", onContextLoss);
       if (document.hidden) onVisibility();
@@ -73,6 +88,9 @@ export const installRenderCapture = () => {
       return new Promise((resolve) => {
         setTimeout(() => {
           document.removeEventListener("visibilitychange", onVisibility);
+          window.removeEventListener("scroll", onScroll, true);
+          window.removeEventListener("resize", onResize);
+          onScroll();
           canvas.removeEventListener("webglcontextlost", onContextLoss);
           if (JSON.stringify(dimensions) !== JSON.stringify(canvasDimensions(canvas))) {
             measurements.invalidate("Canvas dimensions changed during capture");
@@ -84,7 +102,8 @@ export const installRenderCapture = () => {
             scene,
             options,
             environment,
-            result: measurements.snapshot(),
+            finalEnvironment: captureRenderEnvironment(),
+            result: measurements.snapshot(options.scenario.renderMode === "idle"),
           });
         }, options.warmupMs + options.durationMs);
       });

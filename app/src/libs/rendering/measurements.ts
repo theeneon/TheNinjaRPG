@@ -56,10 +56,10 @@ export const createFrameMeasurements = () => {
     stage: (name: string, durationMs: number) => record(stages, name, durationMs),
     counter: (name: string, value: number) => record(counters, name, value),
     invalidate: (reason: string) => invalidReasons.add(reason),
-    snapshot: () => {
+    snapshot: (allowIdle = false) => {
       const intervalMs = summarizeSamples(intervals);
       const reasons = [...invalidReasons];
-      if (!intervals.length) reasons.push("No measured frame intervals");
+      if (!intervals.length && !allowIdle) reasons.push("No measured frame intervals");
       if (frameStart !== null) reasons.push("Capture ended during a frame");
       return {
         valid: reasons.length === 0,

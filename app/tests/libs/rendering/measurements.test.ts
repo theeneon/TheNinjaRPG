@@ -11,6 +11,12 @@ describe("render measurements", () => {
     expect(createFrameMeasurements().snapshot().valid).toBe(false);
   });
 
+  it("permits a deliberately idle visible scene without inventing frame intervals", () => {
+    const idle = createFrameMeasurements().snapshot(true);
+    expect(idle.valid).toBe(true); expect(idle.achievedFps).toBeNull();
+    expect(idle.raw.cpuFrameMs).toEqual([]); expect(idle.raw.frameIntervalMs).toEqual([]);
+  });
+
   it("separates pacing from CPU time and retains long frames", () => {
     const samples = createFrameMeasurements();
     for (const start of [0, 16, 32, 1032]) {

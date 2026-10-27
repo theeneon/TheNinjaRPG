@@ -31,12 +31,14 @@ export const compareRenderingBenchmarks = (
     const example = baseline[0] ?? replacement[0];
     if (!example) throw new Error("Empty benchmark comparison");
     const issues: string[] = [];
+    const idle = example.options.scenario.renderMode === "idle";
     const valid = (runs: RenderMeasurementResult[], name: string) =>
       runs.filter((run) => {
         if (
           !run.result.valid ||
-          !run.result.raw.frameIntervalMs.length ||
-          !run.result.raw.cpuFrameMs.length
+          (!idle &&
+            (!run.result.raw.frameIntervalMs.length ||
+              !run.result.raw.cpuFrameMs.length))
         ) {
           issues.push(
             `${name} run ${run.options.run} is invalid: ${run.result.invalidReasons.join(", ") || "no measured frames"}`,
@@ -71,6 +73,7 @@ export const compareRenderingBenchmarks = (
       name: string,
       read: (run: RenderMeasurementResult) => number | null,
       lowerIsBetter: boolean,
+      role: "core" | "diagnostic" = "core",
     ) => {
       const summarizeRuns = (runs: RenderMeasurementResult[]) =>
         summarizeSamples(runs.map(read).filter((v): v is number => v !== null));
@@ -82,6 +85,7 @@ export const compareRenderingBenchmarks = (
           : null;
       return {
         name,
+        role,
         lowerIsBetter,
         before: previous,
         after: next,
@@ -92,60 +96,86 @@ export const compareRenderingBenchmarks = (
             : null,
       };
     };
-    const stages = new Set(
-      [...beforeRuns, ...afterRuns].flatMap((run) =>
+    const stages = new Set([
+      "render",
+      ...[...beforeRuns, ...afterRuns].flatMap((run) =>
         Object.keys(run.result.raw.stagesMs),
       ),
-    );
-    const counters = new Set(
-      [...beforeRuns, ...afterRuns].flatMap((run) =>
+    ]);
+    const counters = new Set([
+      "drawCalls",
+      ...[...beforeRuns, ...afterRuns].flatMap((run) =>
         Object.keys(run.result.raw.counters),
       ),
-    );
+    ]);
     const metrics = [
       metric(
-        "achievedFps",
-        (run) => {
-          const mean = summarizeSamples(run.result.raw.frameIntervalMs).mean;
-          return mean ? 1000 / mean : null;
-        },
-        false,
-      ),
-      metric(
-        "frameIntervalMs.p95",
-        (run) => summarizeSamples(run.result.raw.frameIntervalMs).p95,
+        "renderSubmissionsPerSecond",
+        (run) => (run.result.raw.cpuFrameMs.length * 1000) / run.options.durationMs,
         true,
       ),
       metric(
-        "frameIntervalMs.p99",
-        (run) => summarizeSamples(run.result.raw.frameIntervalMs).p99,
+        "renderCpuMsPerSecond",
+        (run) =>
+          (run.result.raw.cpuFrameMs.reduce((sum, value) => sum + value, 0) * 1000) /
+          run.options.durationMs,
         true,
       ),
-      metric(
-        "cpuFrameMs.p95",
-        (run) => summarizeSamples(run.result.raw.cpuFrameMs).p95,
-        true,
-      ),
+      ...(!idle
+        ? [
+            metric(
+              "achievedFps",
+              (run) => {
+                const mean = summarizeSamples(run.result.raw.frameIntervalMs).mean;
+                return mean ? 1000 / mean : null;
+              },
+              false,
+            ),
+            metric(
+              "frameIntervalMs.p95",
+              (run) => summarizeSamples(run.result.raw.frameIntervalMs).p95,
+              true,
+            ),
+            metric(
+              "frameIntervalMs.p99",
+              (run) => summarizeSamples(run.result.raw.frameIntervalMs).p99,
+              true,
+            ),
+            metric(
+              "cpuFrameMs.p95",
+              (run) => summarizeSamples(run.result.raw.cpuFrameMs).p95,
+              true,
+            ),
+          ]
+        : []),
       ...[...stages].map((stage) =>
         metric(
           `stagesMs.${stage}.p95`,
           (run) => summarizeSamples(run.result.raw.stagesMs[stage] ?? []).p95,
           true,
+          stage === "render" && !idle ? "core" : "diagnostic",
         ),
       ),
       ...[...counters].map((counter) =>
         metric(
           `counters.${counter}.mean`,
-          (run) => summarizeSamples(run.result.raw.counters[counter] ?? []).mean,
+          (run) =>
+            idle &&
+            !run.result.raw.cpuFrameMs.length &&
+            ["drawCalls", "triangles"].includes(counter)
+              ? 0
+              : summarizeSamples(run.result.raw.counters[counter] ?? []).mean,
           true,
+          counter === "drawCalls" ? "core" : "diagnostic",
         ),
       ),
     ];
     if (
       metrics.some(
         (row) =>
-          row.before.count !== beforeRuns.length ||
-          row.after.count !== afterRuns.length,
+          row.role === "core" &&
+          (row.before.count !== beforeRuns.length ||
+            row.after.count !== afterRuns.length),
       )
     ) {
       issues.push("A metric is missing from one or more runs");
