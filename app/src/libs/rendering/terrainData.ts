@@ -49,6 +49,7 @@ export const buildHexTerrainData = (
         colors: [],
         rawColors: [],
         waves: [],
+        tiles: [],
       };
       groups.set(key, batch);
     }
@@ -57,6 +58,11 @@ export const buildHexTerrainData = (
     if (!raw) throw new Error(`Invalid terrain color ${material.color}`);
     const wave = lightLayout ? -1 : material.waveOffset;
     if (wave >= 0) animatedTiles++;
+    batch.tiles.push({
+      key: `${tile.col},${tile.row}`,
+      start: batch.positions.length / 2,
+      count: points.length,
+    });
     points.forEach((corner, index) => {
       const point = tile.corners[corner];
       if (!point) return;
@@ -171,4 +177,5 @@ type TerrainBatchBuilder = {
   colors: number[];
   rawColors: number[];
   waves: number[];
+  tiles: { key: string; start: number; count: number }[];
 };

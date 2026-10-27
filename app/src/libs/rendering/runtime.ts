@@ -68,6 +68,8 @@ export const createGameRenderer = async (options: {
   let visible = true;
   let contextLost = false;
   let disposed = false;
+  let continuous = true;
+  let dirty = true;
   let unsubscribe: (() => void) | null = null;
   let previousTime: number | null = null;
   let update: (frame: GameFrame) => void = () => {};
@@ -77,6 +79,7 @@ export const createGameRenderer = async (options: {
 
   const tick = (now: number) => {
     if (disposed) return;
+    dirty = false;
     beginRenderMeasurement(scene);
     try {
       animation.uniforms.uTime = motion.matches ? 0 : now / 1000;
@@ -98,10 +101,12 @@ export const createGameRenderer = async (options: {
       options.onError(error);
     } finally {
       endRenderMeasurement(scene);
+      updateSubscription();
     }
   };
   const updateSubscription = () => {
-    const active = visible && !document.hidden && !contextLost && !disposed;
+    const active =
+      (continuous || dirty) && visible && !document.hidden && !contextLost && !disposed;
     if (active && !unsubscribe) unsubscribe = frames.subscribe(tick);
     else if (!active && unsubscribe) {
       unsubscribe();
@@ -120,12 +125,25 @@ export const createGameRenderer = async (options: {
     if (width === renderer.width && height === renderer.height) return;
     renderer.resize(width, height);
     resize(width, height);
+    invalidate();
   });
   resizeObserver.observe(mount);
   const listen = <K extends keyof HTMLElementEventMap>(
     type: K,
     listener: (event: HTMLElementEventMap[K]) => void,
-  ) => canvas.addEventListener(type, listener, { signal: listeners.signal });
+  ) =>
+    canvas.addEventListener(
+      type,
+      (event) => {
+        listener(event);
+        invalidate();
+      },
+      { signal: listeners.signal },
+    );
+  const invalidate = () => {
+    dirty = true;
+    updateSubscription();
+  };
   document.addEventListener("visibilitychange", updateSubscription, {
     signal: listeners.signal,
   });
@@ -142,7 +160,7 @@ export const createGameRenderer = async (options: {
     "webglcontextrestored",
     () => {
       contextLost = false;
-      updateSubscription();
+      invalidate();
     },
     { signal: listeners.signal },
   );
@@ -173,6 +191,12 @@ export const createGameRenderer = async (options: {
     assets,
     signal,
     listen,
+    invalidate,
+    setAnimating: (value: boolean) => {
+      if (continuous === value) return;
+      continuous = value;
+      invalidate();
+    },
     dispose,
     own: (cleanup: () => void) => {
       if (disposed) cleanup();

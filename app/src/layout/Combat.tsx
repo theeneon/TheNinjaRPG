@@ -1,10 +1,8 @@
-import alea from "alea";
 import type { Grid } from "honeycomb-grid";
 import { useSetAtom } from "jotai";
 import { Check, HelpCircle, Loader2 } from "lucide-react";
 import type React from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Clock, Group, OrthographicCamera, Vector2 } from "three";
 import { api, type RouterInputs, useGlobalOnMutateProtect } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,9 +17,9 @@ import {
   useBattleMaps,
   useCombatUpdates,
 } from "@/hooks/combat";
+import { useGameScene } from "@/hooks/game-scene";
 import { useLocalStorage } from "@/hooks/localstorage";
 import { useNavigationRouter as useRouter } from "@/hooks/navigation";
-import { usePerformanceMonitor } from "@/hooks/performance-monitor";
 import { TUTORIAL_STEPS, useTutorialStep } from "@/hooks/tutorial";
 import { usePageActive } from "@/hooks/usePageActive";
 import { CombatAggro } from "@/layout/CombatAggro";
@@ -49,7 +47,6 @@ import { validateActionTarget } from "@/libs/combat/targetValidation";
 import type { BattleState, CombatAction, ReturnedBattle } from "@/libs/combat/types";
 import { combatProfilePatch } from "@/libs/combat/userCache";
 import {
-  getBattlefieldHeightRatio,
   getTurnControl,
   isPvpEnergyRewardBattle,
   resolveControlledActorId,
@@ -58,32 +55,13 @@ import type { TerrainHex } from "@/libs/hexgrid";
 import { LIGHT_LAYOUT_STORAGE_KEY } from "@/libs/layoutPreference";
 import { haptics } from "@/libs/native";
 import { getIsolatedPyramid } from "@/libs/questRun";
-import { getBackgroundColor } from "@/libs/rendering/biomes";
 import {
-  drawCombatBackground,
-  drawCombatEffects,
-  drawCombatUsers,
-  highlightTiles,
-  highlightTileTooltips,
-  highlightTooltips,
-  highlightUsers,
-  resetCombatCaches,
-} from "@/libs/threejs/combat";
-import type { CachedIntersections } from "@/libs/threejs/input";
-import { OrbitControls } from "@/libs/threejs/OrbitControls";
-import { SpriteMixer } from "@/libs/threejs/SpriteMixer";
-import { updateWaveAnimation, updateWindAnimation } from "@/libs/threejs/shaders";
-import {
-  cleanUp,
-  preloadTextures,
-  profiler,
-  setRaycasterFromMouse,
-  setupScene,
-  smoothCameraFollow,
-} from "@/libs/threejs/util";
+  type CombatSceneSnapshot,
+  createCombatScene,
+} from "@/libs/rendering/scenes/combat";
 import { showMutationToast } from "@/libs/toast";
 import { getTutorialBattleReturnPage } from "@/libs/tutorial";
-import { preloadAudioBuffers, savedSfxVolume } from "@/utils/audio";
+import { playPreloadedAudio, preloadAudioBuffers, savedSfxVolume } from "@/utils/audio";
 import { secondsFromNow } from "@/utils/time";
 import {
   combatActionIdAtom,
@@ -133,16 +111,9 @@ const Combat: React.FC<CombatProps> = (props) => {
   const [lightLayout] = useLocalStorage<boolean>(LIGHT_LAYOUT_STORAGE_KEY, false);
   const [storedZoom, setStoredZoom] = useLocalStorage<number>("combatZoom", 1.5);
 
-  // Performance monitoring (unbounded for max FPS testing in dev)
-  const performanceMonitor = usePerformanceMonitor(false, "combat");
-
   // References which shouldn't update
-  const [webglError, setWebglError] = useState<boolean>(false);
   const isPageActive = usePageActive();
-  const isPageActiveRef = useRef(isPageActive);
-  isPageActiveRef.current = isPageActive;
   const wasPageActiveRef = useRef(true);
-  const setRenderActiveRef = useRef<((active: boolean) => void) | null>(null);
   const lastActionsRef = useRef<Date[]>([]);
   const arenaHealInFlightRef = useRef(false);
   const arenaStartInFlightRef = useRef(false);
@@ -159,21 +130,9 @@ const Combat: React.FC<CombatProps> = (props) => {
   const resultRef = useRef(result);
   const mountRef = useRef<HTMLDivElement | null>(null);
   const gridRef = useRef<Grid<TerrainHex> | null>(null);
-  const mouse = new Vector2();
-  const mouseScreenRef = useRef({ x: 0, y: 0 });
   const battleId = battleRef.current?.id;
   const battleType = battleRef.current?.battleType;
 
-  // Reference to group holding tile names for toggling visibility
-  const groupNamesRef = useRef<Group | null>(null);
-
-  // Camera following refs
-  const cameraRef = useRef<OrthographicCamera | null>(null);
-  const controlsRef = useRef<OrbitControls | null>(null);
-  const cameraTargetPositionRef = useRef<{ x: number; y: number } | null>(null);
-
-  // Track if component is mounted to prevent stale render callbacks
-  const isMountedRef = useRef<boolean>(false);
   // getUser / travel / raid invalidation after a result must run once per
   // ended battle, not on every later props identity change while result is set.
   const endedBattleInvalidationRef = useRef<string | null>(null);
@@ -242,8 +201,6 @@ const Combat: React.FC<CombatProps> = (props) => {
       ),
     [battleState.battle],
   );
-  const aggroRef = useRef(config.showAggro ? aggro : undefined);
-  aggroRef.current = config.showAggro ? aggro : undefined;
 
   // Get effects for hovered element (can include both user and ground effects)
   const hoveredEffects = useMemo(() => {
@@ -285,7 +242,6 @@ const Combat: React.FC<CombatProps> = (props) => {
   }, [hoveredEffect, hoveredEffects]);
 
   // Store precomputed maps in refs for use in render loop
-  const battleMapsRef = useRef(battleMaps);
   const setHoveredEffectRef = useRef(setHoveredEffect);
   const lastHoverKeyRef = useRef<string | null>(null);
   // Touch input has no hover: a quick tap is an action, so details only open on
@@ -298,7 +254,6 @@ const Combat: React.FC<CombatProps> = (props) => {
 
   // Update refs when memos change
   useEffect(() => {
-    battleMapsRef.current = battleMaps;
     setHoveredEffectRef.current = setHoveredEffect;
   }, [battleMaps, setHoveredEffect]);
 
@@ -342,18 +297,6 @@ const Combat: React.FC<CombatProps> = (props) => {
       gameAssetsRef.current = { assets: gameAssets, requestedIds: new Set(allAssets) };
     }
   }, [gameAssets, hasPreviousGameAssets, allAssets]);
-
-  // Preload all combat-related asset textures once assets list is ready
-  useEffect(() => {
-    if (!gameAssets || gameAssets.length === 0) return;
-    const ids = battleRef.current?.extraState.textureAssets || [];
-    if (ids.length === 0) return;
-    const urls = gameAssets
-      .filter((a) => ids.includes(a.id))
-      .map((a) => a.image)
-      .filter(Boolean);
-    void preloadTextures(urls);
-  }, [battleRef.current?.id, battleRef.current?.version, gameAssets]);
 
   // Preload combat-related SFX (AudioBuffers via Web Audio API) once assets list is ready
   useEffect(() => {
@@ -808,23 +751,6 @@ const Combat: React.FC<CombatProps> = (props) => {
     };
   }, [suid, timeDiff]);
 
-  // Update mouse position on mouse move
-  const onDocumentMouseMove = (event: MouseEvent) => {
-    if (mountRef.current) {
-      const bounding_box = mountRef.current.getBoundingClientRect();
-      mouse.x = (event.offsetX / bounding_box.width) * 2 - 1;
-      mouse.y = -((event.offsetY / bounding_box.height) * 2 - 1);
-      // Also track screen coordinates for tooltips
-      mouseScreenRef.current.x = event.clientX;
-      mouseScreenRef.current.y = event.clientY;
-    }
-  };
-  const onDocumentMouseLeave = () => {
-    if (mountRef.current) {
-      mouse.x = 9999999;
-      mouse.y = 9999999;
-    }
-  };
   const clearTouchDetailsTimer = () => {
     if (touchDetailsTimerRef.current) clearTimeout(touchDetailsTimerRef.current);
     touchDetailsTimerRef.current = null;
@@ -843,8 +769,7 @@ const Combat: React.FC<CombatProps> = (props) => {
     lastHoverKeyRef.current = null;
     setHoveredEffectRef.current(null);
   };
-  // Update mouse position on touch for mobile devices
-  // This ensures tile highlighting works correctly before tap/click
+  // Long presses inspect effects without submitting a combat action.
   const onDocumentTouchStart = (event: TouchEvent) => {
     isTouchInputRef.current = true;
     touchDetailsOpenRef.current = false;
@@ -854,25 +779,13 @@ const Combat: React.FC<CombatProps> = (props) => {
         touchDetailsOpenRef.current = true;
       }, 400);
     }
-    if (mountRef.current && event.touches.length > 0) {
-      const touch = event.touches[0];
-      if (touch) {
-        const bounding_box = mountRef.current.getBoundingClientRect();
-        const offsetX = touch.clientX - bounding_box.left;
-        const offsetY = touch.clientY - bounding_box.top;
-        mouse.x = (offsetX / bounding_box.width) * 2 - 1;
-        mouse.y = -((offsetY / bounding_box.height) * 2 - 1);
-        mouseScreenRef.current.x = touch.clientX;
-        mouseScreenRef.current.y = touch.clientY;
-      }
-    }
   };
 
   // Keep held rewards paused; refresh battle data only when the page resumes.
   useEffect(() => {
     const wasActive = wasPageActiveRef.current;
     wasPageActiveRef.current = isPageActive;
-    setRenderActiveRef.current?.(isPageActive && !result);
+    combat.scene.current?.refresh();
     if (!isPageActive || wasActive) return;
     void utils.combat.getBattle.invalidate();
   }, [isPageActive, result, utils]);
@@ -1034,508 +947,136 @@ const Combat: React.FC<CombatProps> = (props) => {
     }
   }, [battleRef.current?.version, timeDiff, isInLobby]);
 
-  // WebGL scene. Keep this list narrow: Combat re-renders when battleState
-  // isPending / result change, and those updates must not tear the renderer down.
-  useEffect(() => {
-    // Reference to the mount
-    const sceneRef = mountRef.current;
-
-    if (sceneRef && battleRef.current && hasGameAssets) {
-      // Mark component as mounted
-      isMountedRef.current = true;
-      // Used for map size calculations
-      const width2height = getBattlefieldHeightRatio(
-        battleRef.current.width,
-        battleRef.current.height,
-      );
-
-      // Map size
-      const WIDTH = sceneRef.getBoundingClientRect().width;
-      const HEIGHT = WIDTH * width2height;
-
-      // Listeners
-      sceneRef.addEventListener("mousemove", onDocumentMouseMove, false);
-      sceneRef.addEventListener("mouseleave", onDocumentMouseLeave, false);
-      sceneRef.addEventListener("touchstart", onDocumentTouchStart, { passive: true });
-      sceneRef.addEventListener("touchend", onDocumentTouchEnd, { passive: true });
-      sceneRef.addEventListener("touchcancel", onDocumentTouchEnd, { passive: true });
-      sceneRef.addEventListener("pointermove", onDocumentPointerMove, {
-        passive: true,
-      });
-
-      // Get background color based on battle background/biome
-      const { color } = getBackgroundColor(battleRef.current.background);
-
-      // Setup scene, renderer and raycaster
-      const { scene, renderer, raycaster, handleResize } = setupScene({
-        mountRef: mountRef,
-        width: WIDTH,
-        height: HEIGHT,
-        sortObjects: false,
-        color: color,
-        colorAlpha: 0.5,
-        width2height: width2height,
-      });
-
-      // If no renderer, then we have an error with the browser, let the user know
-      if (!renderer) {
-        setWebglError(true);
-        return;
+  const combatCallbacks = useRef({ onTap: (_tile: TerrainHex) => {} });
+  combatCallbacks.current.onTap = (target) => {
+    if (
+      touchDetailsOpenRef.current ||
+      Date.now() < suppressClickUntilRef.current ||
+      document.body.style.cursor === "wait"
+    )
+      return;
+    const battle = battleRef.current,
+      action = actionRef.current,
+      grid = gridRef.current;
+    if (!battle || !action || !grid) return;
+    const user = battle.usersState.find((user) => user.userId === userIdRef.current);
+    if (!user) return;
+    const { isValid } = validateActionTarget({
+      user,
+      battle,
+      action,
+      grid,
+      target,
+      timeDiff,
+      precomputedUserId: userIdRef.current,
+      precomputedActions: precomputedActionsRef.current,
+    });
+    if (!isValid || !canPerformAction()) return;
+    document.body.style.cursor = "wait";
+    performAction({
+      battleId: battle.id,
+      userId: userIdRef.current,
+      actionId: action.id,
+      longitude: target.col,
+      latitude: target.row,
+      version: battle.version,
+    });
+  };
+  const sceneSnapshot = useRef<CombatSceneSnapshot | null>(null);
+  sceneSnapshot.current = battleState.battle
+    ? {
+        battle: battleState.battle,
+        action: props.action,
+        actions: precomputedActions,
+        userId: props.userId,
+        playerId: suid,
+        viewer: userData,
+        aggro: config.showAggro ? aggro : undefined,
+        timeDiff,
+        assets: gameAssetsRef.current.assets,
+        requestedIds: gameAssetsRef.current.requestedIds,
+        active: isPageActive && !result,
+        sound: getAudioPreference("sfxOn", userData?.sfxOn),
+        volume: savedSfxVolume(),
+        showGridNumbers: config.showGridNumbers,
+        inspect: !isTouchInputRef.current || touchDetailsOpenRef.current,
       }
-
-      // Create scene
-      sceneRef.appendChild(renderer.domElement);
-      performanceMonitor.setCanvas(renderer.domElement);
-
-      // Track WebGL context loss to prevent shader errors on iOS mobile browsers
-      let isContextLost = false;
-      const handleContextLost = (event: Event) => {
-        event.preventDefault();
-        isContextLost = true;
-      };
-      const handleContextRestored = () => {
-        isContextLost = false;
-      };
-      renderer.domElement.addEventListener("webglcontextlost", handleContextLost);
-      renderer.domElement.addEventListener(
-        "webglcontextrestored",
-        handleContextRestored,
-      );
-
-      // Setup camara
-      const camera = new OrthographicCamera(0, WIDTH, HEIGHT, 0, -10, 10);
-      camera.zoom = storedZoom;
-      camera.updateProjectionMatrix();
-      cameraRef.current = camera;
-
-      // Seeded noise generator for map gen from battle ID
-      const prng = alea(battleRef.current.id);
-
-      // Draw the background
-      const {
-        group_dirt,
-        group_tiles,
-        group_edges,
-        group_highlight_edges,
-        group_names,
-        group_assets,
-        honeycombGrid,
-      } = drawCombatBackground(WIDTH, battleRef.current, prng, lightLayout);
-      gridRef.current = honeycombGrid;
-
-      // Set initial visibility based on prop and store reference
-      group_names.visible = config.showGridNumbers;
-      groupNamesRef.current = group_names;
-
-      // Intersections & highlights from interactions
-      let highlights = new Set<string>();
-      let tooltips = new Set<string>();
-      let userHighlights = new Set<string>();
-
-      // js groups for organization
-      const group_users = new Group();
-      const group_ground = new Group();
-      const group_effects = new Group();
-
-      // Enable controls
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableRotate = false;
-      controls.zoomSpeed = 0.3;
-      controls.minZoom = 1;
-      controls.maxZoom = 3;
-      controlsRef.current = controls;
-
-      // Save zoom level to localStorage when it changes (debounced to avoid excessive updates)
-      let zoomTimeout: ReturnType<typeof setTimeout> | null = null;
-      const onZoomChange = () => {
-        if (zoomTimeout) clearTimeout(zoomTimeout);
-        zoomTimeout = setTimeout(() => {
-          setStoredZoom(camera.zoom);
-        }, 300); // Wait 300ms after last change before saving
-      };
-      controls.addEventListener("change", onZoomChange);
-
-      // Add the group to the scene
-      scene.add(group_dirt);
-      scene.add(group_tiles);
-      scene.add(group_edges);
-      scene.add(group_highlight_edges);
-      scene.add(group_assets);
-      scene.add(group_ground);
-      scene.add(group_users);
-      scene.add(group_effects);
-      // Blend labels over static effects while retaining scenery and user occlusion.
-      scene.add(group_names);
-
-      // Capture clicks to update move direction
-      // On mobile, we validate tiles on-the-fly since canClick may be stale
-      // (touch events don't always update mouse position before click fires)
-      const onClick = (e: MouseEvent) => {
-        if (Date.now() < suppressClickUntilRef.current) return;
-        setRaycasterFromMouse(raycaster, sceneRef, e, camera);
-        const intersects = raycaster.intersectObjects(scene.children);
-        intersects
-          .filter((i) => i.object.visible)
-          .every((i) => {
-            if (
-              i.object.userData.type === "tile" &&
-              document.body.style.cursor !== "wait"
-            ) {
-              // Check basic requirements
-              if (!actionRef.current || !battleRef.current || !gridRef.current) {
-                return true;
-              }
-
-              const target = i.object.userData.tile as TerrainHex;
-              const user = battleRef.current.usersState.find(
-                (u) => u.userId === userIdRef.current,
-              );
-              if (!user) return true;
-
-              // Validate using shared function (same logic as highlightTiles).
-              // precomputedUserId reads userIdRef.current (the controlled actor,
-              // kept current by the sync effect) to avoid a stale closure inside
-              // this long-lived handler.
-              const { isValid } = validateActionTarget({
-                user,
-                battle: battleRef.current,
-                action: actionRef.current,
-                grid: gridRef.current,
-                target,
-                timeDiff,
-                precomputedUserId: userIdRef.current,
-                precomputedActions: precomputedActionsRef.current,
-              });
-
-              if (!isValid) return true;
-
-              // All validation passed - perform the action
-              if (canPerformAction()) {
-                document.body.style.cursor = "wait";
-                performAction({
-                  battleId: battleRef.current.id,
-                  userId: userIdRef.current,
-                  actionId: actionRef.current.id,
-                  longitude: target.col,
-                  latitude: target.row,
-                  version: battleRef.current.version,
-                });
-              }
-              return false;
-            }
-            return true;
-          });
-      };
-      const rendererElement = renderer.domElement;
-      rendererElement.addEventListener("click", onClick, true);
-
-      // Sprite mixer for sprite animations
-      const spriteMixer = new SpriteMixer();
-
-      // Callback on sprite animations
-      // spriteMixer.addEventListener("finished", function (event) {});
-
-      const sfxVolume = savedSfxVolume();
-
-      // PERFORMANCE: Cache dimensions to prevent layout thrashing in render loop
-      let cachedWidth = WIDTH;
-      let cachedHeight = HEIGHT;
-
-      // Update cached dimensions on resize
-      const updateCachedDimensions = () => {
-        if (sceneRef) {
-          cachedWidth = sceneRef.getBoundingClientRect().width;
-          cachedHeight = cachedWidth * width2height;
-        }
-      };
-      window.addEventListener("resize", updateCachedDimensions);
-
-      // Render the image
-      let animationId: number | null = null;
-      let hasRenderedFrame = false;
-      const clock = new Clock();
-      clock.start();
-      function render() {
-        // A queued callback must not draw a hidden or settled battlefield.
-        animationId = null;
-        if (!isMountedRef.current || !isPageActiveRef.current || resultRef.current)
-          return;
-
-        // Performance profiling
-        profiler?.beginFrame();
-        performanceMonitor.begin();
-        const endTotal = profiler?.mark("animate_total") ?? (() => {});
-
-        // Use clock for animating sprites
-        const endSpriteMixer = profiler?.mark("animate_sprite_mixer") ?? (() => {});
-        spriteMixer.update(clock.getDelta());
-        endSpriteMixer();
-
-        // Use raycaster to detect mouse intersections
-        raycaster.setFromCamera(mouse, camera);
-
-        // Assume we have battle and a grid
-        if (userData && battleRef.current && gridRef.current) {
-          // Get the actor the human currently controls (self, or piloted summon
-          // on its turn) — drives camera follow, tile highlights and selection.
-          const user = battleRef.current.usersState.find(
-            (u) => u.userId === userIdRef.current,
-          );
-
-          // Draw all users on the map
-          const endDrawUsers = profiler?.mark("animate_draw_users") ?? (() => {});
-          const isAnyUserMoving = drawCombatUsers({
-            group_users: group_users,
-            users: battleRef.current.usersState,
-            usersEffects: battleRef.current.usersEffects,
-            grid: gridRef.current,
-            playerId: suid,
-            userData: userData,
-            battle: battleRef.current,
-            group_assets: group_assets,
-            sfxEnabled: getAudioPreference("sfxOn", userData?.sfxOn),
-            sfxVolume: sfxVolume,
-            gameAssets: gameAssetsRef.current.assets,
-            aggro: aggroRef.current,
-          });
-          endDrawUsers();
-
-          // Update camera target to follow player's character
-          if (user && cameraRef.current && cameraRef.current.zoom > 1.5) {
-            const tile = gridRef.current.getHex({
-              col: user.longitude,
-              row: user.latitude,
-            });
-            if (tile) {
-              const { x, y } = tile.center;
-              cameraTargetPositionRef.current = { x, y };
-            }
-          }
-
-          // Draw all ground effects on the map (non-movement SFX delayed until movement completes)
-          const endDrawEffects = profiler?.mark("animate_draw_effects") ?? (() => {});
-          // Wait for newly revealed assets before caching the effect's first
-          // frame, so its appear animation and sound play when the lookup arrives.
-          if (
-            [
-              ...(battleRef.current.extraState.textureAssets ?? []),
-              ...(battleRef.current.extraState.sfxAssets ?? []),
-            ].every((id) => gameAssetsRef.current.requestedIds.has(id))
-          )
-            drawCombatEffects({
-              groupEffects: group_effects,
-              battle: battleRef.current,
-              grid: gridRef.current,
-              animationId: hasRenderedFrame ? 1 : 0,
-              spriteMixer,
-              gameAssets: gameAssetsRef.current.assets,
-              sfxEnabled: getAudioPreference("sfxOn", userData?.sfxOn),
-              sfxVolume: sfxVolume,
-              isAnyUserMoving,
-            });
-          endDrawEffects();
-
-          // Performance optimization: Run raycaster intersections once per frame
-          const endRaycast = profiler?.mark("animate_raycast") ?? (() => {});
-          const tilesIntersects = raycaster.intersectObjects(group_tiles.children);
-          const cachedIntersections: CachedIntersections = {
-            tiles: tilesIntersects,
-            battleTiles: tilesIntersects,
-            ground: raycaster.intersectObjects(group_effects.children),
-            users: raycaster.intersectObjects(group_users.children),
+    : null;
+  const combat = useGameScene(
+    mountRef,
+    async (mount, signal, onError) =>
+      createCombatScene({
+        mount,
+        signal,
+        onError,
+        lightLayout,
+        initialZoom: storedZoom,
+        onZoom: setStoredZoom,
+        getSnapshot: () => {
+          const snapshot = sceneSnapshot.current;
+          if (!snapshot) throw new Error("Battlefield snapshot unavailable");
+          return {
+            ...snapshot,
+            assets: gameAssetsRef.current.assets,
+            requestedIds: gameAssetsRef.current.requestedIds,
+            inspect: !isTouchInputRef.current || touchDetailsOpenRef.current,
           };
-          endRaycast();
-
-          // Highlight information on user hover
-          const endHighlightUsers =
-            profiler?.mark("animate_highlight_users") ?? (() => {});
-          userHighlights = highlightUsers({
-            group_users,
-            cachedIntersections,
-            userId: userIdRef.current,
-            users: battleRef.current.usersState,
-            currentHighlights: userHighlights,
-          });
-          endHighlightUsers();
-
-          // Detect intersections with tiles for movement/action
-          if (user) {
-            const endHighlightTiles =
-              profiler?.mark("animate_highlight_tiles") ?? (() => {});
-            highlights = highlightTiles({
-              group_tiles,
-              group_highlight_edges,
-              cachedIntersections,
-              user,
-              timeDiff,
-              action: actionRef.current,
-              battle: battleRef.current,
-              grid: gridRef.current,
-              currentHighlights: highlights,
-              precomputedActions: precomputedActionsRef.current,
-            });
-            endHighlightTiles();
+        },
+        onTap: (tile) => combatCallbacks.current.onTap(tile),
+        play: (url, volume) => {
+          void playPreloadedAudio(url, volume);
+        },
+        onHover: (hover) => {
+          const key = hover ? `${hover.tileKey}-${hover.userId ?? ""}` : null;
+          if (key !== lastHoverKeyRef.current) {
+            lastHoverKeyRef.current = key;
+            setHoveredEffectRef.current(hover);
           }
-
-          // Highlight tooltips when hovering on battlefield
-          const endHighlightTooltips =
-            profiler?.mark("animate_highlight_tooltips") ?? (() => {});
-          tooltips = highlightTooltips({
-            group_ground,
-            cachedIntersections,
-            battle: battleRef.current,
-            currentTooltips: tooltips,
-          });
-
-          // Highlight tile tooltips when hovering on tiles with ground effects or users
-          highlightTileTooltips({
-            group_tiles,
-            group_users,
-            cachedIntersections,
-            battleMaps: battleMapsRef.current,
-            mouseX: mouseScreenRef.current.x,
-            mouseY: mouseScreenRef.current.y,
-            onHoverChange: (rawHover) => {
-              // Touch shows details only while a long-press is held
-              const hover =
-                isTouchInputRef.current && !touchDetailsOpenRef.current
-                  ? null
-                  : rawHover;
-              // Only update state if hover target actually changed
-              const newKey = hover
-                ? hover.userId
-                  ? `${hover.tileKey}-${hover.userId}`
-                  : hover.tileKey
-                : null;
-              if (newKey !== lastHoverKeyRef.current) {
-                lastHoverKeyRef.current = newKey;
-                setHoveredEffectRef.current(hover);
-              }
-            },
-          });
-          endHighlightTooltips();
-        }
-
-        // Smooth camera following
-        if (cameraRef.current && controlsRef.current) {
-          const endCamera = profiler?.mark("animate_camera") ?? (() => {});
-          smoothCameraFollow({
-            camera: cameraRef.current,
-            controls: controlsRef.current,
-            targetPosition: cameraTargetPositionRef.current,
-            width: cachedWidth,
-            height: cachedHeight,
-          });
-          endCamera();
-        }
-
-        // Trackball updates
-        const endControls = profiler?.mark("animate_controls") ?? (() => {});
-        controls.update();
-        endControls();
-
-        // Update wind and wave animations for sprites and tiles
-        if (!lightLayout) {
-          const endShaders = profiler?.mark("animate_shaders") ?? (() => {});
-          updateWindAnimation(group_assets, performance.now() / 1000);
-          updateWaveAnimation(group_tiles, performance.now() / 1000);
-          endShaders();
-        }
-
-        // Render the scene (skip if WebGL context is lost)
-        const endRender = profiler?.mark("animate_render") ?? (() => {});
-        if (!isContextLost) {
-          renderer?.render(scene, camera);
-        }
-        endRender();
-
-        if (renderer) {
-          profiler?.setRendererInfo(renderer.info);
-        }
-
-        // Performance monitor
-        performanceMonitor.end();
-        endTotal();
-        profiler?.log(2000);
-
-        hasRenderedFrame = true;
-        animationId = performanceMonitor.requestFrame(render);
-      }
-      setRenderActiveRef.current = (active) => {
-        if (!active) {
-          if (animationId !== null) performanceMonitor.cancelFrame(animationId);
-          animationId = null;
-          clock.stop();
-          return;
-        }
-        if (animationId !== null) return;
-        // Discard elapsed background time rather than jumping sprite animations.
-        clock.start();
-        render();
-      };
-      render();
-
-      // Remove the mouseover listener
-      return () => {
-        // Mark component as unmounted FIRST to prevent stale render callbacks
-        isMountedRef.current = false;
-        clearTouchDetailsTimer();
-
-        // Cancel animation frame before cleanup
-        if (animationId !== null) performanceMonitor.cancelFrame(animationId);
-        setRenderActiveRef.current = null;
-
-        // Reset profiler and combat caches
-        profiler?.reset();
-        resetCombatCaches();
-
-        if (zoomTimeout) clearTimeout(zoomTimeout);
-        void setBattleAtom(undefined);
-
-        // Remove event listeners safely
-        try {
-          window.removeEventListener("resize", handleResize);
-          window.removeEventListener("resize", updateCachedDimensions);
-          sceneRef.removeEventListener("mousemove", onDocumentMouseMove);
-          sceneRef.removeEventListener("mouseleave", onDocumentMouseLeave);
-          sceneRef.removeEventListener("touchstart", onDocumentTouchStart);
-          sceneRef.removeEventListener("touchend", onDocumentTouchEnd);
-          sceneRef.removeEventListener("touchcancel", onDocumentTouchEnd);
-          sceneRef.removeEventListener("pointermove", onDocumentPointerMove);
-          controls.removeEventListener("change", onZoomChange);
-          rendererElement.removeEventListener("click", onClick, true);
-          renderer.domElement.removeEventListener(
-            "webglcontextlost",
-            handleContextLost,
-          );
-          renderer.domElement.removeEventListener(
-            "webglcontextrestored",
-            handleContextRestored,
-          );
-        } catch {
-          // Ignore errors if elements are already removed
-        }
-
-        // Safely remove renderer DOM element
-        try {
-          if (renderer.domElement && renderer.domElement.parentNode === sceneRef) {
-            sceneRef.removeChild(renderer.domElement);
-          }
-        } catch {
-          // Ignore errors if element is already removed
-        }
-
-        cleanUp(scene, renderer);
-      };
-    }
-  }, [battleId, hasGameAssets, userData?.sfxOn]);
-
-  // Update visibility when showGridNumbers flag changes
+        },
+      }),
+    `${battleId}:${lightLayout}`,
+    hasGameAssets && !!battleState.battle && !result,
+  );
+  const webglError = combat.error;
   useEffect(() => {
-    if (groupNamesRef.current) {
-      groupNamesRef.current.visible = config.showGridNumbers;
-    }
-  }, [config.showGridNumbers]);
+    gridRef.current = combat.scene.current?.grid ?? null;
+    const mount = mountRef.current;
+    if (!combat.isReady || !mount) return;
+    mount.addEventListener("touchstart", onDocumentTouchStart, { passive: true });
+    mount.addEventListener("touchend", onDocumentTouchEnd, { passive: true });
+    mount.addEventListener("touchcancel", onDocumentTouchEnd, { passive: true });
+    mount.addEventListener("pointermove", onDocumentPointerMove, { passive: true });
+    return () => {
+      clearTouchDetailsTimer();
+      mount.removeEventListener("touchstart", onDocumentTouchStart);
+      mount.removeEventListener("touchend", onDocumentTouchEnd);
+      mount.removeEventListener("touchcancel", onDocumentTouchEnd);
+      mount.removeEventListener("pointermove", onDocumentPointerMove);
+    };
+  }, [combat.isReady]);
+  useEffect(() => {
+    combat.scene.current?.refresh();
+  }, [
+    battleState.battle,
+    props.action,
+    props.userId,
+    gameAssets,
+    userData,
+    isPageActive,
+    config,
+    combat.isReady,
+  ]);
+  useEffect(
+    () => () => {
+      void setBattleAtom(undefined);
+    },
+    [setBattleAtom],
+  );
+
+  useEffect(() => {
+    lastHoverKeyRef.current = null;
+    setHoveredEffect(null);
+  }, [battleId, result]);
 
   // Clear hover state on mouse leave from combat area
   useEffect(() => {
@@ -1618,7 +1159,8 @@ const Combat: React.FC<CombatProps> = (props) => {
       <div id="tutorial-combat-field" ref={mountRef} hidden={!!result}></div>
 
       {!result &&
-        !hasGameAssets &&
+        (!hasGameAssets || !combat.isReady) &&
+        !webglError &&
         (hasGameAssetsError ? (
           <div className="p-3 text-center" role="alert">
             <p>Unable to load battlefield assets.</p>
@@ -1642,7 +1184,7 @@ const Combat: React.FC<CombatProps> = (props) => {
       )}
 
       {/* Character aggro and effects share the same hover/touch details. */}
-      {hoveredEffect && hoveredEffects && (
+      {!result && hoveredEffect && hoveredEffects && (
         <div
           role="tooltip"
           ref={hoverTooltipRef}

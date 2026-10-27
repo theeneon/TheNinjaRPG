@@ -13,7 +13,7 @@ export const createMapControls = (
     number,
     { x: number; y: number; startX: number; startY: number; moved: boolean }
   >();
-  let pointer: { x: number; y: number } | null = null;
+  let pointer: { x: number; y: number; clientX: number; clientY: number } | null = null;
   let multi = false;
   let revision = 0;
   const point = (event: PointerEvent) => {
@@ -21,6 +21,8 @@ export const createMapControls = (
     return {
       x: ((event.clientX - bounds.left) * game.renderer.width) / bounds.width,
       y: ((event.clientY - bounds.top) * game.renderer.height) / bounds.height,
+      clientX: event.clientX,
+      clientY: event.clientY,
     };
   };
   const distance = () => {
@@ -31,6 +33,8 @@ export const createMapControls = (
     if (!options.enabled()) return;
     if (!contacts.size) multi = false;
     const p = point(event);
+    pointer = p;
+    revision++;
     contacts.set(event.pointerId, {
       ...p,
       startX: p.x,

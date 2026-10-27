@@ -32,6 +32,7 @@ export const createHexTerrain = async (
   const geometries: Geometry[] = [],
     shaders: Shader[] = [];
   const noise = createNoiseTexture();
+  const recolor: ((tints: ReadonlyMap<string, TerrainTint>) => void)[] = [];
   let disposed = false;
   const own = (geometry: Geometry, shader: Shader, state = State.for2d()) => {
     geometries.push(geometry);
@@ -68,11 +69,12 @@ export const createHexTerrain = async (
   };
   colorMesh(data.ground, "#696969", 1, false);
   data.batches.forEach((batch, index) => {
+    const colors = new Float32Array(batch.colors);
     const geometry = new Geometry({
       attributes: {
         aPosition: { buffer: batch.positions, format: "float32x2", stride: 8 },
         aUV: { buffer: batch.uvs, format: "float32x2", stride: 8 },
-        aTint: { buffer: batch.colors, format: "float32x3", stride: 12 },
+        aTint: { buffer: colors, format: "float32x3", stride: 12 },
         aRawTint: { buffer: batch.rawColors, format: "unorm8x4", stride: 4 },
         aWave: { buffer: batch.waves, format: "float32", stride: 4 },
       },
@@ -110,6 +112,23 @@ void main() {
         },
       },
     });
+    recolor.push((tints) => {
+      colors.set(batch.colors);
+      for (const tile of batch.tiles) {
+        const tint = tints.get(tile.key);
+        if (!tint) continue;
+        const color = linearRenderColor(tint.color);
+        for (let vertex = tile.start; vertex < tile.start + tile.count; vertex++) {
+          for (let channel = 0; channel < 3; channel++) {
+            const index = vertex * 3 + channel;
+            const value = channel === 0 ? color.r : channel === 1 ? color.g : color.b;
+            colors[index] =
+              (batch.colors[index] ?? 0) * (1 - tint.strength) + value * tint.strength;
+          }
+        }
+      }
+      geometry.getBuffer("aTint").update();
+    });
     const state = new State();
     state.blend = false;
     own(geometry, shader, state);
@@ -125,7 +144,14 @@ void main() {
     noise.destroy(true);
   };
   game.own(dispose);
-  return { container, dispose, isAnimated: data.animatedTiles > 0 };
+  return {
+    container,
+    dispose,
+    isAnimated: data.animatedTiles > 0,
+    setTints: (tints: ReadonlyMap<string, TerrainTint>) => {
+      for (const update of recolor) update(tints);
+    },
+  };
 };
 
 const createNoiseTexture = () => {
@@ -147,3 +173,5 @@ const createNoiseTexture = () => {
     }),
   });
 };
+
+export type TerrainTint = { color: string; strength: number };
