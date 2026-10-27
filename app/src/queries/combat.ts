@@ -912,7 +912,7 @@ export const insertBattleHistoryForCreateBattle = (
 
 /** Build the `userData` update for `createBattle`, including predicates on `userId`, `activePetId`, `petTask`. */
 export const updateUserDataForCreateBattle = (
-  client: Pick<DrizzleClient, "update" | "select">,
+  client: DrizzleClient,
   queueUpdate: Record<string, SQL<unknown>>,
   battleId: string,
   info: {
@@ -950,7 +950,6 @@ export const updateUserDataForCreateBattle = (
     import("@/drizzle/schema").BattleAction,
     "updatedAt" | "userId"
   >[],
-  valueClient: import("@/server/db").DrizzleClient,
   users: Pick<
     UserData,
     | "userId"
@@ -1134,7 +1133,7 @@ export const updateUserDataForCreateBattle = (
         ),
         info.questAttempt
           ? questAttemptIsActive(
-              valueClient,
+              client,
               info.questAttempt,
               users.find((u) => u.userId === info.questAttempt?.userId)?.role ?? "USER",
             )
@@ -1515,12 +1514,11 @@ export const insertTrainingLogForInitiateBattle = (
 
 /** Build the `userData` update for `initiateBattle`, using predicates on `battleId`. */
 export const updateUserDataForInitiateBattle = (
-  client: Pick<DrizzleClient, "update">,
+  client: DrizzleClient,
   info: {
     questAttempt?: { isolated?: undefined | false | true; userId: string } | undefined;
     clanBattle?: undefined | { queueId: string; battleId: string };
   },
-  valueClient: import("@/server/db").DrizzleClient,
   battleType: BattleType,
   battleId: string,
 ) =>
@@ -1528,8 +1526,8 @@ export const updateUserDataForInitiateBattle = (
     .update(userData)
     .set({
       status: info.questAttempt?.isolated
-        ? sql`CASE WHEN ${userData.userId} = ${info.questAttempt.userId} THEN 'BATTLE' ELSE ${battleClaimRollbackStatus(valueClient, battleType, info.clanBattle)} END`
-        : battleClaimRollbackStatus(valueClient, battleType, info.clanBattle),
+        ? sql`CASE WHEN ${userData.userId} = ${info.questAttempt.userId} THEN 'BATTLE' ELSE ${battleClaimRollbackStatus(client, battleType, info.clanBattle)} END`
+        : battleClaimRollbackStatus(client, battleType, info.clanBattle),
       bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
       bracketImmunityPausedAt: null,
       battleId: null,

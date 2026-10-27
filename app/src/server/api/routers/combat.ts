@@ -3328,7 +3328,6 @@ export const initiateBattle = async (
         sector,
         huntingEquipment,
         partyQuestSnapshots,
-        client,
         users,
         queuedParticipants,
         questEncounter,
@@ -3504,7 +3503,7 @@ export const initiateBattle = async (
   // Undo only this battle's claims and rows, including successful siblings of a failed write.
   if (result.failed || result.claimedUsers?.rowsAffected !== expectedRows) {
     await Promise.all([
-      updateUserDataForInitiateBattle(client, info, client, battleType, battleId),
+      updateUserDataForInitiateBattle(client, info, battleType, battleId),
       deleteBattleById(client, battleId),
       deleteBattleHistoryByBattleId(client, battleId),
     ]);

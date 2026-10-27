@@ -131,10 +131,10 @@ export const listQuestForSelect = (client: Pick<DrizzleClient, "query">) =>
 
 /** Build the `village` update for `select`, setting `activeMission`, using predicates on `activeMission`. */
 export const updateVillageForSelect = (
-  client: Pick<DrizzleClient, "update">,
+  client: Pick<DrizzleClient, "update" | "select">,
   mission: import("@/validators/villageMission").VillageMission,
 
-  ctx: { drizzle: import("@/server/db").DrizzleClient; userId: string },
+  ctx: { userId: string },
   input: { villageId: string; missionId?: undefined | string },
   current: null | import("@/validators/villageMission").VillageMission,
 ) =>
@@ -146,7 +146,7 @@ export const updateVillageForSelect = (
     })
     .where(
       and(
-        leaderGuard(ctx.drizzle, input.villageId, ctx.userId, !input.missionId),
+        leaderGuard(client, input.villageId, ctx.userId, !input.missionId),
         current
           ? and(
               sql`JSON_UNQUOTE(JSON_EXTRACT(${village.activeMission}, '$.id')) = ${current.id}`,
@@ -163,7 +163,7 @@ export const updateVillageForSelect = (
 export const updateVillageForCancel = (
   client: Pick<DrizzleClient, "update" | "select">,
 
-  ctx: { drizzle: import("@/server/db").DrizzleClient; userId: string },
+  ctx: { userId: string },
   input: { villageId: string; missionId: string },
 ) =>
   client
@@ -171,7 +171,7 @@ export const updateVillageForCancel = (
     .set({ activeMission: null })
     .where(
       and(
-        leaderGuard(ctx.drizzle, input.villageId, ctx.userId, true),
+        leaderGuard(client, input.villageId, ctx.userId, true),
         sql`JSON_UNQUOTE(JSON_EXTRACT(${village.activeMission}, '$.id')) = ${input.missionId}`,
         exists(
           client
@@ -187,10 +187,10 @@ export const updateVillageForCancel = (
  * predicates on `activeMission` and `missionCounters`.
  */
 export const updateVillageForClaim = (
-  client: Pick<DrizzleClient, "update">,
+  client: Pick<DrizzleClient, "update" | "select">,
   rewardTokens: number,
 
-  ctx: { drizzle: import("@/server/db").DrizzleClient; userId: string },
+  ctx: { userId: string },
   input: { villageId: string },
   mission: {
     id: string;
@@ -211,7 +211,7 @@ export const updateVillageForClaim = (
     })
     .where(
       and(
-        leaderGuard(ctx.drizzle, input.villageId, ctx.userId),
+        leaderGuard(client, input.villageId, ctx.userId),
         sql`JSON_UNQUOTE(JSON_EXTRACT(${village.activeMission}, '$.id')) = ${mission.id}`,
         ...mission.objectives.map((objective) =>
           gte(
