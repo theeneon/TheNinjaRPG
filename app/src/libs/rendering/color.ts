@@ -13,4 +13,14 @@ export const linearRenderColor = (hex: string): LinearColor => {
   return { r: channel(rgb.r), g: channel(rgb.g), b: channel(rgb.b) };
 };
 
+/** Pixi's straight background RGB must be premultiplied for the WebGL canvas compositor. */
+export const premultipliedClearColor = (
+  color: number,
+  alpha: number,
+): [number, number, number] => [
+  (((color >>> 16) & 255) / 255) * alpha,
+  (((color >>> 8) & 255) / 255) * alpha,
+  ((color & 255) / 255) * alpha,
+];
+
 export type LinearColor = { r: number; g: number; b: number };

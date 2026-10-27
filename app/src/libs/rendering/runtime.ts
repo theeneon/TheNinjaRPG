@@ -9,6 +9,7 @@ import {
   recordRenderCounter,
   registerRenderCanvas,
 } from "@/libs/rendering/browserMetrics";
+import { premultipliedClearColor } from "@/libs/rendering/color";
 import { createFrameLoop } from "@/libs/rendering/frameLoop";
 import { createPixiMetrics } from "@/libs/rendering/pixiMetrics";
 import type { RenderScene } from "@/validators/renderingBenchmark";
@@ -30,6 +31,8 @@ export const createGameRenderer = async (options: {
   onError: (error: unknown) => void;
 }) => {
   const { mount, signal, scene } = options;
+  const backgroundAlpha =
+    options.backgroundAlpha ?? (options.background === undefined ? 0 : 1);
   const renderer = new WebGLRenderer();
   try {
     const width = Math.max(1, options.width ?? mount.clientWidth);
@@ -40,9 +43,11 @@ export const createGameRenderer = async (options: {
       resolution: 1,
       autoDensity: true,
       antialias: false,
-      background: options.background ?? 0x000000,
-      backgroundAlpha:
-        options.backgroundAlpha ?? (options.background === undefined ? 0 : 1),
+      background: premultipliedClearColor(
+        options.background ?? 0x000000,
+        backgroundAlpha,
+      ),
+      backgroundAlpha,
       powerPreference: "low-power",
       preserveDrawingBuffer: false,
     });
@@ -199,6 +204,11 @@ export const createGameRenderer = async (options: {
     signal,
     listen,
     invalidate,
+    setBackground: (color: number) => {
+      renderer.background.color = premultipliedClearColor(color, backgroundAlpha);
+      renderer.background.alpha = backgroundAlpha;
+      invalidate();
+    },
     setAnimating: (value: boolean) => {
       if (continuous === value) return;
       continuous = value;
