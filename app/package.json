@@ -127,7 +127,7 @@
     "next": "16.4.2",
     "node-html-markdown": "^2.0.0",
     "openai": "^7.42.0",
-    "pixi.js": "^8.22.0",
+    "pixi.js": "8.22.0",
     "polygon-clipping": "^0.15.7",
     "pusher-js": "8.6.0",
     "quill": "2.0.3",
@@ -215,5 +215,8 @@
     "sharp": "0.35.5",
     "cytoscape": "3.34.4",
     "@modelcontextprotocol/sdk": "1.32.1"
+  },
+  "patchedDependencies": {
+    "pixi.js@8.22.0": "patches/pixi.js@8.22.0.patch"
   }
 }

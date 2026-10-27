@@ -8,6 +8,7 @@ export const useGameScene = <T extends { dispose: () => void }>(
     signal: AbortSignal,
     onError: (error: unknown) => void,
   ) => Promise<T>,
+  resetKey: unknown = null,
 ) => {
   const factory = useRef(create);
   factory.current = create;
@@ -30,6 +31,6 @@ export const useGameScene = <T extends { dispose: () => void }>(
       scene.current?.dispose();
       scene.current = null;
     };
-  }, [mount]);
+  }, [mount, resetKey]);
   return { scene, error };
 };

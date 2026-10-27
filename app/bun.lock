@@ -89,7 +89,7 @@
         "next": "16.4.2",
         "node-html-markdown": "^2.0.0",
         "openai": "^7.42.0",
-        "pixi.js": "^8.22.0",
+        "pixi.js": "8.22.0",
         "polygon-clipping": "^0.15.7",
         "pusher-js": "8.6.0",
         "quill": "2.0.3",
@@ -152,6 +152,9 @@
         "typescript": "7.0.2",
       },
     },
+  },
+  "patchedDependencies": {
+    "pixi.js@8.22.0": "patches/pixi.js@8.22.0.patch",
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.1",
