@@ -33,9 +33,8 @@ import {
   fetchComments,
   fetchForumThreadPage,
   fetchPrivateConversationSenders,
-  findConversationCommentForDeleteConversationComment,
+  findConversationCommentById,
   findConversationCommentForEditConversationComment,
-  findConversationCommentForReactConversationComment,
   findConversationForGetConvo,
   findConversationForGetConvo2,
   findConversationForGetConvo3,
@@ -797,7 +796,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findConversationCommentForReactConversationComment(ctx.drizzle, input),
+        findConversationCommentById(ctx.drizzle, input.commentId),
       ]);
       // Guard
       if (user.isBanned) return errorResponse("You are banned");
@@ -916,7 +915,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findConversationCommentForDeleteConversationComment(ctx.drizzle, input),
+        findConversationCommentById(ctx.drizzle, input.id),
       ]);
       // Guard
       if (user.isBanned) return errorResponse("You are banned");

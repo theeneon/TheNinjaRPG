@@ -260,13 +260,13 @@ export const listSectorForGetCapturedSectors = (
     where: and(eq(sector.villageId, input.villageId), gt(sector.shrineLevel, 0)),
   });
 
-/** Build the `sector` lookup for `upgradeShrine`, using predicates on `sector`. */
-export const findSectorForUpgradeShrine = (
+/** Build a sector lookup by its map number. */
+export const findSectorByNumber = (
   client: Pick<DrizzleClient, "query">,
-  input: { sectorNumber: number },
+  sectorNumber: number,
 ) =>
   client.query.sector.findFirst({
-    where: eq(sector.sector, input.sectorNumber),
+    where: eq(sector.sector, sectorNumber),
   });
 
 /** Build the `village` update for `upgradeShrine`, setting `tokens`, using predicates on `id` and `tokens`. */
@@ -542,25 +542,16 @@ export const selectMpvpBattleUserForGetUserQueuedShrineBattle = (
     .orderBy(desc(mpvpBattleUser.createdAt))
     .limit(1);
 
-/** Build the `sector` lookup for `challengeShrine`, using predicates on `sector`. */
-export const findSectorForChallengeShrine = (
+/** Build a sector lookup including its village. */
+export const findSectorWithVillage = (
   client: Pick<DrizzleClient, "query">,
-  input: { sectorNumber: number },
+  sectorNumber: number,
 ) =>
   client.query.sector.findFirst({
-    where: eq(sector.sector, input.sectorNumber),
+    where: eq(sector.sector, sectorNumber),
     with: {
       village: true,
     },
-  });
-
-/** Build the `village` lookup for `challengeShrine`, using predicates on `sector`. */
-export const findVillageForChallengeShrine = (
-  client: Pick<DrizzleClient, "query">,
-  input: { sectorNumber: number },
-) =>
-  client.query.village.findFirst({
-    where: eq(village.sector, input.sectorNumber),
   });
 
 /** Build the `mpvpBattleQueue` insert for `challengeShrine`. */
@@ -736,15 +727,6 @@ export const deleteMpvpBattleQueueForLeaveShrineBattle = (
         isNull(mpvpBattleQueue.battleId),
       ),
     );
-
-/** Build the `village` lookup for `initiateShrineBattle`, using predicates on `id`. */
-export const findVillageForInitiateShrineBattle = (
-  client: Pick<DrizzleClient, "query">,
-  shrineBattle: { defenderEntityId: string },
-) =>
-  client.query.village.findFirst({
-    where: eq(village.id, shrineBattle.defenderEntityId),
-  });
 
 /**
  * Build the `userData` listing for `initiateShrineBattle`, selecting only `userId`,

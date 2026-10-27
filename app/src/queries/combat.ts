@@ -74,7 +74,6 @@ import {
   rankedPvpQueue,
   type SectorType,
   sageMode,
-  sector,
   territoryWar,
   tournament,
   tournamentMatch,
@@ -494,16 +493,6 @@ export const updateBattleForToggleAutoCombat = (
     .where(
       and(eq(battle.id, input.battleId), eq(battle.version, userBattle.version - 1)),
     );
-
-/** Build the `sector` lookup for `startShrineBattle`, using predicates on `sector`. */
-export const findSectorForStartShrineBattle = (
-  client: Pick<DrizzleClient, "query">,
-  input: { sector: number },
-) =>
-  client.query.sector.findFirst({
-    where: eq(sector.sector, input.sector),
-    with: { village: true },
-  });
 
 /**
  * Build the `userData` listing for `startShrineBattle`, selecting only `userId`, using

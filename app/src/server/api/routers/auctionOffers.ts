@@ -8,7 +8,6 @@ import {
   fetchOfferItem,
   findAuctionOfferForAcceptAuctionOffer,
   findAuctionOfferForCancelAuctionOffer,
-  findItemForCreateAuctionOffer,
   insertAuctionOfferForCreateAuctionOffer,
   insertUserItemForMoveOfferItem,
   listAuctionOfferForGetAuctionOffers,
@@ -22,6 +21,7 @@ import {
   updateUserItemForCancelAuctionOffer,
   updateUserItemForMoveOfferItem,
 } from "@/queries/auctionOffers";
+import { fetchItem } from "@/queries/item";
 import { findUserById } from "@/queries/profile";
 import {
   baseServerResponse,
@@ -60,7 +60,7 @@ export const auctionOfferProcedures = {
     .mutation(async ({ ctx, input }) => {
       const [user, requested, offered] = await Promise.all([
         findUserById(ctx.drizzle, ctx.userId),
-        findItemForCreateAuctionOffer(ctx.drizzle, input),
+        fetchItem(ctx.drizzle, input.requestedItemId),
         input.offerType === "TRADE"
           ? fetchOfferItem(ctx.drizzle, input.offeredUserItemId, ctx.userId)
           : Promise.resolve(undefined),

@@ -148,17 +148,7 @@ export const fetchGuideForBloodline = async (
 };
 
 import { nanoid } from "nanoid";
-import { actionLog, userData } from "@/drizzle/schema";
-
-/** Build the `userData` lookup for `getAll`, selecting only `role`, using predicates on `userId`. */
-export const findUserDataForGetAll = (
-  client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
-) =>
-  client.query.userData.findFirst({
-    columns: { role: true },
-    where: eq(userData.userId, ctx.userId),
-  });
+import { actionLog } from "@/drizzle/schema";
 
 /** Build the `guideArticle` listing for `getAll`. */
 export const listGuideArticleForGetAll = (client: Pick<DrizzleClient, "query">) =>

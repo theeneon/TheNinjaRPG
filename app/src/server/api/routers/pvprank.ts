@@ -16,6 +16,7 @@ import {
   validateJutsuLoadout,
 } from "@/libs/ranked_pvp";
 import { hasRequiredRank } from "@/libs/train";
+import { listJutsuByIds } from "@/queries/jutsu";
 import { fetchUser, wakeQueuedUser } from "@/queries/profile";
 import {
   countRankedPvpQueueForGetRankedQueueCount,
@@ -28,9 +29,8 @@ import {
   fetchAllSeasons,
   fetchCurrentSeason,
   fetchUserRankedQueue,
-  findRankedLoadoutForGetRankedLoadout,
-  findRankedSeasonForEndRankedSeason,
-  findRankedSeasonForGetSeason,
+  findRankedLoadoutByUserId,
+  findRankedSeasonById,
   findUserDataForLeaveRankedPvpQueue,
   insertLogQueueLengthsForCheckRankedPvpMatches,
   insertLogRankedPicksForCheckRankedPvpMatches,
@@ -39,7 +39,6 @@ import {
   insertRankedSeasonForCreateSeason,
   insertRankedUserRewardsForEndRankedSeason,
   listItemForUpdateRankedLoadout,
-  listJutsuForUpdateRankedLoadout,
   listRankedPvpQueueForCheckRankedPvpMatches,
   listUserDataForEndRankedSeason,
   selectRankedPvpQueueForGetRankedPvpQueue,
@@ -53,7 +52,6 @@ import {
   updateUserDataForGetRankedPvpQueue,
 } from "@/queries/pvprank";
 import { initiateBattle } from "@/routers/combat";
-
 import { updateRewards } from "@/server/api/routers/quests";
 import {
   baseServerResponse,
@@ -150,7 +148,7 @@ export const pvpRankRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a specific ranked season" } })
     .input(idSchema)
     .query(async ({ ctx, input }) => {
-      const season = await findRankedSeasonForGetSeason(ctx.drizzle, input);
+      const season = await findRankedSeasonById(ctx.drizzle, input.id);
       if (!season) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Season not found" });
       }
@@ -223,7 +221,7 @@ export const pvpRankRouter = createTRPCRouter({
       const [user, currentSeason, existingSeason, titleError] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchCurrentSeason(ctx.drizzle),
-        findRankedSeasonForGetSeason(ctx.drizzle, input),
+        findRankedSeasonById(ctx.drizzle, input.id),
         validateTitleRewardIds(ctx.drizzle, input),
       ]);
       // Guard
@@ -295,7 +293,7 @@ export const pvpRankRouter = createTRPCRouter({
         return errorResponse("You don't have permission to end ranked seasons");
       }
       // Verify season exists & not already ended
-      const season = await findRankedSeasonForGetSeason(ctx.drizzle, input);
+      const season = await findRankedSeasonById(ctx.drizzle, input.id);
       if (!season) {
         return errorResponse("Season not found");
       }
@@ -313,7 +311,7 @@ export const pvpRankRouter = createTRPCRouter({
   getRankedLoadout: protectedProcedure
     .meta({ mcp: { description: "Get user's ranked PvP loadout" } })
     .query(async ({ ctx }) => {
-      let loadout = await findRankedLoadoutForGetRankedLoadout(ctx.drizzle, ctx);
+      let loadout = await findRankedLoadoutByUserId(ctx.drizzle, ctx.userId);
       if (!loadout) {
         loadout = {
           id: nanoid(),
@@ -389,9 +387,9 @@ export const pvpRankRouter = createTRPCRouter({
       const [items, jutsus, currentLoadout] = await Promise.all([
         itemIds.length > 0 ? listItemForUpdateRankedLoadout(ctx.drizzle, itemIds) : [],
         loadout.jutsuIds.length > 0
-          ? listJutsuForUpdateRankedLoadout(ctx.drizzle, loadout)
+          ? listJutsuByIds(ctx.drizzle, loadout.jutsuIds)
           : [],
-        findRankedLoadoutForGetRankedLoadout(ctx.drizzle, ctx),
+        findRankedLoadoutByUserId(ctx.drizzle, ctx.userId),
       ]);
       // Guard & ensure that all the items & jutsus exist and are of correct type
       if (!currentLoadout) {
@@ -456,7 +454,7 @@ export const pvpRankRouter = createTRPCRouter({
       const [existingQueue, user, currentLoadout, currentSeason] = await Promise.all([
         fetchUserRankedQueue(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, ctx.userId),
-        findRankedLoadoutForGetRankedLoadout(ctx.drizzle, ctx),
+        findRankedLoadoutByUserId(ctx.drizzle, ctx.userId),
         fetchCurrentSeason(ctx.drizzle),
       ]);
       // Guard
@@ -758,7 +756,7 @@ export const endRankedSeason = async (client: DrizzleClient, seasonId: string) =
   // Fetch users with LP > 0 and the season to end (validate again in case caller skipped)
   const [users, season] = await Promise.all([
     listUserDataForEndRankedSeason(client),
-    findRankedSeasonForEndRankedSeason(client, seasonId),
+    findRankedSeasonById(client, seasonId),
   ]);
 
   if (!season) {

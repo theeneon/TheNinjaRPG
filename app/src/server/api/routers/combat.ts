@@ -193,7 +193,6 @@ import {
   fetchBattleEssentials,
   findBattleHistoryForGetBattleHistoryEntry,
   findQuestForInitiateBattle,
-  findSectorForStartShrineBattle,
   findUserDataForStartArenaBattle,
   insertBattleForCreateBattle,
   insertBattleHistoryForCreateBattle,
@@ -236,17 +235,16 @@ import {
 } from "@/queries/jutsu";
 import { fetchAchievementCatalogue, fetchUser } from "@/queries/profile";
 import { fetchQuestEntryInventory, listVisibleRaidQuests } from "@/queries/quests";
+import { findSectorWithVillage } from "@/queries/shrine";
 import { fetchUserSkills } from "@/queries/skillTree";
 import { fetchActiveTerritoryWar } from "@/queries/territoryWar";
 import { fetchSectorVillage, findVillageBySector } from "@/queries/village";
-
 import { fetchActiveWars } from "@/routers/war";
 import {
   fetchUserItemsWithVariants,
   selectItemLoadout,
 } from "@/server/api/routers/item";
 import { fetchUserJutsus, selectJutsuLoadout } from "@/server/api/routers/jutsu";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -266,7 +264,6 @@ import {
   getQuestEntryCharges,
 } from "@/server/utils/questEntry";
 import { fetchSanninRankedPlayers } from "@/server/utils/ranked";
-
 import { hasDueTimedJob, settleDueTimedQueues } from "@/server/utils/userQueue";
 import { findRelationship } from "@/utils/alliance";
 import { getRandomElement } from "@/utils/array";
@@ -285,7 +282,6 @@ import {
   toggleAutoCombatSchema,
   type ZodAllTags,
 } from "@/validators/combat";
-
 import type { HuntingBattleState } from "@/validators/hunting";
 import { sectorIdSchema } from "@/validators/travel";
 import { fetchUpdatedUser, type UserWithRelations } from "./profile";
@@ -1639,9 +1635,9 @@ export const combatRouter = createTRPCRouter({
           userId: ctx.userId,
         }),
         fetchActiveWars(ctx.drizzle),
-        findSectorForStartShrineBattle(ctx.drizzle, input),
+        findSectorWithVillage(ctx.drizzle, input.sector),
         listUserDataForStartShrineBattle(ctx.drizzle),
-        findVillageBySector(ctx.drizzle, input),
+        findVillageBySector(ctx.drizzle, input.sector),
       ]);
 
       // Find the war the user is involved with

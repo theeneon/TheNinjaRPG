@@ -754,15 +754,6 @@ export const findForumPostForGetInfraction = (
     where: eq(forumPost.id, input.system_id),
   });
 
-/** Build the `conversationComment` lookup for `getInfraction`, using predicates on `id`. */
-export const findConversationCommentForGetInfraction = (
-  client: Pick<DrizzleClient, "query">,
-  input: { system_id: string },
-) =>
-  client.query.conversationComment.findFirst({
-    where: eq(conversationComment.id, input.system_id),
-  });
-
 /** Build the `conversation` lookup for `getInfraction`, selecting only `isPublic`, using predicates on `id`. */
 export const findConversationForGetInfraction = (
   client: Pick<DrizzleClient, "query">,

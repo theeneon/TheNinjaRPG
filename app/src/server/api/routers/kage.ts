@@ -17,8 +17,8 @@ import {
   executeResultForUpgradeStructure,
   fetchElders,
   fetchKageReplacement,
+  findKageRemovalVoteById,
   findVillageElderVoteForNominateKage,
-  findVillageElderVoteForVoteOnKageRemoval,
   incrementKageRemovalNotifications,
   insertActionLogForSendKagePrestige,
   insertActionLogForTakeKage,
@@ -412,7 +412,7 @@ export const kageRouter = createTRPCRouter({
         async (tx, hall) => {
           const [user, current, elders] = await queryInTransaction([
             findUserById(tx, ctx.userId),
-            findVillageElderVoteForVoteOnKageRemoval(tx, input),
+            findKageRemovalVoteById(tx, input.voteId),
             listEligibleKageRemovalElders(tx, motion),
           ]);
           if (

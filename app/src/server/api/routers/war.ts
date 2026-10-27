@@ -51,7 +51,7 @@ import {
 } from "@/libs/war";
 import { fetchElderVote } from "@/queries/elder";
 import { fetchUser } from "@/queries/profile";
-import { findQuestById, listVisibleRaidQuests } from "@/queries/quests";
+import { fetchQuest, listVisibleRaidQuests } from "@/queries/quests";
 import { fetchRequests, insertRequest } from "@/queries/sparring";
 import {
   countVillageSectors,
@@ -107,8 +107,8 @@ import {
   listWarMercenaryForGetMercenaryOffers,
   listWarMercenaryForGetObjectiveWarInfo,
   listWarMercenaryForInviteMercenary,
+  selectClanMemberCountForVillage,
   selectUserDataForCancelWarDeclaration,
-  selectUserDataForGetVillageMemberCount,
   selectUserDataForGetVillageMemberCount2,
   selectUserDataForVoteOnWarDeclaration,
   selectVillageForGetObjectiveWarInfo,
@@ -433,7 +433,7 @@ export const warRouter = createTRPCRouter({
         await Promise.all([
           findWarForStartWarMission(ctx.drizzle, input),
           fetchUser(ctx.drizzle, ctx.userId),
-          findQuestById(ctx.drizzle, input),
+          fetchQuest(ctx.drizzle, input.questId),
           listQuestHistoryForGetObjectiveWarInfo(ctx.drizzle, ctx),
           fetchMercenaryWarId(ctx.drizzle, ctx.userId),
         ]);
@@ -2059,7 +2059,7 @@ const getVillageMemberCount = async (
   client: DrizzleClient,
   villageId: string,
 ): Promise<number> => {
-  const factionMembers = selectUserDataForGetVillageMemberCount(client, villageId);
+  const factionMembers = selectClanMemberCountForVillage(client, villageId);
   const residents = selectUserDataForGetVillageMemberCount2(client, villageId);
   const result = await selectVillageForGetVillageMemberCount(
     client,

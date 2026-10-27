@@ -5,16 +5,14 @@ import type { RankedLoadout, UserRequest } from "@/drizzle/schema";
 import { SPAR_EXPIRY_SECONDS } from "@/libs/combat/constants";
 import { getServerPusher } from "@/libs/pusher";
 import { fetchUser } from "@/queries/profile";
+import { findRankedLoadoutByUserId } from "@/queries/pvprank";
 import {
   fetchRequests,
-  findRankedLoadoutForAcceptChallenge,
-  findRankedLoadoutForAcceptChallenge2,
   findUserRequestForFetchRequest,
   insertRequest,
   updateUserRequestForUpdateRequestState,
 } from "@/queries/sparring";
 import { initiateBattle } from "@/routers/combat";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -101,8 +99,8 @@ export const sparringRouter = createTRPCRouter({
       let forceLoadouts: RankedLoadout[] | undefined;
       if (useRankedRules) {
         const [senderLoadout, receiverLoadout] = await Promise.all([
-          findRankedLoadoutForAcceptChallenge(ctx.drizzle, challenge),
-          findRankedLoadoutForAcceptChallenge2(ctx.drizzle, challenge),
+          findRankedLoadoutByUserId(ctx.drizzle, challenge.senderId),
+          findRankedLoadoutByUserId(ctx.drizzle, challenge.receiverId),
         ]);
 
         if (!senderLoadout || !receiverLoadout) {

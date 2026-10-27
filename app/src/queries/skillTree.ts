@@ -181,13 +181,13 @@ export const insertUserSkillForPurchaseSkill = (
     })
     .onDuplicateKeyUpdate({ set: { activated: true } });
 
-/** Build the `bloodline` lookup for `create`, selecting only `id`, using predicates on `id`. */
-export const findBloodlineForCreate = (
+/** Build a bloodline ID lookup to validate its existence. */
+export const findBloodlineIdentityById = (
   client: Pick<DrizzleClient, "query">,
-  input: { bloodlineId: string },
+  bloodlineId: string,
 ) =>
   client.query.bloodline.findFirst({
-    where: eq(bloodline.id, input.bloodlineId),
+    where: eq(bloodline.id, bloodlineId),
     columns: { id: true },
   });
 
@@ -231,16 +231,6 @@ export const findSkillTreeFolderForUpdate = (
   client.query.skillTreeFolder.findFirst({
     where: eq(skillTreeFolder.id, requestedFolderId),
     columns: { hidden: true },
-  });
-
-/** Build the `bloodline` lookup for `update`, selecting only `id`, using predicates on `id`. */
-export const findBloodlineForUpdate = (
-  client: Pick<DrizzleClient, "query">,
-  input: { data: { bloodlineId: string } },
-) =>
-  client.query.bloodline.findFirst({
-    where: eq(bloodline.id, input.data.bloodlineId),
-    columns: { id: true },
   });
 
 /** Build the `skillTree` listing for `update`, using predicates on `id`. */

@@ -122,11 +122,8 @@ export const updateUserDataForLockPurchaseBuyer = (
     })
     .where(eq(userData.userId, buyerId));
 
-/**
- * Build the `storeUserIdAlias` lookup for `isRetiredStoreUserId`, selecting only
- * `newUserId`, using predicates on `oldUserId`.
- */
-export const findStoreUserIdAliasForIsRetiredStoreUserId = (
+/** Build the replacement user ID lookup for a retired user ID. */
+export const findStoreUserIdAlias = (
   client: Pick<DrizzleClient, "query">,
   userId: string,
 ) =>
@@ -1208,13 +1205,3 @@ export const executeRowsForReconcileFederalStatuses = (
   client.execute(sql`UPDATE ${userData} FORCE INDEX (PRIMARY)
       SET ${userData.federalStatus} = ${federalStatus}
       WHERE ${and(inArray(userData.userId, ids), eligible)}`);
-
-/** Build the `storeUserIdAlias` lookup, selecting only `newUserId`, using predicates on `oldUserId`. */
-export const findStoreUserIdAlias = (
-  client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
-) =>
-  client.query.storeUserIdAlias.findFirst({
-    columns: { newUserId: true },
-    where: eq(storeUserIdAlias.oldUserId, ctx.userId),
-  });

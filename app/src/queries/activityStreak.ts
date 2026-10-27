@@ -105,25 +105,25 @@ export const listActionLogForGetAvailablePasses = (
     columns: { relatedId: true, changes: true },
   });
 
-/** Build the `activityStreakConfig` lookup for `purchaseEventPass`, using predicates on `id`. */
-export const findActivityStreakConfigForPurchaseEventPass = (
+/** Build an activity streak configuration lookup by ID. */
+export const findActivityStreakConfigById = (
   client: Pick<DrizzleClient, "query">,
-  input: { configId: string },
+  id: string,
 ) =>
   client.query.activityStreakConfig.findFirst({
-    where: eq(activityStreakConfig.id, input.configId),
+    where: eq(activityStreakConfig.id, id),
   });
 
-/** Build the `userStreakProgress` lookup for `purchaseEventPass`, using predicates on `userId` and `configId`. */
-export const findUserStreakProgressForPurchaseEventPass = (
+/** Build the progress lookup for one user and streak configuration. */
+export const findUserStreakProgress = (
   client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
-  input: { configId: string },
+  userId: string,
+  configId: string,
 ) =>
   client.query.userStreakProgress.findFirst({
     where: and(
-      eq(userStreakProgress.userId, ctx.userId),
-      eq(userStreakProgress.configId, input.configId),
+      eq(userStreakProgress.userId, userId),
+      eq(userStreakProgress.configId, configId),
     ),
   });
 
@@ -236,19 +236,6 @@ export const insertUserStreakProgressForClaimStreakDay = (
     "id" | "userId" | "startedAt" | "configId" | "currentDay"
   > & { lastClaimDate: null },
 ) => client.insert(userStreakProgress).values(createdProgress);
-
-/** Build the `userStreakProgress` lookup for `claimStreakDay`, using predicates on `userId` and `configId`. */
-export const findUserStreakProgressForClaimStreakDay = (
-  client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
-  config: { id: string },
-) =>
-  client.query.userStreakProgress.findFirst({
-    where: and(
-      eq(userStreakProgress.userId, ctx.userId),
-      eq(userStreakProgress.configId, config.id),
-    ),
-  });
 
 /**
  * Build the `userStreakProgress` update for `claimStreakDay`, setting `currentDay` and
@@ -411,15 +398,6 @@ export const insertActivityStreakConfigForCreateConfig = (
     startDate: input.startDate ?? null,
     endDate: input.endDate ?? null,
     createdByUserId: ctx.userId,
-  });
-
-/** Build the `activityStreakConfig` lookup for `updateConfig`, using predicates on `id`. */
-export const findActivityStreakConfigForUpdateConfig = (
-  client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) =>
-  client.query.activityStreakConfig.findFirst({
-    where: eq(activityStreakConfig.id, input.id),
   });
 
 /** Build the `activityStreakConfig` update for `updateConfig`, using predicates on `id`. */

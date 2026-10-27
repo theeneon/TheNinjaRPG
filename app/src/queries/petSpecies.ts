@@ -1,9 +1,9 @@
 /**
  * Database access for pet species; authorization and transaction scopes stay in callers.
  */
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { actionLog, jutsu, petSpecies } from "@/drizzle/schema";
+import { actionLog, petSpecies } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
 /** Build the `petSpecies` listing for `getAll`. */
@@ -19,22 +19,13 @@ export const findPetSpeciesForGet = (
     where: eq(petSpecies.id, input.id),
   });
 
-/** Build the `petSpecies` lookup for `create`, using predicates on `name`. */
-export const findPetSpeciesForCreate = (
+/** Build a pet species lookup by name. */
+export const findPetSpeciesByName = (
   client: Pick<DrizzleClient, "query">,
-  input: { name: string },
+  name: string,
 ) =>
   client.query.petSpecies.findFirst({
-    where: eq(petSpecies.name, input.name),
-  });
-
-/** Build the `jutsu` listing for `create`, using predicates on `id`. */
-export const listJutsuForCreate = (
-  client: Pick<DrizzleClient, "query">,
-  input: { defaultJutsuIds: string[] },
-) =>
-  client.query.jutsu.findMany({
-    where: inArray(jutsu.id, input.defaultJutsuIds),
+    where: eq(petSpecies.name, name),
   });
 
 /** Build the `petSpecies` insert for `create`. */
@@ -59,24 +50,6 @@ export const insertActionLogForCreate = (
     changes,
     relatedId: id,
     relatedMsg: `Create: ${input.name}`,
-  });
-
-/** Build the `petSpecies` lookup for `update`, using predicates on `name`. */
-export const findPetSpeciesForUpdate2 = (
-  client: Pick<DrizzleClient, "query">,
-  input: { data: { name: string } },
-) =>
-  client.query.petSpecies.findFirst({
-    where: eq(petSpecies.name, input.data.name),
-  });
-
-/** Build the `jutsu` listing for `update`, using predicates on `id`. */
-export const listJutsuForUpdate = (
-  client: Pick<DrizzleClient, "query">,
-  input: { data: { defaultJutsuIds: string[] } },
-) =>
-  client.query.jutsu.findMany({
-    where: inArray(jutsu.id, input.data.defaultJutsuIds),
   });
 
 /** Build the `petSpecies` update for `update`, setting `updatedAt`, using predicates on `id`. */

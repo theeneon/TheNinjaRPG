@@ -579,13 +579,13 @@ export const clearQueueBattleId = (
     .set({ battleId: null })
     .where(eq(mpvpBattleQueue.id, queueEntry.clanBattleId));
 
-/** Build the `mpvpBattleUser` listing, using predicates on `clanBattleId`. */
+/** Build the multiplayer battle roster lookup by team ID. */
 export const listQueueMembers = (
   client: Pick<DrizzleClient, "query">,
-  queueEntry: { clanBattleId: string },
+  teamId: string,
 ) =>
   client.query.mpvpBattleUser.findMany({
-    where: eq(mpvpBattleUser.clanBattleId, queueEntry.clanBattleId),
+    where: eq(mpvpBattleUser.clanBattleId, teamId),
   });
 
 /** Build the `mpvpBattleQueue` deletion, using predicates on `id`. */
@@ -628,15 +628,6 @@ export const updateMpvpBattleQueueForStartRaidBattle = (
       ),
     );
 
-/** Build the `quest` lookup for `startRaidBattle`, using predicates on `id`. */
-export const findQuestForStartRaidBattle = (
-  client: Pick<DrizzleClient, "query">,
-  team: { attackerEntityId: string },
-) =>
-  client.query.quest.findFirst({
-    where: eq(quest.id, team.attackerEntityId),
-  });
-
 /** Build the `mpvpBattleQueue` update for `startRaidBattle`, setting `battleId`, using predicates on `id` and `battleId`. */
 export const updateMpvpBattleQueueForStartRaidBattle2 = (
   client: Pick<DrizzleClient, "update">,
@@ -647,15 +638,6 @@ export const updateMpvpBattleQueueForStartRaidBattle2 = (
     .update(mpvpBattleQueue)
     .set({ battleId: claimId })
     .where(and(eq(mpvpBattleQueue.id, input.teamId), isNull(mpvpBattleQueue.battleId)));
-
-/** Build the `mpvpBattleUser` listing for `startRaidBattle`, using predicates on `clanBattleId`. */
-export const listMpvpBattleUserForStartRaidBattle = (
-  client: Pick<DrizzleClient, "query">,
-  input: { teamId: string },
-) =>
-  client.query.mpvpBattleUser.findMany({
-    where: eq(mpvpBattleUser.clanBattleId, input.teamId),
-  });
 
 /** Build the `mpvpBattleQueue` update for `startRaidBattle`, setting `battleId`, using predicates on `id`. */
 export const updateMpvpBattleQueueForStartRaidBattle3 = (

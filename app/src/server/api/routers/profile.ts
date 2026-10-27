@@ -141,10 +141,10 @@ import {
   fetchHasUnvotedPolls,
   fetchUser,
   findAbEventForUpdateTutorialStep,
+  findOwnedUserPet,
   findSageModeForUpdateUser,
   findUserBlackListForToggleBlacklistEntry,
   findUserById,
-  findUserDataForCloneAi,
   findUserDataForFetchUpdatedUserOnce,
   findUserDataForGetAi,
   findUserDataForGetPublicUser,
@@ -156,10 +156,7 @@ import {
   findUserDataForUpdateUser,
   findUserDataForUpdateUsername,
   findUserDataForUseUnusedExperiencePoints,
-  findUserNindoForCloneAi,
-  findUserNindoForGetNindo,
-  findUserNindoForUpdateNindo,
-  findUserPetForResetPetImageGeneration,
+  findUserNindoByUserId,
   findUserVoteForClaimVotes,
   findVillageForFetchUpdatedUserOnce,
   insertAbEventForUpdateTutorialStep,
@@ -199,8 +196,8 @@ import {
   listUserDataForGetAllAiNames,
   listUserDataForGetStrongestUsers,
   listUserDataForSearchUsers,
-  listUserItemForCloneAi,
-  listUserJutsuForCloneAi,
+  listUserItemsByUserId,
+  listUserJutsuByUserId,
   listUserPetForGetPetImageGenerationForStaff,
   selectContentProposalForGetUser,
   selectFarmPlotForGetUser,
@@ -1408,10 +1405,10 @@ export const profileRouter = createTRPCRouter({
       // Fetch
       const [user, aiData, jutsuData, itemData, nindoData] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findUserDataForCloneAi(ctx.drizzle, input),
-        listUserJutsuForCloneAi(ctx.drizzle, input),
-        listUserItemForCloneAi(ctx.drizzle, input),
-        findUserNindoForCloneAi(ctx.drizzle, input),
+        findUserById(ctx.drizzle, input.id),
+        listUserJutsuByUserId(ctx.drizzle, input.id),
+        listUserItemsByUserId(ctx.drizzle, input.id),
+        findUserNindoByUserId(ctx.drizzle, input.id),
       ]);
       // Guard
       if (!aiData) return errorResponse("AI not found");
@@ -2022,7 +2019,7 @@ export const profileRouter = createTRPCRouter({
     })
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const nindo = await findUserNindoForGetNindo(ctx.drizzle, input);
+      const nindo = await findUserNindoByUserId(ctx.drizzle, input.userId);
       return nindo ? nindo.content : "";
     }),
   // Update nindo
@@ -2354,7 +2351,7 @@ export const profileRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [actor, pet] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findUserPetForResetPetImageGeneration(ctx.drizzle, input),
+        findOwnedUserPet(ctx.drizzle, input.petId, input.userId),
       ]);
       if (actor.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -2546,7 +2543,7 @@ export const updateNindo = async (
   content: string,
   type: "userNindo" | "clanOrder" | "anbuOrder" | "kageOrder",
 ) => {
-  const nindo = await findUserNindoForUpdateNindo(client, userId);
+  const nindo = await findUserNindoByUserId(client, userId);
   const sanitized = sanitize(content);
   await (nindo
     ? updateUserNindoForUpdateNindo(client, sanitized, userId)

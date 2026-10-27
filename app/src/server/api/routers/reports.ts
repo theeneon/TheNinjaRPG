@@ -7,11 +7,11 @@ import { getRelatedReports } from "@/libs/moderation/reportSearch";
 import { buildModBotStats } from "@/libs/moderation/stats";
 import { generateModerationDecision, getAdditionalContext } from "@/libs/moderator";
 import { getServerPusher } from "@/libs/pusher";
+import { findConversationCommentById } from "@/queries/comments";
 import { fetchImage } from "@/queries/conceptart";
 import { fetchUser } from "@/queries/profile";
 import {
   deleteUserNindoForClearNindo,
-  findConversationCommentForGetInfraction,
   findConversationForGetInfraction,
   findForumPostForGetInfraction,
   findUserReviewForUpsertStaffReview,
@@ -270,9 +270,9 @@ export const reportsRouter = createTRPCRouter({
             return { infraction: forumPostData, context: threadContext };
           }
           case "conversation_comment": {
-            const commentData = await findConversationCommentForGetInfraction(
+            const commentData = await findConversationCommentById(
               ctx.drizzle,
-              input,
+              input.system_id,
             );
             const [convoContext, sourceConversation] = await Promise.all([
               getAdditionalContext(

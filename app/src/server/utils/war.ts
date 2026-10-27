@@ -32,6 +32,7 @@ import {
   isVillageInvolvedInAnyWar,
   shouldEndRaid,
 } from "@/libs/war";
+import { findSectorByNumber } from "@/queries/shrine";
 import {
   deleteMpvpBattleQueueForFinishWarSettlement,
   deleteUserRequestForFinishWarSettlement,
@@ -43,7 +44,6 @@ import {
   executeRowsForFinishWarSettlement5,
   executeRowsForFinishWarSettlement6,
   fetchSettlementWar,
-  findSectorForStartSectorWar,
   incrementWarNotifications,
   insertGameSettingForFinishWarSettlement,
   insertNotificationForFinishWarSettlement,
@@ -57,7 +57,7 @@ import {
   listWarForResumePendingWarSettlements,
   listWarForStartDeclaredWar,
   listWarForStartSectorWar,
-  selectUserDataForStartDeclaredWar,
+  selectClanMemberCountForVillage,
   selectVillageForStartSectorWar,
   selectVillageStructureForStartDeclaredWar,
   updateUserDataForFinishWarSettlement,
@@ -487,7 +487,7 @@ export const startSectorWar = async (
         return false;
       // A transaction holds a single connection; its queries must run sequentially.
       const activeWars = await listWarForStartSectorWar(tx);
-      const targetSector = await findSectorForStartSectorWar(tx, declaration);
+      const targetSector = await findSectorByNumber(tx, declaration.sectorId);
       if (
         (targetSector?.villageId ?? VILLAGE_SYNDICATE_ID) !==
           declaration.defenderVillageId ||
@@ -595,7 +595,7 @@ export const startDeclaredWar = async (
           !["VILLAGE", "HIDEOUT", "STRONGHOLD"].includes(defender.type)
         )
           return false;
-        const [members] = await selectUserDataForStartDeclaredWar(tx, attacker);
+        const [members] = await selectClanMemberCountForVillage(tx, attacker.id);
         const structures = await selectVillageStructureForStartDeclaredWar(
           tx,
           villageIds,

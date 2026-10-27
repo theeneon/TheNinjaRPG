@@ -6,13 +6,11 @@ import {
   findUserDataForAuthorize,
   findWebStoreBundleForCheckBundlePurchaseLimit,
   findWebStoreOrderById,
-  findWebStoreOrderForDeliverStoreOrder,
-  findWebStoreOrderForDeliverStoreOrder2,
   insertPaypalTransactionForDeliverStoreOrder,
   insertWebStoreOrderForReserve,
+  listCheckoutUserIdAliases,
   listItemForAuthorize,
   listItemForDeliverStoreOrder,
-  listStoreUserIdAliasForAuthorize,
   lockStoreBuyer,
   selectUserDataForDeliverStoreOrder,
   selectUserDataForReserve,
@@ -106,7 +104,7 @@ export const deliverStoreOrder = async (
     raw: unknown;
   },
 ) => {
-  const order = await findWebStoreOrderForDeliverStoreOrder(client, input);
+  const order = await findWebStoreOrderById(client, input.snapshotId);
   if (!order)
     throw new Error(
       "Checkout snapshot not found. Contact support with your payment receipt.",
@@ -148,7 +146,7 @@ export const deliverStoreOrder = async (
     client.transaction(async (tx) => {
       const claim = await updateWebStoreOrderForDeliverStoreOrder(tx, input, order);
       if (claim.rowsAffected !== 1) {
-        const current = await findWebStoreOrderForDeliverStoreOrder2(tx, order);
+        const current = await findWebStoreOrderById(tx, order.id);
         return current?.grantedAt
           ? { success: true, message: "Purchase already delivered" }
           : {
@@ -217,7 +215,7 @@ export const authorizeStoreCapture = async (
     if (isDeletedStoreUserId(order.recipientId))
       return "The recipient account was deleted. No payment was captured.";
     const recipientQuery = findUserDataForAuthorize(db, order);
-    const aliasesQuery = listStoreUserIdAliasForAuthorize(db, buyerId, order);
+    const aliasesQuery = listCheckoutUserIdAliases(db, buyerId, order.recipientId);
     const itemsQuery = order.contents.items.length
       ? listItemForAuthorize(db, order)
       : [];
@@ -252,7 +250,7 @@ export const authorizeStoreCapture = async (
       buyerId,
     );
     if (refreshed.rowsAffected !== 1) {
-      const current = await findWebStoreOrderForDeliverStoreOrder2(db, order);
+      const current = await findWebStoreOrderById(db, order.id);
       return current?.buyerId === buyerId && current.grantedAt
         ? null
         : "The checkout account changed. Retry checkout. No payment was captured.";

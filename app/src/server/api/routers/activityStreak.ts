@@ -17,13 +17,11 @@ import {
   deleteActivityStreakConfigForDeleteConfig,
   deleteActivityStreakRewardForUpdateConfig,
   deleteUserStreakProgressForDeleteConfig,
+  findActivityStreakConfigById,
   findActivityStreakConfigForClaimStreakDay,
   findActivityStreakConfigForGetConfig,
   findActivityStreakConfigForGetUserStreaks,
-  findActivityStreakConfigForPurchaseEventPass,
-  findActivityStreakConfigForUpdateConfig,
-  findUserStreakProgressForClaimStreakDay,
-  findUserStreakProgressForPurchaseEventPass,
+  findUserStreakProgress,
   insertActionLogForClaimStreakDay,
   insertActivityStreakConfigForCreateConfig,
   insertUserStreakProgressForClaimStreakDay,
@@ -254,8 +252,8 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch purchase requirements and both current and historical ownership in parallel.
       const [user, config, existingProgress, completionLogs] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findActivityStreakConfigForPurchaseEventPass(ctx.drizzle, input),
-        findUserStreakProgressForPurchaseEventPass(ctx.drizzle, ctx, input),
+        findActivityStreakConfigById(ctx.drizzle, input.configId),
+        findUserStreakProgress(ctx.drizzle, ctx.userId, input.configId),
         listActionLogForPurchaseEventPass(ctx.drizzle, ctx, input),
       ]);
 
@@ -363,7 +361,7 @@ export const activityStreakRouter = createTRPCRouter({
       const [user, config, existingProgress, completionLogs] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         findActivityStreakConfigForClaimStreakDay(ctx.drizzle, input),
-        findUserStreakProgressForPurchaseEventPass(ctx.drizzle, ctx, input),
+        findUserStreakProgress(ctx.drizzle, ctx.userId, input.configId),
         listActionLogForClaimStreakDay(ctx.drizzle, ctx, input),
       ]);
 
@@ -414,11 +412,7 @@ export const activityStreakRouter = createTRPCRouter({
           progress = createdProgress;
         } catch (error) {
           if (!isMysqlDuplicateKeyError(error)) throw error;
-          progress = await findUserStreakProgressForClaimStreakDay(
-            ctx.drizzle,
-            ctx,
-            config,
-          );
+          progress = await findUserStreakProgress(ctx.drizzle, ctx.userId, config.id);
         }
       }
 
@@ -684,7 +678,7 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch user and existing config
       const [user, existingConfig, titleError] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findActivityStreakConfigForUpdateConfig(ctx.drizzle, input),
+        findActivityStreakConfigById(ctx.drizzle, input.id),
         validateTitleRewardIds(ctx.drizzle, input),
       ]);
 
@@ -748,7 +742,7 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch user and config
       const [user, config] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findActivityStreakConfigForUpdateConfig(ctx.drizzle, input),
+        findActivityStreakConfigById(ctx.drizzle, input.id),
       ]);
 
       // Guard: permission check

@@ -103,15 +103,6 @@ export const listTowerDefenseRunForGetLeaderboard = (
     },
   });
 
-/** Build the `towerDefenseUpgrade` lookup for `purchasePermanentUpgrade`, using predicates on `id`. */
-export const findTowerDefenseUpgradeForPurchasePermanentUpgrade = (
-  client: Pick<DrizzleClient, "query">,
-  input: { upgradeId: string },
-) =>
-  client.query.towerDefenseUpgrade.findFirst({
-    where: eq(towerDefenseUpgrade.id, input.upgradeId),
-  });
-
 /**
  * Build the `userTowerDefenseUpgrade` lookup for `purchasePermanentUpgrade`, using
  * predicates on `userId` and `upgradeId`.
@@ -335,13 +326,13 @@ export const updateTowerDefenseCharacterForUpdateAssetConfig = (
     })
     .where(eq(towerDefenseCharacter.id, input.characterId));
 
-/** Build the `towerDefenseUpgrade` lookup for `getUpgrade`, using predicates on `id`. */
-export const findTowerDefenseUpgradeForGetUpgrade = (
+/** Build a tower defense upgrade lookup by ID. */
+export const findTowerDefenseUpgradeById = (
   client: Pick<DrizzleClient, "query">,
-  input: { id: string },
+  upgradeId: string,
 ) =>
   client.query.towerDefenseUpgrade.findFirst({
-    where: eq(towerDefenseUpgrade.id, input.id),
+    where: eq(towerDefenseUpgrade.id, upgradeId),
   });
 
 /** Build the `towerDefenseUpgrade` update for `updateUpgrade`, setting `updatedAt`, using predicates on `id`. */

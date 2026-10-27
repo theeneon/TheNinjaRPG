@@ -146,7 +146,7 @@ export const travelRouter = createTRPCRouter({
       const [user, target, sectorData, pvpAverage] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, input.userId),
-        findVillageBySector(ctx.drizzle, input),
+        findVillageBySector(ctx.drizzle, input.sector),
         fetchPvpExperienceAverage(ctx.drizzle),
       ]);
 

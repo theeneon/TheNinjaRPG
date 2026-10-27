@@ -289,12 +289,6 @@ export const updateFarmPlotForHarvestPlot = (
       ),
     );
 
-/** Build the `item` lookup for `plantAllEmpty`, using predicates on `id`. */
-export const findItemForPlantAllEmpty = (
-  client: Pick<DrizzleClient, "query">,
-  input: { seedItemId: string },
-) => client.query.item.findFirst({ where: eq(item.id, input.seedItemId) });
-
 /** Build the `farmPlot` listing for `plantAllEmpty`, using predicates on `userId`. */
 export const listFarmPlotForPlantAllEmpty = (
   client: Pick<DrizzleClient, "query">,
@@ -503,15 +497,6 @@ export const updateUserDataForBuyShopItem3 = (
     .set({ farmCurrency: sql`${userData.farmCurrency} - ${totalCost}` })
     .where(and(eq(userData.userId, ctx.userId), gte(userData.farmCurrency, totalCost)));
 
-/** Build the `item` lookup for `extractSeeds`, using predicates on `id`. */
-export const findItemForExtractSeeds = (
-  client: Pick<DrizzleClient, "query">,
-  cropStack: { item: { farmExtractSeedItemId: string } },
-) =>
-  client.query.item.findFirst({
-    where: eq(item.id, cropStack.item.farmExtractSeedItemId),
-  });
-
 /** Build the `farmExtraction` insert for `extractSeeds`, updating duplicate keys. */
 export const insertFarmExtractionForExtractSeeds = (
   client: Pick<DrizzleClient, "insert">,
@@ -620,12 +605,6 @@ export const updateFarmPlotForRollbackBulkFertilizer = (
       ),
     );
 
-/** Build the `item` lookup for `resolveShopEntry`, using predicates on `id`. */
-export const findItemForResolveShopEntry = (
-  client: Pick<DrizzleClient, "query">,
-  itemId: string,
-) => client.query.item.findFirst({ where: eq(item.id, itemId) });
-
 /** Build the `item` listing for `buildFarmState`, selecting row fields `id`, using predicates on `farmYieldItemId`. */
 export const listItemForBuildFarmState = (client: Pick<DrizzleClient, "query">) =>
   client.query.item.findMany({
@@ -730,17 +709,6 @@ export const insertFarmPlotForEnsureFarmPlots = (
     .insert(farmPlot)
     .values(inserts)
     .onDuplicateKeyUpdate({ set: { id: sql`id` } });
-
-/** Build the `farmPlot` listing for `ensureFarmPlots`, using predicates on `userId`. */
-export const listFarmPlotForEnsureFarmPlots = (
-  client: Pick<DrizzleClient, "query">,
-  userId: string,
-) =>
-  client.query.farmPlot.findMany({
-    where: eq(farmPlot.userId, userId),
-    orderBy: (plot, { asc }) => [asc(plot.slotIndex)],
-    with: { seedItem: true },
-  });
 
 /**
  * Build the `userItem` update for `awardItemToUser`, setting `quantity` and

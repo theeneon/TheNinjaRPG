@@ -19,6 +19,8 @@ import {
   fetchAttributes,
   fetchUser,
   findUserById,
+  listUserItemsByUserId,
+  listUserJutsuByUserId,
 } from "@/queries/profile";
 import { findStoreUserIdAlias } from "@/queries/purchases";
 import { deleteRankedQueueForUser } from "@/queries/pvprank";
@@ -118,9 +120,7 @@ import {
   findHuntingSessionForDeleteUser,
   findMpvpBattleQueueForForceAwake,
   findMpvpBattleUserForForceAwake,
-  findStoreUserIdAliasForUpdateUserId2,
   findUserBadgeForRemoveUserBadge,
-  findUserDataForUpdateUserId2,
   insertActionLogForDeleteReferral,
   insertActionLogForForceAwake,
   insertActionLogForInsertUserBadge,
@@ -140,8 +140,6 @@ import {
   listQuestHistoryForCloneUserForDebug,
   listRankedUserRewardsForCloneUserForDebug,
   listUserActivityEventForGetUserActivityEvents,
-  listUserItemForCloneUserForDebug,
-  listUserJutsuForCloneUserForDebug,
   selectOverworldAiPlacementForDeleteUserInternal,
   updateActionLogForUpdateUserId,
   updateAiProfileForUpdateUserId,
@@ -514,7 +512,10 @@ export const staffRouter = createTRPCRouter({
       ]);
       // Clean up empty teams or stuck claiming states if user was in a team
       if (queueEntry) {
-        const remainingMembers = await listQueueMembers(ctx.drizzle, queueEntry);
+        const remainingMembers = await listQueueMembers(
+          ctx.drizzle,
+          queueEntry.clanBattleId,
+        );
         if (remainingMembers.length === 0) {
           // Delete the queue entry - team is now empty
           await deleteQueueById(ctx.drizzle, queueEntry.clanBattleId);
@@ -610,8 +611,8 @@ export const staffRouter = createTRPCRouter({
       }
       const [targetJutsus, targetItems, targetQuestHistory, targetRankedUserRewards] =
         await Promise.all([
-          listUserJutsuForCloneUserForDebug(ctx.drizzle, input),
-          listUserItemForCloneUserForDebug(ctx.drizzle, input),
+          listUserJutsuByUserId(ctx.drizzle, input.userId),
+          listUserItemsByUserId(ctx.drizzle, input.userId),
           listQuestHistoryForCloneUserForDebug(ctx.drizzle, input),
           listRankedUserRewardsForCloneUserForDebug(ctx.drizzle, input),
         ]);
@@ -750,9 +751,9 @@ export const staffRouter = createTRPCRouter({
         [
           fetchUser(ctx.drizzle, ctx.userId),
           findUserById(ctx.drizzle, input.userId),
-          findUserDataForUpdateUserId2(ctx.drizzle, input),
-          findStoreUserIdAlias(ctx.drizzle, input),
-          findStoreUserIdAliasForUpdateUserId2(ctx.drizzle, input),
+          findUserById(ctx.drizzle, input.newUserId),
+          findStoreUserIdAlias(ctx.drizzle, input.userId),
+          findStoreUserIdAlias(ctx.drizzle, input.newUserId),
         ],
       );
       // Guard
@@ -803,7 +804,7 @@ export const staffRouter = createTRPCRouter({
       // A receipt that lands under the old id in between is re-homed by the ledger's
       // own owner reconciliation, so nothing here holds a lock.
       await insertStoreUserIdAliasForUpdateUserId(ctx.drizzle, input);
-      const claim = await findStoreUserIdAlias(ctx.drizzle, input);
+      const claim = await findStoreUserIdAlias(ctx.drizzle, input.userId);
       if (claim && isDeletedStoreUserId(claim.newUserId)) {
         return {
           success: false,

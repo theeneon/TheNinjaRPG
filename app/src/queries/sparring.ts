@@ -51,25 +51,6 @@ export const fetchRequests = async (
 };
 
 import { nanoid } from "nanoid";
-import { rankedLoadout } from "@/drizzle/schema";
-
-/** Build the `rankedLoadout` lookup for `acceptChallenge`, using predicates on `userId`. */
-export const findRankedLoadoutForAcceptChallenge = (
-  client: Pick<DrizzleClient, "query">,
-  challenge: { senderId: string },
-) =>
-  client.query.rankedLoadout.findFirst({
-    where: eq(rankedLoadout.userId, challenge.senderId),
-  });
-
-/** Build the `rankedLoadout` lookup for `acceptChallenge`, using predicates on `userId`. */
-export const findRankedLoadoutForAcceptChallenge2 = (
-  client: Pick<DrizzleClient, "query">,
-  challenge: { receiverId: string },
-) =>
-  client.query.rankedLoadout.findFirst({
-    where: eq(rankedLoadout.userId, challenge.receiverId),
-  });
 
 /** Build the `userRequest` lookup for `fetchRequest`, using predicates on `id` and `type`. */
 export const findUserRequestForFetchRequest = (

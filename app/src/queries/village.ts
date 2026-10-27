@@ -627,11 +627,11 @@ export const insertVillageAllianceForUpsertAllianceStatus = (
     .insert(villageAlliance)
     .values({ id: nanoid(), villageIdA, villageIdB, status });
 
-/** Build the `village` lookup, using predicates on `id`. */
+/** Build a village lookup by ID. */
 export const findVillageById = (
   client: Pick<DrizzleClient, "query">,
-  initial: { villageId: string },
-) => client.query.village.findFirst({ where: eq(village.id, initial.villageId) });
+  villageId: string,
+) => client.query.village.findFirst({ where: eq(village.id, villageId) });
 
 /** Build the `village` listing. */
 export const listVillagesWithStructures = (client: Pick<DrizzleClient, "query">) =>
@@ -639,11 +639,11 @@ export const listVillagesWithStructures = (client: Pick<DrizzleClient, "query">)
     with: { structures: true },
   });
 
-/** Build the `village` lookup, using predicates on `sector`. */
+/** Build the village lookup for a map sector. */
 export const findVillageBySector = (
   client: Pick<DrizzleClient, "query">,
-  input: { sector: number },
+  sector: number,
 ) =>
   client.query.village.findFirst({
-    where: eq(village.sector, input.sector),
+    where: eq(village.sector, sector),
   });

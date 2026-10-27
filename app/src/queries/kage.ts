@@ -358,16 +358,6 @@ export const incrementKageRemovalNotifications = (
     .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
     .where(inArray(userData.userId, recipients));
 
-/** Build the `villageElderVote` lookup for `voteOnKageRemoval`, using predicates on `id`. */
-export const findVillageElderVoteForVoteOnKageRemoval = (
-  client: Pick<DrizzleClient, "query">,
-  input: { voteId: string },
-) =>
-  client.query.villageElderVote.findFirst({
-    where: eq(villageElderVote.id, input.voteId),
-    with: { entries: true },
-  });
-
 /** Build the `villageElderVote` listing for `getRemovalHistory`, using predicates on `villageId` and `type`. */
 export const listVillageElderVoteForGetRemovalHistory = (
   client: Pick<DrizzleClient, "query">,
@@ -449,8 +439,8 @@ export const updateVillageForSettleKageRemoval = (
     .set({ kageScheduleVersion: sql`${village.kageScheduleVersion} + 1` })
     .where(eq(village.id, initial.villageId));
 
-/** Build the `villageElderVote` lookup for `settleKageRemoval`, using predicates on `id`. */
-export const findVillageElderVoteForSettleKageRemoval2 = (
+/** Build a Kage removal vote lookup including its ballots; execution stays with the caller. */
+export const findKageRemovalVoteById = (
   client: Pick<DrizzleClient, "query">,
   voteId: string,
 ) =>

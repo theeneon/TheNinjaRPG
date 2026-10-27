@@ -134,13 +134,13 @@ export const selectWebStoreOrderForGetStoreBundles = (
     )
     .groupBy(webStoreOrder.bundleId);
 
-/** Build the `webStoreBundle` lookup for `saveStoreBundle`, using predicates on `id`. */
-export const findWebStoreBundleForSaveStoreBundle = (
+/** Build a web store bundle lookup by ID. */
+export const findWebStoreBundleById = (
   client: Pick<DrizzleClient, "query">,
-  input: { id: string },
+  bundleId: string,
 ) =>
   client.query.webStoreBundle.findFirst({
-    where: eq(webStoreBundle.id, input.id),
+    where: eq(webStoreBundle.id, bundleId),
   });
 
 /** Build the `item` listing for `saveStoreBundle`, selecting only `id` and `repsCost`. */
@@ -552,39 +552,11 @@ export const insertPaypalTransactionForDeliverPaypalReputation = (
   status: string,
 ) => client.insert(paypalTransaction).values({ id, ...terms, status });
 
-/** Build the `userData` lookup for `prepareWebCheckout`, using predicates on `userId`. */
-export const findUserDataForPrepareWebCheckout = (
-  client: Pick<DrizzleClient, "query">,
-  input: { recipientId: string },
-) =>
-  client.query.userData.findFirst({
-    where: eq(userData.userId, input.recipientId),
-  });
-
-/** Build the `webStoreBundle` lookup for `prepareWebCheckout`, using predicates on `id`. */
-export const findWebStoreBundleForPrepareWebCheckout = (
-  client: Pick<DrizzleClient, "query">,
-  input: { selection: { bundleId: string } },
-) =>
-  client.query.webStoreBundle.findFirst({
-    where: eq(webStoreBundle.id, input.selection.bundleId),
-  });
-
 /** Build the `item` listing for `prepareWebCheckout`, selecting only `id` and `repsCost`, using predicates on `hidden`. */
 export const listItemForPrepareWebCheckout = (client: Pick<DrizzleClient, "query">) =>
   client.query.item.findMany({
     columns: { id: true, repsCost: true },
     where: eq(item.hidden, false),
-  });
-
-/** Build the `storeUserIdAlias` listing for `prepareWebCheckout`, using predicates on `oldUserId`. */
-export const listStoreUserIdAliasForPrepareWebCheckout = (
-  client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
-  input: { recipientId: string },
-) =>
-  client.query.storeUserIdAlias.findMany({
-    where: inArray(storeUserIdAlias.oldUserId, [ctx.userId, input.recipientId]),
   });
 
 /** Build the `userData` selection for `reserve`, using predicates on `userId`. */
@@ -607,15 +579,6 @@ export const insertWebStoreOrderForReserve = (
     expiresAt: Date;
   },
 ) => client.insert(webStoreOrder).values(order);
-
-/** Build the `webStoreOrder` lookup for `deliverStoreOrder`, using predicates on `id`. */
-export const findWebStoreOrderForDeliverStoreOrder = (
-  client: Pick<DrizzleClient, "query">,
-  input: { snapshotId: string },
-) =>
-  client.query.webStoreOrder.findFirst({
-    where: eq(webStoreOrder.id, input.snapshotId),
-  });
 
 /** Build the `item` listing for `deliverStoreOrder`, using predicates on `id`. */
 export const listItemForDeliverStoreOrder = (
@@ -652,15 +615,6 @@ export const updateWebStoreOrderForDeliverStoreOrder = (
         isNull(webStoreOrder.grantedAt),
       ),
     );
-
-/** Build the `webStoreOrder` lookup for `deliverStoreOrder`, using predicates on `id`. */
-export const findWebStoreOrderForDeliverStoreOrder2 = (
-  client: Pick<DrizzleClient, "query">,
-  order: { id: string },
-) =>
-  client.query.webStoreOrder.findFirst({
-    where: eq(webStoreOrder.id, order.id),
-  });
 
 /**
  * Build the recipient locking lookup used by the existing store-delivery transaction;
@@ -733,14 +687,14 @@ export const findUserDataForAuthorize = (
     where: eq(userData.userId, order.recipientId),
   });
 
-/** Build the `storeUserIdAlias` listing for `authorize`, using predicates on `oldUserId`. */
-export const listStoreUserIdAliasForAuthorize = (
+/** Build the retired user ID alias listing for a checkout’s buyer and recipient. */
+export const listCheckoutUserIdAliases = (
   client: Pick<DrizzleClient, "query">,
   buyerId: string,
-  order: { recipientId: string },
+  recipientId: string,
 ) =>
   client.query.storeUserIdAlias.findMany({
-    where: inArray(storeUserIdAlias.oldUserId, [buyerId, order.recipientId]),
+    where: inArray(storeUserIdAlias.oldUserId, [buyerId, recipientId]),
   });
 
 /** Build the `item` listing for `authorize`, selecting only `id` and `repsCost`, using predicates on `hidden` and `id`. */

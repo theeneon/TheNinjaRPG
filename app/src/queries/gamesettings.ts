@@ -17,8 +17,8 @@ export const updateGameSettingForDecayClansAndAnbu = (
     .set({ time: dayStart })
     .where(and(eq(gameSetting.id, marker.id), lt(gameSetting.time, dayStart)));
 
-/** Build the `gameSetting` lookup for `getGameSetting`, using predicates on `name`. */
-export const findGameSettingForGetGameSetting = (
+/** Build a game setting lookup by name. */
+export const findGameSettingByName = (
   client: Pick<DrizzleClient, "query">,
   name: string,
 ) =>

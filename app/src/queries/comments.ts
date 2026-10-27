@@ -564,13 +564,13 @@ export const updateUserDataForCreateConversationComment2 = (
     .set({ tavernMessages: sql`${userData.tavernMessages} + 1` })
     .where(eq(userData.userId, effectiveUserId));
 
-/** Build the `conversationComment` lookup for `reactConversationComment`, using predicates on `id`. */
-export const findConversationCommentForReactConversationComment = (
+/** Build a conversation comment lookup by ID. */
+export const findConversationCommentById = (
   client: Pick<DrizzleClient, "query">,
-  input: { commentId: string },
+  commentId: string,
 ) =>
   client.query.conversationComment.findFirst({
-    where: eq(conversationComment.id, input.commentId),
+    where: eq(conversationComment.id, commentId),
   });
 
 /** Build the `conversationComment` update for `reactConversationComment`, setting `reactions`, using predicates on `id`. */
@@ -620,15 +620,6 @@ export const updateConversationCommentForEditConversationComment = (
     .update(conversationComment)
     .set({ content: sanitized })
     .where(eq(conversationComment.id, commentId));
-
-/** Build the `conversationComment` lookup for `deleteConversationComment`, using predicates on `id`. */
-export const findConversationCommentForDeleteConversationComment = (
-  client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) =>
-  client.query.conversationComment.findFirst({
-    where: eq(conversationComment.id, input.id),
-  });
 
 /** Build the `conversationComment` deletion for `deleteConversationComment`, using predicates on `id`. */
 export const deleteConversationCommentForDeleteConversationComment = (

@@ -92,8 +92,7 @@ import {
   fetchJutsuLoadouts,
   fetchReskin,
   fetchUserReskins,
-  findBloodlineReskinForCreateLinkedReskin,
-  findBloodlineReskinForUpdate,
+  findBloodlineReskinById,
   findItemForUpdate,
   findJutsuForUpdate,
   findJutsuForUpdateReskin,
@@ -140,8 +139,7 @@ import {
   listSkillTreeForGetJutsuRelations,
   listUserJutsuForGetReskin,
   listUserJutsuForUpdateReskin,
-  selectBloodlineReskinForCreateLinkedReskin,
-  selectBloodlineReskinForSaveJutsuFamily,
+  selectBloodlineReskinForUpdate,
   selectJutsuForCreateLinkedReskin,
   selectJutsuForDelete,
   selectJutsuForDelete2,
@@ -152,12 +150,11 @@ import {
   selectJutsuReskinForGetJutsuRelations,
   selectUserDataForFetchUserJutsus,
   selectUserDataForUpdateReskin,
+  selectUserJutsuEquipped,
   selectUserJutsuForFetchOwned,
   selectUserJutsuForFetchUserJutsus,
   selectUserJutsuForGetJutsuRelations,
   selectUserJutsuForStartTraining,
-  selectUserJutsuForToggleEquip,
-  selectUserJutsuForTryEquipUserJutsuAtomically,
   updateJutsuForSaveJutsuFamily,
   updateJutsuForSaveJutsuFamily2,
   updateJutsuLoadoutForAppendJutsuIdToLoadoutAtomically,
@@ -611,7 +608,7 @@ export const jutsuRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, reskin] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findBloodlineReskinForCreateLinkedReskin(ctx.drizzle, input),
+        findBloodlineReskinById(ctx.drizzle, input.bloodlineReskinId),
       ]);
       if (user.isBanned || !canChangeContent(user.role))
         return errorResponse("Not allowed");
@@ -626,10 +623,7 @@ export const jutsuRouter = createTRPCRouter({
           }
           if (parent.bloodlineId !== reskin.bloodlineId)
             return errorResponse("Parent jutsu must belong to this bloodline");
-          const [currentGroup] = await selectBloodlineReskinForCreateLinkedReskin(
-            tx,
-            reskin,
-          );
+          const [currentGroup] = await selectBloodlineReskinForUpdate(tx, reskin.id);
           if (!currentGroup || currentGroup.bloodlineId !== parent.bloodlineId)
             return errorResponse("Bloodline reskin changed; refresh before creating");
           const id = nanoid();
@@ -984,9 +978,7 @@ export const jutsuRouter = createTRPCRouter({
           ? fetchJutsu(ctx.drizzle, input.data.reskinParentJutsuId)
           : Promise.resolve(null),
         input.data.bloodlineReskinId
-          ? findBloodlineReskinForUpdate(ctx.drizzle, {
-              data: { bloodlineReskinId: input.data.bloodlineReskinId },
-            })
+          ? findBloodlineReskinById(ctx.drizzle, input.data.bloodlineReskinId)
           : Promise.resolve(null),
         input.data.requiredPetSpeciesId
           ? findPetSpeciesForUpdate(ctx.drizzle, {
@@ -1736,7 +1728,11 @@ export const jutsuRouter = createTRPCRouter({
             // 0 rows: either a concurrent writer already put this id in the
             // active loadout (leave equipped), or a concurrent unequip already
             // flipped the row. Only report success when the row is still on.
-            const [row] = await selectUserJutsuForToggleEquip(ctx.drizzle, input, ctx);
+            const [row] = await selectUserJutsuEquipped(
+              ctx.drizzle,
+              input.userJutsuId,
+              ctx.userId,
+            );
             if (!row?.equipped) {
               return errorResponse("Failed to update loadout — please retry");
             }
@@ -1767,7 +1763,7 @@ export const jutsuRouter = createTRPCRouter({
           );
           if (unequipped.rowsAffected !== 1) {
             const [row, activeIds] = await Promise.all([
-              selectUserJutsuForToggleEquip(ctx.drizzle, input, ctx).then(
+              selectUserJutsuEquipped(ctx.drizzle, input.userJutsuId, ctx.userId).then(
                 (rows) => rows[0],
               ),
               fetchActiveLoadoutJutsuIds(ctx.drizzle, ctx.userId),
@@ -1784,7 +1780,11 @@ export const jutsuRouter = createTRPCRouter({
             );
           }
         } catch {
-          const [row] = await selectUserJutsuForToggleEquip(ctx.drizzle, input, ctx);
+          const [row] = await selectUserJutsuEquipped(
+            ctx.drizzle,
+            input.userJutsuId,
+            ctx.userId,
+          );
           if (row && !row.equipped) {
             // Unequip committed despite the lost/failed response — loadout already
             // removed; treat as success rather than restoring a stale id.
@@ -2870,11 +2870,7 @@ export const tryEquipUserJutsuAtomically = async (args: {
   );
   if (result.rowsAffected !== 1) {
     // Distinguish double-click / concurrent equip from a genuine cap rejection.
-    const [row] = await selectUserJutsuForTryEquipUserJutsuAtomically(
-      client,
-      userJutsuId,
-      userId,
-    );
+    const [row] = await selectUserJutsuEquipped(client, userJutsuId, userId);
     return row?.equipped ? "already-equipped" : "cap-reached";
   }
 
@@ -3035,9 +3031,10 @@ const saveJutsuFamily = async (
           effects: inheritJutsuReskinEffects(parent.effects, data.effects),
         };
         if (data.bloodlineReskinId) {
-          const [group] = await selectBloodlineReskinForSaveJutsuFamily(tx, {
-            bloodlineReskinId: data.bloodlineReskinId,
-          });
+          const [group] = await selectBloodlineReskinForUpdate(
+            tx,
+            data.bloodlineReskinId,
+          );
           if (!group || group.bloodlineId !== parent.bloodlineId)
             return errorResponse("Bloodline reskin no longer matches the parent");
         }

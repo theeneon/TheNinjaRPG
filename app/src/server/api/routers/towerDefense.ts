@@ -35,8 +35,7 @@ import { findUserRoleById } from "@/queries/profile";
 import {
   deleteTowerDefenseCharacterForDeleteCharacter,
   findTowerDefenseCharacterForGetCharacter,
-  findTowerDefenseUpgradeForGetUpgrade,
-  findTowerDefenseUpgradeForPurchasePermanentUpgrade,
+  findTowerDefenseUpgradeById,
   findUserDataForGetUserUpgrades,
   findUserTowerDefenseUpgradeForPurchasePermanentUpgrade,
   insertTowerDefenseCharacterForCreateCharacter,
@@ -296,7 +295,7 @@ export const towerDefenseRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, upgradeDef, existingUpgrade] = await Promise.all([
         findUserDataForGetUserUpgrades(ctx.drizzle, ctx),
-        findTowerDefenseUpgradeForPurchasePermanentUpgrade(ctx.drizzle, input),
+        findTowerDefenseUpgradeById(ctx.drizzle, input.upgradeId),
         findUserTowerDefenseUpgradeForPurchasePermanentUpgrade(ctx.drizzle, ctx, input),
       ]);
 
@@ -873,7 +872,7 @@ export const towerDefenseRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a tower defense upgrade by ID" } })
     .input(idSchema)
     .query(async ({ ctx, input }) => {
-      return await findTowerDefenseUpgradeForGetUpgrade(ctx.drizzle, input);
+      return await findTowerDefenseUpgradeById(ctx.drizzle, input.id);
     }),
 
   /**
@@ -896,7 +895,7 @@ export const towerDefenseRouter = createTRPCRouter({
         return errorResponse("Not allowed to update upgrades");
       }
 
-      const existing = await findTowerDefenseUpgradeForGetUpgrade(ctx.drizzle, input);
+      const existing = await findTowerDefenseUpgradeById(ctx.drizzle, input.id);
 
       if (!existing) {
         return errorResponse("Upgrade not found");

@@ -4,8 +4,8 @@ import {
 } from "@/drizzle/constants";
 import { resolveElderVote } from "@/libs/elder";
 import {
+  findKageRemovalVoteById,
   findVillageElderVoteForSettleKageRemoval,
-  findVillageElderVoteForSettleKageRemoval2,
   incrementKageRemovalNotifications,
   insertNotificationForSettleKageRemoval,
   listEligibleKageRemovalElders,
@@ -39,8 +39,8 @@ export const settleKageRemoval = async (
       // Use the same first lock as defense assignments and successor appointments.
       await updateVillageForSettleKageRemoval(tx, initial);
       const [motion, v, elders] = await queryInTransaction([
-        findVillageElderVoteForSettleKageRemoval2(tx, voteId),
-        findVillageById(tx, initial),
+        findKageRemovalVoteById(tx, voteId),
+        findVillageById(tx, initial.villageId),
         listEligibleKageRemovalElders(tx, initial),
       ]);
       if (motion?.status !== "PENDING")

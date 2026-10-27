@@ -140,8 +140,8 @@ export const insertBountyContributionForCreate = (
     createdAt: new Date(),
   });
 
-/** Build the `bounty` lookup for `signup`, using predicates on `id`. */
-export const findBountyForSignup = (
+/** Build a bounty lookup by ID. */
+export const findBountyById = (
   client: Pick<DrizzleClient, "query">,
   bountyId: string,
 ) =>
@@ -189,44 +189,22 @@ export const findBountySignupForResign = (
     where: eq(bountySignup.id, input.claimId),
   });
 
-/** Build the `bounty` lookup for `resign`, using predicates on `id`. */
-export const findBountyForResign = (
-  client: Pick<DrizzleClient, "query">,
-  claim: { bountyId: string },
-) =>
-  client.query.bounty.findFirst({
-    where: eq(bounty.id, claim.bountyId),
-  });
-
 /** Build the `bountySignup` deletion for `resign`, using predicates on `id`. */
 export const deleteBountySignupForResign = (
   client: Pick<DrizzleClient, "delete">,
   claim: { id: string },
 ) => client.delete(bountySignup).where(eq(bountySignup.id, claim.id));
 
-/** Build the `bountySignup` lookup for `stopTracking`, using predicates on `bountyId` and `hunterUserId`. */
-export const findBountySignupForStopTracking = (
-  client: Pick<DrizzleClient, "query">,
-  input: { bountyId: string },
-  ctx: { userId: string },
-) =>
-  client.query.bountySignup.findFirst({
-    where: and(
-      eq(bountySignup.bountyId, input.bountyId),
-      eq(bountySignup.hunterUserId, ctx.userId),
-    ),
-  });
-
-/** Build the `bountySignup` lookup for `collect`, using predicates on `bountyId` and `hunterUserId`. */
-export const findBountySignupForCollect = (
+/** Build the signup lookup for one bounty and hunter. */
+export const findBountySignup = (
   client: Pick<DrizzleClient, "query">,
   bountyId: string,
-  ctx: { userId: string },
+  userId: string,
 ) =>
   client.query.bountySignup.findFirst({
     where: and(
       eq(bountySignup.bountyId, bountyId),
-      eq(bountySignup.hunterUserId, ctx.userId),
+      eq(bountySignup.hunterUserId, userId),
     ),
   });
 
@@ -289,13 +267,13 @@ export const insertBountyContributionForAddMoney = (
     createdAt: new Date(),
   });
 
-/** Build the `bountyContribution` listing for `retract`, using predicates on `bountyId`. */
-export const listBountyContributionForRetract = (
+/** Build the contribution listing for a bounty. */
+export const listBountyContributions = (
   client: Pick<DrizzleClient, "query">,
-  input: { bountyId: string },
+  bountyId: string,
 ) =>
   client.query.bountyContribution.findMany({
-    where: eq(bountyContribution.bountyId, input.bountyId),
+    where: eq(bountyContribution.bountyId, bountyId),
   });
 
 /** Build the `bounty` update for `retract`, setting `status`, using predicates on `id`, `creatorUserId`, `status`. */
@@ -420,15 +398,6 @@ export const listBountyForBountyExpire = (
     with: {
       hunters: true,
     },
-  });
-
-/** Build the `bountyContribution` listing for `bountyExpire`, using predicates on `bountyId`. */
-export const listBountyContributionForBountyExpire = (
-  client: Pick<DrizzleClient, "query">,
-  expiredBounty: { id: string },
-) =>
-  client.query.bountyContribution.findMany({
-    where: eq(bountyContribution.bountyId, expiredBounty.id),
   });
 
 /** Build the `bounty` update for `bountyExpire`, setting `status`, using predicates on `id`. */

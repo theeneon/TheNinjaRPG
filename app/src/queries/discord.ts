@@ -226,12 +226,9 @@ export const findDiscordLinkForRemoveDiscordLink3 = (
     where: eq(discordLink.discordId, link.discordId),
   });
 
-/** Build the `userReport` selection for `fetchIndefiniteSanction`, using the configured predicates. */
+/** Build the active indefinite ban or silence report lookup for one character. */
 export const selectUserReportForFetchIndefiniteSanction = (
   client: Pick<DrizzleClient, "select">,
-  indefiniteSanctionWhere: (
-    userId: string | AnyColumn | SQL,
-  ) => SQL<unknown> | undefined,
   userId: string,
 ) =>
   client
@@ -239,13 +236,13 @@ export const selectUserReportForFetchIndefiniteSanction = (
     .from(userReport)
     .where(indefiniteSanctionWhere(userId));
 
-/** Build the `userReport` selection for `fetchDiscordAccountSanctions`, using the configured predicates. */
+/** User ids linked to a Discord account, as a subquery. */
+const discordAccountUserIds = (discordId: string) =>
+  sql`(SELECT ${discordLink.userId} FROM ${discordLink} WHERE ${discordLink.discordId} = ${discordId})`;
+
+/** Build the active indefinite sanction listing for characters linked to a Discord account. */
 export const selectUserReportForFetchDiscordAccountSanctions = (
   client: Pick<DrizzleClient, "select">,
-  indefiniteSanctionWhere: (
-    userId: string | AnyColumn | SQL,
-  ) => SQL<unknown> | undefined,
-  discordAccountUserIds: (discordId: string) => SQL<unknown>,
   discordId: string,
 ) =>
   client
@@ -348,9 +345,6 @@ export const listDiscordLinkHistoryForLoadLinkCandidate = (
 export const selectUserReportForLoadLinkCandidate = (
   client: Pick<DrizzleClient, "select">,
   input: { userId: string },
-  indefiniteSanctionWhere: (
-    userId: string | AnyColumn | SQL,
-  ) => SQL<unknown> | undefined,
 ) =>
   client
     .select({ id: userReport.id })

@@ -55,7 +55,6 @@ import {
   userData,
   userItem,
   userJutsu,
-  userPet,
   userQuestAttempt,
   userRaidBuff,
   userRewards,
@@ -800,16 +799,6 @@ export const findUserDataForGetPetTask = (
     with: { pets: true },
   });
 
-/** Build the `userPet` lookup for `startPetTask`, using predicates on `id` and `userId`. */
-export const findUserPetForStartPetTask = (
-  client: Pick<DrizzleClient, "query">,
-  input: { petId: string },
-  ctx: { userId: string },
-) =>
-  client.query.userPet.findFirst({
-    where: and(eq(userPet.id, input.petId), eq(userPet.userId, ctx.userId)),
-  });
-
 /** Build the `questHistory` lookup for `collectPetTask`, using predicates on `id` and `userId`. */
 export const findQuestHistoryForCollectPetTask = (
   client: Pick<DrizzleClient, "query">,
@@ -1000,21 +989,6 @@ export const insertActionLogForDeleteUserQuest = (
     relatedId: input.userId,
     relatedMsg: `Deleted quest ${input.questId}`,
     relatedImage: user.avatarLight,
-  });
-
-/** Build the `userData` lookup for `updateRewards`, using predicates on `userId`. */
-export const findUserDataForUpdateRewards = (
-  client: Pick<DrizzleClient, "query">,
-  user: { recruiterId: string },
-) =>
-  client.query.userData.findFirst({
-    columns: {
-      pvpExperience: true,
-      weeklyPvpKills: true,
-      weeklyPvpKillsAt: true,
-      isAi: true,
-    },
-    where: eq(userData.userId, user.recruiterId),
   });
 
 /** Build the `village` selection for `updateRewards`, using predicates on `name`. */
@@ -1741,10 +1715,10 @@ export const revertQuestCompletionAfterFailedClaim = async (
     );
 };
 
-/** Build the `userData` lookup for `commitQuestObjectiveRewards`, using predicates on `userId`. */
-export const findUserDataForCommitQuestObjectiveRewards = (
+/** Build the user state lookup needed to calculate PvP rewards. */
+export const findUserPvpRewardState = (
   client: Pick<DrizzleClient, "query">,
-  senseiId: string,
+  userId: string,
 ) =>
   client.query.userData.findFirst({
     columns: {
@@ -1753,7 +1727,7 @@ export const findUserDataForCommitQuestObjectiveRewards = (
       weeklyPvpKillsAt: true,
       isAi: true,
     },
-    where: eq(userData.userId, senseiId),
+    where: eq(userData.userId, userId),
   });
 
 /** Build the `questHistory` insert for `commitQuestObjectiveRewards`, updating duplicate keys. */
@@ -2065,12 +2039,6 @@ export const selectTitleForResolveRewardChoiceDisplays = (
     .from(title)
     .where(inArray(title.id, titleIds));
 
-/** Build the `quest` lookup, using predicates on `id`. */
-export const findQuestById = (
-  client: Pick<DrizzleClient, "query">,
-  input: { questId: string },
-) => client.query.quest.findFirst({ where: eq(quest.id, input.questId) });
-
 /** Build the `quest` listing, using predicates on `questType` and `hidden`. */
 export const listVisibleRaidQuests = (client: Pick<DrizzleClient, "query">) =>
   client.query.quest.findMany({
@@ -2114,14 +2082,11 @@ export interface QuestDiscoveryOptions {
   ranks?: LetterRank[];
 }
 
-/** Build the `quest` selection for `fetchQuestDiscoveryCandidates`, using the configured predicates. */
+/** Build full quest discovery candidates with the caller's prepared filters and attempt history. */
 export const selectQuestForFetchQuestDiscoveryCandidates = (
   client: Pick<DrizzleClient, "select">,
   userId: string,
-  buildQuestDiscoveryWhere: (
-    options: QuestDiscoveryOptions,
-  ) => SQL<unknown> | undefined,
-  options: QuestDiscoveryOptions,
+  where: SQL<unknown> | undefined,
 ) =>
   client
     .select({
@@ -2137,17 +2102,14 @@ export const selectQuestForFetchQuestDiscoveryCandidates = (
       questHistory,
       and(eq(quest.id, questHistory.questId), eq(questHistory.userId, userId)),
     )
-    .where(buildQuestDiscoveryWhere(options))
+    .where(where)
     .orderBy(asc(quest.name));
 
-/** Build the `quest` selection for `fetchQuestDiscoverySummaryCandidates`, using predicates on `hidden` and `role`. */
+/** Build quest discovery summaries with attempt history and viewer-authorized hidden content. */
 export const selectQuestForFetchQuestDiscoverySummaryCandidates = (
   client: Pick<DrizzleClient, "select">,
   userId: string,
-  buildQuestDiscoveryWhere: (
-    options: QuestDiscoveryOptions,
-  ) => SQL<unknown> | undefined,
-  options: QuestDiscoveryOptions,
+  where: SQL<unknown> | undefined,
 ) =>
   client
     .select({
@@ -2202,7 +2164,7 @@ export const selectQuestForFetchQuestDiscoverySummaryCandidates = (
     .innerJoin(userData, eq(userData.userId, userId))
     .where(
       and(
-        buildQuestDiscoveryWhere(options),
+        where,
         or(
           eq(quest.hidden, false),
           inArray(userData.role, UserRoles.filter(canPlayHiddenQuests)),

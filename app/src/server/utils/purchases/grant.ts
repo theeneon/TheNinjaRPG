@@ -19,7 +19,7 @@ import {
   findStorePurchaseForApplyStorePurchase2,
   findStorePurchaseForApplyStorePurchase3,
   findStorePurchaseTransferForMigrateStorePurchaseTransfers,
-  findStoreUserIdAliasForIsRetiredStoreUserId,
+  findStoreUserIdAlias,
   insertStoreEntitlementRevocationForApplyFederalRevocation,
   insertStoreEntitlementStateForApplyFederalRevocation,
   insertStoreEntitlementStateForApplyStoreTransfer,
@@ -168,7 +168,7 @@ export const isRetiredStoreUserId = async (
   client: DrizzleClient,
   userId: string,
 ): Promise<boolean> => {
-  const alias = await findStoreUserIdAliasForIsRetiredStoreUserId(client, userId);
+  const alias = await findStoreUserIdAlias(client, userId);
   return alias !== undefined && isDeletedStoreUserId(alias.newUserId);
 };
 
@@ -191,7 +191,7 @@ export const canonicalStoreUserId = async (
     if (visited.has(current))
       throw new Error(`Store user-id alias cycle from ${userId}`);
     visited.add(current);
-    const alias = await findStoreUserIdAliasForIsRetiredStoreUserId(client, current);
+    const alias = await findStoreUserIdAlias(client, current);
     if (
       !alias ||
       alias.newUserId === current ||
@@ -1204,7 +1204,7 @@ export const retireStoreUserId = async (
   // if a rename owns it, the identity is being moved, and this deletion stops here rather
   // than shred what the rename is relocating.
   await insertStoreUserIdAliasForRetireStoreUserId(client, userId, tombstone);
-  const claim = await findStoreUserIdAliasForIsRetiredStoreUserId(client, userId);
+  const claim = await findStoreUserIdAlias(client, userId);
   if (claim && !isDeletedStoreUserId(claim.newUserId)) {
     throw new Error(`User ${userId} is being renamed and cannot be deleted`);
   }

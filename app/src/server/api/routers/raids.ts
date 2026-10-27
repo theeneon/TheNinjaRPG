@@ -19,6 +19,7 @@ import {
 import { fetchActiveUserMpvpBattles } from "@/queries/clan";
 import { fetchUser, queueAwakeUser, wakeQueuedUser } from "@/queries/profile";
 import { deleteRankedQueueForUser } from "@/queries/pvprank";
+import { fetchQuest } from "@/queries/quests";
 import {
   clearQueueBattleId,
   deleteMpvpBattleQueueForCheckAndCleanupExpiredRaid,
@@ -46,7 +47,6 @@ import {
   findQuestForCheckAndCleanupExpiredRaid,
   findQuestForGetRaidDetails,
   findQuestForGetUserRaidQueue,
-  findQuestForStartRaidBattle,
   findRaidDamageThresholdForClaimDamageReward,
   findRaidParticipationForGetRaidDetails,
   findSectorForJoinRaidQueue,
@@ -59,7 +59,6 @@ import {
   insertUserRaidBuffForClaimDamageReward,
   listMpvpBattleQueueForCheckAndCleanupExpiredRaid,
   listMpvpBattleQueueForGetActiveRaidTeams,
-  listMpvpBattleUserForStartRaidBattle,
   listQuestForCleanupExpiredExclusiveRaids,
   listQuestForGetAvailableRaids,
   listQuestForGetCompletedRaids,
@@ -85,7 +84,6 @@ import {
   updateUserRequestForReadyToQueue,
   updateUserRequestForReadyToQueue2,
 } from "@/queries/raids";
-
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser } from "@/routers/profile";
 import { updateRewards } from "@/routers/quests";
@@ -100,7 +98,6 @@ import type { DrizzleClient } from "@/server/db";
 import { deferPushToUsers } from "@/server/utils/push/defer";
 import { raidBattleStarted } from "@/server/utils/push/messages";
 import { purgeRaidChatMembership } from "@/server/utils/raidChat";
-
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
 import { canChangeContent } from "@/utils/permissions";
 import { secondsFromDate } from "@/utils/time";
@@ -954,7 +951,10 @@ export const raidsRouter = createTRPCRouter({
       ]);
 
       // Query - check remaining members
-      const remainingMembers = await listQueueMembers(ctx.drizzle, queueEntry);
+      const remainingMembers = await listQueueMembers(
+        ctx.drizzle,
+        queueEntry.clanBattleId,
+      );
 
       // Mutation - clean up empty teams (removed battleId null check for robust cleanup)
       if (remainingMembers.length === 0) {
@@ -1030,7 +1030,7 @@ export const raidsRouter = createTRPCRouter({
       }
 
       // Query - get raid quest data
-      const raid = await findQuestForStartRaidBattle(ctx.drizzle, team);
+      const raid = await fetchQuest(ctx.drizzle, team.attackerEntityId);
 
       // Guard - raid validations
       if (!raid) return errorResponse("Raid quest not found");
@@ -1062,10 +1062,7 @@ export const raidsRouter = createTRPCRouter({
       }
 
       // Query - re-fetch current queue members after claim for fresh state
-      const currentQueueMembers = await listMpvpBattleUserForStartRaidBattle(
-        ctx.drizzle,
-        input,
-      );
+      const currentQueueMembers = await listQueueMembers(ctx.drizzle, input.teamId);
 
       // Guard - members validation after claim
       if (currentQueueMembers.length === 0) {

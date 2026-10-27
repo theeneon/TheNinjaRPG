@@ -26,7 +26,6 @@ import {
 import {
   battleHistory,
   item,
-  jutsu,
   logQueueLengths,
   logRankedPicks,
   mpvpBattleQueue,
@@ -175,15 +174,6 @@ export const updateRankedUserRewardsForClaimSeasonRewards = (
       ),
     );
 
-/** Build the `rankedSeason` lookup for `getSeason`, using predicates on `id`. */
-export const findRankedSeasonForGetSeason = (
-  client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) =>
-  client.query.rankedSeason.findFirst({
-    where: eq(rankedSeason.id, input.id),
-  });
-
 /** Build the `rankedSeason` insert for `createSeason`. */
 export const insertRankedSeasonForCreateSeason = (
   client: Pick<DrizzleClient, "insert">,
@@ -227,13 +217,13 @@ export const deleteRankedUserRewardsForDeleteSeason = (
   input: { id: string },
 ) => client.delete(rankedUserRewards).where(eq(rankedUserRewards.seasonId, input.id));
 
-/** Build the `rankedLoadout` lookup for `getRankedLoadout`, using predicates on `userId`. */
-export const findRankedLoadoutForGetRankedLoadout = (
+/** Build a user’s ranked loadout lookup. */
+export const findRankedLoadoutByUserId = (
   client: Pick<DrizzleClient, "query">,
-  ctx: { userId: string },
+  userId: string,
 ) =>
   client.query.rankedLoadout.findFirst({
-    where: eq(rankedLoadout.userId, ctx.userId),
+    where: eq(rankedLoadout.userId, userId),
   });
 
 /** Build the `rankedLoadout` insert for `getRankedLoadout`. */
@@ -303,15 +293,6 @@ export const listItemForUpdateRankedLoadout = (
 ) =>
   client.query.item.findMany({
     where: and(inArray(item.id, itemIds), eq(item.inShop, true)),
-  });
-
-/** Build the `jutsu` listing for `updateRankedLoadout`, using predicates on `id`. */
-export const listJutsuForUpdateRankedLoadout = (
-  client: Pick<DrizzleClient, "query">,
-  loadout: { jutsuIds: string[] },
-) =>
-  client.query.jutsu.findMany({
-    where: inArray(jutsu.id, loadout.jutsuIds),
   });
 
 /**
@@ -511,8 +492,8 @@ export const listUserDataForEndRankedSeason = (client: Pick<DrizzleClient, "quer
     where: gt(userData.rankedLp, 0),
   });
 
-/** Build the `rankedSeason` lookup for `endRankedSeason`, using predicates on `id`. */
-export const findRankedSeasonForEndRankedSeason = (
+/** Build a ranked season lookup by ID. */
+export const findRankedSeasonById = (
   client: Pick<DrizzleClient, "query">,
   seasonId: string,
 ) =>

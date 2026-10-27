@@ -44,7 +44,7 @@ import {
   updateQuestPartyForRemoveMember,
   updateQuestPartyForRemoveMember2,
 } from "@/queries/questParty";
-import { fetchUserQuestByQuestId, findQuestById } from "@/queries/quests";
+import { fetchQuest, fetchUserQuestByQuestId } from "@/queries/quests";
 import { fetchSectorVillage } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser, type UserWithRelations } from "@/routers/profile";
@@ -254,7 +254,7 @@ export const questPartyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [{ user }, definition, history] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        findQuestById(ctx.drizzle, input),
+        fetchQuest(ctx.drizzle, input.questId),
         fetchUserQuestByQuestId(ctx.drizzle, ctx.userId, input.questId),
       ]);
       if (!user) return errorResponse("User not found");

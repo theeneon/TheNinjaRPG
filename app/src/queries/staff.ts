@@ -374,24 +374,6 @@ export const insertActionLogForRemoveUserBadge = (
     relatedImage: user.avatarLight,
   });
 
-/** Build the `userJutsu` listing for `cloneUserForDebug`, using predicates on `userId`. */
-export const listUserJutsuForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "query">,
-  input: { userId: string },
-) =>
-  client.query.userJutsu.findMany({
-    where: eq(userJutsu.userId, input.userId),
-  });
-
-/** Build the `userItem` listing for `cloneUserForDebug`, using predicates on `userId`. */
-export const listUserItemForCloneUserForDebug = (
-  client: Pick<DrizzleClient, "query">,
-  input: { userId: string },
-) =>
-  client.query.userItem.findMany({
-    where: eq(userItem.userId, input.userId),
-  });
-
 /** Build the `questHistory` listing for `cloneUserForDebug`, using predicates on `userId`. */
 export const listQuestHistoryForCloneUserForDebug = (
   client: Pick<DrizzleClient, "query">,
@@ -679,25 +661,6 @@ export const listUserActivityEventForGetUserActivityEvents = (
     where: eq(userActivityEvent.userId, input.userId),
     orderBy: [desc(userActivityEvent.createdAt)],
     limit: 100, // Limit to last 100 activity events
-  });
-
-/** Build the `userData` lookup for `updateUserId`, using predicates on `userId`. */
-export const findUserDataForUpdateUserId2 = (
-  client: Pick<DrizzleClient, "query">,
-  input: { newUserId: string },
-) =>
-  client.query.userData.findFirst({
-    where: eq(userData.userId, input.newUserId),
-  });
-
-/** Build the `storeUserIdAlias` lookup for `updateUserId`, selecting only `newUserId`, using predicates on `oldUserId`. */
-export const findStoreUserIdAliasForUpdateUserId2 = (
-  client: Pick<DrizzleClient, "query">,
-  input: { newUserId: string },
-) =>
-  client.query.storeUserIdAlias.findFirst({
-    columns: { newUserId: true },
-    where: eq(storeUserIdAlias.oldUserId, input.newUserId),
   });
 
 /** Build the `storeUserIdAlias` insert for `updateUserId`, updating duplicate keys. */

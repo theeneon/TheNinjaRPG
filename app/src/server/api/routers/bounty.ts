@@ -11,20 +11,18 @@ import {
   deleteBountySignupForCollect,
   deleteBountySignupForResign,
   deleteBountySignupForRetract,
+  findBountyById,
   findBountyForCreate,
   findBountyForRemoveAllTrackers,
-  findBountyForResign,
-  findBountyForSignup,
-  findBountySignupForCollect,
+  findBountySignup,
   findBountySignupForResign,
   findBountySignupForSignup,
-  findBountySignupForStopTracking,
   insertActionLogForRemoveAllTrackers,
   insertBountyContributionForAddMoney,
   insertBountyContributionForCreate,
   insertBountyForCreate,
   insertBountySignupForSignup,
-  listBountyContributionForRetract,
+  listBountyContributions,
   listBountyForBoard,
   listBountySignupForGetTrackedBounties,
   listBountySignupForSignup,
@@ -160,7 +158,7 @@ export const bountyRouter = createTRPCRouter({
       // Query
       const { bountyId } = input;
       const [curBounty, curSignups, userSignups, target] = await Promise.all([
-        findBountyForSignup(ctx.drizzle, bountyId),
+        findBountyById(ctx.drizzle, bountyId),
         listBountySignupForSignup(ctx.drizzle, bountyId),
         findBountySignupForSignup(ctx.drizzle, ctx),
         fetchUser(ctx.drizzle, input.targetUserId),
@@ -205,7 +203,7 @@ export const bountyRouter = createTRPCRouter({
       const claim = await findBountySignupForResign(ctx.drizzle, input);
       if (!claim) return errorResponse("Claim not found");
       if (claim.hunterUserId !== ctx.userId) return errorResponse("Not your claim");
-      const curBounty = await findBountyForResign(ctx.drizzle, claim);
+      const curBounty = await findBountyById(ctx.drizzle, claim.bountyId);
       if (!curBounty || curBounty.status !== "OPEN")
         return errorResponse("Bounty closed");
       await deleteBountySignupForResign(ctx.drizzle, claim);
@@ -219,8 +217,8 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [curBounty, userSignup] = await Promise.all([
-        findBountyForResign(ctx.drizzle, input),
-        findBountySignupForStopTracking(ctx.drizzle, input, ctx),
+        findBountyById(ctx.drizzle, input.bountyId),
+        findBountySignup(ctx.drizzle, input.bountyId, ctx.userId),
       ]);
 
       // Guards
@@ -242,8 +240,8 @@ export const bountyRouter = createTRPCRouter({
 
       // Find the bounty and hunter signup
       const [curBounty, hunterSignup] = await Promise.all([
-        findBountyForSignup(ctx.drizzle, bountyId),
-        findBountySignupForCollect(ctx.drizzle, bountyId, ctx),
+        findBountyById(ctx.drizzle, bountyId),
+        findBountySignup(ctx.drizzle, bountyId, ctx.userId),
       ]);
 
       // Guards
@@ -273,7 +271,7 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [curBounty, user] = await Promise.all([
-        findBountyForResign(ctx.drizzle, input),
+        findBountyById(ctx.drizzle, input.bountyId),
         fetchUser(ctx.drizzle, ctx.userId),
       ]);
       // Guards
@@ -305,8 +303,8 @@ export const bountyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [curBounty, contributions] = await Promise.all([
-        findBountyForResign(ctx.drizzle, input),
-        listBountyContributionForRetract(ctx.drizzle, input),
+        findBountyById(ctx.drizzle, input.bountyId),
+        listBountyContributions(ctx.drizzle, input.bountyId),
       ]);
       // Guards
       if (!curBounty) return errorResponse("Bounty not found");

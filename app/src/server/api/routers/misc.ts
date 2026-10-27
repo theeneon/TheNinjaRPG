@@ -22,13 +22,13 @@ import {
   findUserEmailReminder,
   updateEmailReminderForToggleEmailReminder,
 } from "@/queries/emailReminder";
+import { findGameSettingByName } from "@/queries/gamesettings";
 import {
   countCaptchaForRefreshCaptcha,
   fetchGameAssets,
   findCaptchaForGenerateCaptcha,
   findCaptchaForSolvedCaptchaRecently,
   findConversationForGetGlobalTavernEnabled,
-  findGameSettingForGetSetting,
   insertAbEventForTrackVisitor,
   insertCaptchaForGenerateCaptcha,
   insertNotificationForSubmitNotification,
@@ -38,8 +38,7 @@ import {
   listNotificationForGetPreviousNotifications,
   listSupportReviewForReviewSupportWithAI,
   listUserDataForAwardReputation,
-  listUserDataForGetAllAwards,
-  listUserDataForGetAllAwards2,
+  listUserIdsMatchingUsername,
   listUserRewardsForGetAllAwards,
   updateCaptchaForRefreshCaptcha,
   updateCaptchaForValidateCaptcha,
@@ -48,7 +47,6 @@ import {
   updateUserDataForSubmitNotification,
 } from "@/queries/misc";
 import { fetchUser } from "@/queries/profile";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -184,7 +182,7 @@ export const miscRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a game setting by name" } })
     .input(z.object({ name: z.string() }))
     .query(async ({ ctx, input }) => {
-      const setting = await findGameSettingForGetSetting(ctx.drizzle, input);
+      const setting = await findGameSettingByName(ctx.drizzle, input.name);
       return setting ?? null;
     }),
   getGlobalTavernEnabled: publicProcedure
@@ -342,14 +340,14 @@ export const miscRouter = createTRPCRouter({
       // Resolve username filters to userId arrays (done upfront to keep main query simple)
       const [receiverIds, awardedByIds] = await Promise.all([
         input.awardedTo
-          ? listUserDataForGetAllAwards(ctx.drizzle, {
-              awardedTo: input.awardedTo,
-            }).then((rows) => rows.map((r) => r.userId))
+          ? listUserIdsMatchingUsername(ctx.drizzle, input.awardedTo).then((rows) =>
+              rows.map((r) => r.userId),
+            )
           : Promise.resolve<string[]>([]),
         input.awardedBy
-          ? listUserDataForGetAllAwards2(ctx.drizzle, {
-              awardedBy: input.awardedBy,
-            }).then((rows) => rows.map((r) => r.userId))
+          ? listUserIdsMatchingUsername(ctx.drizzle, input.awardedBy).then((rows) =>
+              rows.map((r) => r.userId),
+            )
           : Promise.resolve<string[]>([]),
       ]);
 

@@ -6,14 +6,13 @@ import {
   fetchGuide,
   fetchPublishedGuides,
   findGuideArticleForUpdate,
-  findUserDataForGetAll,
   insertActionLogForDelete,
   insertActionLogForUpdate,
   insertGuideArticleForCreate,
   listGuideArticleForGetAll,
   updateGuideArticleForUpdate,
 } from "@/queries/guide";
-import { fetchUser } from "@/queries/profile";
+import { fetchUser, findUserRoleById } from "@/queries/profile";
 
 import {
   baseServerResponse,
@@ -36,7 +35,7 @@ export const guideRouter = createTRPCRouter({
     .input(GuideListFilterSchema.optional())
     .query(async ({ ctx, input }) => {
       const viewer = ctx.userId
-        ? await findUserDataForGetAll(ctx.drizzle, { userId: ctx.userId })
+        ? await findUserRoleById(ctx.drizzle, ctx.userId)
         : null;
       const canSeeDrafts = Boolean(viewer && canChangeContent(viewer.role));
       const includeDrafts = Boolean(input?.includeDrafts && canSeeDrafts);
@@ -53,7 +52,7 @@ export const guideRouter = createTRPCRouter({
       if (!article) throw serverError("NOT_FOUND", "Guide not found");
       if (!article.published) {
         const viewer = ctx.userId
-          ? await findUserDataForGetAll(ctx.drizzle, { userId: ctx.userId })
+          ? await findUserRoleById(ctx.drizzle, ctx.userId)
           : null;
         if (!viewer || !canChangeContent(viewer.role)) {
           throw serverError("NOT_FOUND", "Guide not found");

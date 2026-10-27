@@ -9,7 +9,6 @@ import {
   captcha,
   conversation,
   gameAsset,
-  gameSetting,
   notification,
   supportReview,
   userData,
@@ -106,15 +105,6 @@ export const listNotificationForGetPreviousNotifications = (
     orderBy: [desc(notification.createdAt)],
   });
 
-/** Build the `gameSetting` lookup for `getSetting`, using predicates on `name`. */
-export const findGameSettingForGetSetting = (
-  client: Pick<DrizzleClient, "query">,
-  input: { name: string },
-) =>
-  client.query.gameSetting.findFirst({
-    where: eq(gameSetting.name, input.name),
-  });
-
 /** Build the `conversation` lookup for `getGlobalTavernEnabled`, using predicates on `title`. */
 export const findConversationForGetGlobalTavernEnabled = (
   client: Pick<DrizzleClient, "query">,
@@ -170,23 +160,13 @@ export const updateUserDataForAwardReputation = (
     })
     .where(inArray(userData.userId, input.userIds));
 
-/** Build the `userData` listing for `getAllAwards`, selecting only `userId`, using predicates on `username`. */
-export const listUserDataForGetAllAwards = (
+/** Build the user ID listing for usernames matching the search text. */
+export const listUserIdsMatchingUsername = (
   client: Pick<DrizzleClient, "query">,
-  input: { awardedTo: string },
+  search: string,
 ) =>
   client.query.userData.findMany({
-    where: like(userData.username, `%${input.awardedTo}%`),
-    columns: { userId: true },
-  });
-
-/** Build the `userData` listing for `getAllAwards`, selecting only `userId`, using predicates on `username`. */
-export const listUserDataForGetAllAwards2 = (
-  client: Pick<DrizzleClient, "query">,
-  input: { awardedBy: string },
-) =>
-  client.query.userData.findMany({
-    where: like(userData.username, `%${input.awardedBy}%`),
+    where: like(userData.username, `%${search}%`),
     columns: { userId: true },
   });
 

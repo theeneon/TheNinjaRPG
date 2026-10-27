@@ -9,8 +9,8 @@ import {
 } from "@/drizzle/constants";
 import type { DmgConfig } from "@/libs/combat/constants";
 import {
+  findGameSettingByName,
   findGameSettingForFetchPetArtProvider,
-  findGameSettingForGetGameSetting,
   insertGameSettingForFetchDmgConfig,
   insertGameSettingForGetGameSetting,
   selectGameSettingForFetchDmgConfig,
@@ -35,7 +35,7 @@ import {
  * @returns The game setting for the specified timer name.
  */
 export const getGameSetting = async (client: DrizzleClient, name: string) => {
-  let setting = await findGameSettingForGetGameSetting(client, name);
+  let setting = await findGameSettingByName(client, name);
   if (!setting) {
     setting = { id: nanoid(), name: name, time: addDays(new Date(), -30), value: 0 };
     await insertGameSettingForGetGameSetting(client, setting);

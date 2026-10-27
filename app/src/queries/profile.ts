@@ -897,38 +897,20 @@ export const insertUserDataForCreate = (
     isAi: true,
   });
 
-/** Build the `userData` lookup for `cloneAi`, using predicates on `userId`. */
-export const findUserDataForCloneAi = (
+/** Build the jutsu listing for a user. */
+export const listUserJutsuByUserId = (
   client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) =>
-  client.query.userData.findFirst({
-    where: eq(userData.userId, input.id),
-  });
-
-/** Build the `userJutsu` listing for `cloneAi`, using predicates on `userId`. */
-export const listUserJutsuForCloneAi = (
-  client: Pick<DrizzleClient, "query">,
-  input: { id: string },
+  userId: string,
 ) =>
   client.query.userJutsu.findMany({
-    where: eq(userJutsu.userId, input.id),
+    where: eq(userJutsu.userId, userId),
   });
 
-/** Build the `userItem` listing for `cloneAi`, using predicates on `userId`. */
-export const listUserItemForCloneAi = (
+/** Build the item listing for a user. */
+export const listUserItemsByUserId = (
   client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) => client.query.userItem.findMany({ where: eq(userItem.userId, input.id) });
-
-/** Build the `userNindo` lookup for `cloneAi`, using predicates on `userId`. */
-export const findUserNindoForCloneAi = (
-  client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) =>
-  client.query.userNindo.findFirst({
-    where: eq(userNindo.userId, input.id),
-  });
+  userId: string,
+) => client.query.userItem.findMany({ where: eq(userItem.userId, userId) });
 
 /** Build the `userData` insert for `cloneAi`. */
 export const insertUserDataForCloneAi = (
@@ -1280,15 +1262,6 @@ export const findUserDataForUseUnusedExperiencePoints = (
     },
   });
 
-/** Build the `userNindo` lookup for `getNindo`, using predicates on `userId`. */
-export const findUserNindoForGetNindo = (
-  client: Pick<DrizzleClient, "query">,
-  input: { userId: string },
-) =>
-  client.query.userNindo.findFirst({
-    where: eq(userNindo.userId, input.userId),
-  });
-
 /** Build the `userAttribute` insert for `insertAttribute`, updating duplicate keys. */
 export const insertUserAttributeForInsertAttribute = (
   client: Pick<DrizzleClient, "insert">,
@@ -1613,13 +1586,14 @@ export const listUserPetForGetPetImageGenerationForStaff = (
     },
   });
 
-/** Build the `userPet` lookup for `resetPetImageGeneration`, using predicates on `id` and `userId`. */
-export const findUserPetForResetPetImageGeneration = (
+/** Build a pet lookup constrained to its owner. */
+export const findOwnedUserPet = (
   client: Pick<DrizzleClient, "query">,
-  input: { petId: string; userId: string },
+  petId: string,
+  userId: string,
 ) =>
   client.query.userPet.findFirst({
-    where: and(eq(userPet.id, input.petId), eq(userPet.userId, input.userId)),
+    where: and(eq(userPet.id, petId), eq(userPet.userId, userId)),
   });
 
 /** Build the `userPet` update for `resetPetImageGeneration`, using predicates on `id`, `userId`, `revision`. */
@@ -1790,8 +1764,8 @@ export const insertActionLogForAwardExperienceToAll = (
     relatedImage: awarder.avatarLight,
   });
 
-/** Build the `userNindo` lookup for `updateNindo`, using predicates on `userId`. */
-export const findUserNindoForUpdateNindo = (
+/** Build a user’s nindo lookup. */
+export const findUserNindoByUserId = (
   client: Pick<DrizzleClient, "query">,
   userId: string,
 ) =>

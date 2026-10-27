@@ -8,6 +8,7 @@ import { getServerPusher } from "@/libs/pusher";
 import { getTerritoryCompetitor, getTerritoryWarBoostUntil } from "@/libs/territoryWar";
 import { deleteClanBattleMemberById } from "@/queries/clan";
 import { wakeQueuedUser } from "@/queries/profile";
+import { listQueueMembers } from "@/queries/raids";
 import {
   deleteMpvpBattleQueueForCreateTeam,
   executeClaimedForJoinTeam,
@@ -17,15 +18,12 @@ import {
   fetchActiveTerritoryWar,
   fetchLatestTerritoryWar,
   findMpvpBattleQueueForStartBattle,
-  findTerritoryWarForCreateTeam,
-  findTerritoryWarForStartBattle,
+  findTerritoryWarById,
   insertMpvpBattleQueueForCreateTeam,
   listMpvpBattleQueueForGetCurrent,
-  listMpvpBattleUserForStartBattle,
   listTerritoryWarScoreForGetCurrent,
   updateMpvpBattleQueueForStartBattle,
 } from "@/queries/territoryWar";
-
 import { initiateBattle } from "@/server/api/routers/combat";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -77,7 +75,7 @@ export const territoryWarRouter = createTRPCRouter({
     .input(z.object({ eventId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const [event, user] = await Promise.all([
-        findTerritoryWarForCreateTeam(ctx.drizzle, input),
+        findTerritoryWarById(ctx.drizzle, input.eventId),
         fetchUser(ctx.drizzle, ctx.userId),
       ]);
       if (!event || event.resolvedAt || event.endsAt <= new Date())
@@ -130,9 +128,7 @@ export const territoryWarRouter = createTRPCRouter({
         !team.queue.some((member) => member.userId === ctx.userId)
       )
         return errorResponse("This team is no longer available");
-      const event = await findTerritoryWarForStartBattle(ctx.drizzle, {
-        territoryWarId: team.territoryWarId,
-      });
+      const event = await findTerritoryWarById(ctx.drizzle, team.territoryWarId);
       if (!event || event.resolvedAt || event.endsAt <= new Date())
         return errorResponse("This Territory War has ended");
       if (!team.queue.length || team.queue.length > TERRITORY_WAR_TEAM_SIZE)
@@ -147,7 +143,7 @@ export const territoryWarRouter = createTRPCRouter({
         return errorResponse("Another teammate already started this battle");
       try {
         // Reservation excludes further successful joins; reload members after it commits.
-        const roster = await listMpvpBattleUserForStartBattle(ctx.drizzle, team);
+        const roster = await listQueueMembers(ctx.drizzle, team.id);
         if (
           !roster.some((member) => member.userId === ctx.userId) ||
           roster.length < 1 ||

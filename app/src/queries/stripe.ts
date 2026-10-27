@@ -85,8 +85,8 @@ export const executeResultForClaim = (
           p.grantedAt = CURRENT_TIMESTAMP(3)
       WHERE p.id = ${receipt.id} AND p.grantedAt IS NULL AND p.reviewRequired = FALSE`);
 
-/** Build the `stripeCheckout` lookup for `fulfillStripeInvoice`, using predicates on `id`. */
-export const findStripeCheckoutForFulfillStripeInvoice = (
+/** Build a Stripe checkout lookup by ID. */
+export const findStripeCheckoutById = (
   client: Pick<DrizzleClient, "query">,
   checkoutId: string,
 ) =>
@@ -166,15 +166,6 @@ export const executeResultForUpgradeStripeFederalWithReps = (
 /** Table alias for recipient joins, keeping its columns distinct from other participants. */
 const recipient = alias(userData, "recipient");
 
-/** Build the `stripeCheckout` lookup for `createCheckout`, using predicates on `id`. */
-export const findStripeCheckoutForCreateCheckout = (
-  client: Pick<DrizzleClient, "query">,
-  input: { requestId: string },
-) =>
-  client.query.stripeCheckout.findFirst({
-    where: eq(stripeCheckout.id, input.requestId),
-  });
-
 /** Build the `stripeCheckout` listing for `createCheckout`, including predicates on `createdById`, `id`, `closedAt`. */
 export const listStripeCheckoutForCreateCheckout = (
   client: Pick<DrizzleClient, "query">,
@@ -245,15 +236,6 @@ export const updateStripeCheckoutForCreateCheckout = (
     .set({ sessionId: session.id })
     .where(eq(stripeCheckout.id, saved.id));
 
-/** Build the `stripeCheckout` lookup for `cancelCheckout`, using predicates on `id`. */
-export const findStripeCheckoutForCancelCheckout = (
-  client: Pick<DrizzleClient, "query">,
-  input: { checkoutId: string },
-) =>
-  client.query.stripeCheckout.findFirst({
-    where: eq(stripeCheckout.id, input.checkoutId),
-  });
-
 /** Build the `stripeCheckout` update for `cancelCheckout`, setting `closedAt`, using predicates on `id`. */
 export const updateStripeCheckoutForCancelCheckout = (
   client: Pick<DrizzleClient, "update">,
@@ -263,15 +245,6 @@ export const updateStripeCheckoutForCancelCheckout = (
     .update(stripeCheckout)
     .set({ closedAt: new Date() })
     .where(eq(stripeCheckout.id, checkout.id));
-
-/** Build the `stripeCheckout` lookup for `resolveSession`, using predicates on `id`. */
-export const findStripeCheckoutForResolveSession = (
-  client: Pick<DrizzleClient, "query">,
-  session: { metadata: { tnrCheckoutId: string } },
-) =>
-  client.query.stripeCheckout.findFirst({
-    where: eq(stripeCheckout.id, session.metadata.tnrCheckoutId),
-  });
 
 /**
  * Build the `stripeCheckout` selection for `getPendingCheckouts`, including predicates

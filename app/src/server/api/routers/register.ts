@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { IMG_DEFAULT_PROFILE_PICTURE } from "@/drizzle/constants";
 import type { userData } from "@/drizzle/schema";
+import { fetchBloodline } from "@/queries/bloodline";
 import { findUserEmailReminder } from "@/queries/emailReminder";
 import { deleteUserAttributes, findUserById } from "@/queries/profile";
 import { findStoreUserIdAlias } from "@/queries/purchases";
 import {
   deleteStoreUserIdAliasForCreateCharacter,
   executeCreatedUserForCreateCharacter,
-  findBloodlineForCreateCharacter,
   findHistoricalIpForCreateCharacter,
   findHistoricalIpForSetReferralSource,
   findPaypalSubscriptionForCreateCharacter,
@@ -125,10 +125,10 @@ export const registerRouter = createTRPCRouter({
         findUserById(ctx.drizzle, ctx.userId),
         findUserDataForCreateCharacter2(ctx.drizzle, input),
         findUserEmailReminder(ctx.drizzle, ctx),
-        findBloodlineForCreateCharacter(ctx.drizzle, input),
+        fetchBloodline(ctx.drizzle, input.bloodlineId),
         findHistoricalIpForCreateCharacter(ctx.drizzle, ctx),
         checkForBadWords(input.username),
-        findStoreUserIdAlias(ctx.drizzle, ctx),
+        findStoreUserIdAlias(ctx.drizzle, ctx.userId),
         findStorePurchaseForCreateCharacter(ctx.drizzle, ctx),
         findPaypalSubscriptionForCreateCharacter(ctx.drizzle, ctx),
         findStripePaymentForCreateCharacter(ctx.drizzle, ctx),

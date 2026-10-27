@@ -14,9 +14,7 @@ import {
   findPaypalSubscriptionForUpgradeSubscription,
   findPaypalTransactionForDeliverPaypalReputation,
   findPaypalTransactionForSyncTransactions,
-  findUserDataForPrepareWebCheckout,
-  findWebStoreBundleForPrepareWebCheckout,
-  findWebStoreBundleForSaveStoreBundle,
+  findWebStoreBundleById,
   findWebStoreOrderById,
   insertActionLogForSaveStoreBundle,
   insertPaypalSubscriptionForSubscribeWithReps,
@@ -25,12 +23,12 @@ import {
   insertPaypalTransactionForUpdateReps,
   insertRecruitmentRewardsForUpdateReps,
   insertWebStoreBundleForSaveStoreBundle,
+  listCheckoutUserIdAliases,
   listItemForGetStoreBundles,
   listItemForPrepareWebCheckout,
   listItemForSaveStoreBundle,
   listPaypalSubscriptionForGetPaypalSubscriptions,
   listPaypalTransactionForGetPaypalTransactions,
-  listStoreUserIdAliasForPrepareWebCheckout,
   listWebStoreBundleForGetStoreBundles,
   releaseDeclinedStoreCapture,
   selectWebStoreOrderForGetStoreBundles,
@@ -43,7 +41,7 @@ import {
   updateWebStoreBundleForSaveStoreBundle,
   updateWebStoreOrderForCreateStoreOrder,
 } from "@/queries/paypal";
-import { fetchUser } from "@/queries/profile";
+import { fetchUser, findUserById } from "@/queries/profile";
 
 import {
   type BaseServerResponse,
@@ -187,9 +185,7 @@ export const paypalRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, existing, items] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        input.id
-          ? findWebStoreBundleForSaveStoreBundle(ctx.drizzle, { id: input.id })
-          : undefined,
+        input.id ? findWebStoreBundleById(ctx.drizzle, input.id) : undefined,
         listItemForSaveStoreBundle(ctx.drizzle),
       ]);
       if (user.isBanned || !canManageStore(user.role))
@@ -1326,14 +1322,12 @@ const prepareWebCheckout = async (
   if (isNativeUserAgent(ctx.userAgent))
     return errorResponse("Use the in-app store to make purchases");
   const [recipient, bundle, items, aliases] = await Promise.all([
-    findUserDataForPrepareWebCheckout(ctx.drizzle, input),
+    findUserById(ctx.drizzle, input.recipientId),
     input.selection.type === "bundle"
-      ? findWebStoreBundleForPrepareWebCheckout(ctx.drizzle, {
-          selection: { bundleId: input.selection.bundleId },
-        })
+      ? findWebStoreBundleById(ctx.drizzle, input.selection.bundleId)
       : undefined,
     listItemForPrepareWebCheckout(ctx.drizzle),
-    listStoreUserIdAliasForPrepareWebCheckout(ctx.drizzle, ctx, input),
+    listCheckoutUserIdAliases(ctx.drizzle, ctx.userId, input.recipientId),
   ]);
   if (aliases.some((alias) => isDeletedStoreUserId(alias.newUserId)))
     return errorResponse(

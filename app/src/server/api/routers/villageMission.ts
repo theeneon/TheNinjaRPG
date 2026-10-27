@@ -11,7 +11,6 @@ import {
 import { fetchUser } from "@/queries/profile";
 import { findVillageById } from "@/queries/village";
 import {
-  findVillageForGet,
   listQuestForSelect,
   selectUserDataForLeaderGuard,
   selectUserDataForLeaderGuard2,
@@ -41,7 +40,7 @@ export const villageMissionRouter = createTRPCRouter({
   get: protectedProcedure.input(idSchema).query(async ({ ctx, input }) => {
     const [user, villageData] = await Promise.all([
       fetchUser(ctx.drizzle, ctx.userId),
-      findVillageForGet(ctx.drizzle, input),
+      findVillageById(ctx.drizzle, input.id),
     ]);
     if (
       !villageData ||
@@ -62,7 +61,7 @@ export const villageMissionRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, villageData, candidates] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findVillageById(ctx.drizzle, input),
+        findVillageById(ctx.drizzle, input.villageId),
         listQuestForSelect(ctx.drizzle),
       ]);
       if (
@@ -162,7 +161,7 @@ export const villageMissionRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, villageData] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findVillageById(ctx.drizzle, input),
+        findVillageById(ctx.drizzle, input.villageId),
       ]);
       if (
         !villageData ||

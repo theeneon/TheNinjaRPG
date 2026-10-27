@@ -56,15 +56,11 @@ import {
   fetchUserExtractions,
   findFarmExtractionForExtractSeeds,
   findFarmPlotForPlantSeed,
-  findItemForExtractSeeds,
-  findItemForPlantAllEmpty,
-  findItemForResolveShopEntry,
   findUserItemForAwardItemToUser,
   insertFarmExtractionForExtractSeeds,
   insertFarmPlotForBuyShopItem,
   insertFarmPlotForEnsureFarmPlots,
   insertUserItemForAwardItemToUser,
-  listFarmPlotForEnsureFarmPlots,
   listFarmPlotForPlantAllEmpty,
   listFarmPlotForWaterAll,
   listItemForBuildFarmState,
@@ -91,7 +87,7 @@ import {
   updateUserDataForSellCrop,
   updateUserItemForAwardItemToUser,
 } from "@/queries/farming";
-import { listItemsByIds } from "@/queries/item";
+import { fetchItem, listItemsByIds } from "@/queries/item";
 import { fetchMasterySources, fetchUserSkills } from "@/queries/skillTree";
 
 import { fetchUserItems } from "@/server/api/routers/item";
@@ -541,7 +537,7 @@ export const farmingRouter = createTRPCRouter({
         await Promise.all([
           fetchUser(ctx.drizzle, ctx.userId),
           fetchUserItems(ctx.drizzle, ctx.userId),
-          findItemForPlantAllEmpty(ctx.drizzle, input),
+          fetchItem(ctx.drizzle, input.seedItemId),
           listFarmPlotForPlantAllEmpty(ctx.drizzle, ctx),
           fetchFarmingQuestState(ctx.drizzle, ctx.userId),
           fetchMasterySources(ctx.drizzle, ctx.userId),
@@ -1187,9 +1183,10 @@ export const farmingRouter = createTRPCRouter({
       }
 
       const seedsToGrant = cropStack.item.farmExtractSeedCount * input.quantity;
-      const seedItem = await findItemForExtractSeeds(ctx.drizzle, {
-        item: { farmExtractSeedItemId: cropStack.item.farmExtractSeedItemId },
-      });
+      const seedItem = await fetchItem(
+        ctx.drizzle,
+        cropStack.item.farmExtractSeedItemId,
+      );
       if (!seedItem) return errorResponse("Seed item not found");
 
       // The other extractors' seeds land in this same inventory. Sizing this job against
@@ -1360,7 +1357,7 @@ const resolveShopEntry = async (
 ) => {
   if (type === "SEED" || type === "FERTILIZER") {
     if (!itemId) return null;
-    const shopItem = await findItemForResolveShopEntry(client, itemId);
+    const shopItem = await fetchItem(client, itemId);
     if (!shopItem) return null;
     if (type === "SEED" && !shopItem.isFarmSeed) return null;
     if (type === "FERTILIZER" && !shopItem.isFarmFertilizer) return null;
@@ -1936,7 +1933,7 @@ export const ensureFarmPlots = async (
   if (inserts.length > 0) {
     await insertFarmPlotForEnsureFarmPlots(client, inserts);
 
-    return await listFarmPlotForEnsureFarmPlots(client, userId);
+    return await fetchFarmPlots(client, userId);
   }
 
   return existing;

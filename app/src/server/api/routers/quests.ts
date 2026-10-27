@@ -128,7 +128,12 @@ import { availableQuestLetterRanks, availableRanks } from "@/libs/train";
 import { villageMissionCompletionEvents } from "@/libs/villageMission";
 import { reduceActiveFarmPlotTimers } from "@/queries/farming";
 import { deleteUserItemsWithPositiveQuantity } from "@/queries/item";
-import { fetchUser, findUserById, incrementUserMoney } from "@/queries/profile";
+import {
+  fetchUser,
+  findOwnedUserPet,
+  findUserById,
+  incrementUserMoney,
+} from "@/queries/profile";
 import {
   deleteOverworldAiPlacementQuestForDelete,
   deleteQuestForDelete,
@@ -155,12 +160,10 @@ import {
   findQuestHistoryForClaimRewardChoice,
   findQuestHistoryForCollectPetTask,
   findQuestHistoryForUpsertQuestEntry,
-  findUserDataForCommitQuestObjectiveRewards,
   findUserDataForGet,
   findUserDataForGetPendingRewardChoices,
   findUserDataForGetPetTask,
-  findUserDataForUpdateRewards,
-  findUserPetForStartPetTask,
+  findUserPvpRewardState,
   insertActionLogForDelete,
   insertActionLogForDeleteUserQuest,
   insertActionLogForUpdate,
@@ -1184,7 +1187,7 @@ export const questsRouter = createTRPCRouter({
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId, forceRegen: true }),
         fetchQuest(ctx.drizzle, input.questId),
         fetchUserQuestByQuestId(ctx.drizzle, ctx.userId, input.questId),
-        findUserPetForStartPetTask(ctx.drizzle, input, ctx),
+        findOwnedUserPet(ctx.drizzle, input.petId, ctx.userId),
       ]);
       if (!user) return errorResponse("User not found");
       const blocked = petTaskDispatchBlockMessage(user, pet);
@@ -1284,7 +1287,7 @@ export const questsRouter = createTRPCRouter({
       const [{ user, settings }, history, pet] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
         findQuestHistoryForCollectPetTask(ctx.drizzle, input, ctx),
-        findUserPetForStartPetTask(ctx.drizzle, input, ctx),
+        findOwnedUserPet(ctx.drizzle, input.petId, ctx.userId),
       ]);
       if (!user) return errorResponse("User not found");
       const task = user.petTask;
@@ -2007,7 +2010,7 @@ export const updateRewards = async (info: {
         : undefined,
     () =>
       hasRecruiterPrestige && user.recruiterId
-        ? findUserDataForUpdateRewards(client, { recruiterId: user.recruiterId })
+        ? findUserPvpRewardState(client, user.recruiterId)
         : undefined,
     () =>
       rewards.reward_village_membership !== "NONE"
@@ -3497,7 +3500,7 @@ export const commitQuestObjectiveRewards = async (info: {
       ? user.senseiId
       : null;
   const [sensei, pvpAverage] = await Promise.all([
-    senseiId ? findUserDataForCommitQuestObjectiveRewards(client, senseiId) : undefined,
+    senseiId ? findUserPvpRewardState(client, senseiId) : undefined,
     senseiId ? fetchPvpExperienceAverage(client) : undefined,
   ]);
   const senseiReward = Math.floor(

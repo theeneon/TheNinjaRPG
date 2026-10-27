@@ -778,15 +778,6 @@ export const listWarForStartSectorWar = (client: Pick<DrizzleClient, "query">) =
     with: { warAllies: { where: activeWarAllyWhere() } },
   });
 
-/** Build the `sector` lookup for `startSectorWar`, using predicates on `sector`. */
-export const findSectorForStartSectorWar = (
-  client: Pick<DrizzleClient, "query">,
-  declaration: { sectorId: number },
-) =>
-  client.query.sector.findFirst({
-    where: eq(sector.sector, declaration.sectorId),
-  });
-
 /** Build the `village` update for `startSectorWar`, setting `tokens`, using predicates on `id` and `tokens`. */
 export const updateVillageForStartSectorWar = (
   client: Pick<DrizzleClient, "update">,
@@ -853,17 +844,6 @@ export const listSectorForStartDeclaredWar = (
   client.query.sector.findMany({
     where: inArray(sector.villageId, villageIds),
   });
-
-/** Build the `userData` selection for `startDeclaredWar`, using predicates on `villageId`, `id`, `isAi`. */
-export const selectUserDataForStartDeclaredWar = (
-  client: Pick<DrizzleClient, "select">,
-  attacker: { id: string },
-) =>
-  client
-    .select({ count: count() })
-    .from(userData)
-    .innerJoin(clan, eq(clan.id, userData.clanId))
-    .where(and(eq(clan.villageId, attacker.id), eq(userData.isAi, false)));
 
 /** Build the `villageStructure` selection for `startDeclaredWar`, using predicates on `villageId`. */
 export const selectVillageStructureForStartDeclaredWar = (
@@ -2107,8 +2087,8 @@ export const listWarForFetchActiveWars = (client: Pick<DrizzleClient, "query">) 
     },
   });
 
-/** Build the `userData` selection for `getVillageMemberCount`, using predicates on `villageId` and `isAi`. */
-export const selectUserDataForGetVillageMemberCount = (
+/** Build the count of non-AI clan members belonging to a village. */
+export const selectClanMemberCountForVillage = (
   client: Pick<DrizzleClient, "select">,
   villageId: string,
 ) =>
@@ -2131,7 +2111,7 @@ export const selectUserDataForGetVillageMemberCount2 = (
 /** Build the `village` selection for `getVillageMemberCount`, using predicates on `id`. */
 export const selectVillageForGetVillageMemberCount = (
   client: Pick<DrizzleClient, "select">,
-  factionMembers: ReturnType<typeof selectUserDataForGetVillageMemberCount>,
+  factionMembers: ReturnType<typeof selectClanMemberCountForVillage>,
   residents: ReturnType<typeof selectUserDataForGetVillageMemberCount2>,
   villageId: string,
 ) =>

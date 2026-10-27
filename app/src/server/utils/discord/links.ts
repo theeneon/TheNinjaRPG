@@ -1,14 +1,12 @@
-import { sql } from "drizzle-orm";
 import {
   DISCORD_UNLINK_COOLDOWN_DAYS,
   type DiscordUnlinkReason,
 } from "@/drizzle/constants";
-import { type DiscordLink, discordLink } from "@/drizzle/schema";
+import type { DiscordLink, discordLink } from "@/drizzle/schema";
 import {
   deleteDiscordLinkForArchiveDiscordLink,
   findDiscordLinkForUser,
   findUserDataForLoadLinkCandidate,
-  indefiniteSanctionWhere,
   insertDiscordLinkForInsertDiscordLink,
   insertDiscordLinkHistoryForArchiveDiscordLink,
   listDiscordLinkForFindClerkDiscordFlags,
@@ -45,19 +43,11 @@ export const fetchIndefiniteSanction = async (
   client: DrizzleClient,
   userId: string,
 ) => {
-  const reports = await selectUserReportForFetchIndefiniteSanction(
-    client,
-    indefiniteSanctionWhere,
-    userId,
-  );
+  const reports = await selectUserReportForFetchIndefiniteSanction(client, userId);
   return (
     reports.find((report) => report.status === "BAN_ACTIVATED") ?? reports[0] ?? null
   );
 };
-
-/** User ids linked to a Discord account, as a subquery. */
-export const discordAccountUserIds = (discordId: string) =>
-  sql`(SELECT ${discordLink.userId} FROM ${discordLink} WHERE ${discordLink.discordId} = ${discordId})`;
 
 /**
  * Indefinite sanctions of any character linked to a Discord account: the account stays banned
@@ -66,13 +56,7 @@ export const discordAccountUserIds = (discordId: string) =>
 export const fetchDiscordAccountSanctions = (
   client: DrizzleClient,
   discordId: string,
-) =>
-  selectUserReportForFetchDiscordAccountSanctions(
-    client,
-    indefiniteSanctionWhere,
-    discordAccountUserIds,
-    discordId,
-  );
+) => selectUserReportForFetchDiscordAccountSanctions(client, discordId);
 
 /** Load everything the linking rules need in one round of parallel reads. */
 export const loadLinkCandidate = async (
@@ -95,7 +79,7 @@ export const loadLinkCandidate = async (
     findDiscordLinkForUser(client, input),
     listDiscordLinkForLoadLinkCandidate(client, input),
     listDiscordLinkHistoryForLoadLinkCandidate(client, input, cooldownStart),
-    selectUserReportForLoadLinkCandidate(client, input, indefiniteSanctionWhere),
+    selectUserReportForLoadLinkCandidate(client, input),
     fetchActiveSanctionTombstones(client),
     fetchDiscordAccountSanctions(client, input.discordId),
   ]);

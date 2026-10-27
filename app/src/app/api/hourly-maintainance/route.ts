@@ -5,7 +5,7 @@ import { handleEndpointError, lockWithHourlyTimer } from "@/libs/gamesettings";
 import {
   deleteBountyContributionForBountyExpire,
   deleteBountySignupForBountyExpire,
-  listBountyContributionForBountyExpire,
+  listBountyContributions,
   listBountyForBountyExpire,
   refundBountyContribution,
   updateBountyForBountyExpire,
@@ -77,10 +77,7 @@ const bountyExpire = async () => {
   await Promise.all(
     expiredBounties.map(async (expiredBounty: (typeof expiredBounties)[number]) => {
       // Get all contributions for this bounty
-      const contributions = await listBountyContributionForBountyExpire(
-        drizzleDB,
-        expiredBounty,
-      );
+      const contributions = await listBountyContributions(drizzleDB, expiredBounty.id);
 
       // Execute all mutations in parallel for each bounty
       await Promise.all([

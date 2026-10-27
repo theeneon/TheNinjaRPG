@@ -313,13 +313,13 @@ export const listJutsuForGetLinkedReskins = (
     orderBy: asc(jutsu.name),
   });
 
-/** Build the `bloodlineReskin` lookup for `createLinkedReskin`, using predicates on `id`. */
-export const findBloodlineReskinForCreateLinkedReskin = (
+/** Build a bloodline reskin lookup by ID. */
+export const findBloodlineReskinById = (
   client: Pick<DrizzleClient, "query">,
-  input: { bloodlineReskinId: string },
+  reskinId: string,
 ) =>
   client.query.bloodlineReskin.findFirst({
-    where: eq(bloodlineReskin.id, input.bloodlineReskinId),
+    where: eq(bloodlineReskin.id, reskinId),
   });
 
 /** Build the parent-jutsu locking lookup used by the caller transaction when creating a linked reskin. */
@@ -328,15 +328,15 @@ export const selectJutsuForCreateLinkedReskin = (
   input: { parentId: string },
 ) => client.select().from(jutsu).where(eq(jutsu.id, input.parentId)).for("update");
 
-/** Build the bloodline-reskin locking lookup used by the caller transaction when linking reskins. */
-export const selectBloodlineReskinForCreateLinkedReskin = (
+/** Build a bloodline reskin lookup that locks the row in the caller’s transaction. */
+export const selectBloodlineReskinForUpdate = (
   client: Pick<DrizzleClient, "select">,
-  reskin: { id: string },
+  reskinId: string,
 ) =>
   client
     .select()
     .from(bloodlineReskin)
-    .where(eq(bloodlineReskin.id, reskin.id))
+    .where(eq(bloodlineReskin.id, reskinId))
     .for("update");
 
 /** Build the `jutsu` insert for `createLinkedReskin`. */
@@ -645,15 +645,6 @@ export const findItemForUpdate = (
     where: eq(item.id, input.data.requiredBloodlineItemId),
   });
 
-/** Build the `bloodlineReskin` lookup for `update`, using predicates on `id`. */
-export const findBloodlineReskinForUpdate = (
-  client: Pick<DrizzleClient, "query">,
-  input: { data: { bloodlineReskinId: string } },
-) =>
-  client.query.bloodlineReskin.findFirst({
-    where: eq(bloodlineReskin.id, input.data.bloodlineReskinId),
-  });
-
 /** Build the `petSpecies` lookup for `update`, selecting only `id`, using predicates on `id`. */
 export const findPetSpeciesForUpdate = (
   client: Pick<DrizzleClient, "query">,
@@ -844,18 +835,6 @@ export const updateUserJutsuForToggleEquip = (
         activeJutsuLoadoutLacksJutsuSql(ctx.userId, userjutsuObj.jutsuId),
       ),
     );
-
-/** Build the `userJutsu` selection for `toggleEquip`, using predicates on `id` and `userId`. */
-export const selectUserJutsuForToggleEquip = (
-  client: Pick<DrizzleClient, "select">,
-  input: { userJutsuId: string },
-  ctx: { userId: string },
-) =>
-  client
-    .select({ equipped: userJutsu.equipped })
-    .from(userJutsu)
-    .where(and(eq(userJutsu.id, input.userJutsuId), eq(userJutsu.userId, ctx.userId)))
-    .limit(1);
 
 /** Build the `jutsuLoadout` update for `updateUserJutsuOrder`, setting `jutsuIds`, using predicates on `id`. */
 export const updateJutsuLoadoutForUpdateUserJutsuOrder = (
@@ -1457,8 +1436,8 @@ export const updateUserJutsuForTryEquipUserJutsuAtomically = (
       ),
     );
 
-/** Build the `userJutsu` selection for `tryEquipUserJutsuAtomically`, using predicates on `id` and `userId`. */
-export const selectUserJutsuForTryEquipUserJutsuAtomically = (
+/** Build the equipped-state lookup for a jutsu owned by one user. */
+export const selectUserJutsuEquipped = (
   client: Pick<DrizzleClient, "select">,
   userJutsuId: string,
   userId: string,
@@ -1551,17 +1530,6 @@ export const selectJutsuForSaveJutsuFamily2 = (
         data.reskinParentJutsuId ? eq(jutsu.parentJutsuId, entry.id) : undefined,
       ),
     );
-
-/** Build the bloodline-reskin locking lookup used by the caller transaction when saving a linked jutsu family. */
-export const selectBloodlineReskinForSaveJutsuFamily = (
-  client: Pick<DrizzleClient, "select">,
-  data: { bloodlineReskinId: string },
-) =>
-  client
-    .select()
-    .from(bloodlineReskin)
-    .where(eq(bloodlineReskin.id, data.bloodlineReskinId))
-    .for("update");
 
 /** Build the `jutsu` update for `saveJutsuFamily`, setting `updatedAt`, using predicates on `id`. */
 export const updateJutsuForSaveJutsuFamily = (

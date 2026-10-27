@@ -5,7 +5,7 @@ import { env } from "@/env/server.mjs";
 import {
   executeResultForClaim,
   executeResultForUpgradeStripeFederalWithReps,
-  findStripeCheckoutForFulfillStripeInvoice,
+  findStripeCheckoutById,
   findStripePaymentForGrantStripeReceipt,
   findStripePaymentForUpgradeStripeFederalWithReps,
   insertStripePaymentForGrantStripeReceipt,
@@ -156,7 +156,7 @@ export const fulfillStripeInvoice = async (
   const checkoutId = subscription.metadata.tnrCheckoutId;
   // Other products in the same Stripe account must never grant game value.
   if (!checkoutId) return;
-  const checkout = await findStripeCheckoutForFulfillStripeInvoice(client, checkoutId);
+  const checkout = await findStripeCheckoutById(client, checkoutId);
   if (!checkout) throw new Error("Unknown Stripe subscription checkout");
   if (checkout.subscriptionId && checkout.subscriptionId !== subscriptionId)
     throw new Error("Stripe subscription does not match checkout");
@@ -170,7 +170,7 @@ export const fulfillStripeInvoice = async (
     checkoutId,
   );
   if (linked.rowsAffected === 0) {
-    const current = await findStripeCheckoutForFulfillStripeInvoice(client, checkoutId);
+    const current = await findStripeCheckoutById(client, checkoutId);
     if (current?.subscriptionId !== subscriptionId)
       throw new Error("Stripe subscription does not match checkout");
   }
@@ -199,7 +199,7 @@ export const fulfillStripeSession = async (
   });
   const checkoutId = session.metadata?.tnrCheckoutId;
   if (!checkoutId) return "ignored" as const;
-  const checkout = await findStripeCheckoutForFulfillStripeInvoice(client, checkoutId);
+  const checkout = await findStripeCheckoutById(client, checkoutId);
   if (!checkout) throw new Error("Unknown Stripe checkout");
   if (
     session.livemode !== stripeIsLive() ||

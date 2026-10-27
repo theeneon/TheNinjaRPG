@@ -282,13 +282,13 @@ export const listMpvpBattleQueueForGetCurrent = (
     },
   });
 
-/** Build the `territoryWar` lookup for `createTeam`, using predicates on `id`. */
-export const findTerritoryWarForCreateTeam = (
+/** Build a territory war lookup by ID. */
+export const findTerritoryWarById = (
   client: Pick<DrizzleClient, "query">,
-  input: { eventId: string },
+  eventId: string,
 ) =>
   client.query.territoryWar.findFirst({
-    where: eq(territoryWar.id, input.eventId),
+    where: eq(territoryWar.id, eventId),
   });
 
 /** Build the `mpvpBattleQueue` insert for `createTeam`. */
@@ -351,15 +351,6 @@ export const findMpvpBattleQueueForStartBattle = (
     with: { queue: true },
   });
 
-/** Build the `territoryWar` lookup for `startBattle`, using predicates on `id`. */
-export const findTerritoryWarForStartBattle = (
-  client: Pick<DrizzleClient, "query">,
-  team: { territoryWarId: string },
-) =>
-  client.query.territoryWar.findFirst({
-    where: eq(territoryWar.id, team.territoryWarId),
-  });
-
 /** Build the `mpvpBattleQueue` update for `startBattle`, setting `battleId`, using predicates on `id` and `battleId`. */
 export const updateMpvpBattleQueueForStartBattle = (
   client: Pick<DrizzleClient, "update">,
@@ -370,15 +361,6 @@ export const updateMpvpBattleQueueForStartBattle = (
     .update(mpvpBattleQueue)
     .set({ battleId })
     .where(and(eq(mpvpBattleQueue.id, team.id), isNull(mpvpBattleQueue.battleId)));
-
-/** Build the `mpvpBattleUser` listing for `startBattle`, using predicates on `clanBattleId`. */
-export const listMpvpBattleUserForStartBattle = (
-  client: Pick<DrizzleClient, "query">,
-  team: { id: string },
-) =>
-  client.query.mpvpBattleUser.findMany({
-    where: eq(mpvpBattleUser.clanBattleId, team.id),
-  });
 
 /** Execute the database statement for `startBattle`. */
 export const executeRowsForStartBattle = (

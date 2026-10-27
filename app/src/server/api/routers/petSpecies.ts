@@ -1,20 +1,17 @@
 import { nanoid } from "nanoid";
 import { isPetJutsuAllowed } from "@/libs/pets/abilities";
 import { callDiscordContent } from "@/libs/socials";
+import { listJutsuByIds } from "@/queries/jutsu";
 import {
-  findPetSpeciesForCreate,
+  findPetSpeciesByName,
   findPetSpeciesForGet,
-  findPetSpeciesForUpdate2,
   insertActionLogForCreate,
   insertActionLogForUpdate,
   insertPetSpeciesForCreate,
-  listJutsuForCreate,
-  listJutsuForUpdate,
   listPetSpeciesForGetAll,
   updatePetSpeciesForUpdate,
 } from "@/queries/petSpecies";
 import { fetchUser } from "@/queries/profile";
-
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -48,8 +45,10 @@ export const petSpeciesRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, existing, defaults] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findPetSpeciesForCreate(ctx.drizzle, input),
-        input.defaultJutsuIds.length ? listJutsuForCreate(ctx.drizzle, input) : [],
+        findPetSpeciesByName(ctx.drizzle, input.name),
+        input.defaultJutsuIds.length
+          ? listJutsuByIds(ctx.drizzle, input.defaultJutsuIds)
+          : [],
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -90,8 +89,10 @@ export const petSpeciesRouter = createTRPCRouter({
       const [user, species, existing, defaults] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         findPetSpeciesForGet(ctx.drizzle, input),
-        findPetSpeciesForUpdate2(ctx.drizzle, input),
-        input.data.defaultJutsuIds.length ? listJutsuForUpdate(ctx.drizzle, input) : [],
+        findPetSpeciesByName(ctx.drizzle, input.data.name),
+        input.data.defaultJutsuIds.length
+          ? listJutsuByIds(ctx.drizzle, input.data.defaultJutsuIds)
+          : [],
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");

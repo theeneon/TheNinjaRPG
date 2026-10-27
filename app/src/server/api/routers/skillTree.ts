@@ -20,8 +20,7 @@ import {
   deleteUserSkillForResetSkillPoints,
   fetchSkillTreeViewer,
   fetchUserSkills,
-  findBloodlineForCreate,
-  findBloodlineForUpdate,
+  findBloodlineIdentityById,
   findSkillTreeFolderForDeleteFolder,
   findSkillTreeFolderForUpdate,
   findSkillTreeFolderForUpdateFolder,
@@ -265,7 +264,7 @@ export const skillTreeRouter = createTRPCRouter({
       const [{ user }, line] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
         input?.bloodlineId
-          ? findBloodlineForCreate(ctx.drizzle, { bloodlineId: input.bloodlineId })
+          ? findBloodlineIdentityById(ctx.drizzle, input.bloodlineId)
           : Promise.resolve(null),
       ]);
       if (!user || !canChangeContent(user.role)) {
@@ -314,9 +313,7 @@ export const skillTreeRouter = createTRPCRouter({
           ? findSkillTreeFolderForUpdate(ctx.drizzle, requestedFolderId)
           : Promise.resolve(null),
         input.data.bloodlineId
-          ? findBloodlineForUpdate(ctx.drizzle, {
-              data: { bloodlineId: input.data.bloodlineId },
-            })
+          ? findBloodlineIdentityById(ctx.drizzle, input.data.bloodlineId)
           : Promise.resolve(null),
         input.data.requiredSkillIds.length
           ? listSkillTreeForUpdate(ctx.drizzle, input)

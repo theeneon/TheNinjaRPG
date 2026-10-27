@@ -68,12 +68,6 @@ export const listAuctionOfferForGetAuctionOffers = (
     limit: input.limit + 1,
   });
 
-/** Build the `item` lookup for `createAuctionOffer`, using predicates on `id`. */
-export const findItemForCreateAuctionOffer = (
-  client: Pick<DrizzleClient, "query">,
-  input: { requestedItemId: string },
-) => client.query.item.findFirst({ where: eq(item.id, input.requestedItemId) });
-
 /** Build the `userData` update for `createAuctionOffer`, setting `bank` and `updatedAt`, using predicates on `bank`. */
 export const updateUserDataForCreateAuctionOffer = (
   client: Pick<DrizzleClient, "update">,

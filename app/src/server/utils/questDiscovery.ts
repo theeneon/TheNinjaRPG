@@ -24,8 +24,7 @@ export const fetchQuestDiscoveryCandidates = async (
   selectQuestForFetchQuestDiscoveryCandidates(
     client,
     userId,
-    buildQuestDiscoveryWhere,
-    options,
+    buildQuestDiscoveryWhere(options),
   );
 
 /**
@@ -40,8 +39,7 @@ export const fetchQuestDiscoverySummaryCandidates = async (
   selectQuestForFetchQuestDiscoverySummaryCandidates(
     client,
     userId,
-    buildQuestDiscoveryWhere,
-    options,
+    buildQuestDiscoveryWhere(options),
   );
 
 const buildQuestDiscoveryWhere = (options: QuestDiscoveryOptions) =>

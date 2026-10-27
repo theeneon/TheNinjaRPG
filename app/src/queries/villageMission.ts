@@ -122,12 +122,6 @@ export const executeResultForApplyVillageMissionShrineDamage = (
     WHERE ${and(eq(war.id, warId), isNull(war.endedAt), warRaidCombatGuard())}
   `);
 
-/** Build the `village` lookup for `get`, using predicates on `id`. */
-export const findVillageForGet = (
-  client: Pick<DrizzleClient, "query">,
-  input: { id: string },
-) => client.query.village.findFirst({ where: eq(village.id, input.id) });
-
 /** Build the `quest` listing for `select`, using predicates on `questType`. */
 export const listQuestForSelect = (client: Pick<DrizzleClient, "query">) =>
   client.query.quest.findMany({

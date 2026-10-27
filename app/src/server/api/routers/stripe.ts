@@ -3,9 +3,7 @@ import { FEDERAL_MONTHLY_USD_CENTS } from "@/drizzle/constants";
 import { isNativeUserAgent } from "@/libs/native/userAgent";
 import { findUserById } from "@/queries/profile";
 import {
-  findStripeCheckoutForCancelCheckout,
-  findStripeCheckoutForCreateCheckout,
-  findStripeCheckoutForResolveSession,
+  findStripeCheckoutById,
   insertStripeCheckoutForCreateCheckout,
   listStripeCheckoutForCreateCheckout,
   listStripeCheckoutForCreateCheckout2,
@@ -60,7 +58,7 @@ export const stripeRouter = createTRPCRouter({
       const [buyer, recipient, existing, allowanceUsed, pending] = await Promise.all([
         findUserById(ctx.drizzle, ctx.userId),
         findUserById(ctx.drizzle, input.userId),
-        findStripeCheckoutForCreateCheckout(ctx.drizzle, input),
+        findStripeCheckoutById(ctx.drizzle, input.requestId),
         reputationAllowanceUsed(ctx.drizzle, ctx.userId, "", input.requestId),
         listStripeCheckoutForCreateCheckout(ctx.drizzle, ctx, input),
       ]);
@@ -194,7 +192,7 @@ export const stripeRouter = createTRPCRouter({
           );
       }
       // A concurrent request using the same id must agree with the saved, server-authored terms.
-      const saved = await findStripeCheckoutForCreateCheckout(ctx.drizzle, input);
+      const saved = await findStripeCheckoutById(ctx.drizzle, input.requestId);
       if (
         !saved ||
         saved.createdById !== ctx.userId ||
@@ -250,7 +248,7 @@ export const stripeRouter = createTRPCRouter({
   cancelCheckout: protectedProcedure
     .input(z.object({ checkoutId: z.string().min(1).max(191) }))
     .mutation(async ({ ctx, input }) => {
-      const checkout = await findStripeCheckoutForCancelCheckout(ctx.drizzle, input);
+      const checkout = await findStripeCheckoutById(ctx.drizzle, input.checkoutId);
       if (!checkout || checkout.createdById !== ctx.userId)
         return errorResponse("This checkout belongs to another account.");
       if (checkout.closedAt) return { success: true, message: "Checkout cancelled." };
@@ -294,9 +292,7 @@ export const stripeRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const session = await getStripe().checkout.sessions.retrieve(input.sessionId);
       const checkout = session.metadata?.tnrCheckoutId
-        ? await findStripeCheckoutForResolveSession(ctx.drizzle, {
-            metadata: { tnrCheckoutId: session.metadata.tnrCheckoutId },
-          })
+        ? await findStripeCheckoutById(ctx.drizzle, session.metadata.tnrCheckoutId)
         : undefined;
       if (!checkout || checkout.createdById !== ctx.userId)
         return errorResponse("This checkout belongs to another account.");
@@ -352,7 +348,7 @@ export const stripeRouter = createTRPCRouter({
   cancelSubscription: protectedProcedure
     .input(z.object({ checkoutId: z.string().min(1).max(191) }))
     .mutation(async ({ ctx, input }) => {
-      const checkout = await findStripeCheckoutForCancelCheckout(ctx.drizzle, input);
+      const checkout = await findStripeCheckoutById(ctx.drizzle, input.checkoutId);
       if (
         !checkout?.subscriptionId ||
         ![checkout.createdById, checkout.affectedUserId].includes(ctx.userId)

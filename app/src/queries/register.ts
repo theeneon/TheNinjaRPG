@@ -10,7 +10,6 @@ import {
 } from "@/drizzle/constants";
 import {
   activityStreakConfig,
-  bloodline,
   bloodlineRolls,
   historicalIp,
   paypalSubscription,
@@ -92,15 +91,6 @@ export const findUserDataForCreateCharacter2 = (
 ) =>
   client.query.userData.findFirst({
     where: eq(userData.username, input.username),
-  });
-
-/** Build the `bloodline` lookup for `createCharacter`, using predicates on `id`. */
-export const findBloodlineForCreateCharacter = (
-  client: Pick<DrizzleClient, "query">,
-  input: { bloodlineId: string },
-) =>
-  client.query.bloodline.findFirst({
-    where: eq(bloodline.id, input.bloodlineId),
   });
 
 /** Build the `historicalIp` lookup for `createCharacter`, using predicates on `ip` and `userId`. */

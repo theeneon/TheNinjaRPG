@@ -34,13 +34,11 @@ import {
   findMpvpBattleQueueForJoinShrineBattle,
   findMpvpBattleQueueForLeaveShrineBattle,
   findMpvpBattleUserForJoinShrineBattle,
-  findSectorForChallengeShrine,
+  findSectorByNumber,
   findSectorForPayWeeklyMaintenance,
-  findSectorForUpgradeShrine,
+  findSectorWithVillage,
   findUserDataForJoinShrineBattle,
-  findVillageForChallengeShrine,
   findVillageForGetBoostTemplate,
-  findVillageForInitiateShrineBattle,
   insertMpvpBattleQueueForChallengeShrine,
   insertMpvpBattleUserForChallengeShrine,
   insertMpvpBattleUserForJoinShrineBattle,
@@ -67,7 +65,11 @@ import {
   updateVillageForUpgradeShrine,
   updateVillageForUpgradeShrine2,
 } from "@/queries/shrine";
-import { fetchAlliances } from "@/queries/village";
+import {
+  fetchAlliances,
+  findVillageById,
+  findVillageBySector,
+} from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
@@ -119,7 +121,7 @@ export const shrineRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        findSectorForUpgradeShrine(ctx.drizzle, input),
+        findSectorByNumber(ctx.drizzle, input.sectorNumber),
       ]);
 
       // Guards
@@ -648,10 +650,10 @@ export const shrineRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        findSectorForChallengeShrine(ctx.drizzle, input),
+        findSectorWithVillage(ctx.drizzle, input.sectorNumber),
         fetchActiveWars(ctx.drizzle),
         fetchAlliances(ctx.drizzle),
-        findVillageForChallengeShrine(ctx.drizzle, input),
+        findVillageBySector(ctx.drizzle, input.sectorNumber),
         // Check if user is already in any active battle queue
         fetchActiveUserMpvpBattles(ctx.drizzle, ctx.userId),
       ]);
@@ -1112,9 +1114,9 @@ export const shrineRouter = createTRPCRouter({
       // If no player defenders, use AI defenders from the defender village
       if (defenderIds.length === 0) {
         // Use defenderEntityId directly - it's the village ID for shrine battles
-        const defenderVillage = await findVillageForInitiateShrineBattle(
+        const defenderVillage = await findVillageById(
           ctx.drizzle,
-          shrineBattle,
+          shrineBattle.defenderEntityId,
         );
         if (defenderVillage?.shrineSettings?.activeAiIds) {
           defenderIds = defenderVillage.shrineSettings.activeAiIds.slice(
