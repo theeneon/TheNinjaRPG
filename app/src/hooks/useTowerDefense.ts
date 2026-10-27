@@ -1150,7 +1150,7 @@ export const useTowerDefense = (userId?: string) => {
       sessionIdRef.current = existingSessionId;
 
       // PERFORMANCE: Subscribe to session-specific data (enemies, projectiles)
-      connection.subscribeToSession(existingSessionId);
+      connection.subscribeToSession(existingSessionId, { replayCached: true });
 
       // PERFORMANCE: Sync HUD store so UI updates immediately
       syncHudStore();

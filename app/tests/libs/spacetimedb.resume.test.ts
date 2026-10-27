@@ -33,4 +33,22 @@ describe("resuming a cached tower defense session", () => {
     expect(events[0]).toMatchObject({ session: { id: 2n } });
     expect(counts()).toEqual([2, 1]);
   });
+
+  it("hydrates a remounted game from an existing subscription without waiting for a row change", () => {
+    const { client, callbacks, counts } = fixture();
+    const original: SpacetimeDBEvent[] = [];
+    const unsubscribe = client.subscribe((event) => original.push(event));
+    client.subscribeToSession(1n); callbacks[0]!();
+    unsubscribe();
+    const resumed: SpacetimeDBEvent[] = [];
+    client.subscribe((event) => {
+      resumed.push(event);
+      if (event.type === "session_update") client.subscribeToSession(event.session.id);
+    });
+    client.subscribeToSession(1n, { replayCached: true });
+    expect(counts()).toEqual([1, 0]);
+    expect(resumed.map((event) => event.type)).toEqual(original.map((event) => event.type));
+    expect(resumed.at(-1)).toMatchObject({ type: "session_state_update", state: { sessionId: 1n } });
+    expect(resumed).toHaveLength(6);
+  });
 });

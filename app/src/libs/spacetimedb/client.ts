@@ -367,12 +367,13 @@ export class SpacetimeDBConnection {
    * PERFORMANCE: Only called after session is created/resumed
    * This is the key optimization - we only receive entity updates for OUR session
    */
-  subscribeToSession(sessionId: bigint): void {
-    if (
-      !this.connection ||
-      (this.currentSessionId === sessionId && this.sessionSubscription)
-    )
+  subscribeToSession(sessionId: bigint, options?: { replayCached?: boolean }): void {
+    if (!this.connection) return;
+    if (this.currentSessionId === sessionId && this.sessionSubscription) {
+      // A newly mounted game has fresh refs even when this connection still owns the subscription.
+      if (options?.replayCached) this.replaySessionSnapshot(sessionId);
       return;
+    }
 
     // Unsubscribe from previous session if any
     if (this.sessionSubscription) {
@@ -389,24 +390,7 @@ export class SpacetimeDBConnection {
       .onApplied(() => {
         // Overlapping subscriptions do not re-insert rows already in the local cache.
         // Reconcile the resumed session explicitly after its complete snapshot arrives.
-        if (!this.connection || this.currentSessionId !== sessionId) return;
-        const db = this.connection.db;
-        for (const session of db.gameSession.iter())
-          if (session.id === sessionId) this.emit({ type: "session_update", session });
-        for (const upgrade of db.sessionUpgrade.iter())
-          if (upgrade.sessionId === sessionId)
-            this.emit({ type: "session_upgrade_insert", upgrade });
-        for (const spawn of db.enemySpawn.iter())
-          if (spawn.sessionId === sessionId)
-            this.emit({ type: "enemy_spawn_insert", spawn });
-        for (const enemy of db.enemy.iter())
-          if (enemy.sessionId === sessionId) this.emit({ type: "enemy_insert", enemy });
-        for (const projectile of db.projectile.iter())
-          if (projectile.sessionId === sessionId)
-            this.emit({ type: "projectile_insert", projectile });
-        for (const state of db.sessionState.iter())
-          if (state.sessionId === sessionId)
-            this.emit({ type: "session_state_update", state });
+        this.replaySessionSnapshot(sessionId);
         if (DEBUG) {
           console.log(
             "[SpacetimeDB] Session subscription applied for:",
@@ -439,6 +423,27 @@ export class SpacetimeDBConnection {
       this.sessionSubscription = null;
     }
     this.currentSessionId = null;
+  }
+
+  private replaySessionSnapshot(sessionId: bigint): void {
+    if (!this.connection || this.currentSessionId !== sessionId) return;
+    const db = this.connection.db;
+    for (const session of db.gameSession.iter())
+      if (session.id === sessionId) this.emit({ type: "session_update", session });
+    for (const upgrade of db.sessionUpgrade.iter())
+      if (upgrade.sessionId === sessionId)
+        this.emit({ type: "session_upgrade_insert", upgrade });
+    for (const spawn of db.enemySpawn.iter())
+      if (spawn.sessionId === sessionId)
+        this.emit({ type: "enemy_spawn_insert", spawn });
+    for (const enemy of db.enemy.iter())
+      if (enemy.sessionId === sessionId) this.emit({ type: "enemy_insert", enemy });
+    for (const projectile of db.projectile.iter())
+      if (projectile.sessionId === sessionId)
+        this.emit({ type: "projectile_insert", projectile });
+    for (const state of db.sessionState.iter())
+      if (state.sessionId === sessionId)
+        this.emit({ type: "session_state_update", state });
   }
 
   /**
