@@ -132,7 +132,7 @@ const TowerDefenseInner = ({
   ref,
 }: TowerDefenseProps & { ref?: React.Ref<TowerDefenseHandle> }) => {
   // Performance monitoring - use bounded mode (requestAnimationFrame) for proper vsync
-  const performanceMonitor = usePerformanceMonitor(false);
+  const performanceMonitor = usePerformanceMonitor(false, "towerDefense");
 
   // Refs for Three.js objects
   const mountRef = useRef<HTMLDivElement | null>(null);

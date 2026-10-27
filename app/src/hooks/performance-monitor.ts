@@ -1,14 +1,18 @@
 import { useEffect, useRef } from "react";
 import type Stats from "stats.js";
+import {
+  beginRenderMeasurement,
+  endRenderMeasurement,
+  installRenderCapture,
+  invalidateRenderMeasurement,
+} from "@/libs/rendering/browserMetrics";
 
 /**
- * Custom hook for Three.js performance monitoring using Stats.js
- * Only active in development mode
- * Shows FPS, MS, and MB panels
+ * Development FPS panels and opt-in production measurements for a named scene.
  *
  * @param unbounded - If true, removes vsync limitation for performance testing (dev only)
  */
-export const usePerformanceMonitor = (unbounded = false) => {
+export const usePerformanceMonitor = (unbounded = false, scene = "scene") => {
   const statsRef = useRef<{
     fps: Stats | null;
     ms: Stats | null;
@@ -20,13 +24,20 @@ export const usePerformanceMonitor = (unbounded = false) => {
   });
 
   useEffect(() => {
+    installRenderCapture();
+    return () => invalidateRenderMeasurement(scene, "Scene unmounted during capture");
+  }, [scene]);
+
+  useEffect(() => {
     // Only load Stats.js in development mode
     if (process.env.NODE_ENV !== "development") {
       return;
     }
 
+    let disposed = false;
     // Dynamically import Stats.js only in development
     void import("stats.js").then((module) => {
+      if (disposed) return;
       const Stats = module.default;
 
       // Create FPS panel
@@ -53,6 +64,7 @@ export const usePerformanceMonitor = (unbounded = false) => {
 
     // Cleanup on unmount
     return () => {
+      disposed = true;
       try {
         if (statsRef.current.fps && document.body.contains(statsRef.current.fps.dom)) {
           document.body.removeChild(statsRef.current.fps.dom);
@@ -72,6 +84,7 @@ export const usePerformanceMonitor = (unbounded = false) => {
 
   // Return functions to begin and end performance measurements
   const begin = () => {
+    beginRenderMeasurement(scene);
     if (process.env.NODE_ENV !== "development") return;
     statsRef.current.fps?.begin();
     statsRef.current.ms?.begin();
@@ -79,6 +92,7 @@ export const usePerformanceMonitor = (unbounded = false) => {
   };
 
   const end = () => {
+    endRenderMeasurement(scene);
     if (process.env.NODE_ENV !== "development") return;
     statsRef.current.fps?.end();
     statsRef.current.ms?.end();
@@ -87,7 +101,11 @@ export const usePerformanceMonitor = (unbounded = false) => {
 
   // Return custom requestAnimationFrame that can be unbounded for performance testing
   const requestFrame = (callback: FrameRequestCallback) => {
-    if (process.env.NODE_ENV === "development" && unbounded) {
+    if (
+      process.env.NODE_ENV === "development" &&
+      unbounded &&
+      !window.tnrRenderMeasurements
+    ) {
       // Unbounded mode: run as fast as possible without vsync
       return setTimeout(() => callback(performance.now()), 0) as unknown as number;
     }
@@ -96,7 +114,11 @@ export const usePerformanceMonitor = (unbounded = false) => {
   };
 
   const cancelFrame = (id: number) => {
-    if (process.env.NODE_ENV === "development" && unbounded) {
+    if (
+      process.env.NODE_ENV === "development" &&
+      unbounded &&
+      !window.tnrRenderMeasurements
+    ) {
       clearTimeout(id);
     } else {
       cancelAnimationFrame(id);

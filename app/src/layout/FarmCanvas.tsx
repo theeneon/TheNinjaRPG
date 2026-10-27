@@ -40,7 +40,12 @@ import {
   updatePlotHoverRing,
   updatePlotSelectionRing,
 } from "@/libs/threejs/farming";
-import { cleanUp, setRaycasterFromMouse, setupScene } from "@/libs/threejs/util";
+import {
+  cleanUp,
+  profiler,
+  setRaycasterFromMouse,
+  setupScene,
+} from "@/libs/threejs/util";
 import { useUserData } from "@/utils/UserContext";
 import type { FarmPlotState, FarmVisualState } from "@/validators/farming";
 
@@ -60,7 +65,7 @@ type FarmCanvasProps = {
 };
 
 const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) => {
-  const performanceMonitor = usePerformanceMonitor(false);
+  const performanceMonitor = usePerformanceMonitor(false, "farm");
   const { timeDiff } = useUserData();
   const mountRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<Scene | null>(null);
@@ -283,6 +288,7 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
 
       if (rendererRef.current && sceneRef.current && cameraRef.current) {
         rendererRef.current.render(sceneRef.current, cameraRef.current);
+        profiler.setRendererInfo(rendererRef.current.info);
       }
       performanceMonitor.end();
       animationId = performanceMonitor.requestFrame(animate);

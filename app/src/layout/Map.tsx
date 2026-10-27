@@ -31,6 +31,7 @@ import {
 } from "@/drizzle/constants";
 import type { Village } from "@/drizzle/schema";
 import { safeLocalStorageGetItem, safeLocalStorageSetItem } from "@/hooks/localstorage";
+import { usePerformanceMonitor } from "@/hooks/performance-monitor";
 import { useTutorialStep } from "@/hooks/tutorial";
 import WebGlError from "@/layout/WebGLError";
 import {
@@ -46,6 +47,7 @@ import {
   createTexture,
   isRendererContextValid,
   loadTexture,
+  profiler,
   safeRemoveRendererElement,
   setupContextLossHandling,
   setupScene,
@@ -94,6 +96,7 @@ const getStoredGlobalMapZoom = () => {
 };
 
 const GlobalMap: React.FC<MapProps> = (props) => {
+  const performanceMonitor = usePerformanceMonitor(false, "globe");
   const { data: userData } = useUserData();
   const [webglError, setWebglError] = useState<boolean>(false);
   const [hoverSector, setHoverSector] = useState<number | null>(null);
@@ -981,6 +984,7 @@ const GlobalMap: React.FC<MapProps> = (props) => {
       let lastRaycastMouseX = Number.NaN;
       let lastRaycastMouseY = Number.NaN;
       function render() {
+        performanceMonitor.begin();
         // One cosine phase, 0 -> 1 -> 0, drives every highlight pulse. Continuous
         // at both ends by construction, so nothing jumps on the turnaround.
         const phase =
@@ -1069,7 +1073,9 @@ const GlobalMap: React.FC<MapProps> = (props) => {
         animationId = requestAnimationFrame(render);
         if (canRender && renderer) {
           renderer.render(scene, camera);
+          profiler.setRendererInfo(renderer.info);
         }
+        performanceMonitor.end();
 
         // Performance monitor
         // stats.update();

@@ -207,7 +207,7 @@ const Sector: React.FC<SectorProps> = (props) => {
   showDayNightMapOverlaysRef.current = showDayNightMapOverlays;
 
   // Performance monitoring
-  const performanceMonitor = usePerformanceMonitor(false);
+  const performanceMonitor = usePerformanceMonitor(false, "sector");
 
   // State pertaining to the sector
   const [webglError, setWebglError] = useState<boolean>(false);

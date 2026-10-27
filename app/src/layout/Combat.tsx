@@ -138,7 +138,7 @@ const Combat: React.FC<CombatProps> = (props) => {
   const [storedZoom, setStoredZoom] = useLocalStorage<number>("combatZoom", 1.5);
 
   // Performance monitoring (unbounded for max FPS testing in dev)
-  const performanceMonitor = usePerformanceMonitor(true);
+  const performanceMonitor = usePerformanceMonitor(false, "combat");
 
   // References which shouldn't update
   const [webglError, setWebglError] = useState<boolean>(false);

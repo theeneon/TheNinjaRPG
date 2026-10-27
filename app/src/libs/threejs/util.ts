@@ -23,6 +23,7 @@ import {
   WebGLRenderer,
 } from "three";
 import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
+import { markRenderStage, recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { textureImageUrl } from "@/utils/image";
 
 /**
@@ -756,9 +757,11 @@ export const profiler = {
   rendererInfo: null as WebGLInfo | null,
 
   mark: function (name: string) {
-    if (!this.enabled) return () => {};
+    const finishMeasurement = markRenderStage(name);
+    if (!this.enabled) return finishMeasurement ?? (() => {});
     const start = performance.now();
     return () => {
+      finishMeasurement?.();
       const duration = performance.now() - start;
       const entry = this.data.get(name) || {
         total: 0,
@@ -801,6 +804,10 @@ export const profiler = {
    * Call this with renderer.info after render.
    */
   setRendererInfo: function (info: WebGLInfo) {
+    recordRenderCounter("drawCalls", info.render.calls);
+    recordRenderCounter("triangles", info.render.triangles);
+    recordRenderCounter("textures", info.memory.textures);
+    recordRenderCounter("geometries", info.memory.geometries);
     if (!this.enabled) return;
     this.rendererInfo = info;
   },
@@ -810,6 +817,7 @@ export const profiler = {
    * This is reset every log interval.
    */
   reportCount: function (name: string, count: number) {
+    recordRenderCounter(name, count);
     if (!this.enabled) return;
     this.counts.set(name, count);
   },
