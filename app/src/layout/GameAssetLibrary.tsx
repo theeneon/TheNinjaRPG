@@ -11,7 +11,7 @@ import {
   FolderOpen,
   LayoutGrid,
   List,
-  Music2,
+  LoaderCircle,
   Pause,
   Pencil,
   Play,
@@ -19,11 +19,10 @@ import {
   Search,
   SlidersHorizontal,
   Trash2,
-  Volume2,
   X,
 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,10 +80,73 @@ export function GameAssetLibrary() {
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState<GameAsset | null>(null);
+  const [playingAssetId, setPlayingAssetId] = useState<string | null>(null);
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<{
+    id: string;
+    message: string;
+  } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const activePreview = useRef<{ id: string; isAudio: boolean } | null>(null);
+  const audioAssetId = useRef<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
   const keywordSearchRef = useRef<HTMLInputElement | null>(null);
   const selectedTrigger = useRef<HTMLElement | null>(null);
   const createTrigger = useRef<HTMLButtonElement | null>(null);
+
+  /** Stop the active overview preview and invalidate any pending play promise. */
+  const stopPreview = useCallback(() => {
+    activePreview.current = null;
+    audioRef.current?.pause();
+    setPlayingAssetId(null);
+    setIsAudioLoading(false);
+  }, []);
+
+  /** Report a media failure only while its playback request is still current. */
+  const failAudioPreview = (preview: typeof activePreview.current) => {
+    if (!preview?.isAudio || activePreview.current !== preview) return;
+    stopPreview();
+    audioAssetId.current = null;
+    setPreviewError({
+      id: preview.id,
+      message: "Audio could not be played. Try again or open its details.",
+    });
+  };
+
+  /** Start audio during the click gesture; animations share the same active-card state. */
+  const togglePreview = async (asset: GameAsset) => {
+    if (activePreview.current?.id === asset.id) {
+      stopPreview();
+      return;
+    }
+    stopPreview();
+    setPreviewError(null);
+    const preview = {
+      id: asset.id,
+      isAudio: asset.type === "SFX" || asset.type === "MUSIC",
+    };
+    activePreview.current = preview;
+    setPlayingAssetId(asset.id);
+    if (!preview.isAudio) return;
+
+    const audio = audioRef.current;
+    if (!audio) {
+      stopPreview();
+      return;
+    }
+    // Resume a paused asset, but restart when choosing another asset or source.
+    if (audioAssetId.current !== asset.id || audio.getAttribute("src") !== asset.url) {
+      audio.src = asset.url;
+      audioAssetId.current = asset.id;
+    }
+    setIsAudioLoading(true);
+    try {
+      await audio.play();
+      if (activePreview.current === preview) setIsAudioLoading(false);
+    } catch {
+      failAudioPreview(preview);
+    }
+  };
 
   const listing = api.gameAsset.getAll.useInfiniteQuery(
     {
@@ -126,6 +188,21 @@ export function GameAssetLibrary() {
   if (view === "list") returnParams.set("view", view);
   if (hasKeywords) for (const tag of keywords) returnParams.append("tag", tag);
   const returnTo = `/manual/asset${returnParams.size ? `?${returnParams}` : ""}`;
+
+  // One lazy audio element avoids loading every sound in the gallery. Release it when
+  // navigating/filtering so playback and pending requests cannot outlive the overview.
+  useEffect(() => {
+    const audio = audioRef.current;
+    stopPreview();
+    setPreviewError(null);
+    return () => {
+      activePreview.current = null;
+      audioAssetId.current = null;
+      audio?.pause();
+      audio?.removeAttribute("src");
+      audio?.load();
+    };
+  }, [returnTo, stopPreview]);
 
   // Save filters without adding history entries, preserving the library's Back target.
   useEffect(() => {
@@ -179,6 +256,21 @@ export function GameAssetLibrary() {
         ) : undefined
       }
     >
+      {/* biome-ignore lint/a11y/useMediaCaption: game music and sound effects have no caption track */}
+      <audio
+        ref={audioRef}
+        preload="none"
+        hidden
+        onEnded={() => {
+          if (audioRef.current?.ended && activePreview.current?.isAudio) stopPreview();
+        }}
+        onPause={() => {
+          if (audioRef.current?.paused && activePreview.current?.isAudio) stopPreview();
+        }}
+        onError={() => {
+          if (audioRef.current?.error) failAudioPreview(activePreview.current);
+        }}
+      />
       <div className="border-border bg-background/70 mt-3 overflow-hidden rounded-xl border">
         <div className="border-border space-y-4 border-b p-4 sm:p-5">
           <div className="relative">
@@ -581,7 +673,12 @@ export function GameAssetLibrary() {
                 key={asset.id}
                 asset={asset}
                 view={view}
+                playing={playingAssetId === asset.id}
+                loading={playingAssetId === asset.id && isAudioLoading}
+                error={previewError?.id === asset.id ? previewError.message : undefined}
+                onToggle={() => void togglePreview(asset)}
                 onOpen={(event) => {
+                  stopPreview();
                   selectedTrigger.current = event.currentTarget;
                   setSelected(asset);
                 }}
@@ -694,67 +791,106 @@ function FilterChip({ label, onClear }: { label: string; onClear: () => void }) 
   );
 }
 
-/** Open details from a still grid or list preview; playback belongs to the dialog. */
+/** Keep detail navigation and in-place playback as separate keyboard-accessible buttons. */
 function AssetTile({
   asset,
   view,
+  playing,
+  loading,
+  error,
+  onToggle,
   onOpen,
 }: {
   asset: GameAsset;
   view: string;
+  playing: boolean;
+  loading: boolean;
+  error?: string;
+  onToggle: () => void;
   onOpen: React.MouseEventHandler<HTMLButtonElement>;
 }) {
   const isAudio = asset.type === "SFX" || asset.type === "MUSIC";
-  const Icon = asset.type === "MUSIC" ? Music2 : asset.type === "SFX" ? Volume2 : Play;
-  return (
-    <button
+  const canPlay = isAudio || asset.type === "ANIMATION";
+  const playbackButton = canPlay ? (
+    <Button
       type="button"
-      data-asset-id={asset.id}
-      onClick={onOpen}
-      aria-label={`Preview ${asset.name}`}
+      variant="secondary"
+      aria-label={`${playing ? "Pause" : "Play"} ${asset.name}`}
+      aria-pressed={playing}
+      aria-busy={loading}
+      title={`${playing ? "Pause" : "Play"} preview`}
+      onClick={onToggle}
       className={cn(
-        "group focus-visible:outline-ring min-w-0 overflow-hidden text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-2",
-        view === "grid"
-          ? "border-border bg-background hover:border-primary/60 rounded-lg border"
-          : "hover:bg-accent/50 flex w-full items-center gap-3 p-3",
+        "bg-background/90 text-foreground hover:bg-background relative z-20 size-[44px] shrink-0 rounded-full p-0 shadow-sm",
+        view === "grid" && "absolute right-2 bottom-2",
       )}
     >
+      {loading ? (
+        <LoaderCircle className="size-4 animate-spin" />
+      ) : playing ? (
+        <Pause className="size-4" />
+      ) : (
+        <Play className="size-4" />
+      )}
+    </Button>
+  ) : null;
+  return (
+    <div data-asset-id={asset.id} className="min-w-0">
       <div
         className={cn(
-          "relative shrink-0",
-          view === "list" && "w-16 overflow-hidden rounded-md",
+          "group relative min-w-0 overflow-hidden text-left transition-colors",
+          view === "grid"
+            ? "border-border bg-background hover:border-primary/60 rounded-lg border"
+            : "hover:bg-accent/50 flex w-full items-center gap-3 p-3",
         )}
       >
-        <GameAssetPreview
-          asset={asset}
-          renditionWidth={view === "list" ? 128 : 320}
-          className={view === "list" ? "aspect-square" : undefined}
+        {/* A stretched detail button leaves the playback button as a sibling, not nested. */}
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`Preview ${asset.name}`}
+          className="focus-visible:ring-ring absolute inset-0 z-10 cursor-pointer rounded-[inherit] focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
         />
-        {(isAudio || asset.type === "ANIMATION") && view === "grid" && (
-          <span className="bg-background/90 text-foreground absolute right-2 bottom-2 flex size-7 items-center justify-center rounded-full shadow-sm">
-            <Icon className="size-3.5" />
-          </span>
+        <div
+          className={cn(
+            "relative shrink-0",
+            view === "list" && "w-16 overflow-hidden rounded-md",
+          )}
+        >
+          <GameAssetPreview
+            asset={asset}
+            play={playing}
+            renditionWidth={view === "list" ? 128 : 320}
+            className={view === "list" ? "aspect-square" : undefined}
+          />
+          {view === "grid" && playbackButton}
+        </div>
+        <div className={cn("min-w-0 flex-1", view === "grid" && "px-3 py-2.5")}>
+          <p
+            className="group-hover:text-primary truncate text-sm font-semibold"
+            title={asset.name}
+          >
+            {asset.name}
+          </p>
+          <p className="text-muted-foreground mt-1 truncate text-xs">
+            {assetTypeLabels[asset.type]}
+          </p>
+          <p className="text-muted-foreground mt-1 flex items-center gap-1 truncate text-xs">
+            <Folder className="size-3 shrink-0" />
+            <span className="truncate">{asset.folder || "Unfiled"}</span>
+          </p>
+        </div>
+        {view === "list" && playbackButton}
+        {view === "list" && !canPlay && (
+          <ChevronRight className="text-muted-foreground size-4 shrink-0" />
         )}
       </div>
-      <div className={cn("min-w-0 flex-1", view === "grid" && "px-3 py-2.5")}>
-        <p
-          className="group-hover:text-primary truncate text-sm font-semibold"
-          title={asset.name}
-        >
-          {asset.name}
+      {error && (
+        <p role="alert" className="text-destructive px-2 py-1 text-xs">
+          {error}
         </p>
-        <p className="text-muted-foreground mt-1 truncate text-xs">
-          {assetTypeLabels[asset.type]}
-        </p>
-        <p className="text-muted-foreground mt-1 flex items-center gap-1 truncate text-xs">
-          <Folder className="size-3 shrink-0" />
-          <span className="truncate">{asset.folder || "Unfiled"}</span>
-        </p>
-      </div>
-      {view === "list" && (
-        <ChevronRight className="text-muted-foreground size-4 shrink-0" />
       )}
-    </button>
+    </div>
   );
 }
 

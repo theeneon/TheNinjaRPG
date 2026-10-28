@@ -5,7 +5,7 @@ import {
   useInfiniteQuery,
   useMutation,
 } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as navigation from "next/navigation";
 import * as client from "@/app/_trpc/client";
@@ -34,25 +34,33 @@ let deleted: boolean;
 let failReads: boolean;
 let hasMore: boolean;
 let folders: { folder: string; count: number }[];
+let pageAssets: GameAsset[];
+let play: ReturnType<typeof vi.fn<() => Promise<void>>>;
+let pause: ReturnType<typeof vi.fn<() => void>>;
 const create = vi.fn(async (_input: CreateInput): Promise<Result> => ({ success: false, message: "Creation checked" }));
 const read = vi.fn(async (cursor: number | null): Promise<Page> => {
   if (failReads) throw new Error("Temporarily unavailable");
   return cursor
     ? { data: [nextAsset], nextCursor: null }
-    : { data: deleted ? [] : [asset], nextCursor: hasMore ? 1 : null };
+    : { data: deleted ? [] : pageAssets, nextCursor: hasMore ? 1 : null };
 });
 
 beforeEach(() => {
   ensureDom();
   deleted = false; failReads = false; hasMore = false; read.mockClear();
   folders = []; create.mockClear();
+  pageAssets = [asset];
+  const media = Object.getPrototypeOf(document.createElement("audio"));
+  play = vi.spyOn(media, "play").mockImplementation(async () => undefined);
+  pause = vi.spyOn(media, "pause").mockImplementation(() => undefined);
+  vi.spyOn(media, "load").mockImplementation(() => undefined);
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   vi.spyOn(navigation, "useRouter").mockReturnValue({ push: vi.fn() } as never);
   vi.spyOn(navigation, "useSearchParams").mockReturnValue(new URLSearchParams() as never);
   vi.spyOn(userContext, "useUserData").mockReturnValue({ data: { role: "CONTENT" } } as never);
   vi.spyOn(toast, "showMutationToast").mockImplementation(() => undefined);
   vi.spyOn(ContentBox, "default").mockImplementation(({ children, topRightContent }) => <div>{topRightContent}{children}</div>);
-  vi.spyOn(preview, "GameAssetPreview").mockImplementation(() => <></>);
+  vi.spyOn(preview, "GameAssetPreview").mockImplementation(({ asset, play }) => <span data-testid={`media-${asset.name}`} data-playing={String(play ?? false)} />);
   vi.spyOn(preview, "AssetPreviewBackgroundControls").mockImplementation(() => <></>);
   vi.spyOn(Link, "default").mockImplementation(({ children, href }) => <a href={String(href)}>{children}</a>);
   vi.spyOn(Modal, "default").mockImplementation(({ children, isOpen, title, onAccept, proceed_label, footerExtra }) => isOpen ? (
@@ -169,5 +177,129 @@ describe("asset library retry", () => {
     expect(view.getByRole("button", { name: "Preview Forest" })).toBeDefined();
     expect(view.queryByRole("alert")).toBeNull();
     expect(view.getByText("2 assets loaded. You’re all caught up.")).toBeDefined();
+  });
+});
+
+describe("asset overview playback", () => {
+  const animation = { ...asset, id: "wind", name: "Wind", type: "ANIMATION" as const };
+  const sound = { ...asset, id: "sound", name: "Whoosh", type: "SFX" as const, url: "https://example.com/whoosh.mp3" };
+  const music = { ...asset, id: "music", name: "Theme", type: "MUSIC" as const, url: "https://example.com/theme.mp3" };
+  const overview = () => render(<QueryClientProvider client={cache}><GameAssetLibrary /></QueryClientProvider>);
+
+  it("plays and pauses animations without opening details, with one active preview", async () => {
+    pageAssets = [animation, { ...animation, id: "fire", name: "Fire" }];
+    const view = overview();
+    fireEvent.click(await view.findByRole("button", { name: "Play Wind" }));
+    expect(view.queryByRole("dialog")).toBeNull();
+    expect(view.getByTestId("media-Wind").getAttribute("data-playing")).toBe("true");
+    fireEvent.click(view.getByRole("button", { name: "Play Fire" }));
+    expect(view.getByTestId("media-Wind").getAttribute("data-playing")).toBe("false");
+    expect(view.getByTestId("media-Fire").getAttribute("data-playing")).toBe("true");
+    fireEvent.click(view.getByRole("button", { name: "Pause Fire" }));
+    expect(view.getByTestId("media-Fire").getAttribute("data-playing")).toBe("false");
+    expect(view.container.querySelector("button button")).toBeNull();
+    expect(play).not.toHaveBeenCalled();
+  });
+
+  it("starts sound only on request, pauses, and switches sources in the shared player", async () => {
+    pageAssets = [sound, music, animation];
+    const view = overview();
+    await view.findByRole("button", { name: "Play Whoosh" });
+    const audio = view.container.querySelector("audio")!;
+    expect(audio.getAttribute("src")).toBeNull();
+    expect(play).not.toHaveBeenCalled();
+    fireEvent.click(view.getByRole("button", { name: "Play Whoosh" }));
+    await waitFor(() => expect(view.getByRole("button", { name: "Pause Whoosh" }).getAttribute("aria-busy")).toBe("false"));
+    expect(audio.getAttribute("src")).toBe(sound.url);
+    expect(view.queryByRole("dialog")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Pause Whoosh" }));
+    expect(view.getByRole("button", { name: "Play Whoosh" })).toBeDefined();
+    fireEvent.click(view.getByRole("button", { name: "Play Theme" }));
+    await waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+    expect(audio.getAttribute("src")).toBe(music.url);
+    fireEvent.click(view.getByRole("button", { name: "Play Wind" }));
+    expect(view.getByRole("button", { name: "Play Theme" })).toBeDefined();
+    expect(pause).toHaveBeenCalled();
+    expect(view.container.querySelectorAll("audio")).toHaveLength(1);
+  });
+
+  it("keeps a newer preview active when a previous play promise rejects", async () => {
+    pageAssets = [sound, music];
+    let rejectPrevious!: (error: Error) => void;
+    play.mockImplementationOnce(() => new Promise((_, reject) => { rejectPrevious = reject; }));
+    const view = overview();
+    fireEvent.click(await view.findByRole("button", { name: "Play Whoosh" }));
+    fireEvent.click(view.getByRole("button", { name: "Play Theme" }));
+    await waitFor(() => expect(view.getByRole("button", { name: "Pause Theme" }).getAttribute("aria-busy")).toBe("false"));
+    await act(async () => rejectPrevious(new Error("Interrupted by another preview")));
+    await waitFor(() => expect(view.queryByRole("alert")).toBeNull());
+    expect(view.getByRole("button", { name: "Pause Theme" })).toBeDefined();
+  });
+
+  it("shows recoverable playback failure beside the card and retries without a dialog", async () => {
+    pageAssets = [sound];
+    play.mockRejectedValueOnce(new Error("Unsupported media"));
+    const view = overview();
+    fireEvent.click(await view.findByRole("button", { name: "Play Whoosh" }));
+    expect((await view.findByRole("alert")).textContent).toContain("Audio could not be played");
+    expect(view.queryByRole("dialog")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Play Whoosh" }));
+    await waitFor(() => expect(view.queryByRole("alert")).toBeNull());
+    expect(play).toHaveBeenCalledTimes(2);
+    expect(view.getByRole("button", { name: "Pause Whoosh" })).toBeDefined();
+  });
+
+  it("restores the play control when audio ends or is externally paused", async () => {
+    pageAssets = [sound];
+    const view = overview();
+    fireEvent.click(await view.findByRole("button", { name: "Play Whoosh" }));
+    const audio = view.container.querySelector("audio")!;
+    Object.defineProperty(audio, "ended", { configurable: true, value: true });
+    fireEvent.ended(audio);
+    expect(view.getByRole("button", { name: "Play Whoosh" })).toBeDefined();
+    fireEvent.click(view.getByRole("button", { name: "Play Whoosh" }));
+    fireEvent.pause(audio);
+    expect(view.getByRole("button", { name: "Play Whoosh" })).toBeDefined();
+  });
+
+  it("reports a media failure after playback has started", async () => {
+    pageAssets = [sound];
+    const view = overview();
+    fireEvent.click(await view.findByRole("button", { name: "Play Whoosh" }));
+    await waitFor(() => expect(view.getByRole("button", { name: "Pause Whoosh" }).getAttribute("aria-busy")).toBe("false"));
+    const audio = view.container.querySelector("audio")!;
+    Object.defineProperty(audio, "error", { configurable: true, value: { code: 3 } });
+    fireEvent.error(audio);
+    expect(view.getByRole("alert").textContent).toContain("Audio could not be played");
+    expect(view.getByRole("button", { name: "Play Whoosh" })).toBeDefined();
+  });
+
+  it("stops and unloads playback when filtering or leaving the overview", async () => {
+    pageAssets = [sound];
+    const view = overview();
+    fireEvent.click(await view.findByRole("button", { name: "Play Whoosh" }));
+    const audio = view.container.querySelector("audio")!;
+    fireEvent.change(view.getByRole("searchbox", { name: "Search assets" }), { target: { value: "another" } });
+    expect(view.getByRole("button", { name: "Play Whoosh" })).toBeDefined();
+    expect(audio.getAttribute("src")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Play Whoosh" }));
+    const pauseCalls = pause.mock.calls.length;
+    view.unmount();
+    expect(pause.mock.calls.length).toBeGreaterThan(pauseCalls);
+    expect(audio.getAttribute("src")).toBeNull();
+  });
+
+  it("offers inline playback in list view and keeps details as a separate action", async () => {
+    pageAssets = [sound];
+    vi.spyOn(userContext, "useUserData").mockReturnValue({ data: undefined } as never);
+    const view = overview();
+    await view.findByRole("button", { name: "Play Whoosh" });
+    fireEvent.click(view.getByRole("button", { name: "List view" }));
+    fireEvent.click(view.getByRole("button", { name: "Play Whoosh" }));
+    expect(view.queryByRole("dialog")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Preview Whoosh" }));
+    expect(view.getByRole("dialog", { name: "Whoosh" })).toBeDefined();
+    expect(view.getByRole("button", { name: "Play Whoosh" })).toBeDefined();
+    expect(view.queryByRole("button", { name: "New asset" })).toBeNull();
   });
 });
