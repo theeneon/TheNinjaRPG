@@ -31,7 +31,10 @@ import { filterQuestTrackersForDbPersist, getNewTrackers } from "@/libs/quest";
 import { getNextQueueSchedule } from "@/libs/queue";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
-import { deleteUserItemWhere } from "@/queries/concurrency";
+import {
+  deleteUserItemWhere,
+  updateUserItemForUpdateUserItemQuantityAtomically,
+} from "@/queries/concurrency";
 import { fetchItemWithCraftingRequirements, insertUserItems } from "@/queries/item";
 import {
   deleteUserItemImbuementForRemoveImbuement,
@@ -45,7 +48,6 @@ import {
   updateUserDataForCraftItem,
   updateUserDataForImbueItem,
   updateUserDataForSelectOccupation,
-  updateUserItemForCraftItem,
   updateUserItemForFinishCraftingImmediately,
   updateUserItemForImbueItem,
   updateUserItemImbuementForFinishImbuingImmediately,
@@ -416,7 +418,11 @@ export const occupationRouter = createTRPCRouter({
             );
             const result =
               consumption.newQuantity > 0
-                ? await updateUserItemForCraftItem(ctx.drizzle, consumption, itemWhere)
+                ? await updateUserItemForUpdateUserItemQuantityAtomically(
+                    ctx.drizzle,
+                    consumption.newQuantity,
+                    itemWhere,
+                  )
                 : await deleteUserItemWhere(ctx.drizzle, itemWhere);
             return result.rowsAffected === 1;
           }),
@@ -479,7 +485,11 @@ export const occupationRouter = createTRPCRouter({
             );
             const materialResult =
               consumption.newQuantity > 0
-                ? await updateUserItemForCraftItem(tx, consumption, itemWhere)
+                ? await updateUserItemForUpdateUserItemQuantityAtomically(
+                    tx,
+                    consumption.newQuantity,
+                    itemWhere,
+                  )
                 : await deleteUserItemWhere(tx, itemWhere);
             if (materialResult.rowsAffected !== 1) throw materialConflict;
           }

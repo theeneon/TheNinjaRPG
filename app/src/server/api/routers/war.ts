@@ -31,7 +31,6 @@ import {
   type WarAlly,
   warKill,
 } from "@/drizzle/schema";
-
 import { castElderVoteEntry, fetchElderVotes } from "@/libs/elder";
 import {
   areWarObjectivesRevealed,
@@ -50,6 +49,7 @@ import {
   isVillageInvolvedInAnyWar,
 } from "@/libs/war";
 import { fetchElderVote } from "@/queries/elder";
+import { incrementNotificationCounters } from "@/queries/misc";
 import { fetchUser } from "@/queries/profile";
 import { fetchQuest, listVisibleRaidQuests } from "@/queries/quests";
 import { fetchRequests, insertRequest } from "@/queries/sparring";
@@ -84,7 +84,6 @@ import {
   findWarForGetObjectiveWarInfo,
   findWarForInviteMercenary,
   findWarForStartWarMission,
-  incrementWarNotifications,
   insertActionLogForAdminEndWar,
   insertGameSettingForSetRules,
   insertNotificationForCancelWarDeclaration,
@@ -1304,7 +1303,7 @@ export const warRouter = createTRPCRouter({
           elderUserIds,
           elderContent,
         ),
-        incrementWarNotifications(ctx.drizzle, allNotifyIds),
+        incrementNotificationCounters(ctx.drizzle, allNotifyIds),
       ]);
       return {
         success: true,
@@ -1813,7 +1812,7 @@ export const warRouter = createTRPCRouter({
         const notifyIds = elders.map((e) => e.userId);
         await Promise.all([
           insertNotificationForCancelWarDeclaration(ctx.drizzle, notifyIds, user),
-          incrementWarNotifications(ctx.drizzle, notifyIds),
+          incrementNotificationCounters(ctx.drizzle, notifyIds),
         ]);
       }
 
@@ -1916,7 +1915,7 @@ export const warRouter = createTRPCRouter({
               voteRecord,
               defenderVillage,
             ),
-            incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
+            incrementNotificationCounters(ctx.drizzle, [voteRecord.initiatedByUserId]),
           ]);
           return errorResponse("A village is already involved in an active war");
         }
@@ -1930,7 +1929,7 @@ export const warRouter = createTRPCRouter({
               voteRecord,
               defenderVillage,
             ),
-            incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
+            incrementNotificationCounters(ctx.drizzle, [voteRecord.initiatedByUserId]),
           ]);
           return errorResponse("Village no longer has enough tokens to declare war");
         }
@@ -1952,7 +1951,7 @@ export const warRouter = createTRPCRouter({
               voteRecord,
               defenderVillage,
             ),
-            incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
+            incrementNotificationCounters(ctx.drizzle, [voteRecord.initiatedByUserId]),
           ]);
           return errorResponse(
             "War could not start: a village is already involved in a war or your village no longer has enough tokens.",
@@ -1983,7 +1982,7 @@ export const warRouter = createTRPCRouter({
             voteRecord,
             targetVillage,
           ),
-          incrementWarNotifications(ctx.drizzle, [voteRecord.initiatedByUserId]),
+          incrementNotificationCounters(ctx.drizzle, [voteRecord.initiatedByUserId]),
         ]);
         return {
           success: true,

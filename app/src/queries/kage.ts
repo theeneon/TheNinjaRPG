@@ -3,19 +3,7 @@
  */
 
 import { randomInt } from "node:crypto";
-import {
-  and,
-  desc,
-  eq,
-  exists,
-  gte,
-  inArray,
-  isNull,
-  ne,
-  or,
-  type SQL,
-  sql,
-} from "drizzle-orm";
+import { and, desc, eq, exists, gte, isNull, ne, or, type SQL, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   ELDER_KAGE_REMOVAL_VOTE_DAYS,
@@ -135,18 +123,6 @@ export const updateUserDataForSendKagePrestige = (
       villagePrestige: sql`${userData.villagePrestige} - ${input.amount}`,
     })
     .where(eq(userData.userId, ctx.userId));
-
-/** Build the `userData` update for `sendKagePrestige`, setting `villagePrestige`, using predicates on `userId`. */
-export const updateUserDataForSendKagePrestige2 = (
-  client: Pick<DrizzleClient, "update">,
-  input: { amount: number; kageId: string },
-) =>
-  client
-    .update(userData)
-    .set({
-      villagePrestige: sql`${userData.villagePrestige} + ${input.amount}`,
-    })
-    .where(eq(userData.userId, input.kageId));
 
 /** Build the `actionLog` insert for `sendKagePrestige`. */
 export const insertActionLogForSendKagePrestige = (
@@ -347,16 +323,6 @@ export const insertNotificationForInitiateKageRemovalVote = (
     userId: user.userId,
     content: `${user.username} proposed removing the ${v.name} Kage: ${input.reason} Vote at Town Hall.`,
   });
-
-/** Build the `userData` update, setting `unreadNotifications`, using predicates on `userId`. */
-export const incrementKageRemovalNotifications = (
-  client: Pick<DrizzleClient, "update">,
-  recipients: string[],
-) =>
-  client
-    .update(userData)
-    .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-    .where(inArray(userData.userId, recipients));
 
 /** Build the `villageElderVote` listing for `getRemovalHistory`, using predicates on `villageId` and `type`. */
 export const listVillageElderVoteForGetRemovalHistory = (

@@ -17,6 +17,7 @@ import { findHuntingSessionForUser } from "@/queries/hunting";
 import { renameParentalContact } from "@/queries/parentalControls";
 import {
   deleteUserAttributes,
+  deleteUserNindo,
   fetchAttributes,
   fetchUser,
   findUserById,
@@ -64,7 +65,6 @@ import {
   deleteRecruitReferralForDeleteUserInternal,
   deleteReportLogForDeleteUserInternal,
   deleteReportLogForDeleteUserInternal2,
-  deleteSectorForReleaseSector,
   deleteStaffApplicationForDeleteUserInternal,
   deleteSupportReviewForDeleteUserInternal,
   deleteTitleForDeleteUserInternal,
@@ -83,7 +83,6 @@ import {
   deleteUserJutsus,
   deleteUserLikesForDeleteUserInternal,
   deleteUserLiveActivityForDeleteUserInternal,
-  deleteUserNindoForDeleteUserInternal,
   deleteUserPetForDeleteUserInternal,
   deleteUserPollVoteForDeleteUserInternal,
   deleteUserPushPreferenceForDeleteUserInternal,
@@ -231,7 +230,12 @@ import {
   updateWebStoreOrderForUpdateUserId2,
   validateDevelopmentBackup,
 } from "@/queries/staff";
-import { fetchSector, fetchVillages, insertSectorReleaseLog } from "@/queries/village";
+import {
+  deleteSectorByNumber,
+  fetchSector,
+  fetchVillages,
+  insertSectorReleaseLog,
+} from "@/queries/village";
 import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
@@ -699,7 +703,7 @@ export const staffRouter = createTRPCRouter({
 
       // Mutate
       await Promise.all([
-        deleteSectorForReleaseSector(ctx.drizzle, input),
+        deleteSectorByNumber(ctx.drizzle, input.sector),
         insertSectorReleaseLog(
           ctx.drizzle,
           ctx.userId,
@@ -1143,7 +1147,7 @@ const deleteUserInternal = async (client: DrizzleClient, userId: string) => {
   await Promise.all([
     deleteUserReviewForDeleteUserInternal(client, userId),
     deleteUserReviewForDeleteUserInternal2(client, userId),
-    deleteUserNindoForDeleteUserInternal(client, userId),
+    deleteUserNindo(client, userId),
     deleteUserHomeForDeleteUserInternal(client, userId),
     deleteUserLikesForDeleteUserInternal(client, userId),
     deleteUserRequestForDeleteUserInternal(client, userId),

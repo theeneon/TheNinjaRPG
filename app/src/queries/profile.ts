@@ -2282,3 +2282,31 @@ export const fetchLoadoutUser = async (client: DrizzleClient, userId: string) =>
     },
   });
 };
+
+/** Build deletion of a user’s nindo by owner ID; moderation and account cleanup keep their guards in callers. */
+export const deleteUserNindo = (
+  client: Pick<DrizzleClient, "delete">,
+  userId: string,
+) => client.delete(userNindo).where(eq(userNindo.userId, userId));
+
+/** Build an atomic reputation-points refund to one user; callers determine the amount and eligibility. */
+export const refundUserReputationPoints = (
+  client: Pick<DrizzleClient, "update">,
+  amount: number,
+  userId: string,
+) =>
+  client
+    .update(userData)
+    .set({ reputationPoints: sql`${userData.reputationPoints} + ${amount}` })
+    .where(eq(userData.userId, userId));
+
+/** Build an atomic village-prestige increment for one user; callers determine reward or transfer eligibility. */
+export const incrementUserVillagePrestige = (
+  client: Pick<DrizzleClient, "update">,
+  amount: number,
+  userId: string,
+) =>
+  client
+    .update(userData)
+    .set({ villagePrestige: sql`${userData.villagePrestige} + ${amount}` })
+    .where(eq(userData.userId, userId));

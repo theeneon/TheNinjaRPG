@@ -5,7 +5,6 @@ import { and, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm"
 import { nanoid } from "nanoid";
 import {
   clan,
-  notification,
   userData,
   village,
   villageElderVote,
@@ -115,13 +114,6 @@ export const updateVillageElderVoteForRejectWithNotification = (
     .update(villageElderVote)
     .set({ status: "REJECTED" })
     .where(eq(villageElderVote.id, vote.id));
-
-/** Build the `notification` insert for `rejectWithNotification`. */
-export const insertNotificationForRejectWithNotification = (
-  client: Pick<DrizzleClient, "insert">,
-  vote: { initiatedByUserId: string },
-  content: string,
-) => client.insert(notification).values({ userId: vote.initiatedByUserId, content });
 
 /** Build the `village` listing for `handleCutoff`, selecting only `id` and `name`, using predicates on `type`. */
 export const listVillageForHandleCutoff = (client: Pick<DrizzleClient, "query">) =>

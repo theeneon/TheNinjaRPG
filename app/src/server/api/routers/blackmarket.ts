@@ -49,14 +49,17 @@ import {
   updateUserDataForBuyJutsuSlot,
   updateUserDataForChangeUserGender,
   updateUserDataForCreateOffer,
-  updateUserDataForDelistOffer,
   updateUserDataForRerollElement,
   updateUserDataForTakeOffer,
   updateUserDataForTakeOffer2,
   updateUserDataForTakeOffer3,
   updateUserDataForTakeOffer4,
 } from "@/queries/blackmarket";
-import { fetchUser, findUserWithBloodline } from "@/queries/profile";
+import {
+  fetchUser,
+  findUserWithBloodline,
+  refundUserReputationPoints,
+} from "@/queries/profile";
 
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
@@ -181,7 +184,7 @@ export const blackMarketRouter = createTRPCRouter({
       // Mutate
       await Promise.all([
         deleteRyoTradeForDelistOffer(ctx.drizzle, input),
-        updateUserDataForDelistOffer(ctx.drizzle, offer, creatorId),
+        refundUserReputationPoints(ctx.drizzle, offer.repsForSale, creatorId),
       ]);
       // Response
       return {

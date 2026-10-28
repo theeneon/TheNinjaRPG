@@ -44,7 +44,6 @@ import {
   sanctionTombstone,
   storeUserIdAlias,
   userData,
-  userNindo,
   userReport,
   userReportComment,
   userReportEmbedding,
@@ -1061,12 +1060,6 @@ export const insertReportLogForClearNindo = (
     action: "NINDO_CLEARED",
     targetUserId: input.userId,
   });
-
-/** Build the `userNindo` deletion for `clearNindo`, using predicates on `userId`. */
-export const deleteUserNindoForClearNindo = (
-  client: Pick<DrizzleClient, "delete">,
-  target: { userId: string },
-) => client.delete(userNindo).where(eq(userNindo.userId, target.userId));
 
 /** Build the `userReview` listing for `getUserStaffReviews`, using predicates on `authorUserId`. */
 export const listUserReviewForGetUserStaffReviews = (

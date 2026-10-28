@@ -647,3 +647,9 @@ export const findVillageBySector = (
   client.query.village.findFirst({
     where: eq(village.sector, sector),
   });
+
+/** Build deletion of sector ownership by sector number; callers decide when the sector may be released. */
+export const deleteSectorByNumber = (
+  client: Pick<DrizzleClient, "delete">,
+  sectorNum: number,
+) => client.delete(sector).where(eq(sector.sector, sectorNum));

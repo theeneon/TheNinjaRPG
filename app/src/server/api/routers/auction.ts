@@ -57,11 +57,11 @@ import {
   updateAuctionListingForSettleAuction,
   updateAuctionListingForSettleAuction2,
   updateUserDataForPlaceBid,
-  updateUserDataForRecordBidActivity,
   updateUserDataForSettleAuction,
   updateUserItemForCreateAuctionListing,
   updateUserItemForSettleAuction,
 } from "@/queries/auction";
+import { incrementNotificationCounters } from "@/queries/misc";
 import { fetchUser, findUserIdentityById, findUserRoleById } from "@/queries/profile";
 import {
   baseServerResponse,
@@ -980,7 +980,7 @@ const recordBidActivity = async (
       ? [
           async () => {
             await insertNotificationForRecordBidActivity(client, outbid);
-            await updateUserDataForRecordBidActivity(client, outbid);
+            await incrementNotificationCounters(client, [outbid.userId]);
           },
         ]
       : []),

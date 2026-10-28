@@ -19,7 +19,6 @@ import {
   fetchKageReplacement,
   findKageRemovalVoteById,
   findVillageElderVoteForNominateKage,
-  incrementKageRemovalNotifications,
   insertActionLogForSendKagePrestige,
   insertActionLogForTakeKage,
   insertNotificationForInitiateKageRemovalVote,
@@ -31,14 +30,18 @@ import {
   selectUserDataForUpgradeStructure,
   setKageCandidateToJonin,
   updateUserDataForSendKagePrestige,
-  updateUserDataForSendKagePrestige2,
   updateUserDataForTakeKage,
   updateVillageElderVoteForNominateKage,
   updateVillageForPayStructureMaintenance,
   updateVillageForResignKage,
   updateVillageForTakeKage,
 } from "@/queries/kage";
-import { fetchUser, findUserById } from "@/queries/profile";
+import { incrementNotificationCounters } from "@/queries/misc";
+import {
+  fetchUser,
+  findUserById,
+  incrementUserVillagePrestige,
+} from "@/queries/profile";
 import { fetchVillage } from "@/queries/village";
 
 import { kageDefenseProcedures } from "@/routers/kageDefense";
@@ -131,7 +134,7 @@ export const kageRouter = createTRPCRouter({
       // Create transfer request
       await Promise.all([
         updateUserDataForSendKagePrestige(ctx.drizzle, input, ctx),
-        updateUserDataForSendKagePrestige2(ctx.drizzle, input),
+        incrementUserVillagePrestige(ctx.drizzle, input.amount, input.kageId),
         insertActionLogForSendKagePrestige(ctx.drizzle, ctx, input, kage, user),
       ]);
       return {
@@ -384,7 +387,7 @@ export const kageRouter = createTRPCRouter({
           // without leaving an unannounced pending vote that blocks further proposals.
           // Notification is a shared announcement; unread counters select its recipients.
           await insertNotificationForInitiateKageRemovalVote(tx, user, v, input);
-          await incrementKageRemovalNotifications(tx, recipients);
+          await incrementNotificationCounters(tx, recipients);
           return {
             success: true,
             message: `Removal vote published. Elders have ${ELDER_KAGE_REMOVAL_VOTE_DAYS} days to vote.`,

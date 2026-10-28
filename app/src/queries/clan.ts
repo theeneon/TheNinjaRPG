@@ -414,19 +414,6 @@ export const updateClanForClanDonate = (
     })
     .where(eq(clan.id, fetchedClan.id));
 
-/** Build the `userData` update for `clanDonate`, setting `reputationPoints`, using predicates on `userId`. */
-export const updateUserDataForClanDonate2 = (
-  client: Pick<DrizzleClient, "update">,
-  repsCost: number,
-  ctx: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({
-      reputationPoints: sql`${userData.reputationPoints} + ${repsCost}`,
-    })
-    .where(eq(userData.userId, ctx.userId));
-
 /** Build the `actionLog` insert for `clanDonate`. */
 export const insertActionLogForClanDonate = (
   client: Pick<DrizzleClient, "insert">,

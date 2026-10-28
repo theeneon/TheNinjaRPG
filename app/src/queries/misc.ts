@@ -328,3 +328,13 @@ export const countCaptchaForRefreshCaptcha = (
       gt(captcha.createdAt, sql`${captchaNow} - INTERVAL 1 MINUTE`),
     ),
   );
+
+/** Build an atomic unread-notification increment for the selected recipients. */
+export const incrementNotificationCounters = (
+  client: Pick<DrizzleClient, "update">,
+  userIds: string[],
+) =>
+  client
+    .update(userData)
+    .set({ unreadNotifications: sql`unreadNotifications + 1` })
+    .where(inArray(userData.userId, userIds));

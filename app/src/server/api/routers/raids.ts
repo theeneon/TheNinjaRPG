@@ -36,7 +36,6 @@ import {
   deleteMpvpBattleUserForRollbackJoinRaidQueue,
   deleteQueueById,
   deleteRaidDamageThresholdForDeleteDamageThreshold,
-  deleteSectorForCleanupExpiredExclusiveRaids,
   deleteUnclaimedBattleQueue,
   executeInsertResultForJoinRaidQueue,
   fetchRaidJoinUser,
@@ -84,6 +83,7 @@ import {
   updateUserRequestForReadyToQueue,
   updateUserRequestForReadyToQueue2,
 } from "@/queries/raids";
+import { deleteSectorByNumber } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUpdatedUser } from "@/routers/profile";
 import { updateRewards } from "@/routers/quests";
@@ -1270,9 +1270,7 @@ export const cleanupExpiredExclusiveRaids = async (
 
   // Delete all sectors in parallel
   const results = await Promise.all(
-    sectorsToClean.map((sectorNum) =>
-      deleteSectorForCleanupExpiredExclusiveRaids(client, sectorNum),
-    ),
+    sectorsToClean.map((sectorNum) => deleteSectorByNumber(client, sectorNum)),
   );
 
   return results.filter((r) => r.rowsAffected > 0).length;
@@ -1334,10 +1332,7 @@ export const checkAndCleanupExpiredRaid = async (
       const raidSector = (objective as RaidObjectiveType).sector;
       if (raidSector !== null && raidSector !== undefined) {
         // Delete sector - returns it to neutral ownership (syndicate)
-        const result = await deleteSectorForCleanupExpiredExclusiveRaids(
-          client,
-          raidSector,
-        );
+        const result = await deleteSectorByNumber(client, raidSector);
         return { wasExpired: true, sectorCleaned: result.rowsAffected > 0 };
       }
     }

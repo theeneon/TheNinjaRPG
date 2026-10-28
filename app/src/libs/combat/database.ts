@@ -1,5 +1,4 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
-
 import { nanoid } from "nanoid";
 import {
   ELITE_JONIN_JUTSU_ADVANCED_XP_TO_LEVEL,
@@ -17,7 +16,6 @@ import {
   WAR_SHRINE_RECAPTURE_WARHEALTH_HEAL,
 } from "@/drizzle/constants";
 import { type Battle, userData, userJutsu, war } from "@/drizzle/schema";
-
 import { stillInBattle } from "@/libs/combat/actions";
 import { settleObjectiveWarCombat } from "@/libs/combat/objectiveWar";
 import { areBattleAllies } from "@/libs/combat/participants";
@@ -57,7 +55,6 @@ import {
   type PusherClient,
   updateUserOnMap,
 } from "@/libs/pusher";
-
 import { boostPvpGain } from "@/libs/pvpExperience";
 import {
   filterQuestTrackersForDbPersist,
@@ -101,7 +98,6 @@ import {
   updateTournamentMatchForUpdateTournament,
   updateTournamentMatchForUpdateTournament2,
   updateUserDataForFinishBattle,
-  updateUserDataForUpdateRaidProgress,
   updateUserDataForUpdateUser,
   updateUserDataForUpdateUser2,
   updateUserItemForUpdateKage,
@@ -119,6 +115,7 @@ import {
 } from "@/queries/combat";
 import { reduceActiveFarmPlotTimers } from "@/queries/farming";
 import { deleteUserItemsWithPositiveQuantity } from "@/queries/item";
+import { incrementNotificationCounters } from "@/queries/misc";
 import { warRaidCombatGuard } from "@/queries/war";
 import type { UserWithRelations } from "@/routers/profile";
 import type { DrizzleClient } from "@/server/db";
@@ -1185,7 +1182,7 @@ export const updateRaidProgress = async (
   const raidName = updatedQuest?.name ?? "the raid";
   await Promise.all([
     insertNotificationForUpdateRaidProgress(client, userId, raidName),
-    updateUserDataForUpdateRaidProgress(client, userId),
+    incrementNotificationCounters(client, [userId]),
   ]);
 };
 

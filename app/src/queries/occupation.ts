@@ -1,7 +1,7 @@
 /**
  * Database access for occupation; authorization and transaction scopes stay in callers.
  */
-import type { SQL } from "drizzle-orm";
+
 import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { MAP_WAKE_ISLAND_SECTOR } from "@/drizzle/constants";
@@ -72,14 +72,6 @@ export const updateUserDataForSelectOccupation = (
           : eq(userData.occupationSignupAt, user.occupationSignupAt),
       ),
     );
-
-/** Build the `userItem` update for `craftItem`, setting `quantity`, using the configured predicates. */
-export const updateUserItemForCraftItem = (
-  client: Pick<DrizzleClient, "update">,
-  consumption: { newQuantity: number },
-  itemWhere: undefined | SQL<unknown>,
-) =>
-  client.update(userItem).set({ quantity: consumption.newQuantity }).where(itemWhere);
 
 /** Build the `userData` update for `craftItem`, including predicates on `userId`, `updatedAt`, `status`. */
 export const updateUserDataForCraftItem = (

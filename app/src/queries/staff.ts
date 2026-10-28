@@ -49,7 +49,6 @@ import {
   recruitReferral,
   reportLog,
   ryoTrade,
-  sector,
   staffApplication,
   storePurchase,
   storeUserIdAlias,
@@ -567,12 +566,6 @@ export const listHistoricalIpForGetUserHistoricalIps = (
     orderBy: [desc(historicalIp.usedAt)],
     limit: 100, // Limit to last 100 IP records
   });
-
-/** Build the `sector` deletion for `releaseSector`, using predicates on `sector`. */
-export const deleteSectorForReleaseSector = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { sector: number },
-) => client.delete(sector).where(eq(sector.sector, input.sector));
 
 /** Build the `userActivityEvent` listing for `getUserActivityEvents`, using predicates on `userId`. */
 export const listUserActivityEventForGetUserActivityEvents = (
@@ -1887,12 +1880,6 @@ export const deleteUserReviewForDeleteUserInternal2 = (
   client: Pick<DrizzleClient, "delete">,
   userId: string,
 ) => client.delete(userReview).where(eq(userReview.targetUserId, userId));
-
-/** Build the `userNindo` deletion for `deleteUserInternal`, using predicates on `userId`. */
-export const deleteUserNindoForDeleteUserInternal = (
-  client: Pick<DrizzleClient, "delete">,
-  userId: string,
-) => client.delete(userNindo).where(eq(userNindo.userId, userId));
 
 /** Build the `userHome` deletion for `deleteUserInternal`, using predicates on `userId`. */
 export const deleteUserHomeForDeleteUserInternal = (

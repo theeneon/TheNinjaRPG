@@ -159,19 +159,6 @@ export const deleteRyoTradeForDelistOffer = (
   input: { offerId: string },
 ) => client.delete(ryoTrade).where(eq(ryoTrade.id, input.offerId));
 
-/** Build the `userData` update for `delistOffer`, setting `reputationPoints`, using predicates on `userId`. */
-export const updateUserDataForDelistOffer = (
-  client: Pick<DrizzleClient, "update">,
-  offer: { repsForSale: number },
-  creatorId: string,
-) =>
-  client
-    .update(userData)
-    .set({
-      reputationPoints: sql`${userData.reputationPoints} + ${offer.repsForSale}`,
-    })
-    .where(eq(userData.userId, creatorId));
-
 /** Build the `userData` lookup for `takeOffer`, selecting only `userId` and `bank`, using predicates on `userId`. */
 export const findUserDataForTakeOffer = (
   client: Pick<DrizzleClient, "query">,

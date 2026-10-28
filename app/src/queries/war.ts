@@ -909,16 +909,6 @@ export const insertNotificationForStartDeclaredWar = (
     .insert(notification)
     .values(notifyKageIds.map((userId) => ({ userId, content: warContent })));
 
-/** Build the `userData` update, setting `unreadNotifications`, using predicates on `userId`. */
-export const incrementWarNotifications = (
-  client: Pick<DrizzleClient, "update">,
-  notifyKageIds: string[],
-) =>
-  client
-    .update(userData)
-    .set({ unreadNotifications: sql`unreadNotifications + 1` })
-    .where(inArray(userData.userId, notifyKageIds));
-
 /**
  * Build the `villageElderVote` update for `startApprovedVoteWar`, setting `status`,
  * using predicates on `id` and `status`.

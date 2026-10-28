@@ -18,16 +18,18 @@ import {
 import { isVillageInvolvedInAnyWar } from "@/libs/war";
 import {
   fetchExpiredElderVotes,
-  insertNotificationForRejectWithNotification,
   listVillageForProcessExpiredElderVotes,
   selectUserDataForProcessExpiredElderVotes,
   updateVillageElderVoteForRejectWithNotification,
 } from "@/queries/elder";
+import {
+  incrementNotificationCounters,
+  insertNotificationForSubmitNotification,
+} from "@/queries/misc";
 import { updateVillageStructureForClearExpiredStructureBonuses } from "@/queries/village";
 import {
   approvePendingWarDeclaration,
   expireWarPoints,
-  incrementWarNotifications,
   listActiveWarsWithRules,
   updateWarForGET,
   updateWarForGET2,
@@ -349,8 +351,12 @@ async function handleExpiredWarDeclaration(
   const rejectWithNotification = async (content: string) => {
     await Promise.all([
       updateVillageElderVoteForRejectWithNotification(drizzleDB, vote),
-      insertNotificationForRejectWithNotification(drizzleDB, vote, content),
-      incrementWarNotifications(drizzleDB, [vote.initiatedByUserId]),
+      insertNotificationForSubmitNotification(
+        drizzleDB,
+        { userId: vote.initiatedByUserId },
+        { content },
+      ),
+      incrementNotificationCounters(drizzleDB, [vote.initiatedByUserId]),
     ]);
   };
 

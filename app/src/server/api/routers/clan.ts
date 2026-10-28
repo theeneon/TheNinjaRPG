@@ -88,7 +88,6 @@ import {
   updateUserDataForAcceptRequest,
   updateUserDataForChallengeClan,
   updateUserDataForClanDonate,
-  updateUserDataForClanDonate2,
   updateUserDataForCreateClan,
   updateUserDataForEditClanColor,
   updateUserDataForInitiateClanBattle,
@@ -100,7 +99,12 @@ import {
   updateVillageForEditClanColor,
   updateVillageForRemoveFromClan,
 } from "@/queries/clan";
-import { debitUserMoney, fetchUser, incrementUserMoney } from "@/queries/profile";
+import {
+  debitUserMoney,
+  fetchUser,
+  incrementUserMoney,
+  refundUserReputationPoints,
+} from "@/queries/profile";
 import { deleteQueueById } from "@/queries/raids";
 import { fetchRequests, insertRequest } from "@/queries/sparring";
 import { fetchStructures, fetchVillage, fetchVillages } from "@/queries/village";
@@ -302,7 +306,7 @@ export const clanRouter = createTRPCRouter({
       // Mutate step 2 - update the clan
       const result2 = await updateClanForClanDonate(ctx.drizzle, repsCost, fetchedClan);
       if (result2.rowsAffected === 0) {
-        await updateUserDataForClanDonate2(ctx.drizzle, repsCost, ctx);
+        await refundUserReputationPoints(ctx.drizzle, repsCost, ctx.userId);
         return errorResponse("Failed to update the treasury");
       } else {
         // Create donation message

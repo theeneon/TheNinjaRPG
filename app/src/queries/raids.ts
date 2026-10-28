@@ -723,12 +723,6 @@ export const listQuestForCleanupExpiredExclusiveRaids = (
     columns: { id: true, content: true },
   });
 
-/** Build the `sector` deletion for `cleanupExpiredExclusiveRaids`, using predicates on `sector`. */
-export const deleteSectorForCleanupExpiredExclusiveRaids = (
-  client: Pick<DrizzleClient, "delete">,
-  sectorNum: number,
-) => client.delete(sector).where(eq(sector.sector, sectorNum));
-
 /** Build the `quest` lookup for `checkAndCleanupExpiredRaid`, including predicates on `id`, `questType`, `raidEndsAt`. */
 export const findQuestForCheckAndCleanupExpiredRaid = (
   client: Pick<DrizzleClient, "query">,

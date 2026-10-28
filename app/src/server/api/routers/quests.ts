@@ -122,6 +122,7 @@ import {
   findOwnedUserPet,
   findUserById,
   incrementUserMoney,
+  incrementUserVillagePrestige,
 } from "@/queries/profile";
 import {
   deleteOverworldAiPlacementQuestForDelete,
@@ -218,7 +219,6 @@ import {
   updateUserDataForAbandon,
   updateUserDataForClaimDailyQuestSlot,
   updateUserDataForUpdateRewards,
-  updateUserDataForUpdateRewards2,
   updateUserDataForUpsertQuestEntries,
   updateUserDataForUpsertQuestEntry,
   updateUserQuestData,
@@ -2185,9 +2185,7 @@ export const updateRewards = async (info: {
     () => updateUserDataForUpdateRewards(client, updatedUserData, user),
     ...(user.recruiterId && prestigeReward > 0
       ? [
-          updateUserDataForUpdateRewards2(client, prestigeReward, {
-            recruiterId: user.recruiterId,
-          }),
+          incrementUserVillagePrestige(client, prestigeReward, user.recruiterId),
           insertRecruitmentRewardsForUpdateRewards(
             client,
             { recruiterId: user.recruiterId, userId: user.userId },

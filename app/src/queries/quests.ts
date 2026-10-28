@@ -1144,19 +1144,6 @@ export const updateUserDataForUpdateRewards = (
 ) =>
   client.update(userData).set(updatedUserData).where(eq(userData.userId, user.userId));
 
-/** Build the `userData` update for `updateRewards`, setting `villagePrestige`, using predicates on `userId`. */
-export const updateUserDataForUpdateRewards2 = (
-  client: Pick<DrizzleClient, "update">,
-  prestigeReward: number,
-  user: { recruiterId: string },
-) =>
-  client
-    .update(userData)
-    .set({
-      villagePrestige: sql`${userData.villagePrestige} + ${prestigeReward}`,
-    })
-    .where(eq(userData.userId, user.recruiterId));
-
 /** Build the `recruitmentRewards` insert for `updateRewards`. */
 export const insertRecruitmentRewardsForUpdateRewards = (
   client: Pick<DrizzleClient, "insert">,

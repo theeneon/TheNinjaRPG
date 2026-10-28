@@ -13,10 +13,9 @@ import {
   markConversationCommentReported,
   markForumPostReported,
 } from "@/queries/moderator";
-import { fetchUser } from "@/queries/profile";
+import { deleteUserNindo, fetchUser } from "@/queries/profile";
 import {
   clearUserBanWithoutActiveReport,
-  deleteUserNindoForClearNindo,
   findConversationForGetInfraction,
   findForumPostForGetInfraction,
   findUserReviewForUpsertStaffReview,
@@ -682,7 +681,7 @@ export const reportsRouter = createTRPCRouter({
       // Mutate
       await Promise.all([
         insertReportLogForClearNindo(ctx.drizzle, ctx, input),
-        deleteUserNindoForClearNindo(ctx.drizzle, target),
+        deleteUserNindo(ctx.drizzle, target.userId),
       ]);
       return { success: true, message: "Nindo cleared" };
     }),

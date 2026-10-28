@@ -646,16 +646,6 @@ export const insertNotificationForRecordBidActivity = (
   outbid: typeof notification.$inferInsert,
 ) => client.insert(notification).values(outbid);
 
-/** Build the `userData` update for `recordBidActivity`, setting `unreadNotifications`, using predicates on `userId`. */
-export const updateUserDataForRecordBidActivity = (
-  client: Pick<DrizzleClient, "update">,
-  outbid: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-    .where(eq(userData.userId, outbid.userId));
-
 /** Build the matching auction-ID subquery so callers can compose it without an extra database round trip. */
 export const fetchAuctionListingIds = (
   client: Pick<DrizzleClient, "select">,

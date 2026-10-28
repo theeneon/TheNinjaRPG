@@ -2247,16 +2247,6 @@ export const insertNotificationForUpdateRaidProgress = (
     },
   ]);
 
-/** Build the `userData` update for `updateRaidProgress`, setting `unreadNotifications`, using predicates on `userId`. */
-export const updateUserDataForUpdateRaidProgress = (
-  client: Pick<DrizzleClient, "update">,
-  userId: string,
-) =>
-  client
-    .update(userData)
-    .set({ unreadNotifications: sql`unreadNotifications + 1` })
-    .where(eq(userData.userId, userId));
-
 /** Build the `userData` update for `updateUser`, using predicates on `userId` and `battleId`. */
 export const updateUserDataForUpdateUser = (
   client: Pick<DrizzleClient, "update">,

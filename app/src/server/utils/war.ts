@@ -23,7 +23,6 @@ import {
   type WarState,
   type WarType,
 } from "@/drizzle/constants";
-
 import { mpvpBattleQueue, type War, war, warAlly } from "@/drizzle/schema";
 import { selectWarObjectives } from "@/libs/objectiveWar";
 import {
@@ -32,6 +31,7 @@ import {
   isVillageInvolvedInAnyWar,
   shouldEndRaid,
 } from "@/libs/war";
+import { incrementNotificationCounters } from "@/queries/misc";
 import { findSectorByNumber } from "@/queries/shrine";
 import {
   deleteMpvpBattleQueueForFinishWarSettlement,
@@ -44,7 +44,6 @@ import {
   executeRowsForFinishWarSettlement5,
   executeRowsForFinishWarSettlement6,
   fetchSettlementWar,
-  incrementWarNotifications,
   insertGameSettingForFinishWarSettlement,
   insertNotificationForFinishWarSettlement,
   insertNotificationForStartDeclaredWar,
@@ -639,7 +638,7 @@ export const startDeclaredWar = async (
   try {
     await Promise.all([
       insertNotificationForStartDeclaredWar(client, notifyKageIds, warContent),
-      incrementWarNotifications(client, notifyKageIds),
+      incrementNotificationCounters(client, notifyKageIds),
     ]);
   } catch (error) {
     // The war has committed; keep the client's success response and war refresh intact.

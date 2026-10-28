@@ -6,13 +6,13 @@ import { resolveElderVote } from "@/libs/elder";
 import {
   findKageRemovalVoteById,
   findVillageElderVoteForSettleKageRemoval,
-  incrementKageRemovalNotifications,
   insertNotificationForSettleKageRemoval,
   listEligibleKageRemovalElders,
   updateVillageElderVoteForSettleKageRemoval,
   updateVillageForSettleKageRemoval2,
 } from "@/queries/kage";
 import { incrementKageScheduleVersion } from "@/queries/kageDefense";
+import { incrementNotificationCounters } from "@/queries/misc";
 import { findVillageById } from "@/queries/village";
 import type { DrizzleClient } from "@/server/db";
 import { queryInTransaction } from "@/server/utils/concurrency";
@@ -87,7 +87,7 @@ export const settleKageRemoval = async (
       const recipients = [...new Set([motion.targetId, ...electorate])];
       // Publish one system announcement; unread counters determine who receives it.
       await insertNotificationForSettleKageRemoval(tx, outcome, v);
-      await incrementKageRemovalNotifications(tx, recipients);
+      await incrementNotificationCounters(tx, recipients);
       return {
         success: isValid,
         message: !isValid
