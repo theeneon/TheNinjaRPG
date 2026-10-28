@@ -222,6 +222,8 @@ export const createCombatActors = (
         .stroke({ color: 0x252b26, alpha: 0.65, width: size * 0.045 });
       if (ratio > 0)
         record.halo
+          // The threat arc is independent of the track's retained path endpoint.
+          .beginPath()
           .arc(
             target.width / 2,
             target.height * (user.isAi && user.isOriginal ? 0.9 : 1),

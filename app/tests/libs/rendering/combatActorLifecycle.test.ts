@@ -51,6 +51,20 @@ describe("combat actor reconciliation", () => {
     expect(halo.context.instructions).toEqual(instructions);
     actors.sync({ battle }); expect(halo.visible).toBe(false);
   });
+  it("keeps changing threat arcs within the fighter's ring", async () => {
+    const { actors, root, user, battle } = await setup();
+    const halo = root.children.at(-1) as Graphics;
+    actors.sync({ battle, aggro: new Map([[user.userId, { enmity: 0, ratio: 0, isHighest: false }]]) });
+    const track = { ...halo.getLocalBounds() };
+    for (const ratio of [0.25, 1, 0.5, 0]) {
+      actors.sync({ battle, aggro: new Map([[user.userId, { enmity: ratio * 100, ratio, isHighest: ratio === 1 }]]) });
+      const bounds = halo.getLocalBounds();
+      expect(bounds.minX).toBeCloseTo(track.minX);
+      expect(bounds.minY).toBeCloseTo(track.minY);
+      expect(bounds.maxX).toBeCloseTo(track.maxX);
+      expect(bounds.maxY).toBeCloseTo(track.maxY);
+    }
+  });
   it("removes absent actors and their asset scopes immediately", async () => {
     const { actors, root, battle, owned } = await setup();
     const before = owned.size;
