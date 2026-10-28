@@ -1,6 +1,10 @@
 import type { UserRole } from "@/drizzle/constants";
 import { canCreateNews, canModerate } from "@/utils/permissions";
-import type { ForumCapability, ForumPolicy } from "@/validators/forum";
+import {
+  type ForumCapability,
+  type ForumPolicy,
+  forumCapabilities,
+} from "@/validators/forum";
 
 export const canAdminForum = (role?: UserRole) =>
   !!role && ["OWNER", "MODERATOR-ADMIN", "CODING-ADMIN"].includes(role);
@@ -149,21 +153,7 @@ export const forumBoardPermissions = (
     grants,
   );
   if (!valid && !canRecover) {
-    for (const key of [
-      "view",
-      "read",
-      "create",
-      "reply",
-      "upload",
-      "vote",
-      "edit",
-      "remove",
-      "moderate",
-      "approve",
-      "manage",
-      "purge",
-    ] as const)
-      permissions[key] = false;
+    for (const key of forumCapabilities) permissions[key] = false;
   }
   return permissions;
 };

@@ -115,8 +115,6 @@ export default function Board({
                 const result = await create.mutateAsync({
                   board_id: board.id,
                   ...value,
-                  senderId: value.senderId,
-                  image: value.image,
                 });
                 showMutationToast(result);
                 if (!result.success) return false;
