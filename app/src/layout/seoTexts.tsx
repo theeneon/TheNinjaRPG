@@ -1,53 +1,7 @@
 import { DISCORD_INVITE_URL } from "@/drizzle/constants";
 import Link from "@/layout/Link";
 
-/**
- * Short, entity-specific intros for the pages a signed-out visitor lands on from search.
- *
- * These replaced two four-paragraph pitches that were rendered verbatim on every forum
- * thread and every player profile. Identical copy was the majority of each page's body,
- * and Search Console filed the lot as duplicates of one another -- Google's near-duplicate
- * detection is weighted by the body, and a 1,900-character block repeated across 900
- * threads outweighed the posts beneath it. Each intro below names the thing the page is
- * about, says what a visitor can do here, and stops.
- */
-
-export const forumThreadIntro = (title: string) => (
-  <p>
-    You are reading <strong>{title}</strong>, a discussion on the{" "}
-    <Link className="font-bold" href="/forum">
-      TheNinja-RPG community forums
-    </Link>
-    . Players use these boards to share builds, ask questions and follow announcements.{" "}
-    <Link className="font-bold" href="/signup">
-      Create a free account
-    </Link>{" "}
-    to reply, or start with the{" "}
-    <Link className="font-bold" href="/guide/getting-started">
-      getting-started guide
-    </Link>
-    .
-  </p>
-);
-
-export const forumBoardIntro = (boardName: string) => (
-  <p>
-    The <strong>{boardName}</strong> board on the{" "}
-    <Link className="font-bold" href="/forum">
-      TheNinja-RPG community forums
-    </Link>
-    . Browse the threads below, or{" "}
-    <Link className="font-bold" href="/signup">
-      create a free account
-    </Link>{" "}
-    to post. Strategy questions are usually answered fastest on our{" "}
-    <Link className="font-bold" href={DISCORD_INVITE_URL}>
-      Discord
-    </Link>
-    .
-  </p>
-);
-
+/** A short, player-specific introduction for signed-out visitors from search. */
 export const publicUserIntro = (username: string) => (
   <p>
     <strong>{username}</strong>&apos;s public profile in TheNinja-RPG: rank, village,
