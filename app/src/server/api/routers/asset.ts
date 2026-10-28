@@ -185,15 +185,7 @@ export const gameAssetRouter = createTRPCRouter({
       }
     }),
   create: protectedProcedure
-    .input(
-      z
-        .object({
-          name: gameAssetValidator.shape.name,
-          type: gameAssetValidator.shape.type,
-          folder: gameAssetValidator.shape.folder,
-        })
-        .nullish(),
-    )
+    .input(gameAssetValidator.pick({ name: true, type: true, folder: true }).nullish())
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       const user = await fetchUser(ctx.drizzle, ctx.userId);
