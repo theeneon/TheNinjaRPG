@@ -581,14 +581,17 @@ export const setForumReaction = (
             eq(forumReaction.reaction, values.reaction),
           ),
         );
-export const listForumAudit = (db: Client, boardIds: string[], query: string) =>
+// A null scope includes retained history for removed boards; only forum managers use it.
+export const listForumAudit = (db: Client, boardIds: string[] | null, query: string) =>
   db
     .select({ ...getTableColumns(forumAudit), actorName: userData.username })
     .from(forumAudit)
     .leftJoin(userData, eq(userData.userId, forumAudit.actorId))
     .where(
       and(
-        or(inArray(forumAudit.boardId, boardIds), isNull(forumAudit.boardId)),
+        boardIds === null
+          ? undefined
+          : or(inArray(forumAudit.boardId, boardIds), isNull(forumAudit.boardId)),
         query
           ? or(
               like(forumAudit.action, `%${query}%`),

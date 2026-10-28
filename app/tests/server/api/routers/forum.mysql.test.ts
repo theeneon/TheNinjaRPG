@@ -7,6 +7,7 @@ import { fetchForumThreadPage, getForumContext, getInfiniteThreads } from "@/lib
 import * as moderation from "@/libs/moderation/defer";
 import { commentsRouter } from "@/routers/comments";
 import { forumRouter } from "@/routers/forum";
+import { listForumAudit } from "@/queries/forum";
 import type { DrizzleClient } from "@/server/db";
 import { insertUsers } from "../../../setup/factories";
 import { callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../../setup/testDatabase";
@@ -249,6 +250,19 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await (await client()).react({ postId: post.id, reaction: "helpful", active: true })).success).toBe(false);
     await db.update(forumPost).set({ isReported: true }).where(eq(forumPost.id, post.id)); await db.delete(forumSection).where(eq(forumSection.id, "public"));
     expect(await (await client(moderatorId)).administration({ query: "" })).toBeNull();
+  });
+  it("preserves searchable administrator audit history after removing a board without widening scoped staff access", async () => {
+    const db = await getTestDatabase(); const id = await create(); const admin = await client(adminId); const moderator = await client(moderatorId);
+    expect((await admin.lockThread({ thread_id: id, status: true })).success).toBe(true);
+    expect((await moderator.administration({ query: id }))?.logs.some(log => log.action === "topic.lock")).toBe(true);
+    expect((await admin.removeStructure({ type: "BOARD", id: "general", destinationId: "other", reason: "Consolidate related discussions" })).success).toBe(true);
+    expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }))?.boardId).toBe("other");
+    expect((await db.query.forumAudit.findMany()).some(log => log.action === "topic.lock" && log.targetId === id && log.boardId === "general")).toBe(true);
+    expect((await admin.administration({ query: id }))?.logs.some(log => log.action === "topic.lock" && log.boardId === "general")).toBe(true);
+    expect(await moderator.administration({ query: id })).toBeNull();
+    await db.update(forumGrant).set({ scopeId: "other" }).where(eq(forumGrant.id, "scoped"));
+    expect((await moderator.administration({ query: id }))?.logs).toEqual([]);
+    expect(await listForumAudit(db, [], id)).toEqual([]);
   });
   it("searches reply content by its author and sends mention alerts without requiring a watch", async () => {
     const id = await create(); await (await comments(moderatorId)).createForumComment(commentInput(id, "A unique healing strategy for new players."));
