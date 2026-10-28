@@ -209,23 +209,6 @@ export const insertUserReportCommentForCreateReportComment = (
     content: sanitize(input.comment),
   });
 
-/** Build the `forumPost` insert for `umPostForCreateForumComment`. */
-export const insertForumPostForCreateForumComment = (
-  client: Pick<DrizzleClient, "insert">,
-  createdId: string,
-  effectiveUserId: string,
-  thread: { id: string },
-  sanitized: string,
-  ctx: { userId: string },
-) =>
-  client.insert(forumPost).values({
-    id: createdId,
-    userId: effectiveUserId,
-    threadId: thread.id,
-    content: sanitized,
-    authorId: ctx.userId,
-  });
-
 /** Build the `forumThread` update for `umThreadForCreateForumComment`, setting `nPosts`, using predicates on `id`. */
 export const updateForumThreadForCreateForumComment = (
   client: Pick<DrizzleClient, "update">,

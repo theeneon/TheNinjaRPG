@@ -103,7 +103,7 @@ export const insertForumThreadForCreateThread = (
     userId: effectiveUserId,
   });
 
-/** Build the `forumPost` insert for `umPostForCreateThread`. */
+/** Build a forum post insert for new threads and comments; posting guards stay in callers. */
 export const insertForumPostForCreateThread = (
   client: Pick<DrizzleClient, "insert">,
   postId: string,

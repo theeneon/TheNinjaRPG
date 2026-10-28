@@ -47,7 +47,6 @@ import {
   findUserDataForSendTypingIndicator,
   insertConversationComment,
   insertConversationForCreateConvo,
-  insertForumPostForCreateForumComment,
   insertSupportTicketActivityForUpdateSupportTicketStatusAfterComment,
   insertUser2conversationForCreateConvo,
   insertUserReportCommentForCreateReportComment,
@@ -66,7 +65,7 @@ import {
   updateUserDataForCreateConversationComment2,
   updateUserDataForGetUserConversations,
 } from "@/queries/comments";
-import { fetchThread } from "@/queries/forum";
+import { fetchThread, insertForumPostForCreateThread } from "@/queries/forum";
 import { fetchCommunicationPolicies } from "@/queries/parentalControls";
 import { fetchUser } from "@/queries/profile";
 import {
@@ -221,12 +220,12 @@ export const commentsRouter = createTRPCRouter({
       const sanitized = moderated.sanitized;
       const createdId = nanoid();
       await Promise.all([
-        insertForumPostForCreateForumComment(
+        insertForumPostForCreateThread(
           ctx.drizzle,
           createdId,
-          effectiveUserId,
-          thread,
           sanitized,
+          thread.id,
+          effectiveUserId,
           ctx,
         ).then(() =>
           deferModeration(ctx.drizzle, {
