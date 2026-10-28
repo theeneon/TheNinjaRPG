@@ -83,6 +83,16 @@ function SingleEditAsset({
   const router = useRouter();
   const params = useSearchParams();
   const returnTo = getAssetLibraryReturnTo(params.get("returnTo"));
+  const returnToLibrary = () => {
+    // Restore scroll only for a confirmed library entry; direct links use the fallback.
+    const navigation = window.navigation;
+    const previous = navigation?.entries()[(navigation.currentEntry?.index ?? 0) - 1];
+    if (previous?.url === new URL(returnTo, window.location.origin).href) {
+      router.back();
+    } else {
+      router.replace(returnTo);
+    }
+  };
   const { form, formData, handleAssetSubmit, isUpdating, saveError } = useAssetEditForm(
     asset,
     refetch,
@@ -108,7 +118,7 @@ function SingleEditAsset({
       title={canSave ? "Edit asset" : "Suggest asset changes"}
       subtitle={asset.name}
       defaultBackHref={returnTo}
-      onBack={() => router.push(returnTo)}
+      onBack={returnToLibrary}
       backDisabled={isUpdating}
       noBorder
       padding={false}
@@ -121,7 +131,7 @@ function SingleEditAsset({
           <Button
             variant="ghost"
             disabled={isUpdating}
-            onClick={() => router.push(returnTo)}
+            onClick={returnToLibrary}
             className="text-primary gap-1.5"
           >
             <FolderOpen className="size-4" />

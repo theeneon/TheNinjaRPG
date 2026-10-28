@@ -80,6 +80,7 @@ export function GameAssetLibrary() {
   const [showImport, setShowImport] = useState(false);
   const [selected, setSelected] = useState<GameAsset | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const keywordSearchRef = useRef<HTMLInputElement | null>(null);
   const selectedTrigger = useRef<HTMLElement | null>(null);
   const createTrigger = useRef<HTMLButtonElement | null>(null);
 
@@ -234,6 +235,7 @@ export function GameAssetLibrary() {
                     Combine keywords from asset names to narrow your search.
                   </p>
                   <Input
+                    ref={keywordSearchRef}
                     aria-label="Find an asset keyword"
                     placeholder="Find a keyword…"
                     value={keywordSearch}
@@ -259,7 +261,10 @@ export function GameAssetLibrary() {
                         variant="outline"
                         size="sm"
                         key={tag}
-                        onClick={() => setKeywords([...keywords, tag])}
+                        onClick={(event) => {
+                          setKeywords([...keywords, tag]);
+                          if (event.detail === 0) keywordSearchRef.current?.focus();
+                        }}
                       >
                         {tag}
                       </Button>
