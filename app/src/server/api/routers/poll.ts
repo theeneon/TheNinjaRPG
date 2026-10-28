@@ -383,5 +383,3 @@ export const pollRouter = createTRPCRouter({
       return { success: true, message: "Poll option deleted successfully" };
     }),
 });
-
-// Define types for the poll data with relations

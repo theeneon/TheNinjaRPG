@@ -1385,7 +1385,6 @@ export const forumPost = mysqlTable("ForumPost", {
   authorId: varchar("authorId", { length: 191 }).notNull(),
   isReported: boolean("isReported").default(false).notNull(),
 }, (t) => ({ userIdIdx: index("ForumPost_userId_idx").on(t.userId), threadIdIdx: index("ForumPost_threadId_idx").on(t.threadId, t.createdAt, t.id) }));
-export type ForumPost = InferSelectModel<typeof forumPost>;
 export const forumPostRelations = relations(forumPost, ({ one, many }) => ({
   user: one(userData, { fields: [forumPost.userId], references: [userData.userId] }),
   thread: one(forumThread, { fields: [forumPost.threadId], references: [forumThread.id] }),
