@@ -16,6 +16,7 @@ import type { RouterOutputs } from "@/app/_trpc/client";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { safeLocalStorageRemoveItem } from "@/hooks/localstorage";
 import ContentImageSelector from "@/layout/ContentImageSelector";
 import { ForumAttachments } from "@/layout/ForumAttachments";
 import Link from "@/layout/Link";
@@ -340,11 +341,7 @@ export const ForumComposer = ({
       if (success) {
         form.reset({ content: "", title: "", kind: defaultKind, tags: "", image: "" });
         setRecovery(null);
-        try {
-          localStorage.removeItem(storageKey);
-        } catch {
-          /* Posting succeeded even without storage access. */
-        }
+        safeLocalStorageRemoveItem(storageKey);
       }
     } catch (e) {
       setError(
@@ -383,11 +380,7 @@ export const ForumComposer = ({
             size="sm"
             onClick={() => {
               setRecovery(null);
-              try {
-                localStorage.removeItem(storageKey);
-              } catch {
-                /* Optional browser storage. */
-              }
+              safeLocalStorageRemoveItem(storageKey);
             }}
           >
             Discard draft

@@ -211,9 +211,9 @@ export const forumRouter = createTRPCRouter({
     }),
 
   getAll: publicProcedure.query(async ({ ctx }) =>
-    (await getForumContext(ctx.drizzle, ctx.userId)).boards
-      .filter((b) => b.permissions.view)
-      .map(({ restriction, ...board }) => ({ ...board, restriction })),
+    (await getForumContext(ctx.drizzle, ctx.userId)).boards.filter(
+      (b) => b.permissions.view,
+    ),
   ),
   getContext: publicProcedure.query(async ({ ctx }) => {
     const context = await getForumContext(ctx.drizzle, ctx.userId);
