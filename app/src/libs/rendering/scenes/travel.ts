@@ -1,6 +1,6 @@
 import alea from "alea";
 import type { Grid } from "honeycomb-grid";
-import { Container, Graphics } from "pixi.js";
+import { Container, Graphics, RenderLayer } from "pixi.js";
 import type { MapAsset, VillageStructure } from "@/drizzle/schema";
 import type { TerrainHex } from "@/libs/hexgrid";
 import { getBackgroundColor } from "@/libs/rendering/biomes";
@@ -57,10 +57,17 @@ export const createTravelScene = async (options: {
   try {
     const world = new Container(),
       terrainLayer = new Container(),
+      terrainDrawLayer = new RenderLayer(),
       artLayer = new Container();
     const highlights = new Graphics(),
       actors = createTravelActors(game);
-    world.addChild(terrainLayer, highlights, artLayer, actors.container);
+    world.addChild(
+      terrainLayer,
+      terrainDrawLayer,
+      highlights,
+      artLayer,
+      actors.container,
+    );
     game.stage.addChild(world);
     const sectors = new Map<number, TravelSector>();
     const pending = new Set<GameRenderer>();
@@ -229,6 +236,9 @@ export const createTravelScene = async (options: {
           terrain.container.position.copyFrom(position);
           art.container.position.copyFrom(position);
           terrainLayer.addChild(terrain.container);
+          // Interleave sector depths while retaining each sector's transform and ownership.
+          terrainDrawLayer.attach(...terrain.container.children);
+          terrainDrawLayer.sortRenderLayerChildren();
           artLayer.addChild(art.container);
           existing?.scope.dispose();
           sectors.set(entry.sector, {

@@ -20,6 +20,7 @@ import type { HexTerrainData } from "@/libs/rendering/terrainData";
  * Owns meshes/shaders for immutable CPU terrain data. Resolves after texture attempts;
  * missing optional images retain tinted faces, while cancellation rejects.
  * setTints replaces the overlay from original colors without mutating data.
+ * Mesh zIndex orders dirt, recessed faces and flat faces across sector containers.
  */
 export const createHexTerrain = async (
   game: GameRenderer,
@@ -50,16 +51,22 @@ export const createHexTerrain = async (
   const noise = createNoiseTexture();
   const recolor: ((tints: ReadonlyMap<string, TerrainTint>) => void)[] = [];
   let disposed = false;
-  const own = (geometry: Geometry, shader: Shader, state = State.for2d()) => {
+  const own = (
+    geometry: Geometry,
+    shader: Shader,
+    order: number,
+    state = State.for2d(),
+  ) => {
     geometries.push(geometry);
     shaders.push(shader);
-    container.addChild(new Mesh({ geometry, shader, state }));
+    container.addChild(new Mesh({ geometry, shader, state, zIndex: order }));
   };
   const colorMesh = (
     positions: Float32Array,
     hex: string,
     alpha: number,
     lines: boolean,
+    order: number,
   ) => {
     if (!positions.length) return;
     const color = linearRenderColor(hex);
@@ -81,12 +88,13 @@ export const createHexTerrain = async (
         },
       },
     });
-    own(geometry, shader);
+    own(geometry, shader, order);
   };
-  colorMesh(data.ground, "#696969", 1, false);
+  colorMesh(data.ground, "#696969", 1, false, 0);
   // Opaque faces cover buried dirt edges; recessed outlines stay below flat land.
-  colorMesh(data.groundEdges, "#555555", 0.25, true);
+  colorMesh(data.groundEdges, "#555555", 0.25, true, 1);
   data.batches.forEach((batch, index) => {
+    const order = batch.layer < 0 ? 2 : 4;
     const colors = new Float32Array(batch.colors);
     const geometry = new Geometry({
       attributes: {
@@ -149,13 +157,13 @@ void main() {
     });
     const state = new State();
     state.blend = false;
-    own(geometry, shader, state);
+    own(geometry, shader, order, state);
     if (batch.layer !== data.batches[index + 1]?.layer) {
       const edges = data.edges.get(batch.layer);
-      if (edges) colorMesh(edges, "#555555", 0.25, true);
+      if (edges) colorMesh(edges, "#555555", 0.25, true, order + 1);
     }
   });
-  if (showBoundary) colorMesh(data.boundary, "#ffc23e", 0.85, true);
+  if (showBoundary) colorMesh(data.boundary, "#ffc23e", 0.85, true, 6);
   const dispose = () => {
     if (disposed) return;
     disposed = true;

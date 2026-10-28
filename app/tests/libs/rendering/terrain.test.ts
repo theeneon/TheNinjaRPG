@@ -43,6 +43,19 @@ const renderer = (texture: (path: string) => Promise<Texture>) => {
 };
 
 describe("shared hex terrain textures", () => {
+  it("orders all sector sides below neighboring faces and recessed outlines below flat land", async () => {
+    const { data } = prepare(mapOf(5, 3));
+    const { game } = renderer(async () => Texture.WHITE);
+    const terrains = await Promise.all([createHexTerrain(game, data), createHexTerrain(game, data)]);
+    const meshes = terrains.flatMap((terrain) => terrain.container.children as Mesh[]);
+    const sides = meshes.filter((mesh) => [data.ground, data.groundEdges].some((points) => points === mesh.geometry.getBuffer("aPosition").data));
+    const faces = meshes.filter((mesh) => mesh.geometry.attributes.aTint);
+    expect(Math.max(...sides.map((mesh) => mesh.zIndex))).toBeLessThan(Math.min(...faces.map((mesh) => mesh.zIndex)));
+    const recessedEdges = meshes.filter((mesh) => mesh.geometry.getBuffer("aPosition").data === data.edges.get(-0.5));
+    const flatFaces = faces.filter((mesh) => data.batches.some((batch) => batch.layer === 0 && batch.positions === mesh.geometry.getBuffer("aPosition").data));
+    expect(Math.max(...recessedEdges.map((mesh) => mesh.zIndex))).toBeLessThan(Math.min(...flatFaces.map((mesh) => mesh.zIndex)));
+  });
+
   it("covers buried dirt and recessed outlines with higher tile faces", async () => {
     const { data } = prepare(mapOf(5, 3));
     const { game } = renderer(async () => Texture.WHITE);
