@@ -508,12 +508,7 @@ export function GameAssetLibrary() {
                 </Button>
               </div>
               {showImport && (
-                <EpidemicSfxSearch
-                  onImported={async (id) => {
-                    await refreshLibrary();
-                    router.push(editHref(id));
-                  }}
-                />
+                <EpidemicSfxSearch onImported={(id) => router.push(editHref(id))} />
               )}
             </div>
           )}

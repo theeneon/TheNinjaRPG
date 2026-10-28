@@ -37,10 +37,13 @@ export const EpidemicSfxSearch: React.FC<EpidemicSfxSearchProps> = ({ onImported
     onSuccess: async (result) => {
       showMutationToast(result);
       if (result.success && result.assetId) {
-        // The picker lists assets from one query and effect fields label them from another.
+        // Refresh the asset library, picker options and labels before handing off the asset.
         await Promise.all([
           utils.gameAsset.getAll.invalidate(),
+          utils.gameAsset.getAllFolders.invalidate(),
+          utils.gameAsset.getAllNames.invalidate(),
           utils.misc.getAllGameAssetNames.invalidate(),
+          utils.gameAsset.getNameTags.invalidate(),
         ]);
         await onImported(result.assetId);
       } else if (!result.success) {

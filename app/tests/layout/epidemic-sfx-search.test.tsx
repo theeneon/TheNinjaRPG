@@ -10,15 +10,30 @@ import { ensureDom } from "../setup/dom.mjs";
 type Result = { success: boolean; message: string; assetId?: string };
 type Callbacks = { onMutate: () => void; onSuccess: (result: Result) => Promise<void>; onError: (error: Error) => void; onSettled: () => void };
 const request = vi.fn(async (_input: unknown): Promise<Result> => ({ success: true, message: "Imported", assetId: "new-sound" }));
-const invalidate = vi.fn(async () => undefined);
+const invalidations = {
+  getAll: vi.fn(async (): Promise<void> => undefined),
+  getAllFolders: vi.fn(async (): Promise<void> => undefined),
+  getAllNames: vi.fn(async (): Promise<void> => undefined),
+  getAllGameAssetNames: vi.fn(async (): Promise<void> => undefined),
+  getNameTags: vi.fn(async (): Promise<void> => undefined),
+};
 
 beforeEach(() => {
-  ensureDom(); request.mockReset(); invalidate.mockClear();
+  ensureDom(); request.mockReset();
+  for (const invalidate of Object.values(invalidations)) invalidate.mockReset().mockResolvedValue(undefined);
   request.mockResolvedValue({ success: true, message: "Imported", assetId: "new-sound" });
   vi.spyOn(userContext, "useUserData").mockReturnValue({ data: { role: "CONTENT" } } as never);
   vi.spyOn(toast, "showMutationToast").mockImplementation(() => undefined);
   Object.assign(vi.spyOn(client, "api" as never), {
-    useUtils: () => ({ gameAsset: { getAll: { invalidate } }, misc: { getAllGameAssetNames: { invalidate } } }),
+    useUtils: () => ({
+      gameAsset: {
+        getAll: { invalidate: invalidations.getAll },
+        getAllFolders: { invalidate: invalidations.getAllFolders },
+        getAllNames: { invalidate: invalidations.getAllNames },
+        getNameTags: { invalidate: invalidations.getNameTags },
+      },
+      misc: { getAllGameAssetNames: { invalidate: invalidations.getAllGameAssetNames } },
+    }),
     contentReview: {
       searchSfx: { useQuery: ({ term }: {term: string}) => ({ data: term ? { configured: true, results: [{ id: "catalog-sound", title: "Fiery whoosh", lengthMs: 1000 }] } : undefined, isFetching: false }) },
       importSfx: { useMutation: function useImport(callbacks: Callbacks) {
@@ -46,14 +61,24 @@ const search = (onImported: (assetId: string) => void | Promise<void> = vi.fn(as
 };
 
 describe("sound library import recovery", () => {
-  it("blocks duplicate clicks and stays pending until the library callback completes", async () => {
+  it("refreshes each asset cache once and stays pending through the import callback", async () => {
+    let finishRefresh!: () => void;
+    const refreshGate = new Promise<void>((resolve) => { finishRefresh = resolve; });
+    for (const invalidate of Object.values(invalidations)) invalidate.mockReturnValueOnce(refreshGate);
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const onImported = vi.fn(async () => gate);
     const { view } = search(onImported);
     act(() => { fireEvent.click(view.getByRole("button", { name: /^Use this/ })); fireEvent.click(view.getByRole("button", { name: /^Use this/ })); });
+    await waitFor(() => {
+      for (const invalidate of Object.values(invalidations)) expect(invalidate).toHaveBeenCalledTimes(1);
+    });
+    expect(onImported).not.toHaveBeenCalled();
+    expect((view.getByRole("button", { name: /^Use this/ }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => { finishRefresh(); });
     await waitFor(() => expect(onImported).toHaveBeenCalledWith("new-sound"));
-    expect(request).toHaveBeenCalledTimes(1); expect(invalidate).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(1);
+    for (const invalidate of Object.values(invalidations)) expect(invalidate).toHaveBeenCalledTimes(1);
     expect((view.getByRole("button", { name: /^Use this/ }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { finish(); });
     await waitFor(() => expect((view.getByRole("button", { name: /^Use this/ }) as HTMLButtonElement).disabled).toBe(false));
@@ -77,6 +102,7 @@ describe("sound library import recovery", () => {
     const { view, onImported } = search();
     fireEvent.click(view.getByRole("button", { name: /^Use this/ }));
     await waitFor(() => expect(view.getByRole("alert").textContent).toBe("Your content permissions changed."));
-    expect(onImported).not.toHaveBeenCalled(); expect(invalidate).not.toHaveBeenCalled();
+    expect(onImported).not.toHaveBeenCalled();
+    for (const invalidate of Object.values(invalidations)) expect(invalidate).not.toHaveBeenCalled();
   });
 });
