@@ -9,7 +9,7 @@ import Image from "@/layout/Image";
 import { cn } from "@/libs/shadui";
 import { bunnyImageUrl } from "@/utils/image";
 
-/** Media stays still and audio stays silent until the user opens or plays it. */
+/** Show still artwork, opt-in animation playback, or a silent audio placeholder. */
 export function GameAssetPreview({
   asset,
   className,
@@ -21,6 +21,7 @@ export function GameAssetPreview({
   className?: string;
   play?: boolean;
   background?: PreviewBackground;
+  /** Static-image CDN width; fill layouts do not provide the Image wrapper a width. */
   renditionWidth?: number;
 }) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
@@ -87,6 +88,7 @@ export function GameAssetPreview({
   );
 }
 
+/** Choose contrasting backgrounds for inspecting transparent artwork. */
 export function AssetPreviewBackgroundControls({
   value,
   onChange,

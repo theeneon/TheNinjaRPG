@@ -6,6 +6,7 @@ import type { DrizzleClient } from "@/server/db";
 // Compile real Drizzle statements without connecting to a database.
 const client = drizzle(async () => ({ rows: [] })) as unknown as DrizzleClient;
 
+/** Compile our filter and pagination choices without executing database statements. */
 const listing = (input: Parameters<typeof selectGameAssetForGetAll>[1]) =>
   selectGameAssetForGetAll(client, input, 49, 48).toSQL();
 

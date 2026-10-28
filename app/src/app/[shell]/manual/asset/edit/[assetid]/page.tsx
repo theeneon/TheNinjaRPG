@@ -23,6 +23,7 @@ import { useRequiredUserData } from "@/utils/UserContext";
 import type { ZodGameAssetType } from "@/validators/asset";
 import { gameAssetValidator } from "@/validators/asset";
 
+/** Gate editing by staff permissions and provide recoverable loading/not-found states. */
 export default function AssetEdit(props: { params: Promise<{ assetid: string }> }) {
   const { assetid } = use(props.params);
   const router = useRouter();
@@ -71,6 +72,7 @@ export default function AssetEdit(props: { params: Promise<{ assetid: string }> 
   );
 }
 
+/** Share one validated form across media/details sections and preserve library context. */
 function SingleEditAsset({
   asset,
   refetch,
@@ -84,7 +86,8 @@ function SingleEditAsset({
   const params = useSearchParams();
   const returnTo = getAssetLibraryReturnTo(params.get("returnTo"));
   const returnToLibrary = () => {
-    // Restore scroll only for a confirmed library entry; direct links use the fallback.
+    // History length cannot prove the previous route. Match it before restoring scroll;
+    // direct links and browsers without the Navigation API replace with the safe fallback.
     const navigation = window.navigation;
     const previous = navigation?.entries()[(navigation.currentEntry?.index ?? 0) - 1];
     if (previous?.url === new URL(returnTo, window.location.origin).href) {
@@ -106,6 +109,7 @@ function SingleEditAsset({
     name: ["name", "image", "type", "frames", "speed"],
   });
   const sharedForm = form as unknown as UseFormReturn<ZodGameAssetType, unknown>;
+  // Both sections use the same controller; only Details renders the submit form.
   const mediaFields = formData
     .filter((field) => field.type === "avatar" || field.type === "audio")
     .map((field) => ({ ...field, fullWidth: true }));

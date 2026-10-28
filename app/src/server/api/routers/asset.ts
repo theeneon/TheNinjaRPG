@@ -37,6 +37,7 @@ import { canChangeContent } from "@/utils/permissions";
 import { gameAssetSchema, gameAssetValidator } from "@/validators/asset";
 import { idSchema } from "@/validators/misc";
 
+/** Public asset discovery and authenticated staff mutations through asset query helpers. */
 export const gameAssetRouter = createTRPCRouter({
   getNameTags: publicProcedure
     .meta({ mcp: { description: "Get game asset name tags" } })
@@ -121,6 +122,7 @@ export const gameAssetRouter = createTRPCRouter({
       const currentCursor = input?.cursor ? input.cursor : 0;
       const limit = input?.limit ? input.limit : 100;
       const skip = currentCursor * limit;
+      // Look ahead one row to avoid an empty final page or a separate count query.
       const results = await selectGameAssetForGetAll(
         ctx.drizzle,
         input,
@@ -185,6 +187,7 @@ export const gameAssetRouter = createTRPCRouter({
       }
     }),
   create: protectedProcedure
+    // Preserve no-input placeholder creation alongside named library creation.
     .input(gameAssetValidator.pick({ name: true, type: true, folder: true }).nullish())
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {

@@ -12,11 +12,14 @@ import type { ZodGameAssetInput, ZodGameAssetType } from "@/validators/asset";
 import { gameAssetValidator } from "@/validators/asset";
 
 /**
- * Hook used when creating frontend forms for editing assets
- * @param data
+ * Share media and metadata form state, retain failed edits, and refresh consumers on save.
+ * @param asset Persisted baseline for form defaults and change detection.
+ * @param refetch Reload the saved asset after a successful mutation.
  */
 export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknown>) => {
+  // Block same-tick submissions before React exposes the pending mutation.
   const submitInFlight = useRef(false);
+  // Retain failure feedback until resubmission; editing a draft must not erase a new error.
   const [saveError, setSaveError] = useState<string | null>(null);
   const utils = api.useUtils();
 
@@ -76,7 +79,7 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
     },
   );
 
-  // Watch for changes to avatar
+  // Subscribe to media/type changes without react-hook-form's compiler-incompatible watch.
   const imageUrl = useWatch({
     control: form.control,
     name: "image",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { GameAssetTypes } from "@/drizzle/constants";
 
+/** Asset edit payload shared by content forms and server mutation validation. */
 export const gameAssetValidator = z.object({
   name: z.string().min(1).max(191),
   image: z.url(),
@@ -21,6 +22,7 @@ export const gameAssetValidator = z.object({
 export type ZodGameAssetType = z.output<typeof gameAssetValidator>;
 export type ZodGameAssetInput = z.input<typeof gameAssetValidator>;
 
+/** Reusable listing filters; pagination and sort envelopes remain in their router. */
 export const gameAssetSchema = z.object({
   name: z.string().optional(),
   type: z.enum(GameAssetTypes).optional(),

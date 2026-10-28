@@ -1,5 +1,5 @@
 /**
- * Database access for asset; authorization and transaction scopes stay in callers.
+ * Asset database access; callers own authorization and mutation orchestration.
  */
 import type { SQL } from "drizzle-orm";
 import { eq } from "drizzle-orm";
@@ -50,7 +50,7 @@ export const selectDistinctGameAssetTagForGetAllGameAssetContentTagNames = (
     .from(gameAssetTag)
     .innerJoin(contentTag, eq(gameAssetTag.tagId, contentTag.id));
 
-/** Build the `gameAsset` selection for `getAllFolders`, using predicates on `folder`. */
+/** Count all nonempty folders, optionally within one media type, without pagination. */
 export const selectGameAssetForGetAllFolders = (
   client: Pick<DrizzleClient, "select">,
   input?: { type?: GameAssetType },
@@ -70,7 +70,11 @@ export const selectGameAssetForGetAllFolders = (
     .groupBy(gameAsset.folder)
     .orderBy(gameAsset.folder);
 
-/** Build the `gameAsset` selection for `getAll`, using predicates on `name`, `type`, `folder`. */
+/**
+ * Build a deterministically ordered listing, retaining animation-free picker defaults.
+ * `folder` matches substrings; `exactFolder` also accepts an empty Unfiled folder.
+ * Callers can opt into animations and request an extra row for pagination lookahead.
+ */
 export const selectGameAssetForGetAll = (
   client: Pick<DrizzleClient, "select">,
   input: {
@@ -156,7 +160,7 @@ export const insertActionLogForUpdate = (
     relatedImage: entry.image,
   });
 
-/** Build the `gameAsset` insert for `create`. */
+/** Build one asset insert; omitted metadata retains placeholder defaults for callers. */
 export const insertGameAssetForCreate = (
   client: Pick<DrizzleClient, "insert">,
   id: string,

@@ -12,7 +12,7 @@ import { formatSoundLength } from "@/utils/time";
 import { useUserData } from "@/utils/UserContext";
 
 interface EpidemicSfxSearchProps {
-  /** Called with the new GameAsset id once the sound is in the asset library. */
+  /** Runs after import caches refresh; a returned promise keeps import controls pending. */
   onImported: (assetId: string) => void | Promise<void>;
 }
 
@@ -25,6 +25,7 @@ export const EpidemicSfxSearch: React.FC<EpidemicSfxSearchProps> = ({ onImported
   const [draft, setDraft] = useState("");
   const [term, setTerm] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
+  // Block same-tick clicks before the mutation's pending state disables the buttons.
   const importInFlight = useRef(false);
   const canSearch = !!userData && canChangeContent(userData.role);
   const utils = api.useUtils();

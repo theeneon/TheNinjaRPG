@@ -48,6 +48,7 @@ import { canChangeContent, canSuggestContent } from "@/utils/permissions";
 import { useUserData } from "@/utils/UserContext";
 import { gameAssetValidator } from "@/validators/asset";
 
+/** Search and browse assets with URL-backed filters and permission-gated editing. */
 export function GameAssetLibrary() {
   const params = useSearchParams();
   const router = useRouter();
@@ -61,6 +62,7 @@ export function GameAssetLibrary() {
     const value = params.get("type");
     return GameAssetTypes.find((type) => type === value) ?? "ALL";
   });
+  // Undefined searches every folder; an empty string selects Unfiled exactly.
   const [folder, setFolder] = useState<string | undefined>(
     params.get("folder") ?? undefined,
   );
@@ -125,7 +127,7 @@ export function GameAssetLibrary() {
   if (hasKeywords) for (const tag of keywords) returnParams.append("tag", tag);
   const returnTo = `/manual/asset${returnParams.size ? `?${returnParams}` : ""}`;
 
-  // Preserve the workspace when following an edit link or using browser Back.
+  // Save filters without adding history entries, preserving the library's Back target.
   useEffect(() => {
     const url = new URL(window.location.href);
     url.search = returnParams.toString();
@@ -143,6 +145,7 @@ export function GameAssetLibrary() {
     setKeywords([]);
     setKeywordSearch("");
   };
+  /** Refresh discovery lists and picker labels after library creation or deletion. */
   const refreshLibrary = async () => {
     await Promise.all([
       utils.gameAsset.getAll.invalidate(),
@@ -263,6 +266,7 @@ export function GameAssetLibrary() {
                         key={tag}
                         onClick={(event) => {
                           setKeywords([...keywords, tag]);
+                          // Selection removes this button; keep keyboard focus in refinement.
                           if (event.detail === 0) keywordSearchRef.current?.focus();
                         }}
                       >
@@ -629,6 +633,7 @@ export function GameAssetLibrary() {
           canSuggest={canSuggest}
           editHref={editHref(selected.id)}
           onDeleted={async () => {
+            // The deleted tile unmounts, so restore dialog focus to a surviving control.
             selectedTrigger.current = createTrigger.current ?? searchRef.current;
             setSelected(null);
             await refreshLibrary();
@@ -644,6 +649,7 @@ export function GameAssetLibrary() {
   );
 }
 
+/** Select a media type while exposing its pressed state to assistive technology. */
 function TypeFilter({
   label,
   active,
@@ -670,6 +676,7 @@ function TypeFilter({
   );
 }
 
+/** Remove one active filter without clearing the remaining library context. */
 function FilterChip({ label, onClear }: { label: string; onClear: () => void }) {
   return (
     <button
@@ -684,6 +691,7 @@ function FilterChip({ label, onClear }: { label: string; onClear: () => void }) 
   );
 }
 
+/** Open details from a still grid or list preview; playback belongs to the dialog. */
 function AssetTile({
   asset,
   view,
@@ -747,6 +755,7 @@ function AssetTile({
   );
 }
 
+/** Preview media and metadata, with parent-owned navigation and post-delete refresh. */
 function AssetDetails({
   asset,
   isOpen,
@@ -775,6 +784,7 @@ function AssetDetails({
   const [copied, setCopied] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  // Block repeated confirmation events before React exposes the pending mutation.
   const deleteInFlight = useRef(false);
   const isAudio = asset.type === "SFX" || asset.type === "MUSIC";
   const remove = api.gameAsset.delete.useMutation({
@@ -992,6 +1002,7 @@ function AssetDetails({
   );
 }
 
+/** Validate initial metadata, refresh discovery caches, then open the media editor. */
 function CreateAssetDialog({
   folder,
   type,
@@ -1017,6 +1028,7 @@ function CreateAssetDialog({
   );
   const [assetFolder, setAssetFolder] = useState(folder ?? "");
   const [error, setError] = useState("");
+  // Enter and the confirmation button can submit before pending state re-renders.
   const createInFlight = useRef(false);
   const create = api.gameAsset.create.useMutation({
     onSuccess: async (data) => {

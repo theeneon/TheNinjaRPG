@@ -17,6 +17,7 @@ interface ContentImageProps {
   alt: string;
   rarity?: ItemRarity;
   frames?: number;
+  /** Duration of each sprite-sheet frame in milliseconds. */
   speed?: number;
   className: string;
   roundFull?: boolean;
@@ -33,9 +34,11 @@ interface ContentImageProps {
   onClick?: () => void;
   /** Draw the first frame without starting playback. */
   paused?: boolean;
+  /** Report sprite-sheet load failure so callers can render recovery feedback. */
   onError?: () => void;
 }
 
+/** Render static artwork or a vertical sprite sheet, respecting explicit playback state. */
 const ContentImage: React.FC<ContentImageProps> = (props) => {
   // The image to show
   const imgRef = useRef<HTMLCanvasElement>(null);
@@ -68,6 +71,7 @@ const ContentImage: React.FC<ContentImageProps> = (props) => {
       };
       const step = (timestamp: number) => {
         if (startedAt === undefined) startedAt = timestamp;
+        // Elapsed time preserves frame duration across different display refresh rates.
         drawFrame(Math.floor((timestamp - startedAt) / speed) % frames);
         timerId = window.requestAnimationFrame(step);
       };

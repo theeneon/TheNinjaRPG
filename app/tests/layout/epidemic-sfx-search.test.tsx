@@ -36,6 +36,7 @@ beforeEach(() => {
     }),
     contentReview: {
       searchSfx: { useQuery: ({ term }: {term: string}) => ({ data: term ? { configured: true, results: [{ id: "catalog-sound", title: "Fiery whoosh", lengthMs: 1000 }] } : undefined, isFetching: false }) },
+      // Await the component's callbacks so deferred cache/caller work controls pending state.
       importSfx: { useMutation: function useImport(callbacks: Callbacks) {
         const [isPending, setPending] = useState(false);
         const [variables, setVariables] = useState<{epidemicId: string} | undefined>();
@@ -53,6 +54,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+/** Exercise search through the component controls; only its tRPC boundary is stubbed. */
 const search = (onImported: (assetId: string) => void | Promise<void> = vi.fn(async () => undefined)) => {
   const view = render(<EpidemicSfxSearch onImported={onImported} />);
   fireEvent.change(view.getByRole("textbox"), { target: { value: "fire" } });

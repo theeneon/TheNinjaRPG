@@ -33,6 +33,7 @@ beforeEach(() => {
       gameAsset: Object.fromEntries(["getAll", "getAllFolders", "getAllNames", "getNameTags"].map((key) => [key, { invalidate }])),
       misc: { getAllGameAssetNames: { invalidate } },
     }),
+    // Stub the tRPC boundary while retaining real React pending state and form validation.
     gameAsset: { update: { useMutation: function useUpdateMutation(callbacks: Callbacks) {
       const [isPending, setPending] = useState(false);
       return { isPending, mutateAsync: async (input: unknown) => {
