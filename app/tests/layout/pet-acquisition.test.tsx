@@ -16,7 +16,7 @@ import { getDailyPetOptions } from "@/libs/pets/catalogue";
 import * as toast from "@/libs/toast";
 import * as UserContext from "@/utils/UserContext";
 import { initialPetSpecies } from "../libs/pets/helpers/species";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const testApi = createTRPCReact<AppRouter>();
 const dayKey = "2026-10-16";

@@ -1,9 +1,14 @@
+import * as nextHeaders from "next/headers";
+import * as gameSettings from "@/libs/gamesettings";
 import {
   resetServerModuleStubs,
   stubCronAuth,
   stubDatabase,
 } from "../../../setup/serverModules";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { GET as dailyPvp } from "@/app/api/daily-pvp/route";
+import { GET as weeklyPvp } from "@/app/api/weekly-pvp/route";
+import { anbuSquad, clan, gameSetting, userData } from "@/drizzle/schema";
 
 type PvpResetTestMocks = {
   dailyLock: ReturnType<typeof vi.fn>;
@@ -19,35 +24,17 @@ type PvpResetTestMocks = {
   candidates: string[];
 };
 
-/** Returns Bun-compatible module mocks shared by the hoisted route factories. */
-function getPvpResetTestMocks(): PvpResetTestMocks {
-  const globals = globalThis as unknown as { __pvpResetTestMocks?: PvpResetTestMocks };
-  globals.__pvpResetTestMocks ??= {
-    dailyLock: vi.fn(),
-    weeklyLock: vi.fn(),
-    rollback: vi.fn(),
-    handleError: vi.fn(),
-    update: vi.fn(),
-    getSetting: vi.fn(),
-    updates: [],
-    markerClaimRows: 1,
-    candidates: [],
-  };
-  return globals.__pvpResetTestMocks;
-}
-
-const mocks = getPvpResetTestMocks();
-
-vi.mock("next/headers", () => ({ cookies: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("@/libs/gamesettings", () => ({
-  lockWithDailyTimer: getPvpResetTestMocks().dailyLock,
-  lockWithWeeklyTimer: getPvpResetTestMocks().weeklyLock,
-  handleEndpointError: getPvpResetTestMocks().handleError,
-  getGameSetting: getPvpResetTestMocks().getSetting,
-}));
-import { GET as dailyPvp } from "@/app/api/daily-pvp/route";
-import { GET as weeklyPvp } from "@/app/api/weekly-pvp/route";
-import { anbuSquad, clan, gameSetting, userData } from "@/drizzle/schema";
+const mocks: PvpResetTestMocks = {
+  dailyLock: vi.fn(),
+  weeklyLock: vi.fn(),
+  rollback: vi.fn(),
+  handleError: vi.fn(),
+  update: vi.fn(),
+  getSetting: vi.fn(),
+  updates: [],
+  markerClaimRows: 1,
+  candidates: [],
+};
 
 const cronRequest = (path: string) =>
   new Request(`https://example.com/api/${path}`, {
@@ -59,20 +46,33 @@ const setsFor = (table: unknown) =>
 const userDataSets = () => setsFor(userData);
 
 describe("PvP reset crons", () => {
-  afterEach(resetServerModuleStubs);
+  afterEach(() => {
+    resetServerModuleStubs();
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
+    vi.spyOn(nextHeaders, "cookies").mockResolvedValue(undefined as never);
+    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(
+      mocks.dailyLock as never,
+    );
+    vi.spyOn(gameSettings, "lockWithWeeklyTimer").mockImplementation(
+      mocks.weeklyLock as never,
+    );
+    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(
+      mocks.handleError as never,
+    );
+    vi.spyOn(gameSettings, "getGameSetting").mockImplementation(
+      mocks.getSetting as never,
+    );
     stubCronAuth(() => null);
-    const update = getPvpResetTestMocks().update;
+    const update = mocks.update;
     stubDatabase({
       update,
       transaction: (run: (tx: unknown) => Promise<unknown>) => run({ update }),
       select: () => ({
         from: () => ({
-          where: () =>
-            Promise.resolve(
-              getPvpResetTestMocks().candidates.map((userId) => ({ userId })),
-            ),
+          where: () => Promise.resolve(mocks.candidates.map((userId) => ({ userId }))),
         }),
       }),
     });
@@ -95,8 +95,16 @@ describe("PvP reset crons", () => {
       time: new Date(0),
       value: 0,
     });
-    mocks.dailyLock.mockResolvedValue({ release: mocks.rollback, isNewDay: true, prevTime: 1 });
-    mocks.weeklyLock.mockResolvedValue({ release: mocks.rollback, isNewWeek: true, prevTime: 1 });
+    mocks.dailyLock.mockResolvedValue({
+      release: mocks.rollback,
+      isNewDay: true,
+      prevTime: 1,
+    });
+    mocks.weeklyLock.mockResolvedValue({
+      release: mocks.rollback,
+      isNewWeek: true,
+      prevTime: 1,
+    });
     // Bulk updates are awaited either directly or after .where().
     mocks.update.mockImplementation((table: unknown) => ({
       set: (set: Record<string, unknown>) => {

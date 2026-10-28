@@ -5,7 +5,7 @@ import MenuBoxCombat from "@/layout/MenuBoxCombat";
 import { maskBattle } from "@/libs/combat/util";
 import * as UserContext from "@/utils/UserContext";
 import { makeBattleUser, makeCompleteBattle } from "../libs/combat/helpers/battleScenario";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 beforeEach(() => {
   ensureDom();

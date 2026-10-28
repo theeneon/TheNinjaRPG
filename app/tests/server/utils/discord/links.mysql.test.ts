@@ -1,3 +1,4 @@
+import { rateLimitResponse } from "../../../setup/rateLimit";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import * as clerk from "@clerk/nextjs/server";
 import { eq } from "drizzle-orm";
@@ -88,17 +89,8 @@ let authorization = {
 const fakeDiscord = (user = { id: OLD_DISCORD, username: "naruto_fan" }) => {
   globalThis.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     // Public procedures (getStatus) pass the rate limiter: let every call through.
-    if (typeof init?.body === "string" && init.body.includes("trpc-ratelimit")) {
-      const commands = JSON.parse(init.body) as unknown[];
-      const resultFor = (command: unknown[]) => ({
-        result: command[0] === "evalsha" || command[0] === "eval" ? [59, 60] : 1,
-      });
-      return Response.json(
-        Array.isArray(commands[0])
-          ? commands.map((command) => resultFor(command as unknown[]))
-          : resultFor(commands),
-      );
-    }
+    const rateLimit = rateLimitResponse(init);
+    if (rateLimit) return rateLimit;
     const url = new URL(String(input));
     const path = url.pathname.replace("/api/v10", "");
     const method = init?.method ?? "GET";

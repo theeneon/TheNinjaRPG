@@ -9,7 +9,7 @@ import {
   useNavigationRouter,
 } from "@/hooks/navigation";
 import { NavigationProvider } from "@/layout/NavigationProvider";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { actualLink as Link } from "../setup/preload";
 
 ensureDom();

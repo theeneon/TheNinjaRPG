@@ -7,7 +7,7 @@ import * as link from "@/layout/Link";
 import { Objective } from "@/layout/Objective";
 import * as userContext from "@/utils/UserContext";
 import { AllObjectives, QuestTracker } from "@/validators/objectives";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 describe("collection objective countdown", () => {
   beforeEach(() => {

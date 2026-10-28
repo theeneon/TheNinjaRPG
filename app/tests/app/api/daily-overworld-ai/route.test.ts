@@ -1,10 +1,14 @@
-
+import * as nextHeaders from "next/headers";
+import * as gameSettings from "@/libs/gamesettings";
+import * as overworld from "@/libs/overworldAi";
+import * as sectorMaps from "@/server/utils/sectorMap";
 import {
   resetServerModuleStubs,
   stubCronAuth,
   stubDatabase,
 } from "../../../setup/serverModules";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "bun:test";
+import { GET } from "@/app/api/daily-overworld-ai/route";
 
 type DailyOverworldTestMocks = {
   authenticate: Mock<(request: Request) => Response | null>;
@@ -19,41 +23,18 @@ type DailyOverworldTestMocks = {
   updateSets: Record<string, unknown>[];
 };
 
-/** Returns Bun-compatible module mocks shared by the hoisted route factories. */
-function getDailyOverworldTestMocks(): DailyOverworldTestMocks {
-  const globals = globalThis as unknown as {
-    __dailyOverworldTestMocks?: DailyOverworldTestMocks;
-  };
-  globals.__dailyOverworldTestMocks ??= {
-    authenticate: vi.fn<(request: Request) => Response | null>(),
-    lock: vi.fn(),
-    rollback: vi.fn(),
-    handleError: vi.fn(),
-    findMany: vi.fn(),
-    update: vi.fn(),
-    fetchMaps: vi.fn(),
-    resolve: vi.fn(),
-    snap: vi.fn(),
-    updateSets: [],
-  };
-  return globals.__dailyOverworldTestMocks;
-}
-
-const mocks = getDailyOverworldTestMocks();
-
-vi.mock("next/headers", () => ({ cookies: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("@/libs/gamesettings", () => ({
-  lockWithDailyTimer: getDailyOverworldTestMocks().lock,
-  handleEndpointError: getDailyOverworldTestMocks().handleError,
-}));
-vi.mock("@/libs/overworldAi", () => ({
-  resolveOverworldPosition: getDailyOverworldTestMocks().resolve,
-  snapOverworldPositionToWalkable: getDailyOverworldTestMocks().snap,
-}));
-vi.mock("@/server/utils/sectorMap", () => ({
-  fetchPublishedSectorMaps: getDailyOverworldTestMocks().fetchMaps,
-}));
-import { GET } from "@/app/api/daily-overworld-ai/route";
+const mocks: DailyOverworldTestMocks = {
+  authenticate: vi.fn<(request: Request) => Response | null>(),
+  lock: vi.fn(),
+  rollback: vi.fn(),
+  handleError: vi.fn(),
+  findMany: vi.fn(),
+  update: vi.fn(),
+  fetchMaps: vi.fn(),
+  resolve: vi.fn(),
+  snap: vi.fn(),
+  updateSets: [],
+};
 
 const request = () => new Request("https://example.com/api/daily-overworld-ai");
 const placement = (id: string, sector: number) => ({
@@ -67,23 +48,43 @@ const placement = (id: string, sector: number) => ({
 });
 
 describe("daily-overworld-ai route", () => {
-  afterEach(resetServerModuleStubs);
+  afterEach(() => {
+    resetServerModuleStubs();
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
+    vi.spyOn(nextHeaders, "cookies").mockResolvedValue(undefined as never);
+    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(
+      mocks.lock as never,
+    );
+    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(
+      mocks.handleError as never,
+    );
+    vi.spyOn(overworld, "resolveOverworldPosition").mockImplementation(
+      mocks.resolve as never,
+    );
+    vi.spyOn(overworld, "snapOverworldPositionToWalkable").mockImplementation(
+      mocks.snap as never,
+    );
+    vi.spyOn(sectorMaps, "fetchPublishedSectorMaps").mockImplementation(
+      mocks.fetchMaps as never,
+    );
     stubCronAuth(mocks.authenticate);
     stubDatabase({
       query: {
         overworldAiPlacement: {
-          findMany: getDailyOverworldTestMocks().findMany,
+          findMany: mocks.findMany,
         },
       },
-      update: getDailyOverworldTestMocks().update,
+      update: mocks.update,
     });
     vi.clearAllMocks();
     mocks.updateSets.length = 0;
     mocks.authenticate.mockReturnValue(null);
     mocks.lock.mockResolvedValue({
-      release: mocks.rollback, isNewDay: true,
+      release: mocks.rollback,
+      isNewDay: true,
       prevTime: new Date("2026-08-14T00:00:00.000Z"),
       response: new Response("locked"),
     });

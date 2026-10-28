@@ -8,7 +8,7 @@ import * as objective from "@/layout/Objective";
 import TutorialAssistant from "@/layout/TutorialAssistant";
 import type { UserWithRelations } from "@/server/api/routers/profile";
 import { type UserPatch, updateUserCache } from "@/utils/userCache";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const key = [["profile", "getUser"], { type: "query" }];
 const profile = (money = 100, userId = "actor", tutorialOn = true) => ({

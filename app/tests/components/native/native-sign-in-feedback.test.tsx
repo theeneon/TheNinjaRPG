@@ -4,7 +4,7 @@ import NativeSignIn from "@/components/native/NativeSignIn";
 import * as auth from "@/hooks/useNativeAuth";
 import * as shell from "@/hooks/useNativeShell";
 import { appleAuth } from "@/libs/native";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 
 const signIn = vi.fn<() => Promise<auth.NativeAuthResult>>();
 

@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 const { act, cleanup, fireEvent, render } = await import("@testing-library/react");
 import * as elementSize from "@radix-ui/react-use-size";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";

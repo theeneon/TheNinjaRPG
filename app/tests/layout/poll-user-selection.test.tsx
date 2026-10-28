@@ -9,7 +9,7 @@ import * as RichInput from "@/layout/RichInput";
 import * as UserSearchSelect from "@/layout/UserSearchSelect";
 import * as UserContext from "@/utils/UserContext";
 import type { CreatePollSchema } from "@/validators/poll";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const createPoll = vi.fn<(data: CreatePollSchema) => void>();
 const originalEvent = globalThis.Event;

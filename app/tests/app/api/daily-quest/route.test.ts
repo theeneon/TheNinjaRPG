@@ -1,4 +1,6 @@
-
+import * as nextHeaders from "next/headers";
+import * as gameSettings from "@/libs/gamesettings";
+import * as quests from "@/routers/quests";
 import {
   resetServerModuleStubs,
   stubCronAuth,
@@ -7,6 +9,7 @@ import {
 import type { SQL } from "drizzle-orm";
 import { MySqlDialect } from "drizzle-orm/mysql-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { GET } from "@/app/api/daily-quest/route";
 
 type DailyQuestTestMocks = {
   lock: ReturnType<typeof vi.fn>;
@@ -21,35 +24,18 @@ type DailyQuestTestMocks = {
   updateSets: Record<string, unknown>[];
 };
 
-/** Returns Bun-compatible module mocks shared by the hoisted route factories. */
-function getDailyQuestTestMocks(): DailyQuestTestMocks {
-  const globals = globalThis as unknown as { __dailyQuestTestMocks?: DailyQuestTestMocks };
-  globals.__dailyQuestTestMocks ??= {
-    lock: vi.fn(),
-    rollback: vi.fn(),
-    handleError: vi.fn(),
-    findQuests: vi.fn(),
-    findVillages: vi.fn(),
-    select: vi.fn(),
-    update: vi.fn(),
-    upsertQuestEntries: vi.fn(),
-    calls: [],
-    updateSets: [],
-  };
-  return globals.__dailyQuestTestMocks;
-}
-
-const mocks = getDailyQuestTestMocks();
-
-vi.mock("next/headers", () => ({ cookies: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("@/libs/gamesettings", () => ({
-  lockWithDailyTimer: getDailyQuestTestMocks().lock,
-  handleEndpointError: getDailyQuestTestMocks().handleError,
-}));
-vi.mock("@/routers/quests", () => ({
-  upsertQuestEntries: getDailyQuestTestMocks().upsertQuestEntries,
-}));
-import { GET } from "@/app/api/daily-quest/route";
+const mocks: DailyQuestTestMocks = {
+  lock: vi.fn(),
+  rollback: vi.fn(),
+  handleError: vi.fn(),
+  findQuests: vi.fn(),
+  findVillages: vi.fn(),
+  select: vi.fn(),
+  update: vi.fn(),
+  upsertQuestEntries: vi.fn(),
+  calls: [],
+  updateSets: [],
+};
 
 const daily = {
   id: "daily-1",
@@ -131,17 +117,30 @@ const dayStart = (now: number) => {
 };
 
 describe("daily-quest cron", () => {
-  afterEach(resetServerModuleStubs);
+  afterEach(() => {
+    resetServerModuleStubs();
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
+    vi.spyOn(nextHeaders, "cookies").mockResolvedValue(undefined as never);
+    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(
+      mocks.lock as never,
+    );
+    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(
+      mocks.handleError as never,
+    );
+    vi.spyOn(quests, "upsertQuestEntries").mockImplementation(
+      mocks.upsertQuestEntries as never,
+    );
     stubCronAuth(() => null);
     stubDatabase({
       query: {
-        quest: { findMany: getDailyQuestTestMocks().findQuests },
-        village: { findMany: getDailyQuestTestMocks().findVillages },
+        quest: { findMany: mocks.findQuests },
+        village: { findMany: mocks.findVillages },
       },
-      select: getDailyQuestTestMocks().select,
-      update: getDailyQuestTestMocks().update,
+      select: mocks.select,
+      update: mocks.update,
     });
     for (const mock of [
       mocks.lock,
@@ -157,7 +156,12 @@ describe("daily-quest cron", () => {
     }
     mocks.calls.length = 0;
     mocks.updateSets.length = 0;
-    mocks.lock.mockResolvedValue({ release: mocks.rollback, update: mocks.rollback, isNewDay: true, prevTime: 1 });
+    mocks.lock.mockResolvedValue({
+      release: mocks.rollback,
+      update: mocks.rollback,
+      isNewDay: true,
+      prevTime: 1,
+    });
   });
 
   it("closes every open daily before any quest is reassigned", async () => {
@@ -166,7 +170,11 @@ describe("daily-quest cron", () => {
     // fully-done tracker, which getReward reads as resolved and pays out again.
     seedHappyPath();
 
-    await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+    await GET(
+      new Request("https://example.com/api/daily-quest", {
+        headers: { authorization: "Bearer test-cron" },
+      }),
+    );
 
     const closeIndex = mocks.calls.indexOf("update:completed,endAt");
     const assignIndex = mocks.calls.indexOf("upsertQuestEntries");
@@ -203,7 +211,11 @@ describe("daily-quest cron", () => {
   it("assigns one daily per rank/village/level combo without changing tutorial preferences", async () => {
     seedHappyPath();
 
-    const response = await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+    const response = await GET(
+      new Request("https://example.com/api/daily-quest", {
+        headers: { authorization: "Bearer test-cron" },
+      }),
+    );
 
     expect(await response.json()).toBe("OK");
     expect(mocks.upsertQuestEntries).toHaveBeenCalledTimes(1);
@@ -230,11 +242,15 @@ describe("daily-quest cron", () => {
       })),
     });
 
-    await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+    await GET(
+      new Request("https://example.com/api/daily-quest", {
+        headers: { authorization: "Bearer test-cron" },
+      }),
+    );
 
     const dialect = new MySqlDialect();
-    const selectors = mocks.upsertQuestEntries.mock.calls.map(
-      (call) => dialect.sqlToQuery(call[2] as SQL),
+    const selectors = mocks.upsertQuestEntries.mock.calls.map((call) =>
+      dialect.sqlToQuery(call[2] as SQL),
     );
     const levelParams = selectors.flatMap((query) =>
       query.params.filter((param) => param === 10 || param === 12),
@@ -263,7 +279,11 @@ describe("daily-quest cron", () => {
       }),
     }));
 
-    const response = await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+    const response = await GET(
+      new Request("https://example.com/api/daily-quest", {
+        headers: { authorization: "Bearer test-cron" },
+      }),
+    );
 
     expect(await response.json()).toBe("OK");
     expect(attempts).toBe(2);
@@ -273,7 +293,11 @@ describe("daily-quest cron", () => {
   it("skips the reset when the daily timer says it is not a new day", async () => {
     mocks.lock.mockResolvedValue({ isNewDay: false, response: new Response("locked") });
 
-    await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+    await GET(
+      new Request("https://example.com/api/daily-quest", {
+        headers: { authorization: "Bearer test-cron" },
+      }),
+    );
 
     expect(mocks.findQuests).not.toHaveBeenCalled();
     expect(mocks.upsertQuestEntries).not.toHaveBeenCalled();
@@ -309,7 +333,9 @@ describe("daily-quest cron", () => {
     await GET(cronRequest());
 
     const dialect = new MySqlDialect();
-    const selector = dialect.sqlToQuery(mocks.upsertQuestEntries.mock.calls[0]?.[2] as SQL);
+    const selector = dialect.sqlToQuery(
+      mocks.upsertQuestEntries.mock.calls[0]?.[2] as SQL,
+    );
     expect(selector.sql).toContain("`UserData`.`updatedAt` >= ?");
     expect(selector.sql).toContain("NOT EXISTS");
     expect(selector.sql).toContain("assignedDaily.startedAt >= ?");
@@ -346,7 +372,13 @@ describe("daily-quest cron", () => {
       seedHappyPath();
       mocks.findQuests.mockResolvedValue(bandDailies);
       seedCombos(bandCombos);
-      mocks.lock.mockResolvedValue({ release: mocks.rollback, update: mocks.rollback, isNewDay: true, prevTime: time, prevValue: value });
+      mocks.lock.mockResolvedValue({
+        release: mocks.rollback,
+        update: mocks.rollback,
+        isNewDay: true,
+        prevTime: time,
+        prevValue: value,
+      });
 
       const second = await GET(cronRequest());
 
@@ -374,7 +406,9 @@ describe("daily-quest cron", () => {
   it("starts over with a full close when the resume marker is from an earlier day", async () => {
     seedHappyPath();
     mocks.lock.mockResolvedValue({
-      release: mocks.rollback, update: mocks.rollback, isNewDay: true,
+      release: mocks.rollback,
+      update: mocks.rollback,
+      isNewDay: true,
       prevTime: new Date(Date.UTC(2020, 0, 1) - 1),
       prevValue: 1,
     });
@@ -389,7 +423,11 @@ describe("daily-quest cron", () => {
     mocks.upsertQuestEntries.mockRejectedValue(new Error("reset failed"));
     mocks.handleError.mockResolvedValue(new Response("error", { status: 500 }));
 
-    await GET(new Request("https://example.com/api/daily-quest", { headers: { authorization: "Bearer test-cron" } }));
+    await GET(
+      new Request("https://example.com/api/daily-quest", {
+        headers: { authorization: "Bearer test-cron" },
+      }),
+    );
 
     expect(mocks.rollback).toHaveBeenCalledTimes(1);
     expect(mocks.rollback).toHaveBeenCalledWith();

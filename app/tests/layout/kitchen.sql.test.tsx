@@ -36,7 +36,7 @@ import {
   getTestDatabase,
   resetTables,
 } from "../setup/testDatabase";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 describeWithDatabase("Kitchen shrine duration preview", () => {
   beforeEach(async () => {

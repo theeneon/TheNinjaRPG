@@ -1,3 +1,4 @@
+import { makeAiUser as mkUser } from "./helpers/aiScenario";
 import { describe, it, expect, vi } from "bun:test";
 import { Grid, rectangle } from "honeycomb-grid";
 import { performAIaction } from "@/libs/combat/ai_v2";
@@ -18,26 +19,6 @@ import { TerrainHex } from "@/libs/hexgrid";
 
 const SUMMON_JUTSU = "j-summon";
 const PROFILE = "profile-1";
-
-const mkUser = (over: Partial<BattleUserState>): BattleUserState =>
-  ({
-    userId: "x", username: "x", controllerId: "x",
-    isAi: true, isSummon: false, isPiloted: false,
-    curHealth: 5000, maxHealth: 5000, curChakra: 5000, maxChakra: 5000,
-    curStamina: 5000, maxStamina: 5000,
-    fledBattle: false, leftBattle: false, longitude: 1, latitude: 1,
-    actionPoints: 100, effects: [], jutsus: [], items: [], basicActions: [],
-    round: 0, direction: "right", isAggressor: false,
-    highestGenerals: [], iAmHere: true, level: 10,
-    originalLevel: 10, originalMoney: 0, originalLongitude: 1, originalLatitude: 1,
-    isOriginal: true, usedGenerals: {}, usedStats: {}, moneyStolen: 0,
-    allyVillage: false, usedActions: [], initiative: 0,
-    relationIds: [],
-    offence: 100, defence: 100, ninjutsuMastery: 100, genjutsuMastery: 100,
-    taijutsuMastery: 100, bukijutsuMastery: 100, bloodlineMastery: 100, sageMastery: 100,
-    strength: 100, intelligence: 100, willpower: 100, speed: 100,
-    ...over,
-  }) as unknown as BattleUserState;
 
 const summonJutsu = {
   id: SUMMON_JUTSU,

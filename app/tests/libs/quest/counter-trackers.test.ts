@@ -1,0 +1,135 @@
+import {
+  trackerQuest as makeQuest,
+  trackerUser as makeUser,
+  trackerGoal as goalOf,
+} from "../../setup/quest";
+import { describe, expect, it } from "bun:test";
+import { getNewTrackers } from "@/libs/quest";
+import {
+  allObjectiveTasks,
+  getObjectiveSchema,
+  SimpleObjective,
+} from "@/validators/objectives";
+
+const baseObjective = (id: string) => ({
+  id,
+  description: "",
+  successDescription: "",
+});
+
+const COUNTERS = ["items_crafted", "creatures_hunted", "herbs_gathered"] as const;
+const FARMING_COUNTERS = [
+  "seeds_planted",
+  "plants_watered",
+  "plants_fertilized",
+  "plants_harvested",
+] as const;
+const FARMING_SNAPSHOTS = ["farming_collection_log", "farming_level"] as const;
+
+describe("counter objective tasks", () => {
+  it("registers each counter task and routes it through SimpleObjective", () => {
+    for (const task of [...COUNTERS, ...FARMING_COUNTERS, ...FARMING_SNAPSHOTS]) {
+      expect(allObjectiveTasks).toContain(task);
+      expect(getObjectiveSchema(task)).toBe(SimpleObjective);
+    }
+  });
+
+  it("items_crafted increments by quantity and auto-completes at value", () => {
+    const quest = makeQuest("q1", [
+      { ...baseObjective("o1"), task: "items_crafted" as const, value: 3 },
+    ]);
+    const user = makeUser([quest]);
+
+    let result = getNewTrackers(user, [{ task: "items_crafted", increment: 2 }]);
+    user.questData = result.trackers;
+    expect(goalOf(result, "q1", "o1")?.value).toBe(2);
+    expect(goalOf(result, "q1", "o1")?.done).toBe(false);
+
+    result = getNewTrackers(user, [{ task: "items_crafted", increment: 1 }]);
+    expect(goalOf(result, "q1", "o1")?.value).toBe(3);
+    expect(goalOf(result, "q1", "o1")?.done).toBe(true);
+  });
+
+  it("creatures_hunted counts +1 per emit and herbs_gathered by drop count", () => {
+    const quest = makeQuest("q1", [
+      { ...baseObjective("hunt"), task: "creatures_hunted" as const, value: 2 },
+      { ...baseObjective("herb"), task: "herbs_gathered" as const, value: 5 },
+    ]);
+    const user = makeUser([quest]);
+
+    const result = getNewTrackers(user, [
+      { task: "creatures_hunted", increment: 1 },
+      { task: "herbs_gathered", increment: 3 },
+    ]);
+    expect(goalOf(result, "q1", "hunt")?.value).toBe(1);
+    expect(goalOf(result, "q1", "herb")?.value).toBe(3);
+    expect(goalOf(result, "q1", "herb")?.done).toBe(false);
+  });
+
+  it("tracks each farming action only after its event is emitted", () => {
+    const quest = makeQuest(
+      "farm-quest",
+      FARMING_COUNTERS.map((task) => ({
+        ...baseObjective(task),
+        task,
+        value: 2,
+      })),
+    );
+    const user = makeUser([quest]);
+
+    let result = getNewTrackers(
+      user,
+      FARMING_COUNTERS.map((task) => ({ task, increment: 1 })),
+    );
+    user.questData = result.trackers;
+
+    for (const task of FARMING_COUNTERS) {
+      expect(goalOf(result, "farm-quest", task)?.value).toBe(1);
+      expect(goalOf(result, "farm-quest", task)?.done).toBe(false);
+    }
+
+    result = getNewTrackers(user, [{ task: "plants_harvested", increment: 1 }]);
+    expect(goalOf(result, "farm-quest", "plants_harvested")?.value).toBe(2);
+    expect(goalOf(result, "farm-quest", "plants_harvested")?.done).toBe(true);
+    expect(goalOf(result, "farm-quest", "seeds_planted")?.value).toBe(1);
+  });
+
+  it("initializes and refreshes farming level from absolute experience", () => {
+    const quest = makeQuest("farming-level", [
+      { ...baseObjective("level"), task: "farming_level" as const, value: 3 },
+    ]);
+    const user = makeUser([quest]);
+
+    let result = getNewTrackers(user, [{ task: "any" }]);
+    expect(goalOf(result, "farming-level", "level")?.value).toBe(1);
+
+    user.questData = result.trackers;
+    user.farmingExperience = 1500;
+    result = getNewTrackers(user, [{ task: "farming_level", value: 3 }]);
+    expect(goalOf(result, "farming-level", "level")).toMatchObject({
+      value: 3,
+      done: true,
+    });
+  });
+
+  it("hydrates a newly accepted collection quest and does not double-credit repeats", () => {
+    const quest = makeQuest("collection", [
+      {
+        ...baseObjective("collection-count"),
+        task: "farming_collection_log" as const,
+        value: 10,
+      },
+    ]);
+    const user = makeUser([quest]) as ReturnType<typeof makeUser> & {
+      farmingCollectionCount: number;
+    };
+    user.farmingCollectionCount = 4;
+
+    let result = getNewTrackers(user, [{ task: "any" }]);
+    expect(goalOf(result, "collection", "collection-count")?.value).toBe(4);
+
+    user.questData = result.trackers;
+    result = getNewTrackers(user, [{ task: "farming_collection_log", value: 4 }]);
+    expect(goalOf(result, "collection", "collection-count")?.value).toBe(4);
+  });
+});

@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 const { act, cleanup, fireEvent, render } = await import("@testing-library/react");

@@ -12,7 +12,7 @@ import * as RichInput from "@/layout/RichInput";
 import * as toast from "@/libs/toast";
 import * as UserContext from "@/utils/UserContext";
 import type { CreatePollSchema } from "@/validators/poll";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 type Response = { success: boolean; message: string };
 let onSuccess: (response: Response) => void;

@@ -21,7 +21,7 @@ import { HOME_FLOOR_PROJECTION } from "@/libs/homeRoomGeometry";
 import * as Kitchen from "@/layout/Kitchen";
 import * as toast from "@/libs/toast";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 import { actualDialog, actualModal } from "../../setup/preload";
 
 const furniture: HomeFurniture[] = [

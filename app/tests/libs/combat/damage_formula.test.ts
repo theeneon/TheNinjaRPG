@@ -2,8 +2,6 @@ import { describe, it, expect } from "bun:test";
 
 import { damageCalc } from "@/libs/combat/tags";
 import { dmgConfig } from "@/libs/combat/constants";
-import { DMG_REDUCTION_CAP } from "@/drizzle/constants";
-import type { Consequence } from "@/libs/combat/types";
 import { makeDamageEffect, makeUser } from "./helpers/battleScenario";
 
 describe("damageCalc - new HP-based formula", () => {
@@ -230,93 +228,7 @@ describe("damageCalc - new HP-based formula", () => {
     const dmgFast = damageCalc(effect, attacker, defender, configFast);
     const dmgSlow = damageCalc(effect, attacker, defender, configSlow);
 
-    // base_hits 5 should deal 2x the damage of base_hits 20 (since baseline = HP / base_hits)
-    // Actually base_hits 5 vs 20 = 4x ratio
+    // Damage is inversely proportional to the configured hit count.
     expect(dmgFast / dmgSlow).toBeCloseTo(4.0, 5);
-  });
-});
-
-describe("damage reduction cap", () => {
-  const applyReductionCap = (consequences: Map<string, Consequence>) => {
-    consequences.forEach((consequence) => {
-      if (
-        consequence.damage !== undefined &&
-        consequence.baseDamageForModifiers !== undefined
-      ) {
-        const minDamage =
-          consequence.baseDamageForModifiers * (1 - DMG_REDUCTION_CAP);
-        consequence.damage = Math.max(consequence.damage, minDamage);
-      }
-    });
-  };
-
-  const makeConsequence = (
-    overrides: Partial<Consequence> = {},
-  ): Consequence => ({
-    userId: "attacker",
-    targetId: "defender",
-    damage: 100,
-    baseDamageForModifiers: 100,
-    ...overrides,
-  });
-
-  it("DMG_REDUCTION_CAP is 90%", () => {
-    expect(DMG_REDUCTION_CAP).toBe(0.9);
-  });
-
-  it("does not alter damage that is above the floor", () => {
-    const consequences = new Map<string, Consequence>();
-    consequences.set("e1", makeConsequence({ damage: 60, baseDamageForModifiers: 100 }));
-    applyReductionCap(consequences);
-    expect(consequences.get("e1")!.damage).toBe(60);
-  });
-
-  it("caps damage at 10% of base when fully reduced to 0", () => {
-    const consequences = new Map<string, Consequence>();
-    consequences.set("e1", makeConsequence({ damage: 0, baseDamageForModifiers: 100 }));
-    applyReductionCap(consequences);
-    expect(consequences.get("e1")!.damage).toBeCloseTo(10, 5);
-  });
-
-  it("caps damage at 10% of base when reduced below the floor", () => {
-    const consequences = new Map<string, Consequence>();
-    consequences.set("e1", makeConsequence({ damage: 5, baseDamageForModifiers: 100 }));
-    applyReductionCap(consequences);
-    expect(consequences.get("e1")!.damage).toBeCloseTo(10, 5);
-  });
-
-  it("caps negative damage (over-reduction) at 10% of base", () => {
-    const consequences = new Map<string, Consequence>();
-    consequences.set(
-      "e1",
-      makeConsequence({ damage: -50, baseDamageForModifiers: 100 }),
-    );
-    applyReductionCap(consequences);
-    expect(consequences.get("e1")!.damage).toBeCloseTo(10, 5);
-  });
-
-  it("does not affect consequences without baseDamageForModifiers", () => {
-    const consequences = new Map<string, Consequence>();
-    consequences.set(
-      "e1",
-      makeConsequence({ damage: 0, baseDamageForModifiers: undefined }),
-    );
-    applyReductionCap(consequences);
-    expect(consequences.get("e1")!.damage).toBe(0);
-  });
-
-  it("handles multiple consequences independently", () => {
-    const consequences = new Map<string, Consequence>();
-    consequences.set(
-      "e1",
-      makeConsequence({ damage: 0, baseDamageForModifiers: 200 }),
-    );
-    consequences.set(
-      "e2",
-      makeConsequence({ damage: 80, baseDamageForModifiers: 200 }),
-    );
-    applyReductionCap(consequences);
-    expect(consequences.get("e1")!.damage).toBeCloseTo(20, 5);
-    expect(consequences.get("e2")!.damage).toBe(80);
   });
 });

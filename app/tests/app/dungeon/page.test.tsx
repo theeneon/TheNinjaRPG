@@ -10,7 +10,7 @@ import * as ContentBox from "@/layout/ContentBox";
 import * as Countdown from "@/layout/Countdown";
 import * as Loader from "@/layout/Loader";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 import { dungeonContent } from "../../setup/dungeon";
 
 type PartyState = RouterOutputs["coop"]["dungeon"]["getState"];

@@ -1,0 +1,290 @@
+
+import { eq, sql } from "drizzle-orm";
+import { beforeEach, expect, it } from "bun:test";
+import { actionLog, userData } from "@/drizzle/schema";
+import { profileRouter } from "@/routers/profile";
+import { insertUsers } from "../../../../setup/factories";
+import { beforeStatements } from "../../../../setup/statements";
+import {
+  callerFor,
+  callerForDatabase,
+  describeWithDatabase,
+  getTestDatabase,
+  resetTables,
+} from "../../../../setup/testDatabase";
+
+const caller = (userId: string) => callerFor(profileRouter, userId);
+
+const createUser = async (patch: Record<string, unknown> = {}) => {
+  await insertUsers([
+    {
+      userId: "color-user",
+      username: "ColorUser",
+      reputationPoints: 30,
+      ...patch,
+    } as never,
+  ]);
+};
+
+const readUser = async () => {
+  const database = await getTestDatabase();
+  const [user] = await database
+    .select()
+    .from(userData)
+    .where(eq(userData.userId, "color-user"));
+  return user;
+};
+
+describeWithDatabase("profile tavern color purchases", () => {
+  beforeEach(async () => {
+    await resetTables(actionLog, userData);
+  });
+
+  it("charges username and title as independent 10-reputation purchases", async () => {
+    await createUser();
+    const api = await caller("color-user");
+    expect(
+      (
+        await api.updateTavernColor({
+          target: "username",
+          color: "NAVY",
+          currentColor: "DEFAULT",
+        })
+      ).success,
+    ).toBe(true);
+    expect(
+      (
+        await api.updateTavernColor({
+          target: "title",
+          color: "COBALT",
+          currentColor: "DEFAULT",
+        })
+      ).success,
+    ).toBe(true);
+
+    const user = await readUser();
+    expect(user?.tavernUsernameColor).toBe("NAVY");
+    expect(user?.tavernTitleColor).toBe("COBALT");
+    expect(user?.reputationPoints).toBe(10);
+  });
+
+  it("charges 10 reputation when returning to DEFAULT", async () => {
+    await createUser({ reputationPoints: 10, tavernUsernameColor: "NAVY" });
+    const result = await (await caller("color-user")).updateTavernColor({
+      target: "username",
+      color: "DEFAULT",
+      currentColor: "NAVY",
+    });
+    expect(result.success).toBe(true);
+    const user = await readUser();
+    expect(user?.tavernUsernameColor).toBe("DEFAULT");
+    expect(user?.reputationPoints).toBe(0);
+  });
+
+  it.each(["username", "title"] as const)("charges a fractional FLOAT balance once for %s color", async (target) => {
+    await createUser({ reputationPoints: 921.3 });
+    const api = await caller("color-user");
+    const input = { target, color: "CRIMSON", currentColor: "DEFAULT" } as const;
+    const result = await api.updateTavernColor(input);
+    expect(result.success).toBe(true);
+    expect(result.userDelta).toEqual({ reputationPoints: -10 });
+    expect(result.userPatch).toEqual(target === "title"
+      ? { tavernTitleColor: "CRIMSON" }
+      : { tavernUsernameColor: "CRIMSON" });
+    expect((await api.updateTavernColor(input)).success).toBe(false);
+    const user = await readUser();
+    expect(user?.reputationPoints).toBeCloseTo(911.3, 2);
+    expect(user?.tavernTitleColor).toBe(target === "title" ? "CRIMSON" : "DEFAULT");
+    expect(user?.tavernUsernameColor).toBe(target === "username" ? "CRIMSON" : "DEFAULT");
+    const database = await getTestDatabase();
+    expect(await database.query.actionLog.findMany({ where: eq(actionLog.userId, "color-user") })).toHaveLength(1);
+  });
+
+  it("preserves concurrent reputation earnings and returns a debit instead of a stale balance", async () => {
+    await createUser({ reputationPoints: 921.3 });
+    const database = await getTestDatabase();
+    const api = callerForDatabase(profileRouter, "color-user", beforeStatements(database, userData, [async () => {
+      await database.update(userData).set({ reputationPoints: sql`${userData.reputationPoints} + 5` })
+        .where(eq(userData.userId, "color-user"));
+    }]));
+    const result = await api.updateTavernColor({ target: "title", color: "CRIMSON", currentColor: "DEFAULT" });
+    expect(result.success).toBe(true);
+    expect(result.userPatch?.reputationPoints).toBeUndefined();
+    expect(result.userDelta).toEqual({ reputationPoints: -10 });
+    expect((await readUser())?.reputationPoints).toBeCloseTo(916.3, 2);
+  });
+
+  it("rejects an intervening spend without charging or logging a color change", async () => {
+    await createUser({ reputationPoints: 10.3 });
+    const database = await getTestDatabase();
+    const api = callerForDatabase(profileRouter, "color-user", beforeStatements(database, userData, [async () => {
+      await database.update(userData).set({ reputationPoints: sql`${userData.reputationPoints} - 1` })
+        .where(eq(userData.userId, "color-user"));
+    }]));
+    const result = await api.updateTavernColor({ target: "title", color: "CRIMSON", currentColor: "DEFAULT" });
+    expect(result.success).toBe(false);
+    expect(result.userDelta).toBeUndefined();
+    expect(result.userPatch).toBeUndefined();
+    const user = await readUser();
+    expect(user?.reputationPoints).toBeCloseTo(9.3, 2);
+    expect(user?.tavernTitleColor).toBe("DEFAULT");
+    expect(await database.query.actionLog.findMany({ where: eq(actionLog.userId, "color-user") })).toHaveLength(0);
+  });
+
+  it("rejects returning to DEFAULT without enough reputation", async () => {
+    await createUser({ reputationPoints: 9, tavernUsernameColor: "NAVY" });
+    const result = await (await caller("color-user")).updateTavernColor({
+      target: "username",
+      color: "DEFAULT",
+      currentColor: "NAVY",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/not enough/i);
+    expect((await readUser())?.tavernUsernameColor).toBe("NAVY");
+  });
+
+  it("rejects insufficient reputation without changing the setting", async () => {
+    await createUser({ reputationPoints: 9 });
+    const result = await (await caller("color-user")).updateTavernColor({
+      target: "title",
+      color: "GOLD",
+      currentColor: "DEFAULT",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/not enough/i);
+    expect((await readUser())?.tavernTitleColor).toBe("DEFAULT");
+  });
+
+  it("rejects unchanged selections", async () => {
+    await createUser();
+    const result = await (await caller("color-user")).updateTavernColor({
+      target: "username",
+      color: "DEFAULT",
+      currentColor: "DEFAULT",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/unchanged/i);
+  });
+
+  it("rejects banned users", async () => {
+    await createUser({ isBanned: true });
+    const result = await (await caller("color-user")).updateTavernColor({
+      target: "username",
+      color: "SLATE",
+      currentColor: "DEFAULT",
+    });
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/banned/i);
+  });
+
+  it("writes an action log only after a successful change", async () => {
+    await createUser();
+    const api = await caller("color-user");
+    await api.updateTavernColor({
+      target: "username",
+      color: "NAVY",
+      currentColor: "DEFAULT",
+    });
+    await api.updateTavernColor({
+      target: "username",
+      color: "NAVY",
+      currentColor: "NAVY",
+    });
+    const database = await getTestDatabase();
+    const logs = await database
+      .select()
+      .from(actionLog)
+      .where(eq(actionLog.userId, "color-user"));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]?.changes).toEqual([
+      "Tavern username color changed from DEFAULT to NAVY (-10 reputation)",
+    ]);
+  });
+
+  it("cannot overspend when two purchases race", async () => {
+    await createUser({ reputationPoints: 10 });
+    const api = await caller("color-user");
+    const results = await Promise.all([
+      api.updateTavernColor({
+        target: "username",
+        color: "NAVY",
+        currentColor: "DEFAULT",
+      }),
+      api.updateTavernColor({
+        target: "title",
+        color: "COBALT",
+        currentColor: "DEFAULT",
+      }),
+    ]);
+    expect(results.filter((result) => result.success)).toHaveLength(1);
+    const user = await readUser();
+    expect(user?.reputationPoints).toBe(0);
+    expect(
+      [user?.tavernUsernameColor, user?.tavernTitleColor].filter(
+        (color) => color !== "DEFAULT",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("allows independent username and title purchases to race when both are affordable", async () => {
+    await createUser({ reputationPoints: 20.3 });
+    const database = await getTestDatabase();
+    const api = await caller("color-user");
+    const title = callerForDatabase(profileRouter, "color-user", beforeStatements(database, userData, [async () => {
+      expect((await api.updateTavernColor({ target: "username", color: "NAVY", currentColor: "DEFAULT" })).success).toBe(true);
+    }]));
+    const result = await title.updateTavernColor({ target: "title", color: "CRIMSON", currentColor: "DEFAULT" });
+    expect(result.success).toBe(true);
+    const user = await readUser();
+    expect(user?.tavernUsernameColor).toBe("NAVY");
+    expect(user?.tavernTitleColor).toBe("CRIMSON");
+    expect(user?.reputationPoints).toBeCloseTo(0.3, 2);
+    expect(await database.query.actionLog.findMany({ where: eq(actionLog.userId, "color-user") })).toHaveLength(2);
+  });
+
+  it("rejects a stale username color change after a concurrent update", async () => {
+    await createUser({ reputationPoints: 20 });
+    const database = await getTestDatabase();
+    const api = await caller("color-user");
+    // The budget covers both purchases on purpose: the guard under test is the colour
+    // predicate in the update's WHERE, not the reputation one, and it only fires when a
+    // write follows a read that another write has since invalidated. The competing
+    // purchase runs in exactly that gap -- after this caller has read the row, just
+    // before its UPDATE executes -- so the interleaving is the same on every run.
+    let competing: Awaited<ReturnType<typeof api.updateTavernColor>> | undefined;
+    const stale = callerForDatabase(
+      profileRouter,
+      "color-user",
+      beforeStatements(database, userData, [
+        async () => {
+          competing = await api.updateTavernColor({
+            target: "username",
+            color: "COBALT",
+            currentColor: "DEFAULT",
+          });
+        },
+      ]),
+    );
+    const result = await stale.updateTavernColor({
+      target: "username",
+      color: "NAVY",
+      currentColor: "DEFAULT",
+    });
+    expect(competing?.success).toBe(true);
+    expect(result.success).toBe(false);
+    expect(result.message).toMatch(/could not update tavern color/i);
+
+    const user = await readUser();
+    expect(user?.tavernUsernameColor).toBe("COBALT");
+    expect(user?.reputationPoints).toBe(10);
+
+    const logs = await database
+      .select()
+      .from(actionLog)
+      .where(eq(actionLog.userId, "color-user"));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]?.changes).toEqual([
+      "Tavern username color changed from DEFAULT to COBALT (-10 reputation)",
+    ]);
+  });
+});

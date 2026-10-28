@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { useState } from "react";
 import { WeightedCacheEditor } from "@/layout/WeightedCacheEditor";

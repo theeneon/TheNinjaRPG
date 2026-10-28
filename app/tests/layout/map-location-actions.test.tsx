@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { MapLocationActions } from "@/layout/MapLocationActions";
 import type { MapLocation } from "@/validators/mapLocation";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 beforeEach(ensureDom);
 afterEach(cleanup);

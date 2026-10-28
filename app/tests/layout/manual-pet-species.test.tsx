@@ -22,7 +22,7 @@ import { ActionEndTurn } from "@/validators/ai";
 import { IncreaseStatTag } from "@/validators/combat";
 import { PET_RANK_APPEARANCES } from "@/libs/pets/catalogue";
 import { PetSpeciesValidator } from "@/validators/petSpecies";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 // These workflows render multiple dialogs and large forms in one interaction.
 setDefaultTimeout(20_000);

@@ -2,7 +2,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { useLiveCountdown } from "@/hooks/useLiveCountdown";
 import { getRemainingStealthCooldown } from "@/libs/stealth";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 

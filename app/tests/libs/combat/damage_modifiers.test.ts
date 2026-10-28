@@ -632,10 +632,6 @@ describe("computeDamagePacket", () => {
     expect(damage).toBeCloseTo(569.17, 2);
   });
 
-  it("uses DMG_REDUCTION_CAP of 90%", () => {
-    expect(DMG_REDUCTION_CAP).toBe(0.9);
-  });
-
   it("enforces 10% damage floor after extreme DR", () => {
     const extremeDr = makeModifierEffect({
       id: "extreme-dr",

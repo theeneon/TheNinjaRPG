@@ -1,0 +1,172 @@
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import {
+  createPurchaseIdentityScope,
+  purchaseForBoundIdentity,
+  runPurchaseIdentityOperation,
+  syncPurchaseIdentitySnapshot,
+} from "@/libs/native/purchases";
+import { ensureDom } from "../../setup/dom.mjs";
+
+ensureDom();
+
+const capacitorWindow = window as typeof window & {
+  Capacitor?: {
+    isNativePlatform: () => boolean;
+    getPlatform: () => string;
+    Plugins: Record<string, Record<string, unknown>>;
+  };
+};
+
+afterEach(() => {
+  delete capacitorWindow.Capacitor;
+});
+
+describe("RevenueCat identity queue", () => {
+  it("refreshes customer history before opening the purchase sheet", async () => {
+    const events: string[] = [];
+    const syncPurchases = vi.fn();
+    capacitorWindow.Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => "ios",
+      Plugins: {
+        Purchases: {
+          invalidateCustomerInfoCache: async () => {
+            events.push("invalidate");
+          },
+          getCustomerInfo: async () => {
+            events.push("customer-info");
+            return {
+              customerInfo: {
+                entitlements: { active: {} },
+                activeSubscriptions: [],
+                originalAppUserId: "player-a",
+                nonSubscriptionTransactions: [{
+                  transactionIdentifier: "rc-history-id",
+                  productIdentifier: "tnr_reps_tier1",
+                }],
+                subscriptionsByProductIdentifier: {
+                  tnr_federal_normal: { storeTransactionId: "apple-subscription-id" },
+                },
+              },
+            };
+          },
+          purchasePackage: async () => {
+            events.push("purchase");
+            return { userCancelled: true };
+          },
+          syncPurchases,
+        },
+      },
+    };
+
+    const result = await purchaseForBoundIdentity(
+      {
+        identifier: "tier1",
+        product: {
+          identifier: "tnr_reps_tier1",
+          priceString: "$4.99",
+          title: "8 reputation points",
+          description: "",
+        },
+      },
+      () => {
+        events.push("prepare");
+        return { prepared: "baseline" };
+      },
+    );
+
+    expect(result.outcome.status).toBe("cancelled");
+    expect(result.customerInfo.transactions).toEqual([
+      { transactionId: "rc-history-id", productId: "tnr_reps_tier1", transactionIdSource: "revenuecat" },
+      { transactionId: "apple-subscription-id", productId: "tnr_federal_normal", transactionIdSource: "store" },
+    ]);
+    expect(events).toEqual(["invalidate", "customer-info", "prepare", "purchase"]);
+    expect(syncPurchases).not.toHaveBeenCalled();
+  });
+
+  it("keeps sync and its customer-info read ahead of logout and account rebind", async () => {
+    const events: string[] = [];
+    let finishSync: (() => void) | undefined;
+    const sync = syncPurchaseIdentitySnapshot(
+      async () => {
+        events.push("sync:start");
+        await new Promise<void>((resolve) => {
+          finishSync = resolve;
+        });
+        events.push("sync:end");
+      },
+      async () => {
+        events.push("customer-info:a");
+        return { originalAppUserId: "player-a" };
+      },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(events).toEqual(["sync:start"]);
+
+    const rebind = runPurchaseIdentityOperation(async () => {
+      events.push("rebind:b");
+    });
+    const logout = runPurchaseIdentityOperation(async () => {
+      events.push("logout");
+    });
+    await Promise.resolve();
+    expect(events).toEqual(["sync:start"]);
+
+    finishSync?.();
+    await Promise.all([sync, rebind, logout]);
+    expect(events).toEqual([
+      "sync:start",
+      "sync:end",
+      "customer-info:a",
+      "rebind:b",
+      "logout",
+    ]);
+  });
+
+  it("configures once after a retryable failure and logs in for every later bind", async () => {
+    const identity = createPurchaseIdentityScope();
+    const configure = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("SDK unavailable"))
+      .mockResolvedValue(undefined);
+    const logIn = vi.fn().mockResolvedValue(undefined);
+    const isConfigured = vi.fn().mockResolvedValue({ isConfigured: false });
+    capacitorWindow.Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => "ios",
+      Plugins: {
+        Purchases: {
+          isConfigured,
+          configure,
+          logIn,
+          getOfferings: vi.fn().mockResolvedValue({
+            current: { availablePackages: [] },
+          }),
+          getCustomerInfo: vi.fn().mockResolvedValue({
+            customerInfo: {
+              entitlements: { active: {} },
+              activeSubscriptions: [],
+              originalAppUserId: "player-a",
+            },
+          }),
+        },
+      },
+    };
+
+    await expect(identity.bind("ios-key", "player-a")).rejects.toThrow(
+      "SDK unavailable",
+    );
+    await expect(identity.bind("ios-key", "player-a")).resolves.toMatchObject({
+      packages: [],
+    });
+    await expect(identity.bind("ios-key", "player-b")).resolves.toMatchObject({
+      packages: [],
+    });
+
+    expect(configure).toHaveBeenCalledTimes(2);
+    expect(isConfigured).toHaveBeenCalledTimes(2);
+    expect(logIn).toHaveBeenNthCalledWith(1, { appUserID: "player-a" });
+    expect(logIn).toHaveBeenNthCalledWith(2, { appUserID: "player-b" });
+  });
+});

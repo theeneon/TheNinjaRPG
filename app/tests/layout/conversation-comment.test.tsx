@@ -10,7 +10,7 @@ import { ConversationComments } from "@/layout/ConversationComments";
 import type { PostProps } from "@/layout/Post";
 import type { MutateCommentSchema } from "@/validators/comments";
 import * as Parse from "@/utils/parse";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { conversationQueryOptions } from "../setup/conversationQueryOptions";
 import { createToastMock } from "../setup/toastMock";
 

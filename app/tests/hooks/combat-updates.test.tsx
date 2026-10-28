@@ -12,7 +12,7 @@ import { useCombatUpdates } from "@/hooks/combat";
 import type { BattleUpdate } from "@/libs/combat/log";
 import type { BattleState } from "@/libs/combat/types";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 // Keep the real tRPC observer and mutation lifecycle; control network ordering.
 const testApi = createTRPCReact<AppRouter>();

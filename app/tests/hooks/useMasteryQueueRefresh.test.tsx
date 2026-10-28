@@ -2,7 +2,7 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { useMasteryQueueRefresh } from "@/hooks/useMasteryQueueRefresh";
 import type { UserWithRelations } from "@/routers/profile";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 

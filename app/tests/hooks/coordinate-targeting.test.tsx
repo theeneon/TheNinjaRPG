@@ -6,7 +6,7 @@ import type { Item, Jutsu } from "@/drizzle/schema";
 import { useItemEditForm } from "@/hooks/item";
 import { useJutsuEditForm } from "@/hooks/jutsu";
 import { ItemValidator, JutsuValidator, type ZodJutsuInput } from "@/validators/combat";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 

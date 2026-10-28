@@ -9,7 +9,7 @@ import * as client from "@/app/_trpc/client";
 import type { RouterInputs, RouterOutputs } from "@/app/_trpc/client";
 import * as Avatar from "@/layout/Avatar";
 import { BattleHistoryTable } from "@/layout/BattleHistoryTable";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 type Input = RouterInputs["combat"]["getBattleHistory"];
 type Row = RouterOutputs["combat"]["getBattleHistory"]["data"][number];

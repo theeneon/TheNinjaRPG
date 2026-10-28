@@ -21,7 +21,7 @@ import { DEFAULT_FURNITURE_DATA, FURNITURE_ITEM_DEFAULTS } from "@/validators/it
 import type { FurnitureGeometry } from "@/validators/itemFurniture";
 import { setNullsToEmptyStrings } from "@/utils/typeutils";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 const validItem = ItemValidator.parse({

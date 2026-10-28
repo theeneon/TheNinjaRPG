@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import React from "react";
 import { PerspectiveCamera } from "three";

@@ -21,7 +21,7 @@ import * as routing from "@/utils/routing";
 import * as UserContext from "@/utils/UserContext";
 import { SimpleObjective } from "@/validators/objectives";
 import { defaultWarRules } from "@/validators/war";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 type ObjectiveInfo = NonNullable<RouterOutputs["war"]["getObjectiveWarInfo"]>;
 type MutationResult = { success: boolean; message: string; battleId?: string };
