@@ -454,6 +454,10 @@ export const saveForumRead = (
       postId = IF(${forumRead.readAt} < ${post.createdAt} OR (${forumRead.readAt} = ${post.createdAt} AND ${forumRead.postId} < ${post.id}), ${post.id}, ${forumRead.postId}),
       readAt = GREATEST(${forumRead.readAt}, ${post.createdAt})
   `);
+export const clearSplitForumReads = (db: Client, threadId: string, postIds: string[]) =>
+  db
+    .delete(forumRead)
+    .where(and(eq(forumRead.threadId, threadId), inArray(forumRead.postId, postIds)));
 export const previousVisibleForumPost = (
   db: Client,
   post: { id: string; threadId: string; createdAt: Date },
@@ -732,7 +736,7 @@ export const listForumLinkedReports = (db: Client) =>
       postId: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${userReport.infraction}, '$.id'))`,
     })
     .from(userReport)
-    .where(eq(userReport.system, "forum_comment"))
+    .where(inArray(userReport.system, ["forum_comment", "forumPost"]))
     .orderBy(desc(userReport.createdAt))
     .limit(1000);
 

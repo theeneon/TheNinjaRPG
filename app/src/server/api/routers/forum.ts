@@ -825,6 +825,13 @@ export const forumRouter = createTRPCRouter({
             );
             if (moved.rowsAffected !== selected.length)
               throw new Error("Post membership changed during restructuring");
+            // A source topic's resume link must not follow a post into its split destination.
+            if (input.action === "SPLIT")
+              await q.clearSplitForumReads(
+                tx,
+                source.id,
+                selected.map((p) => p.id),
+              );
             if (input.action === "MERGE")
               await q.updateForumThread(tx, source.id, { deletedAt: new Date() });
           }

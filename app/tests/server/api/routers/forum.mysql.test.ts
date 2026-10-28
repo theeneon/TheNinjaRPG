@@ -147,6 +147,32 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await api.restructureTopic({ threadId: id, action: "MERGE", targetThreadId: copy.threadId, reason: "Merge duplicate guide", postIds: [] })).success).toBe(true);
     expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }))?.deletedAt).toBeInstanceOf(Date);
   });
+  it("clears only source reading positions moved by a split and preserves direct post links", async () => {
+    const db = await getTestDatabase(); const id = await create(); const other = await create("other");
+    const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
+    await db.update(forumPost).set({ createdAt: new Date(1000) }).where(eq(forumPost.id, opening.id));
+    await db.insert(forumPost).values([
+      { id: "split-middle", threadId: id, userId: playerId, authorId: playerId, content: "A tangent to separate", createdAt: new Date(2000) },
+      { id: "split-last", threadId: id, userId: playerId, authorId: playerId, content: "Later advice in the original discussion", createdAt: new Date(3000) },
+    ]);
+    const reader = await client(); const admin = await client(adminId); const behind = await client(moderatorId);
+    await reader.markRead({ postId: "split-middle" }); await admin.markRead({ postId: "split-last" }); await behind.markRead({ postId: opening.id });
+    const otherPost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, other) }))[0]!;
+    await reader.markRead({ postId: otherPost.id }); const before = await db.query.forumRead.findMany();
+    expect((await admin.restructureTopic({ threadId: id, action: "COPY", title: "Copied discussion", reason: "Share this discussion", postIds: [] })).success).toBe(true);
+    expect(await db.query.forumRead.findMany()).toEqual(before);
+    const split = await admin.restructureTopic({ threadId: id, action: "SPLIT", title: "Separate tangent", reason: "Keep the original discussion focused", postIds: ["split-middle"] });
+    expect(split.success).toBe(true);
+    expect(await db.query.forumRead.findMany()).toEqual(before.filter(r => r.threadId !== id || r.userId !== playerId));
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.find(t => t.id === id)).toMatchObject({ unread: true, resumePostId: null });
+    expect((await reader.resolvePost({ postId: "split-middle" }))?.threadId).toBe(split.threadId);
+    await reader.markRead({ postId: opening.id });
+    const resumed = (await reader.getThreads({ boardId: "general", limit: 20 })).threads.find(t => t.id === id)!;
+    expect(resumed).toMatchObject({ unread: true, resumePostId: opening.id });
+    expect((await reader.resolvePost({ postId: resumed.resumePostId! }))?.threadId).toBe(id);
+    await reader.markRead({ postId: "split-last" }); await reader.markRead({ postId: opening.id });
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.some(t => t.id === id)).toBe(false);
+  });
   it("rejects private forum evidence through the report integration", async () => {
     const id = await create("private-board", adminId); const db = await getTestDatabase(); const post = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
     const result = await callerForDatabase(reportsRouter, playerId, db).create({ system: "forum_comment", system_id: post.id, reported_userId: adminId, reason: "Attempt to report a private source" });

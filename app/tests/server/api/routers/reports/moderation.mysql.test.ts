@@ -7,8 +7,9 @@ import { unflaggedModeration } from "../../../../setup/moderation";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { TERR_BOT_ID } from "@/drizzle/constants";
-import { forumBoard, forumSection, forumThread, forumPost, moderationScan, userData, userReport } from "@/drizzle/schema";
+import { automatedModeration, forumBoard, forumGrant, forumSection, forumThread, forumPost, moderationScan, userData, userReport } from "@/drizzle/schema";
 import * as moderator from "@/libs/moderator";
+import { forumRouter } from "@/routers/forum";
 import { reportsRouter } from "@/server/api/routers/reports";
 import { insertUsers } from "../../../../setup/factories";
 import { resetServerModuleStubs, stubProfile } from "../../../../setup/serverModules";
@@ -19,7 +20,7 @@ const reportInput = { system: "forum_comment" as const, system_id: "target-post"
 describeWithDatabase("moderation report evidence and dashboard", () => {
   beforeEach(async () => {
     const db = await getTestDatabase();
-    await resetTables(moderationScan, userReport, forumPost, forumThread, forumBoard, forumSection, userData);
+    await resetTables(automatedModeration, moderationScan, userReport, forumGrant, forumPost, forumThread, forumBoard, forumSection, userData);
     await insertUsers([{ userId: "reporter" }, { userId: "target" }, { userId: "staff", role: "MODERATOR" }]);
     stubProfile("fetchUser", async (_client: unknown, id: string) => db.query.userData.findFirst({ where: eq(userData.userId, id) }));
     await db.insert(forumSection).values({ id: "section", name: "General", summary: "", policy: {} });
@@ -61,6 +62,23 @@ describeWithDatabase("moderation report evidence and dashboard", () => {
     expect(stored?.predictedStatus).toBeNull();
     expect(stored?.predictedAt).toBeNull();
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, "target-post") }))?.isReported).toBe(true);
+  });
+
+  it("links automated and human forum reports within the reviewer's board scope", async () => {
+    const db = await getTestDatabase(); const gate = unflaggedModeration(); gate.results[0]!.flagged = true;
+    vi.spyOn(Moderations.prototype, "create").mockResolvedValue(gate);
+    vi.spyOn(moderator, "generateModerationDecision").mockResolvedValue({ decision: { createReport: "OFFICIAL_WARNING", reasoning: "Review this flagged message" }, aiInterpretation: "Flagged forum message" });
+    expect((await callerForDatabase(reportsRouter, "reporter", db).create(reportInput)).success).toBe(true);
+    await moderator.moderateContent(db, { userId: "target", relationId: "target-post", relationType: "forumPost", contextId: "thread", content: "The actual reported message" });
+    const reports = await db.query.userReport.findMany(); expect(reports.map(r => r.system).sort()).toEqual(["forumPost", "forum_comment"]);
+    await db.insert(forumGrant).values({ id: "scoped-reviewer", userId: "reporter", scope: "BOARD", scopeId: "board", permissions: ["moderate"], denies: [] });
+    const reviewer = callerForDatabase(forumRouter, "reporter", db);
+    expect((await reviewer.administration({ query: "" }))?.linkedReports.map(r => r.id).sort()).toEqual(reports.map(r => r.id).sort());
+    await db.insert(forumBoard).values({ id: "other-board", name: "Other discussion", summary: "", sectionId: "section" });
+    await db.update(forumThread).set({ boardId: "other-board" }).where(eq(forumThread.id, "thread"));
+    expect((await reviewer.administration({ query: "" }))?.linkedReports).toEqual([]);
+    expect((await callerForDatabase(forumRouter, "staff", db).administration({ query: "" }))?.linkedReports).toHaveLength(2);
+    expect(await db.query.userReport.findMany()).toEqual(reports);
   });
 
   it("records gate clears and missing-provider-result failures as different scan outcomes", async () => {
