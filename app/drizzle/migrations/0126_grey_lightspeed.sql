@@ -1,0 +1,1 @@
+ALTER TABLE `ForumPost` ADD `publicationPending` boolean DEFAULT false NOT NULL;

@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { FORUM_MIN_LEVEL, forumLevelMessage } from "@/drizzle/constants";
-import { forumPost, poll } from "@/drizzle/schema";
+import { forumPost, type forumThread, poll } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
 import {
+  type ForumContext,
   forumPersonalState,
   forumWriteSnapshotMatches,
   getForumContext,
@@ -564,12 +565,14 @@ export const forumRouter = createTRPCRouter({
           if (input.action === "APPROVE" && !current.isApproved)
             return errorResponse("Approve the topic to publish its opening post");
           if (input.action === "APPROVE" && currentPost.isApproved)
-            return { success: true, message: "Post already approved", notify: false };
+            return { success: true, message: "Post already approved" };
+          if (input.action === "RESTORE" && !currentPost.deletedAt)
+            return { success: true, message: "Post already restored" };
           const values =
             input.action === "RESTORE"
               ? { deletedAt: null, removedBy: null, removalReason: null }
               : input.action === "APPROVE"
-                ? { isApproved: true }
+                ? { isApproved: true, publicationPending: true }
                 : input.action === "DISMISS_REPORT"
                   ? { isReported: false }
                   : { isLocked: input.action === "LOCK" };
@@ -581,16 +584,10 @@ export const forumRouter = createTRPCRouter({
           );
           if (!updated.rowsAffected)
             return errorResponse("This post moved. Refresh before moderating it.");
-          if (
-            input.action === "APPROVE" &&
-            !currentPost.deletedAt &&
-            !current.deletedAt
-          )
-            await q.rewindForumReads(
-              tx,
-              currentPost,
-              await q.previousVisibleForumPost(tx, currentPost),
-            );
+          const publication =
+            input.action === "APPROVE" || input.action === "RESTORE"
+              ? await prepareForumPublication(tx, current, board, post.id)
+              : { approvedPosts: [], approvedNews: [] };
           await q.repairForumThread(tx, thread.id);
           await q.repairForumBoard(tx, board.id);
           await q.insertForumAudit(tx, {
@@ -605,22 +602,12 @@ export const forumRouter = createTRPCRouter({
           return {
             success: true,
             message: "Post moderation saved",
-            notify:
-              input.action === "APPROVE" &&
-              !currentPost.deletedAt &&
-              !current.deletedAt,
+            ...publication,
           };
         }),
       );
       if (!saved.success) return saved;
-      if ("notify" in saved && saved.notify)
-        deferForumAlerts(ctx.drizzle, {
-          boardId: board.id,
-          threadId: thread.id,
-          postId: post.id,
-          actorId: post.authorId,
-          mentionedUserNames: forumMentionNames(post.content),
-        });
+      if ("approvedPosts" in saved) deferForumPublication(ctx.drizzle, saved);
       return { success: true, message: saved.message };
     }),
   revisions: protectedProcedure
@@ -1523,13 +1510,7 @@ async function moderateForumThreads(
   // Bulk topic changes, counters and audit records must succeed or roll back as a unit.
   const saved = await retryOnDeadlock(() =>
     db.transaction(async (tx) => {
-      const approvedPosts: {
-        boardId: string;
-        threadId: string;
-        postId: string;
-        actorId: string;
-        mentionedUserNames: string[];
-      }[] = [];
+      const approvedPosts: Parameters<typeof deferForumAlerts>[1][] = [];
       const approvedNews: {
         title: string;
         content: string;
@@ -1588,39 +1569,27 @@ async function moderateForumThreads(
           const posts = await q.listForumPosts(tx, thread.id, 0, 1, true);
           const opening = posts[0];
           if (opening) {
-            await q.updateForumPost(tx, opening.id, { isApproved: true });
             const wasApproved = currentRows.find((t) => t.id === thread.id)?.isApproved;
-            if (
-              (!wasApproved || !opening.isApproved) &&
-              !currentRows.find((t) => t.id === thread.id)?.deletedAt &&
-              !opening.deletedAt
-            )
-              await q.rewindForumReads(tx, opening);
-            if (
-              !wasApproved &&
-              !currentRows.find((t) => t.id === thread.id)?.deletedAt &&
-              !opening.deletedAt
-            ) {
-              const board = context.boards.find((b) => b.id === thread.boardId);
-              if (board?.name === "News" && board.publicRead) {
-                await q.updateUserDataForCreateThread(tx, { userId: opening.authorId });
-                const current = currentRows.find((t) => t.id === thread.id);
-                approvedNews.push({
-                  title: current?.title ?? thread.title,
-                  image: current?.image ?? null,
-                  content: opening.content,
-                  avatar: opening.user?.avatar ?? null,
-                });
-              }
-              approvedPosts.push({
-                boardId: thread.boardId,
-                threadId: thread.id,
-                postId: opening.id,
-                actorId: opening.authorId,
-                mentionedUserNames: forumMentionNames(opening.content),
-              });
-            }
+            await q.updateForumPost(tx, opening.id, {
+              isApproved: true,
+              publicationPending:
+                !wasApproved || !opening.isApproved || opening.publicationPending,
+            });
           }
+        }
+        if (input.action === "APPROVE" || input.action === "RESTORE") {
+          const current = currentRows.find((t) => t.id === thread.id)!;
+          const publication = await prepareForumPublication(
+            tx,
+            {
+              ...current,
+              isApproved: input.action === "APPROVE" || current.isApproved,
+              deletedAt: input.action === "RESTORE" ? null : current.deletedAt,
+            },
+            context.boards.find((b) => b.id === current.boardId)!,
+          );
+          approvedPosts.push(...publication.approvedPosts);
+          approvedNews.push(...publication.approvedNews);
         }
         await q.repairForumThread(tx, thread.id);
         await q.insertForumAudit(tx, {
@@ -1643,16 +1612,73 @@ async function moderateForumThreads(
     }),
   );
   if (!saved.success) return saved;
-  if ("approvedPosts" in saved)
-    for (const post of saved.approvedPosts) deferForumAlerts(db, post);
-  if ("approvedNews" in saved)
-    for (const news of saved.approvedNews) {
-      void Promise.allSettled(
-        publishNewsToSocialMedia(news.title, news.content, news.avatar, news.image),
-      );
-      void notifyNewsSubscribers(db, news.content);
-    }
+  if ("approvedPosts" in saved) deferForumPublication(db, saved);
   return { success: true, message: saved.message };
+}
+
+/** Called under the topic lock so only its first visible publication rewinds and notifies. */
+async function prepareForumPublication(
+  db: Parameters<typeof q.rewindForumReads>[0],
+  thread: Pick<
+    typeof forumThread.$inferSelect,
+    "id" | "isApproved" | "deletedAt" | "title" | "image"
+  >,
+  board: Pick<ForumContext["boards"][number], "id" | "name" | "publicRead">,
+  postId?: string,
+) {
+  const approvedPosts: Parameters<typeof deferForumAlerts>[1][] = [];
+  const approvedNews: {
+    title: string;
+    content: string;
+    avatar: string | null;
+    image: string | null;
+  }[] = [];
+  if (!thread.isApproved || thread.deletedAt) return { approvedPosts, approvedNews };
+  const posts = await q.listPendingForumPublications(db, thread.id, postId);
+  const first = posts[0];
+  if (!first) return { approvedPosts, approvedNews };
+  const claimed = await q.claimForumPublications(
+    db,
+    thread.id,
+    posts.map((post) => post.id),
+  );
+  if (claimed.rowsAffected !== posts.length)
+    throw new Error("Forum publication changed during moderation");
+  await q.rewindForumReads(db, first, await q.previousVisibleForumPost(db, first));
+  for (const post of posts)
+    approvedPosts.push({
+      boardId: board.id,
+      threadId: thread.id,
+      postId: post.id,
+      actorId: post.authorId,
+      mentionedUserNames: forumMentionNames(post.content),
+    });
+  if (board.name === "News" && board.publicRead) {
+    const [opening] = await q.listForumPosts(db, thread.id, 0, 1, true);
+    if (opening && posts.some((post) => post.id === opening.id)) {
+      await q.updateUserDataForCreateThread(db, { userId: opening.authorId });
+      approvedNews.push({
+        title: thread.title,
+        image: thread.image,
+        content: opening.content,
+        avatar: opening.user?.avatar ?? null,
+      });
+    }
+  }
+  return { approvedPosts, approvedNews };
+}
+
+function deferForumPublication(
+  db: DrizzleClient,
+  publication: Awaited<ReturnType<typeof prepareForumPublication>>,
+) {
+  for (const post of publication.approvedPosts) deferForumAlerts(db, post);
+  for (const news of publication.approvedNews) {
+    void Promise.allSettled(
+      publishNewsToSocialMedia(news.title, news.content, news.avatar, news.image),
+    );
+    void notifyNewsSubscribers(db, news.content);
+  }
 }
 
 /**

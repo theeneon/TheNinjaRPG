@@ -20,7 +20,7 @@ describeWithDatabase("forum structure migration", () => {
         INSERT INTO ForumThread(id,title,boardId,userId) VALUES('topic','Question topic','questions','author');
         INSERT INTO ForumPost(id,content,userId,authorId,threadId,createdAt) VALUES('opening','Opening','author','author','topic','2026-01-01 00:00:00.000'),('answer','Answer','author','author','topic','2026-01-02 00:00:00.000');
       `));
-      for (const name of ["0122_flashy_mac_gargan.sql", "0123_lovely_rumiko_fujikawa.sql", "0124_fair_nightcrawler.sql", "0125_puzzling_magdalene.sql"]) await connection.query(rename(readFileSync(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")));
+      for (const name of ["0122_flashy_mac_gargan.sql", "0123_lovely_rumiko_fujikawa.sql", "0124_fair_nightcrawler.sql", "0125_puzzling_magdalene.sql", "0126_grey_lightspeed.sql"]) await connection.query(rename(readFileSync(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")));
       const [sections] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT * FROM ForumSection"));
       expect(sections.map(s => s.name).sort()).toEqual(["Main Broadcast", "忍者"]);
       expect(sections.find(s => s.name === "忍者")?.summary).toBe("物語");
@@ -31,6 +31,8 @@ describeWithDatabase("forum structure migration", () => {
       expect(boards.find(b => b.id === "questions")).toMatchObject({ nPosts: 2, nThreads: 1 });
       const [topics] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT * FROM ForumThread"));
       expect(topics[0]).toMatchObject({ nPosts: 2, kind: "QUESTION", lastPostId: "answer" });
+      const [posts] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT publicationPending FROM ForumPost"));
+      expect(posts.map(p => p.publicationPending)).toEqual([0, 0]);
     } finally {
       await connection.query(`DROP TABLE IF EXISTS ${tables.map(table => `\`${prefix}${table}\``).join(", ")}`);
       await connection.end();

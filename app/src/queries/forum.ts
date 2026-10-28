@@ -327,6 +327,38 @@ export const updateForumPosts = (
     .update(forumPost)
     .set(values)
     .where(and(inArray(forumPost.id, ids), eq(forumPost.threadId, threadId)));
+export const listPendingForumPublications = (
+  db: Client,
+  threadId: string,
+  postId?: string,
+) =>
+  db.query.forumPost.findMany({
+    where: and(
+      eq(forumPost.threadId, threadId),
+      eq(forumPost.publicationPending, true),
+      eq(forumPost.isApproved, true),
+      isNull(forumPost.deletedAt),
+      postId ? eq(forumPost.id, postId) : undefined,
+    ),
+    orderBy: [asc(forumPost.createdAt), asc(forumPost.id)],
+  });
+export const claimForumPublications = (
+  db: Client,
+  threadId: string,
+  postIds: string[],
+) =>
+  db
+    .update(forumPost)
+    .set({ publicationPending: false })
+    .where(
+      and(
+        eq(forumPost.threadId, threadId),
+        inArray(forumPost.id, postIds),
+        eq(forumPost.publicationPending, true),
+        eq(forumPost.isApproved, true),
+        isNull(forumPost.deletedAt),
+      ),
+    );
 /** Existing parent rows serialize posting with lock/archive/slow-mode changes; no missing-row locks. */
 export const lockForumThread = (db: Client, id: string) =>
   db.select().from(forumThread).where(eq(forumThread.id, id)).for("update");

@@ -862,6 +862,13 @@
       "when": 1793257037373,
       "tag": "0123_pet_skill_targets",
       "breakpoints": false
+    },
+    {
+      "idx": 126,
+      "version": "5",
+      "when": 1793212223172,
+      "tag": "0126_grey_lightspeed",
+      "breakpoints": false
     }
   ]
 }
