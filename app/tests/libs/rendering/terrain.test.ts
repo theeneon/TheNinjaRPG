@@ -1,6 +1,9 @@
 import alea from "alea";
-import { describe, expect, it } from "bun:test";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { BufferImageSource, Mesh, Shader, Texture, UniformGroup } from "pixi.js";
 import { SECTOR_MAP_VERSION } from "@/drizzle/constants";
+import { createHexTerrain } from "@/libs/rendering/primitives/terrain";
+import type { GameRenderer } from "@/libs/rendering/runtime";
 import { buildSectorTerrainData } from "@/libs/rendering/sectorData";
 import { hexTerrainAt } from "@/libs/rendering/terrainData";
 import { prepareSectorGrid } from "@/libs/sector-map/sector-grid";
@@ -20,6 +23,77 @@ const prepare = (map: NormalizedSectorMap, light = false) => {
   const { grid } = prepareSectorGrid(1024, random, 1, [], map, mergeTerrainSpecs([]), null);
   return { grid, data: buildSectorTerrainData(grid, random, light) };
 };
+
+const cleanups: (() => void)[] = [];
+afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.restoreAllMocks(); });
+const renderer = (texture: (path: string) => Promise<Texture>) => {
+  const controller = new AbortController(), owned = new Set<() => void>();
+  let disposed = false;
+  const own = vi.fn((cleanup: () => void) => { owned.add(cleanup); });
+  const game = {
+    assets: { texture }, animation: new UniformGroup({ uTime: { value: 0, type: "f32" } }),
+    signal: controller.signal, isDisposed: () => disposed, own,
+    dispose: () => { disposed = true; for (const cleanup of owned) cleanup(); owned.clear(); },
+  } as unknown as GameRenderer;
+  cleanups.push(game.dispose);
+  return { game, controller, own };
+};
+
+describe("shared hex terrain textures", () => {
+  it("keeps terrain geometry, palette and picking when one optional image fails", async () => {
+    const { grid, data } = prepare(mapOf(3, 2));
+    const failedTexture = data.batches.find((batch) => batch.kind === "image")!.texture;
+    const failure = new Error("HTTP 404 for optional terrain image");
+    const image = new Texture({ source: new BufferImageSource({ resource: new Uint8Array([255, 255, 255, 255]), width: 1, height: 1 }) });
+    const { game } = renderer(async (path) => { if (path === failedTexture) throw failure; return image; });
+    cleanups.push(() => image.destroy(true));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const terrain = await createHexTerrain(game, data);
+    const meshes = terrain.container.children.filter((child): child is Mesh => child instanceof Mesh && Boolean(child.geometry.attributes.aTint));
+    expect(meshes).toHaveLength(data.batches.length);
+    data.batches.forEach((batch, index) => {
+      const mesh = meshes[index]!;
+      expect(mesh.geometry.getBuffer("aPosition").data).toEqual(batch.positions);
+      expect(mesh.geometry.getBuffer("aTint").data).toEqual(batch.colors);
+      if (batch.kind === "image") expect(mesh.shader!.resources.uTexture).toBe((batch.texture === failedTexture ? Texture.WHITE : image).source);
+    });
+    expect(warning).toHaveBeenCalledWith("Terrain texture unavailable", failure);
+    for (const tile of grid) {
+      const offset = data.faceOffsets.get(`${tile.col},${tile.row}`) ?? 0;
+      expect(tile.blocked).toBe(false);
+      expect(hexTerrainAt(grid, data.faceOffsets, tile.x, tile.y + offset)).toBe(tile);
+    }
+    game.dispose();
+    expect(terrain.container.destroyed).toBe(true);
+    expect(image.source.destroyed).toBe(false);
+  });
+
+  it.each(["abort", "dispose"])("does not create fallback resources after %s during a failed image load", async (cancel) => {
+    let reject = (_error: Error) => {};
+    const pending = new Promise<Texture>((_resolve, fail) => { reject = fail; });
+    const { game, controller, own } = renderer(() => pending);
+    const terrain = createHexTerrain(game, prepare(mapOf(2, 2)).data);
+    if (cancel === "abort") controller.abort(); else game.dispose();
+    const failure = new Error("Image load failed after cancellation");
+    reject(failure);
+    await expect(terrain).rejects.toBe(failure);
+    expect(own).not.toHaveBeenCalled();
+  });
+
+  it("preserves an image loader's AbortError even before its signal is aborted", async () => {
+    const failure = new DOMException("Image load cancelled", "AbortError");
+    const { game, own } = renderer(async () => { throw failure; });
+    await expect(createHexTerrain(game, prepare(mapOf(2, 2)).data)).rejects.toBe(failure);
+    expect(own).not.toHaveBeenCalled();
+  });
+
+  it("propagates terrain initialization errors after images load", async () => {
+    const failure = new Error("Shader initialization failed");
+    const { game } = renderer(async () => Texture.WHITE);
+    vi.spyOn(Shader, "from").mockImplementation(() => { throw failure; });
+    await expect(createHexTerrain(game, prepare(mapOf(2, 2)).data)).rejects.toBe(failure);
+  });
+});
 
 describe("shared hex terrain data", () => {
   it("picks each authored tile on its recessed face without renderer hit objects", () => {

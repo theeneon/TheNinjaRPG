@@ -23,7 +23,18 @@ export const createHexTerrain = async (
 ) => {
   const images = await Promise.all(
     data.batches.map((batch) =>
-      batch.texture ? game.assets.texture(batch.texture) : Promise.resolve(null),
+      batch.texture
+        ? game.assets.texture(batch.texture).catch((error: unknown) => {
+            if (
+              game.signal.aborted ||
+              game.isDisposed() ||
+              (error instanceof Error && error.name === "AbortError")
+            )
+              throw error;
+            console.warn("Terrain texture unavailable", error);
+            return null;
+          })
+        : Promise.resolve(null),
     ),
   );
   if (game.signal.aborted || game.isDisposed())
