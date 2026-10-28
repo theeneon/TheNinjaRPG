@@ -13,6 +13,7 @@ export const gameAssetValidator = z.object({
   url: z.url().optional(),
   folder: z
     .string()
+    .max(191)
     .regex(/^[a-zA-Z0-9]*$/, "Folder name can only contain letters and numbers")
     .optional(),
 });

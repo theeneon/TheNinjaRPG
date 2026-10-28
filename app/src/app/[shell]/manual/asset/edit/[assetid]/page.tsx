@@ -1,101 +1,232 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { use, useEffect } from "react";
-import type { UseFormReturn } from "react-hook-form";
+import { FolderOpen, Pause, Play } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, use, useEffect, useState } from "react";
+import { type UseFormReturn, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
+import { Button } from "@/components/ui/button";
 import type { GameAsset } from "@/drizzle/schema";
 import { useAssetEditForm } from "@/hooks/asset";
 import ContentBox from "@/layout/ContentBox";
 import { EditContent } from "@/layout/EditContent";
+import {
+  AssetPreviewBackgroundControls,
+  GameAssetPreview,
+} from "@/layout/GameAssetPreview";
+import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
 import { SuggestChange } from "@/layout/SuggestChange";
-import { canChangeContent, isStaffRole } from "@/utils/permissions";
+import { assetTypeLabels, getAssetLibraryReturnTo } from "@/libs/assetLibrary";
+import { canChangeContent, canSuggestContent } from "@/utils/permissions";
 import { useRequiredUserData } from "@/utils/UserContext";
 import type { ZodGameAssetType } from "@/validators/asset";
 import { gameAssetValidator } from "@/validators/asset";
 
 export default function AssetEdit(props: { params: Promise<{ assetid: string }> }) {
-  const params = use(props.params);
-  const assetId = params.assetid;
+  const { assetid } = use(props.params);
   const router = useRouter();
   const { data: userData } = useRequiredUserData();
+  const canOpenEditor =
+    !!userData && (canChangeContent(userData.role) || canSuggestContent(userData.role));
+  const { data, isPending, error, refetch } = api.gameAsset.get.useQuery({
+    id: assetid,
+  });
 
-  // Queries
-  const { data, isPending, refetch } = api.gameAsset.get.useQuery(
-    { id: assetId },
-    { enabled: assetId !== undefined },
-  );
-
-  // Redirect to profile if not staff
   useEffect(() => {
-    if (userData && !isStaffRole(userData.role)) {
-      router.push("/profile");
-    }
-  }, [userData]);
+    if (userData && !canOpenEditor) router.push("/profile");
+  }, [userData, canOpenEditor]);
 
-  // Prevent unauthorized access
-  if (isPending || !userData || !isStaffRole(userData.role) || !data) {
-    return <Loader explanation="Loading data" />;
+  if (error) {
+    return (
+      <ContentBox title="Asset unavailable" defaultBackHref="/manual/asset">
+        <p role="alert">
+          {error.data?.code === "NOT_FOUND"
+            ? "This asset no longer exists. Return to the library to choose another asset."
+            : "The asset could not be loaded. Try again or return to the library."}
+        </p>
+        <div className="mt-4 flex gap-2">
+          <Button variant="outline" onClick={() => void refetch()}>
+            Try again
+          </Button>
+          <Button asChild>
+            <Link href="/manual/asset">Back to library</Link>
+          </Button>
+        </div>
+      </ContentBox>
+    );
   }
+  if (isPending || !userData || !canOpenEditor || !data)
+    return <Loader explanation="Loading asset" />;
 
   return (
-    <SingleEditAsset
-      asset={data}
-      refetch={refetch}
-      canSave={canChangeContent(userData.role)}
-    />
+    <Suspense fallback={<Loader explanation="Loading asset editor" />}>
+      <SingleEditAsset
+        key={data.id}
+        asset={data}
+        refetch={refetch}
+        canSave={canChangeContent(userData.role)}
+      />
+    </Suspense>
   );
 }
 
-interface SingleEditAssetProps {
-  /** Staff who cannot save content still get the editor, to suggest changes. */
-  canSave: boolean;
+function SingleEditAsset({
+  asset,
+  refetch,
+  canSave,
+}: {
   asset: GameAsset;
   refetch: () => Promise<unknown>;
-}
-
-const SingleEditAsset: React.FC<SingleEditAssetProps> = (props) => {
-  // Form handling
-  const { asset, form, formData, handleAssetSubmit, isUpdating } = useAssetEditForm(
-    props.asset,
-    props.refetch,
+  canSave: boolean;
+}) {
+  const router = useRouter();
+  const params = useSearchParams();
+  const returnTo = getAssetLibraryReturnTo(params.get("returnTo"));
+  const { form, formData, handleAssetSubmit, isUpdating } = useAssetEditForm(
+    asset,
+    refetch,
+  );
+  const [playing, setPlaying] = useState(false);
+  const [background, setBackground] = useState<"light" | "dark" | "checkerboard">(
+    "dark",
+  );
+  const [name, image, type, frames, speed] = useWatch({
+    control: form.control,
+    name: ["name", "image", "type", "frames", "speed"],
+  });
+  const sharedForm = form as unknown as UseFormReturn<ZodGameAssetType, unknown>;
+  const mediaFields = formData
+    .filter((field) => field.type === "avatar" || field.type === "audio")
+    .map((field) => ({ ...field, fullWidth: true }));
+  const detailFields = formData.filter(
+    (field) => field.type !== "avatar" && field.type !== "audio",
   );
 
-  // Show panel controls
   return (
     <ContentBox
-      title="Content Panel"
-      subtitle="Asset Management"
-      defaultBackHref="/manual/asset"
-      noRightAlign={true}
+      title={canSave ? "Edit asset" : "Suggest asset changes"}
+      subtitle={asset.name}
+      defaultBackHref={returnTo}
+      onBack={() => router.push(returnTo)}
+      backDisabled={isUpdating}
+      noBorder
+      padding={false}
     >
-      {!asset && <p>Could not find this asset</p>}
-      {asset && (
-        <>
+      <div className="mt-4 space-y-4">
+        <div className="text-muted-foreground flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="bg-secondary text-secondary-foreground rounded-md px-2 py-1 text-xs font-medium">
+            {assetTypeLabels[type]}
+          </span>
+          <Button
+            variant="ghost"
+            disabled={isUpdating}
+            onClick={() => router.push(returnTo)}
+            className="text-primary gap-1.5"
+          >
+            <FolderOpen className="size-4" />
+            Back to library
+          </Button>
+        </div>
+        <section
+          className="border-border bg-background/70 rounded-xl border p-4 sm:p-5"
+          aria-labelledby="asset-media-heading"
+        >
+          <h3 id="asset-media-heading" className="text-lg font-semibold">
+            Media
+          </h3>
+          <p className="text-muted-foreground mt-1 mb-4 text-sm">
+            {type === "ANIMATION"
+              ? "Upload a vertical sprite sheet, then set its frame count and speed below."
+              : type === "SFX" || type === "MUSIC"
+                ? "Choose or generate audio. You can listen before saving."
+                : "Upload, replace or generate the artwork for this asset."}
+          </p>
           <EditContent
             schema={gameAssetValidator}
-            form={form as unknown as UseFormReturn<ZodGameAssetType, unknown>}
-            formData={formData}
-            showSubmit={props.canSave}
-            buttonTxt="Save to Database"
+            form={sharedForm}
+            formData={mediaFields}
+            showSubmit={false}
             submitLoading={isUpdating}
-            submitLoadingText="Saving"
+            fieldsOnly
             type="asset"
             relationId={asset.id}
-            allowImageUpload={props.canSave}
-            onAccept={handleAssetSubmit}
+            allowImageUpload={canSave}
           />
-          <div className="mt-2 flex justify-end">
+          {type === "ANIMATION" && (
+            <div className="mx-auto mt-4 max-w-xs space-y-2">
+              <GameAssetPreview
+                asset={{
+                  name,
+                  image,
+                  type,
+                  frames: Number(frames),
+                  speed: Number(speed),
+                }}
+                play={playing}
+                background={background}
+                className="rounded-lg"
+              />
+              <AssetPreviewBackgroundControls
+                value={background}
+                onChange={setBackground}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2"
+                onClick={() => setPlaying(!playing)}
+              >
+                {playing ? <Pause className="size-4" /> : <Play className="size-4" />}
+                {playing ? "Pause preview" : "Play animation"}
+              </Button>
+            </div>
+          )}
+        </section>
+        <section
+          className="border-border bg-background/70 rounded-xl border p-4 sm:p-5"
+          aria-labelledby="asset-details-heading"
+        >
+          <h3 id="asset-details-heading" className="text-lg font-semibold">
+            Asset details
+          </h3>
+          <p className="text-muted-foreground mt-1 mb-4 text-sm">
+            Use a descriptive name and folder so other creators can find this asset.
+            Record where the media came from and how it may be used.
+          </p>
+          <EditContent
+            schema={gameAssetValidator}
+            form={sharedForm}
+            formData={detailFields}
+            showSubmit={canSave}
+            buttonTxt="Save changes"
+            submitLoading={isUpdating}
+            submitLoadingText="Saving changes…"
+            type="asset"
+            relationId={asset.id}
+            allowImageUpload={canSave}
+            onAccept={handleAssetSubmit}
+          >
+            {form.formState.errors.root?.message && (
+              <p role="alert" className="text-destructive col-span-full text-sm">
+                {form.formState.errors.root.message}
+              </p>
+            )}
+          </EditContent>
+          <p className="text-muted-foreground mt-3 text-xs">
+            Folder names use letters and numbers; leave empty for Unfiled. Hidden assets
+            remain in the library and are marked hidden for game content.
+          </p>
+          <div className="border-border mt-4 flex justify-end border-t pt-3">
             <SuggestChange
               entityType="GAME_ASSET"
               entityId={asset.id}
               getData={() => form.getValues()}
-              label={props.canSave ? "Suggest instead" : "Suggest a change"}
+              label={canSave ? "Suggest instead" : "Suggest a change"}
             />
           </div>
-        </>
-      )}
+        </section>
+      </div>
     </ContentBox>
   );
-};
+}

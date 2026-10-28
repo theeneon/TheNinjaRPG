@@ -14,7 +14,7 @@ export const fetchGameAsset = async (client: DrizzleClient, id: string) => {
   });
 };
 
-import { and, desc, getTableColumns, inArray, like, ne, sql } from "drizzle-orm";
+import { and, asc, desc, getTableColumns, inArray, like, ne, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
 import { actionLog, contentTag, gameAssetTag } from "@/drizzle/schema";
@@ -53,6 +53,7 @@ export const selectDistinctGameAssetTagForGetAllGameAssetContentTagNames = (
 /** Build the `gameAsset` selection for `getAllFolders`, using predicates on `folder`. */
 export const selectGameAssetForGetAllFolders = (
   client: Pick<DrizzleClient, "select">,
+  input?: { type?: GameAssetType },
 ) =>
   client
     .select({
@@ -60,7 +61,12 @@ export const selectGameAssetForGetAllFolders = (
       count: sql`count(*)`.mapWith(Number),
     })
     .from(gameAsset)
-    .where(sql`${gameAsset.folder} != ''`)
+    .where(
+      and(
+        sql`${gameAsset.folder} != ''`,
+        input?.type ? eq(gameAsset.type, input.type) : undefined,
+      ),
+    )
     .groupBy(gameAsset.folder)
     .orderBy(gameAsset.folder);
 
@@ -73,6 +79,9 @@ export const selectGameAssetForGetAll = (
     tags?: undefined | string[];
     nameTokens?: undefined | string[];
     folder?: undefined | string;
+    includeAnimations?: boolean;
+    exactFolder?: string;
+    sort?: "newest" | "oldest" | "name-asc" | "name-desc";
   },
   limit: number,
   skip: number,
@@ -87,16 +96,30 @@ export const selectGameAssetForGetAll = (
         ...(input.name ? [like(gameAsset.name, `%${input.name}%`)] : []),
         ...(input.type
           ? [eq(gameAsset.type, input.type)]
-          : [ne(gameAsset.type, "ANIMATION")]),
+          : input.includeAnimations
+            ? []
+            : [ne(gameAsset.type, "ANIMATION")]),
         ...(input.tags ? [inArray(contentTag.name, input.tags)] : []),
         ...(input.nameTokens
           ? input.nameTokens.map((t) => like(gameAsset.name, `%${t}%`))
           : []),
         ...(input.folder ? [like(gameAsset.folder, `%${input.folder}%`)] : []),
+        ...(input.exactFolder !== undefined
+          ? [eq(gameAsset.folder, input.exactFolder)]
+          : []),
       ),
     )
     .groupBy(gameAsset.id)
-    .orderBy(desc(gameAsset.name))
+    .orderBy(
+      input.sort === "newest"
+        ? desc(gameAsset.createdAt)
+        : input.sort === "oldest"
+          ? asc(gameAsset.createdAt)
+          : input.sort === "name-asc"
+            ? asc(gameAsset.name)
+            : desc(gameAsset.name),
+      asc(gameAsset.id),
+    )
     .limit(limit)
     .offset(skip);
 
@@ -138,11 +161,13 @@ export const insertGameAssetForCreate = (
   client: Pick<DrizzleClient, "insert">,
   id: string,
   ctx: { userId: string },
+  input?: { name: string; type: GameAssetType; folder?: string },
 ) =>
   client.insert(gameAsset).values({
     id: id,
-    name: "Placeholder",
-    type: "STATIC",
+    name: input?.name ?? "Placeholder",
+    type: input?.type ?? "STATIC",
+    folder: input?.folder ?? "",
     image: IMG_AVATAR_DEFAULT,
     url: IMG_AVATAR_DEFAULT,
     createdByUserId: ctx.userId,

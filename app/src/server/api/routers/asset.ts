@@ -100,28 +100,37 @@ export const gameAssetRouter = createTRPCRouter({
     }),
   getAllFolders: publicProcedure
     .meta({ mcp: { description: "Get all game asset folders" } })
-    .query(async ({ ctx }) => {
+    .input(z.object({ type: z.enum(GameAssetTypes).optional() }).nullish())
+    .query(async ({ ctx, input }) => {
       // Return unique folders with counts
-      return await selectGameAssetForGetAllFolders(ctx.drizzle);
+      return await selectGameAssetForGetAllFolders(ctx.drizzle, input ?? undefined);
     }),
   getAll: publicProcedure
     .meta({ mcp: { description: "Get all game assets with filtering" } })
     .input(
       gameAssetSchema.extend({
-        cursor: z.number().nullish(),
-        limit: z.number().min(1).max(500),
+        cursor: z.number().int().min(0).nullish(),
+        limit: z.number().int().min(1).max(500),
         nameTokens: z.array(z.string()).optional(),
+        includeAnimations: z.boolean().optional(),
+        exactFolder: z.string().optional(),
+        sort: z.enum(["newest", "oldest", "name-asc", "name-desc"]).optional(),
       }),
     )
     .query(async ({ ctx, input }) => {
       const currentCursor = input?.cursor ? input.cursor : 0;
       const limit = input?.limit ? input.limit : 100;
       const skip = currentCursor * limit;
-      const results = await selectGameAssetForGetAll(ctx.drizzle, input, limit, skip);
+      const results = await selectGameAssetForGetAll(
+        ctx.drizzle,
+        input,
+        limit + 1,
+        skip,
+      );
 
-      const nextCursor = results.length < limit ? null : currentCursor + 1;
+      const nextCursor = results.length > limit ? currentCursor + 1 : null;
       return {
-        data: results,
+        data: results.slice(0, limit),
         nextCursor: nextCursor,
       };
     }),
@@ -175,16 +184,27 @@ export const gameAssetRouter = createTRPCRouter({
         return { success: false, message: `Not allowed to edit gameAsset` };
       }
     }),
-  create: protectedProcedure.output(baseServerResponse).mutation(async ({ ctx }) => {
-    const user = await fetchUser(ctx.drizzle, ctx.userId);
-    if (canChangeContent(user.role)) {
-      const id = nanoid();
-      await insertGameAssetForCreate(ctx.drizzle, id, ctx);
-      return { success: true, message: id };
-    } else {
-      return { success: false, message: `Not allowed to create gameAsset` };
-    }
-  }),
+  create: protectedProcedure
+    .input(
+      z
+        .object({
+          name: gameAssetValidator.shape.name,
+          type: gameAssetValidator.shape.type,
+          folder: gameAssetValidator.shape.folder,
+        })
+        .nullish(),
+    )
+    .output(baseServerResponse)
+    .mutation(async ({ ctx, input }) => {
+      const user = await fetchUser(ctx.drizzle, ctx.userId);
+      if (canChangeContent(user.role)) {
+        const id = nanoid();
+        await insertGameAssetForCreate(ctx.drizzle, id, ctx, input ?? undefined);
+        return { success: true, message: id };
+      } else {
+        return { success: false, message: `Not allowed to create gameAsset` };
+      }
+    }),
   delete: protectedProcedure
     .input(idSchema)
     .output(baseServerResponse)

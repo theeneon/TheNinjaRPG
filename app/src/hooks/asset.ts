@@ -5,6 +5,7 @@ import { api } from "@/app/_trpc/client";
 import { GameAssetTypes } from "@/drizzle/constants";
 import type { GameAsset } from "@/drizzle/schema";
 import type { FormEntry } from "@/layout/EditContent";
+import { assetTypeLabels } from "@/libs/assetLibrary";
 import { showFormErrorsToast, showMutationToast } from "@/libs/toast";
 import { calculateContentDiff } from "@/utils/diff";
 import type { ZodGameAssetInput, ZodGameAssetType } from "@/validators/asset";
@@ -16,6 +17,7 @@ import { gameAssetValidator } from "@/validators/asset";
  */
 export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknown>) => {
   const submitInFlight = useRef(false);
+  const utils = api.useUtils();
 
   // Form handling
   const form = useForm<ZodGameAssetInput, unknown, ZodGameAssetType>({
@@ -32,9 +34,19 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
       onSuccess: async (data) => {
         showMutationToast(data);
         if (data.success) {
-          await refetch();
+          await Promise.all([
+            refetch(),
+            utils.gameAsset.getAll.invalidate(),
+            utils.gameAsset.getAllFolders.invalidate(),
+            utils.gameAsset.getAllNames.invalidate(),
+            utils.gameAsset.getNameTags.invalidate(),
+            utils.misc.getAllGameAssetNames.invalidate(),
+          ]);
+        } else {
+          form.setError("root", { message: data.message });
         }
       },
+      onError: (error) => form.setError("root", { message: error.message }),
       onSettled: () => {
         submitInFlight.current = false;
       },
@@ -44,6 +56,7 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
   const handleAssetSubmit = form.handleSubmit(
     async (data: ZodGameAssetType) => {
       if (submitInFlight.current) return;
+      form.clearErrors("root");
       const newAsset = { ...asset, ...data };
       const diff = calculateContentDiff(asset, newAsset);
       if (diff.length > 0) {
@@ -80,6 +93,7 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
   if (type === "SCENE_BACKGROUND") {
     formData.push({
       id: "image",
+      label: "Artwork",
       type: "avatar",
       href: imageUrl,
       size: "landscape",
@@ -88,22 +102,40 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
   } else if (type === "SCENE_CHARACTER") {
     formData.push({
       id: "image",
+      label: "Artwork",
       type: "avatar",
       href: imageUrl,
       size: "portrait",
       maxDim: 512,
     });
   } else if (type !== "SFX") {
-    formData.push({ id: "image", type: "avatar", href: imageUrl, size: "square" });
+    formData.push({
+      id: "image",
+      label: "Artwork",
+      type: "avatar",
+      href: imageUrl,
+      size: "square",
+    });
   }
 
   // Object for form values
   formData.push(
-    { id: "name", label: "Asset Name", type: "text" },
-    { id: "licenseDetails", type: "text", label: "License Details" },
-    { id: "type", type: "str_array", values: GameAssetTypes },
-    { id: "folder", type: "text", label: "Folder Name" },
-    { id: "hidden", type: "boolean" },
+    { id: "name", label: "Asset name", type: "text" },
+    {
+      id: "licenseDetails",
+      type: "textarea",
+      rows: 3,
+      label: "License details",
+      fullWidth: true,
+    },
+    {
+      id: "type",
+      label: "Asset type",
+      type: "db_values",
+      values: GameAssetTypes.map((type) => ({ id: type, name: assetTypeLabels[type] })),
+    },
+    { id: "folder", type: "text", label: "Folder" },
+    { id: "hidden", type: "boolean", label: "Hidden in game" },
   );
 
   if (type === "MUSIC") {
@@ -111,7 +143,7 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
       id: "url",
       type: "audio",
       href: soundUrl,
-      label: "Music URL",
+      label: "Music",
       doubleWidth: true,
     });
   }
@@ -121,20 +153,24 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
       id: "url",
       type: "audio",
       href: soundUrl,
-      label: "Music URL",
+      label: "Sound effect",
       doubleWidth: true,
     });
   }
 
   // For animations
   if (type === "ANIMATION") {
-    formData.push({ id: "frames", type: "number", label: "Number of Frames" });
-    formData.push({ id: "speed", type: "number", label: "Speed of Animation" });
+    formData.push({ id: "frames", type: "number", label: "Number of frames" });
+    formData.push({ id: "speed", type: "number", label: "Frame duration (ms)" });
   }
 
   // For static
   if (type === "STATIC") {
-    formData.push({ id: "onInitialBattleField", type: "boolean" });
+    formData.push({
+      id: "onInitialBattleField",
+      type: "boolean",
+      label: "Use on initial battlefield",
+    });
   }
 
   return { asset, form, formData, handleAssetSubmit, isUpdating };

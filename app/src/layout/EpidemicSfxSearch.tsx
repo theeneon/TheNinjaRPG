@@ -13,7 +13,7 @@ import { useUserData } from "@/utils/UserContext";
 
 interface EpidemicSfxSearchProps {
   /** Called with the new GameAsset id once the sound is in the asset library. */
-  onImported: (assetId: string) => void;
+  onImported: (assetId: string) => void | Promise<void>;
 }
 
 /**
@@ -39,7 +39,7 @@ export const EpidemicSfxSearch: React.FC<EpidemicSfxSearchProps> = ({ onImported
           utils.gameAsset.getAll.invalidate(),
           utils.misc.getAllGameAssetNames.invalidate(),
         ]);
-        onImported(result.assetId);
+        await onImported(result.assetId);
       }
     },
   });
@@ -48,7 +48,7 @@ export const EpidemicSfxSearch: React.FC<EpidemicSfxSearchProps> = ({ onImported
 
   return (
     <div className="space-y-2 border-t pt-3">
-      <h4 className="font-bold text-sm">Find a new sound</h4>
+      <h4 className="text-sm font-bold">Find a new sound</h4>
       <div className="flex gap-2">
         <Input
           value={draft}
@@ -72,7 +72,7 @@ export const EpidemicSfxSearch: React.FC<EpidemicSfxSearchProps> = ({ onImported
         </p>
       )}
       {error && !data && !isFetching && (
-        <p className="text-red-500 text-sm">
+        <p className="text-sm text-red-500">
           The sound search failed ({error.message}). Try again in a moment.
         </p>
       )}
@@ -82,7 +82,7 @@ export const EpidemicSfxSearch: React.FC<EpidemicSfxSearchProps> = ({ onImported
       <div className="grid max-h-96 grid-cols-2 gap-3 overflow-auto md:grid-cols-3">
         {data?.results.map((sfx) => (
           <div key={sfx.id} className="space-y-2 rounded border p-2">
-            <p className="truncate font-medium text-sm">{sfx.title}</p>
+            <p className="truncate text-sm font-medium">{sfx.title}</p>
             <p className="text-xs opacity-70">{formatSoundLength(sfx.lengthMs)}</p>
             {/* biome-ignore lint/a11y/useMediaCaption: sound effects have no speech to caption */}
             <audio
