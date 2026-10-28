@@ -218,6 +218,22 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const scoped = await (await client(moderatorId)).analytics({ days: 7 }); expect(scoped?.boards.map(b => b.id)).toEqual(["general"]); expect(scoped?.boards[0]).toMatchObject({ topics: 1, posts: 2, participants: 1 }); expect(scoped?.daily.reduce((n, d) => n + d.posts, 0)).toBe(2); expect(scoped?.reviewers[0]?.actions).toBe(1); expect(scoped?.reviewers.some(r => r.actorId === playerId)).toBe(false);
     const all = await (await client(adminId)).analytics({ days: 30 }); expect(all?.boards.find(b => b.id === "private-board")?.posts).toBe(1);
   });
+  it("keeps delegated moderation usable while a forum posting restriction blocks contributions", async () => {
+    const id = await create(); const db = await getTestDatabase();
+    await db.insert(forumRestriction).values({ id: "moderator-posting-restriction", userId: moderatorId, boardId: "general", reason: "Posting paused independently of review work", expiresAt: new Date(Date.now() + 60_000) });
+    const moderator = await client(moderatorId);
+    expect((await moderator.lockThread({ thread_id: id, status: true })).success).toBe(true);
+    expect((await moderator.saveTopicExtras({ threadId: id, pollId: null, summary: "A reviewed topic summary", reason: "Maintain the existing review responsibility" })).success).toBe(true);
+    expect((await moderator.createThread(topicInput())).success).toBe(false);
+    expect((await (await comments(moderatorId)).createForumComment(commentInput(id))).success).toBe(false);
+  });
+  it("attributes a staff removal through the comments endpoint correctly", async () => {
+    await create(); const db = await getTestDatabase(); const post = (await db.query.forumPost.findMany())[0]!;
+    expect((await (await comments(moderatorId)).deleteForumComment({ id: post.id })).success).toBe(true);
+    expect((await db.query.forumPost.findFirst())?.removalReason).toBe("Moderator removal");
+    const audit = (await db.query.forumAudit.findMany()).find(a => a.action === "post.moderator-remove");
+    expect(audit?.reason).toBe("Moderator removal");
+  });
   it("rejects stale public News publication after its guest access changes", async () => {
     const db = await getTestDatabase();
     const stale = new Proxy(db, { get(target, key, receiver) { if (key === "transaction") return async (work: Parameters<DrizzleClient["transaction"]>[0]) => { await db.update(forumBoard).set({ policy: { read: "STAFF", create: "STAFF" } }).where(eq(forumBoard.id, "news")); return target.transaction(work); }; return Reflect.get(target, key, receiver); } });

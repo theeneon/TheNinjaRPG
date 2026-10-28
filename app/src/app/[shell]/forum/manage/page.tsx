@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import ContentBox from "@/layout/ContentBox";
 import { ForumNavigation } from "@/layout/Forum";
 import { ForumAnalytics } from "@/layout/ForumAnalytics";
@@ -34,7 +35,11 @@ export default function ForumManagement() {
   const { data: user } = useUserData();
   const [tab, setTab] = useState("review");
   const [query, setQuery] = useState("");
-  const data = api.forum.administration.useQuery({ query }, { enabled: !!user });
+  const debouncedQuery = useDebouncedValue(query);
+  const data = api.forum.administration.useQuery(
+    { query: debouncedQuery },
+    { enabled: !!user, placeholderData: (previous) => previous },
+  );
   const utils = api.useUtils();
   const refresh = async () => {
     await Promise.all([
@@ -57,6 +62,11 @@ export default function ForumManagement() {
         <p role="alert">
           The workspace could not load.{" "}
           <Button onClick={() => void data.refetch()}>Try again</Button>
+          {query && (
+            <Button variant="outline" onClick={() => setQuery("")}>
+              Clear search
+            </Button>
+          )}
         </p>
       ) : !data.data ? (
         <p>You do not have permission to manage this forum.</p>
@@ -108,6 +118,7 @@ export default function ForumManagement() {
                 <Input
                   id={`${fieldPrefix}-1`}
                   placeholder="Search the audit log"
+                  maxLength={200}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -840,6 +851,12 @@ function ForumStaff({
               value={scope}
               onChange={(e) => {
                 setScope(e.target.value as typeof scope);
+                if (e.target.value !== "GLOBAL") {
+                  const isScoped = (capability: string) =>
+                    !["manage", "purge"].includes(capability);
+                  setPermissions((current) => current.filter(isScoped));
+                  setDenies((current) => current.filter(isScoped));
+                }
                 setScopeId(
                   e.target.value === "SECTION"
                     ? (data.sections[0]?.id ?? "")
@@ -983,13 +1000,24 @@ function ForumStaff({
             size="sm"
             disabled={save.isPending}
             onClick={async () => {
-              const r = await save.mutateAsync({
-                ...g,
-                remove: true,
-                reason: "Remove forum assignment",
-              });
-              showMutationToast(r);
-              if (r.success) await refresh();
+              setError("");
+              try {
+                const result = await save.mutateAsync({
+                  ...g,
+                  remove: true,
+                  reason: "Remove forum assignment",
+                });
+                showMutationToast(result);
+                if (result.success) await refresh();
+                else setError(result.message);
+              } catch (error) {
+                const message =
+                  error instanceof Error
+                    ? error.message
+                    : "Assignment could not be removed";
+                setError(message);
+                showMutationToast({ success: false, message });
+              }
             }}
           >
             Remove assignment
@@ -1008,8 +1036,11 @@ function ForumRestrictions({
 }) {
   const fieldPrefix = useId();
   const [userId, setUserId] = useState("");
+  const restrictable = data.boards.filter(
+    (board) => data.canManage || board.permissions.moderate,
+  );
   const [boardId, setBoardId] = useState(
-    data.canManage ? "" : (data.boards[0]?.id ?? ""),
+    data.canManage ? "" : (restrictable[0]?.id ?? ""),
   );
   const [days, setDays] = useState(1);
   const [reason, setReason] = useState("");
@@ -1050,7 +1081,7 @@ function ForumRestrictions({
             className="bg-background block h-10 w-full rounded-md border px-2"
           >
             {data.canManage && <option value="">Whole forum</option>}
-            {data.boards.map((b) => (
+            {restrictable.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>
@@ -1101,9 +1132,20 @@ function ForumRestrictions({
             variant="outline"
             disabled={save.isPending}
             onClick={async () => {
-              const result = await save.mutateAsync({ ...r, remove: true });
-              showMutationToast(result);
-              if (result.success) await refresh();
+              setError("");
+              try {
+                const result = await save.mutateAsync({ ...r, remove: true });
+                showMutationToast(result);
+                if (result.success) await refresh();
+                else setError(result.message);
+              } catch (error) {
+                const message =
+                  error instanceof Error
+                    ? error.message
+                    : "Restriction could not be lifted";
+                setError(message);
+                showMutationToast({ success: false, message });
+              }
             }}
           >
             Lift restriction

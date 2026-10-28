@@ -243,7 +243,7 @@ export const removeForumPost = async (
   db: DrizzleClient,
   userId: string,
   id: string,
-  reason = "Author removal",
+  reason?: string,
 ) => {
   const [context, post] = await Promise.all([
     getForumContext(db, userId),
@@ -260,6 +260,8 @@ export const removeForumPost = async (
   )
     return errorResponse("Post not found");
   const own = post.authorId === userId;
+  const removalReason =
+    reason?.trim() || (own ? "Author removal" : "Moderator removal");
   if (
     !context.actor ||
     context.actor.isBanned ||
@@ -286,7 +288,7 @@ export const removeForumPost = async (
       const result = await updateForumPost(
         tx,
         post.id,
-        { deletedAt: new Date(), removedBy: userId, removalReason: reason },
+        { deletedAt: new Date(), removedBy: userId, removalReason },
         and(
           isNull(forumPost.deletedAt),
           eq(forumPost.threadId, thread.id),
@@ -304,7 +306,7 @@ export const removeForumPost = async (
         boardId: board.id,
         action: own ? "post.author-remove" : "post.moderator-remove",
         targetId: post.id,
-        reason,
+        reason: removalReason,
       });
       return { success: true, message: "Post removed. Staff can restore it." };
     }),

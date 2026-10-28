@@ -41,6 +41,7 @@ export default function Board({
     { boardId, limit: FORUM_BOARD_THREADS_PER_PAGE, query: query || undefined },
     {
       initialData: !query ? { pages: [initialThreads], pageParams: [0] } : undefined,
+      placeholderData: (previous) => previous,
       getNextPageParam: (p) => p.nextCursor,
       staleTime: 15000,
       refetchOnMount: "always",

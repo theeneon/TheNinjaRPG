@@ -465,7 +465,6 @@ export const ForumComposer = ({
         focusEndOnExternalChange={!!quote}
         disabled={isBlocked}
         onUploadPendingChange={setUploading}
-        onSubmit={submit}
       />
       {uploads && (
         <ForumAttachments

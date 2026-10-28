@@ -44,7 +44,7 @@ export const getForumContext = async (
           !grants.some((d) => d.scope === "GLOBAL" && d.denies.includes("manage")),
       ));
   const accessibleBoards = boards.map((board) => {
-    const permissions = forumBoardPermissions(
+    const basePermissions = forumBoardPermissions(
       actor ?? null,
       board,
       boards,
@@ -55,12 +55,7 @@ export const getForumContext = async (
     const restriction = restrictions.find(
       (r) => (!r.boardId || r.boardId === board.id) && r.expiresAt > new Date(),
     );
-    if (restriction) {
-      permissions.create = false;
-      permissions.reply = false;
-      permissions.edit = false;
-      permissions.vote = false;
-    }
+    const permissions = applyPostingRestriction(basePermissions, restriction);
     return {
       ...board,
       permissions,
@@ -279,13 +274,25 @@ export const forumWriteSnapshotMatches = async (
     forumBoardPermissions(null, current, boards, [], false).read ===
       previous.publicRead &&
     JSON.stringify(
-      forumBoardPermissions(
-        context.actor,
-        current,
-        boards,
-        context.grants,
-        context.canManage,
+      applyPostingRestriction(
+        forumBoardPermissions(
+          context.actor,
+          current,
+          boards,
+          context.grants,
+          context.canManage,
+        ),
+        previous.restriction,
       ),
     ) === JSON.stringify(previous.permissions)
   );
 };
+
+/** Posting restrictions leave delegated moderation and recovery capabilities available. */
+const applyPostingRestriction = (
+  permissions: ReturnType<typeof forumBoardPermissions>,
+  restriction: { expiresAt: Date } | null | undefined,
+) =>
+  restriction && restriction.expiresAt > new Date()
+    ? { ...permissions, create: false, reply: false, edit: false, vote: false }
+    : permissions;
