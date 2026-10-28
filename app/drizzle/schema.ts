@@ -1438,7 +1438,7 @@ export const forumRead = mysqlTable("ForumRead", {
   threadId: varchar("threadId", { length: 191 }).notNull(),
   readAt: datetime("readAt", { mode: "date", fsp: 3 }).notNull(),
   postId: varchar("postId", { length: 191 }).notNull(),
-}, t => ({ pk: primaryKey({ columns: [t.userId, t.threadId] }) }));
+}, t => ({ pk: primaryKey({ columns: [t.userId, t.threadId] }), threadReadIdx: index("ForumRead_thread_read_idx").on(t.threadId, t.readAt) }));
 export const forumReadRelations = relations(forumRead, ({ one }) => ({
   thread: one(forumThread, { fields: [forumRead.threadId], references: [forumThread.id] }),
 }));
@@ -1455,7 +1455,7 @@ export const forumAlert = mysqlTable("ForumAlert", {
   postId: varchar("postId", { length: 191 }).notNull(),
   createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
   readAt: datetime("readAt", { mode: "date", fsp: 3 }),
-}, t => ({ userPostKey: uniqueIndex("ForumAlert_user_post_key").on(t.userId, t.postId), userIdx: index("ForumAlert_user_created_idx").on(t.userId, t.createdAt) }));
+}, t => ({ userPostKey: uniqueIndex("ForumAlert_user_post_key").on(t.userId, t.postId), userIdx: index("ForumAlert_user_created_idx").on(t.userId, t.createdAt), postIdx: index("ForumAlert_postId_idx").on(t.postId), threadIdx: index("ForumAlert_threadId_idx").on(t.threadId) }));
 export const forumReaction = mysqlTable("ForumReaction", {
   userId: varchar("userId", { length: 191 }).notNull(),
   postId: varchar("postId", { length: 191 }).notNull(),
