@@ -43,8 +43,10 @@ const renderer = (texture: (path: string) => Promise<Texture>) => {
 };
 
 describe("shared hex terrain textures", () => {
-  it("orders all sector sides below neighboring faces and recessed outlines below flat land", async () => {
-    const { data } = prepare(mapOf(5, 3));
+  it.each(["mixed", "ocean", "ice"] as const)("orders %s sector sides below neighboring faces and recessed outlines below flat land", async (kind) => {
+    const map = mapOf(5, 3);
+    if (kind !== "mixed") map.tiles = map.tiles.map((tile) => ({ ...tile, terrain: kind, battleBiome: kind }));
+    const { data } = prepare(map);
     const { game } = renderer(async () => Texture.WHITE);
     const terrains = await Promise.all([createHexTerrain(game, data), createHexTerrain(game, data)]);
     const meshes = terrains.flatMap((terrain) => terrain.container.children as Mesh[]);
@@ -53,7 +55,7 @@ describe("shared hex terrain textures", () => {
     expect(Math.max(...sides.map((mesh) => mesh.zIndex))).toBeLessThan(Math.min(...faces.map((mesh) => mesh.zIndex)));
     const recessedEdges = meshes.filter((mesh) => mesh.geometry.getBuffer("aPosition").data === data.edges.get(-0.5));
     const flatFaces = faces.filter((mesh) => data.batches.some((batch) => batch.layer === 0 && batch.positions === mesh.geometry.getBuffer("aPosition").data));
-    expect(Math.max(...recessedEdges.map((mesh) => mesh.zIndex))).toBeLessThan(Math.min(...flatFaces.map((mesh) => mesh.zIndex)));
+    if (flatFaces.length) expect(Math.max(...recessedEdges.map((mesh) => mesh.zIndex))).toBeLessThan(Math.min(...flatFaces.map((mesh) => mesh.zIndex)));
   });
 
   it("covers buried dirt and recessed outlines with higher tile faces", async () => {
