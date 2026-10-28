@@ -7,5 +7,7 @@ export default async function ManualAssetsFolderPage({
   params: Promise<{ folder: string }>;
 }) {
   const { folder } = await params;
-  redirect(`/manual/asset?${new URLSearchParams({ folder })}`);
+  redirect(
+    `/manual/asset?${new URLSearchParams({ folder: decodeURIComponent(folder) })}`,
+  );
 }

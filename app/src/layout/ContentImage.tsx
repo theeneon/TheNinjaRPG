@@ -67,7 +67,7 @@ const ContentImage: React.FC<ContentImageProps> = (props) => {
         );
       };
       const step = (timestamp: number) => {
-        startedAt ??= timestamp;
+        if (startedAt === undefined) startedAt = timestamp;
         drawFrame(Math.floor((timestamp - startedAt) / speed) % frames);
         timerId = window.requestAnimationFrame(step);
       };
