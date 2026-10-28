@@ -239,7 +239,6 @@ export const createTowerDefenseActors = (game: GameRenderer) => {
       // Actors cross at interpolated Y positions; every shadow/bar belongs to its actor.
       container.children.sort((a, b) => b.y - a.y);
     },
-    count: () => records.size,
   };
 };
 

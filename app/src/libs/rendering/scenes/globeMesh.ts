@@ -143,8 +143,6 @@ void main() {
   return {
     container,
     dispose,
-    vertexCount: data.positions.length / 3 + poles.positions.length / 3,
-    triangleCount: (data.indices.length + poles.indices.length) / 3,
     setHighlights: (values: { sector: number; type: "quest" | "war" | "focus" }[]) => {
       highlightData.fill(0);
       for (const value of values)

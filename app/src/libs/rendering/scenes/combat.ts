@@ -9,7 +9,6 @@ import type { CombatAction, ReturnedBattle } from "@/libs/combat/types";
 import { getBattlefieldHeightRatio } from "@/libs/combat/util";
 import type { TerrainHex } from "@/libs/hexgrid";
 import { getBackgroundColor } from "@/libs/rendering/biomes";
-import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { combatHighlightPlan } from "@/libs/rendering/combatHighlights";
 import {
   type CombatHoverCursor,
@@ -25,7 +24,6 @@ import { createCombatEffects } from "@/libs/rendering/scenes/combatEffects";
 import { prepareCombatTerrain } from "@/libs/rendering/scenes/combatTerrain";
 import { createRenderScope } from "@/libs/rendering/scope";
 import { hexTerrainAt } from "@/libs/rendering/terrainData";
-import type { RenderScene } from "@/validators/renderingBenchmark";
 
 /**
  * Owns a battle canvas and awaits its initial terrain, actors and known effects.
@@ -45,7 +43,6 @@ export const createCombatScene = async (options: {
   interactive?: boolean;
   lightLayout: boolean;
   seed?: string;
-  scene?: RenderScene;
   viewport?: { width: number; magnify?: number };
   focus?: { x: number; y: number };
   showInitialAppearance?: boolean;
@@ -57,7 +54,6 @@ export const createCombatScene = async (options: {
     ratio = getBattlefieldHeightRatio(initial.battle.width, initial.battle.height);
   const game = await createGameRenderer({
     ...options,
-    scene: options.scene ?? "combat",
     touchAction: options.interactive === false ? "auto" : "none",
     width: options.viewport
       ? options.viewport.width * (options.viewport.magnify ?? 1)
@@ -355,8 +351,6 @@ export const createCombatScene = async (options: {
         options.onHover(hover);
       }
       rendered = true;
-      recordRenderCounter("combat_users", actors.count());
-      recordRenderCounter("combat_effects", effects.count());
       game.setAnimating(snapshot.active);
     };
     game.setUpdate(updateFrame);

@@ -222,7 +222,7 @@ export const createCombatEffects = (
     queued = [];
     flushAt = null;
   });
-  return { container, sync, animate, hit, count: () => records.size };
+  return { container, sync, animate, hit };
 };
 export type CombatEffectSnapshot = {
   battle: ReturnedBattle;

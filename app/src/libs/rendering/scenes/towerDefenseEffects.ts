@@ -227,12 +227,6 @@ export const createTowerDefenseEffects = async (game: GameRenderer) => {
           record.root.alpha = 1 - (record.age / TD_DAMAGE_NUMBER_LIFETIME) ** 2;
         }
     },
-    counts: () => ({
-      projectiles: projectileRecords.size,
-      impacts: impactPool.filter((entry) => entry.pending || entry.sprite.visible)
-        .length,
-      damageNumbers: damagePool.filter((entry) => entry.root.visible).length,
-    }),
   };
 };
 

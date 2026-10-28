@@ -14,7 +14,6 @@ import {
   TD_PLAYER_BASE_HEALTH,
   TD_PROJECTILE_SPEED,
 } from "@/drizzle/constants";
-import { markRenderStage } from "@/libs/rendering/browserMetrics";
 import {
   clearEnemyAssetConfigCache,
   clearPlayerAssetConfigCache,
@@ -854,8 +853,6 @@ export const useTowerDefense = (userId?: string) => {
     const connection = connectionRef.current;
 
     const handleEvent = (event: SpacetimeDBEvent) => {
-      const endMark = markRenderStage(`stdb_event_${event.type}`);
-
       switch (event.type) {
         case "connection_state":
           if (event.state === "error") {
@@ -956,7 +953,6 @@ export const useTowerDefense = (userId?: string) => {
           }));
           break;
       }
-      endMark?.();
     };
 
     const unsubscribe = connection.subscribe(handleEvent);

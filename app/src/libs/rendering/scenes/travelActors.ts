@@ -80,7 +80,7 @@ export const createTravelActors = (game: GameRenderer) => {
             padding: 6,
           },
         });
-        // The badge is a single cached text texture; its dimensions follow the original pin.
+        // Grouped encounters use a single cached badge text texture.
         const badge = new Container();
         const background = new Graphics()
           .rect(-35, -35, 70, 70)
@@ -195,7 +195,6 @@ export const createTravelActors = (game: GameRenderer) => {
         updateActions();
       }
     },
-    count: () => records.size,
   };
 };
 

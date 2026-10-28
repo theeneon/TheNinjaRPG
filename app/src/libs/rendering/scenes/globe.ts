@@ -9,7 +9,6 @@ import {
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
 } from "@/drizzle/constants";
 import type { Village } from "@/drizzle/schema";
-import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { linearRenderColor } from "@/libs/rendering/color";
 import { createGameRenderer } from "@/libs/rendering/runtime";
 import {
@@ -46,7 +45,6 @@ export const createGlobeScene = async (options: {
 }) => {
   const game = await createGameRenderer({
     ...options,
-    scene: "globe",
     height: (width) => width,
   });
   try {
@@ -319,8 +317,6 @@ export const createGlobeScene = async (options: {
       else if (!pointer && lastPickKey && !controls.isInteracting())
         highlightSector(null);
       lastPickKey = key;
-      recordRenderCounter("surfaceVertices", surface?.vertexCount ?? 0);
-      recordRenderCounter("surfaceTriangles", surface?.triangleCount ?? 0);
     });
     return { dispose: game.dispose, updateState, zoom: controls.zoom };
   } catch (error) {

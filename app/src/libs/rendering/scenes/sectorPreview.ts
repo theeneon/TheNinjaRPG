@@ -40,7 +40,6 @@ export const createSectorPreview = async (options: {
   const ratio = calculateWidth2Height(map.width, map.height + 2);
   const game = await createGameRenderer({
     ...options,
-    scene: "sectorPreview",
     touchAction: options.canMove() ? "none" : "auto",
     height: (width) => width * ratio,
     background: getBackgroundColor(

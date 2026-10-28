@@ -211,9 +211,11 @@ describe("optional tower-defense projectile artwork", () => {
     expect(sprite.texture).toBe(artwork === "healthy" ? healthy : Texture.WHITE);
     expect(sprite.visible).toBe(true);
     expect(spawn).toHaveBeenCalledWith(projectile);
-    expect(effects.counts().projectiles).toBe(1);
+    expect(effects.container.children[0]!.children).toHaveLength(1);
     effects.update([], [], grid, undefined, frame, undefined, spawn, impact);
-    expect(effects.counts()).toEqual({ projectiles: 0, impacts: 0, damageNumbers: 1 });
+    expect(effects.container.children[0]!.children).toHaveLength(0);
+    expect(effects.container.children[1]!.children.filter((child) => child.visible)).toHaveLength(0);
+    expect(effects.container.children[2]!.children.filter((child) => child.visible)).toHaveLength(1);
     expect(impact).toHaveBeenCalledTimes(1);
     expect(sprite.destroyed).toBe(true);
     fixture.game.dispose();

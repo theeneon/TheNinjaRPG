@@ -4,7 +4,6 @@ import { Container, Graphics } from "pixi.js";
 import type { MapAsset, VillageStructure } from "@/drizzle/schema";
 import type { TerrainHex } from "@/libs/hexgrid";
 import { getBackgroundColor } from "@/libs/rendering/biomes";
-import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { calculateWidth2Height } from "@/libs/rendering/hexGeometry";
 import { createMapControls } from "@/libs/rendering/mapControls";
 import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
@@ -51,7 +50,6 @@ export const createTravelScene = async (options: {
   };
   const game = await createGameRenderer({
     ...options,
-    scene: "sector",
     backgroundAlpha: 0.5,
     height: (width) =>
       Math.max(width * displayRatio(), Math.min(window.innerHeight * 0.6, 600)),
@@ -397,8 +395,6 @@ export const createTravelScene = async (options: {
         }
       }
       game.canvas.style.filter = `brightness(${snapshot.brightness.toFixed(3)})`;
-      recordRenderCounter("sector_users", actors.count());
-      recordRenderCounter("sector_count", sectors.size);
     });
     await updateWindow(true);
     return {

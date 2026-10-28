@@ -1542,10 +1542,8 @@ function Travel() {
 /**
  * Stealth and sensory controls for the sector view.
  *
- * The three cooldowns tick once a second each. Held on the travel page they re-rendered it — and
- * with it the whole sector scene — up to three times a second for as long as any cooldown was
- * running, which is why the page already memoizes `villages` against exactly this. Owning the
- * countdowns here keeps every tick inside these two buttons.
+ * Owns the cooldown countdowns so their one-second updates only render the controls,
+ * independently of the sector scene.
  */
 const StealthControls: React.FC<{
   onRevealed: (players: RevealedPlayer[]) => void;

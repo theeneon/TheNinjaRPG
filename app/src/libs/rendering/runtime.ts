@@ -1,18 +1,7 @@
 import { Container, UniformGroup, WebGLRenderer } from "pixi.js";
 import { createSceneAssets } from "@/libs/rendering/assets";
-import {
-  beginRenderMeasurement,
-  endRenderMeasurement,
-  installRenderCapture,
-  invalidateRenderMeasurement,
-  markRenderStage,
-  recordRenderCounter,
-  registerRenderCanvas,
-} from "@/libs/rendering/browserMetrics";
 import { premultipliedClearColor } from "@/libs/rendering/color";
 import { createFrameLoop } from "@/libs/rendering/frameLoop";
-import { createPixiMetrics } from "@/libs/rendering/pixiMetrics";
-import type { RenderScene } from "@/validators/renderingBenchmark";
 
 const frames = createFrameLoop(
   (callback) => requestAnimationFrame(callback),
@@ -26,7 +15,6 @@ const frames = createFrameLoop(
  */
 export const createGameRenderer = async (options: {
   mount: HTMLElement;
-  scene: RenderScene;
   signal: AbortSignal;
   /** Renderer/CSS pixel dimensions at resolution 1; observed mount width is used by default. */
   height: (width: number) => number;
@@ -36,7 +24,7 @@ export const createGameRenderer = async (options: {
   touchAction?: "none" | "auto";
   onError: (error: unknown) => void;
 }) => {
-  const { mount, signal, scene } = options;
+  const { mount, signal } = options;
   const backgroundAlpha =
     options.backgroundAlpha ?? (options.background === undefined ? 0 : 1);
   const renderer = new WebGLRenderer();
@@ -66,7 +54,6 @@ export const createGameRenderer = async (options: {
     renderer.destroy({ removeView: true });
     throw new DOMException("Scene initialization cancelled", "AbortError");
   }
-  const metrics = createPixiMetrics(renderer);
   const stage = new Container();
   const animation = new UniformGroup({ uTime: { value: 0, type: "f32" } });
   stage.eventMode = "none";
@@ -76,8 +63,6 @@ export const createGameRenderer = async (options: {
   canvas.style.width = "100%";
   canvas.style.touchAction = options.touchAction ?? "none";
   mount.appendChild(canvas);
-  installRenderCapture();
-  const unregister = registerRenderCanvas(scene, canvas, "pixi");
   const motion = matchMedia("(prefers-reduced-motion: reduce)");
   let visible = true;
   let contextLost = false;
@@ -94,29 +79,20 @@ export const createGameRenderer = async (options: {
   const tick = (now: number) => {
     if (disposed) return;
     dirty = false;
-    beginRenderMeasurement(scene);
-    metrics?.reset();
     try {
       animation.uniforms.uTime = motion.matches ? 0 : now / 1000;
       animation.update();
-      const endUpdate = markRenderStage("update");
       update({
         now,
         delta: previousTime === null ? 0 : Math.min(0.1, (now - previousTime) / 1000),
         reducedMotion: motion.matches,
       });
       previousTime = now;
-      endUpdate?.();
-      const endRender = markRenderStage("render");
       renderer.render({ container: stage });
-      endRender?.();
-      metrics?.record();
-      recordRenderCounter("displayObjects", stage.children.length);
     } catch (error) {
       dispose();
       options.onError(error);
     } finally {
-      endRenderMeasurement(scene);
       updateSubscription();
     }
   };
@@ -185,18 +161,15 @@ export const createGameRenderer = async (options: {
   const dispose = () => {
     if (disposed) return;
     disposed = true;
-    invalidateRenderMeasurement(scene, "Scene unmounted during capture");
     updateSubscription();
     signal.removeEventListener("abort", dispose);
     listeners.abort();
     observer.disconnect();
     resizeObserver.disconnect();
-    unregister();
     stage.destroy({ children: true, texture: false, textureSource: false });
     for (const cleanup of cleanups) cleanup();
     cleanups.clear();
     assets.dispose();
-    metrics?.dispose();
     renderer.destroy({ removeView: true });
   };
   signal.addEventListener("abort", dispose, { once: true });

@@ -58,7 +58,7 @@ describe("Pixi combat effects", () => {
     expect(scene.owned.size).toBeGreaterThan(1);
     scene.snapshot.battle.groundEffects = [];
     await scene.effects.sync(scene.snapshot);
-    expect(scene.effects.count()).toBe(0); expect(scene.effects.container.children).toHaveLength(0);
+    expect(scene.effects.container.children).toHaveLength(0);
     // Only the scene-level sound queue cleanup remains registered.
     expect(scene.owned.size).toBe(1);
   });

@@ -16,7 +16,6 @@ make dev-up                 # start/reuse this worktree's server; wait for /logi
 make dev-status             # JSON: url, phase, PID, logPath, browser context prefix
 make dev-doctor             # also show database target and whether broker/Clerk keys exist
 make dev-down               # stop only this worktree's supervisor and descendants
-make dev-up DEV_SERVER_MODE=production # serve an existing production build for measurements
 ```
 
 `dev-up` reserves an available port in 3100–3999 across sibling worktrees and reuses a
@@ -36,12 +35,6 @@ Background logs stream immediately to `logPath`. Preparation errors fail promptl
 a five-minute readiness timeout leaves a slow server running. Inspect status/logs,
 then rerun `dev-up` to wait again. Status reports the managed process; verify individual
 routes by HTTP. Do not adopt or kill an unmanaged server just because its port answers.
-
-`DEV_SERVER_MODE=production` runs `next start` against an existing `.next/BUILD_ID`.
-It never builds automatically; run `make build` only when explicitly authorized.
-Status includes the mode, and a live server cannot be reused under a different mode:
-stop it with `make dev-down` before changing modes. This keeps production measurements
-from silently testing the development server.
 
 Worktrees share the database in `app/.env`; ports do **not** isolate data. Check
 `dev-doctor` before scenarios. Startup never runs migrations, schema pushes or seeds.
@@ -75,14 +68,6 @@ calls the existing broker/tRPC caller. A missing token must be configured in the
 env file (`realpath app/.env`); do not paste secrets into command lines. A shared `.env`
 symlink affects every linked worktree; replace its link with a real file for a separate
 configuration/database.
-
-A profile can include `resources` to prepare repeatable gameplay on that provisioned
-identity: pool maxima (which also fill their current pools), farming experience,
-farm currency, purchased plots and tower-defense points. These fields are bounded
-by the broker schema; arbitrary balance fields are rejected. Use `preferredUsername`
-when reconfiguring a scenario so the visible name stays stable. Production servers
-keep the broker disabled; prepare accounts through a development checkout when
-measuring a production build.
 
 Credentials and `loginUrl` values are saved with mode 0600 in gitignored
 `app/scripts/.artifacts/dev-users.json`. Only IDs/names and that path are printed.

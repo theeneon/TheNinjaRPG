@@ -7,7 +7,6 @@ import {
 } from "@/drizzle/constants";
 import type { GameAsset } from "@/drizzle/schema";
 import { getAudioPreference } from "@/libs/audioPreferences";
-import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { calculateWidth2Height } from "@/libs/rendering/hexGeometry";
 import { createMapControls } from "@/libs/rendering/mapControls";
 import { createWorldSprites } from "@/libs/rendering/primitives/sprites";
@@ -55,7 +54,6 @@ export const createTowerDefenseScene = async (options: {
     currentSize = options.initialGridSize;
   const game = await createGameRenderer({
     ...options,
-    scene: "towerDefense",
     background: 0x1a1a2e,
     height: (width) => width * calculateWidth2Height(currentSize, currentSize + 2),
   });
@@ -245,11 +243,6 @@ export const createTowerDefenseScene = async (options: {
       seenHits = currentHits;
       actors.animate(enemies, player, data.grid, frame);
       art?.animate(frame, scale);
-      const counts = effects.counts();
-      recordRenderCounter("towerDefense_enemies", Math.max(0, actors.count() - 1));
-      recordRenderCounter("towerDefense_projectiles", counts.projectiles);
-      recordRenderCounter("towerDefense_impacts", counts.impacts);
-      recordRenderCounter("towerDefense_damageNumbers", counts.damageNumbers);
       game.setAnimating(snapshot.active);
     });
     game.setAnimating(true);

@@ -107,10 +107,8 @@ export const prepareSectorGrid = (
       // flat, biome-appropriate foundation. This keeps walls from floating on
       // recessed water/ice while leaving the exterior terrain untouched.
       if (hasStructureFoundation || wallFoundationKeys.has(tileKey)) {
-        // Preserve authored land beneath structures. Water becomes a small
-        // land island and blue ice becomes snow; repainting every footprint
-        // from the globe's centre biome caused white patches on Horizon's
-        // legacy desert map when the topology and published map disagreed.
+        // Authored land defines foundations even when the globe biome differs.
+        // Recessed water and ice use flat land and snow beneath structures.
         const groundSpec = resolveStructureTerrainSpec({
           authoredTerrain: authoredTile?.terrain,
           authoredBattleBiome: authoredTile?.battleBiome,

@@ -42,10 +42,8 @@ const interpolateEdge = (
  * each sector's climate-field vertices. The GPU interpolates those colors
  * across the triangles, producing gradual coast and biome transitions.
  *
- * Merging matters: a mesh per sector meant ~1,950 draw calls every frame, which
- * is what made the map crawl on mobile. Sector identity survives as the
- * vertexRanges lookup, and picking is arithmetic (see globeSectorAt) rather
- * than a raycast, so nothing needs the tiles to stay separate objects.
+ * Batching limits draw submissions while vertexRanges retains sector identity
+ * for arithmetic picking (see globeSectorAt).
  */
 export const buildGlobeSurfaceData = (
   hexasphere: GlobalMapData,

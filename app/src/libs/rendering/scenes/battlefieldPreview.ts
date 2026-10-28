@@ -191,7 +191,6 @@ export const createBattlefieldPreview = async (
       onError: (error) => {
         console.error("Battlefield preview unavailable", error);
       },
-      scene: "battlefieldPreview",
       interactive: false,
       viewport: { width, magnify: options.magnify ?? 1 },
       getSnapshot,

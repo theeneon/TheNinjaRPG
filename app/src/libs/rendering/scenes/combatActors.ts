@@ -316,7 +316,6 @@ export const createCombatActors = (
       }
       needsSort = true;
     },
-    count: () => records.size,
     position: (id: string) => records.get(id)?.root.position,
   };
 };

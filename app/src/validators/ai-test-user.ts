@@ -5,12 +5,7 @@
  * curl-based requests, so the shape is kept intentionally simple / JSON-safe.
  */
 import { z } from "zod";
-import {
-  FARM_MAX_PLOTS,
-  FARM_STARTING_PLOTS,
-  UserRanks,
-  UserRoles,
-} from "@/drizzle/constants";
+import { UserRanks, UserRoles } from "@/drizzle/constants";
 
 /** Describes a single test user the agent wants provisioned. */
 export const aiTestUserProfileSchema = z
@@ -33,23 +28,6 @@ export const aiTestUserProfileSchema = z
     isBanned: z.boolean().optional(),
     /** Assign an admin/staff role for scenario setup (defaults to USER). */
     role: z.enum(UserRoles).optional(),
-    /** Bounded resources for repeatable reviewer gameplay scenarios. */
-    resources: z
-      .strictObject({
-        maxHealth: z.coerce.number().int().min(1).max(1_000_000).optional(),
-        maxChakra: z.coerce.number().int().min(1).max(1_000_000).optional(),
-        maxStamina: z.coerce.number().int().min(1).max(1_000_000).optional(),
-        farmingExperience: z.coerce.number().int().min(0).max(1_000_000_000).optional(),
-        farmCurrency: z.coerce.number().int().min(0).max(1_000_000).optional(),
-        farmPlotsPurchased: z.coerce
-          .number()
-          .int()
-          .min(0)
-          .max(FARM_MAX_PLOTS - FARM_STARTING_PLOTS)
-          .optional(),
-        towerDefensePoints: z.coerce.number().int().min(0).max(1_000_000).optional(),
-      })
-      .optional(),
   })
   .refine((value) => value.villageId || value.villageName, {
     error: "Either villageId or villageName must be provided",

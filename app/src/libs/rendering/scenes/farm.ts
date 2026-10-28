@@ -5,7 +5,6 @@ import {
   IMG_FARM_PLOT_SOIL,
 } from "@/drizzle/constants";
 import { canWaterPlot, getPlotGrowthStage, isPlotReady } from "@/libs/farming";
-import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 import { createGameRenderer } from "@/libs/rendering/runtime";
 import { farmLightingClock, nextFarmVisualAt } from "@/libs/rendering/scenes/farmClock";
 import {
@@ -33,7 +32,6 @@ export const createFarmScene = async (options: {
 }) => {
   const game = await createGameRenderer({
     ...options,
-    scene: "farm",
     touchAction: "auto",
     background: 0x87ae73,
     height: (width) => Math.max(360, width * 0.55),
@@ -297,8 +295,6 @@ export const createFarmScene = async (options: {
         lighting.isTransitioning ||
           (!reducedMotion && (activeAnimations > 0 || effects.length > 0)),
       );
-      recordRenderCounter("sprites", entries.size * 5 + 2);
-      recordRenderCounter("activeAnimations", activeAnimations);
     });
     game.own(() => {
       if (wake !== null) clearTimeout(wake);
