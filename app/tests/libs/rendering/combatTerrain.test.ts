@@ -28,6 +28,8 @@ describe("combat terrain preparation", () => {
       expect(hexTerrainAt(first.grid, first.terrain.faceOffsets, tile.x, tile.y + offset)).toBe(tile);
     }
     for (const sprite of first.scenery) {
+      expect(sprite.nearest).toBe(true);
+      expect(sprite.rendition).toBe(sprite.small ? 50 : 128);
       const coordinates = sprite.id.replace("scenery:", "").split(",").map(Number);
       if (isCombatTile({ col: coordinates[0] ?? -1, row: coordinates[1] ?? -1 }, battle(background))) expect(sprite.small).toBe(true);
     }

@@ -22,6 +22,10 @@ describe("tower defense world data", () => {
         if (Math.abs(tile.col - center.col) <= 1 && Math.abs(tile.row - center.row) <= 1) protectedIds.add(`scenery:${tile.col},${tile.row}`);
       }
       expect(first.scenery.every((entry) => !protectedIds.has(entry.id))).toBe(true);
+      for (const sprite of first.scenery) {
+        expect(sprite.nearest).toBe(true);
+        expect(sprite.rendition).toBe(sprite.small ? 50 : 128);
+      }
     }
   });
   it("samples the authoritative path without mutating the enemy or inventing movement", () => {

@@ -324,6 +324,9 @@ export const proceduralDecoration = (
     y,
     groundY: y,
     small: selected.small === true,
+    // Keep enlarged pixel-art scenery crisp without increasing canvas resolution.
+    rendition: selected.small ? 50 : 128,
+    nearest: true,
     wind: selected.windAffected ? (Math.floor(rand * 4) * Math.PI) / 2 : null,
     rotation: selected.randomRotation ? rand * Math.PI * 2 : 0,
   };
