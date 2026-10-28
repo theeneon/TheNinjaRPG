@@ -573,6 +573,16 @@ export const forumRouter = createTRPCRouter({
           );
           if (!updated.rowsAffected)
             return errorResponse("This post moved. Refresh before moderating it.");
+          if (
+            input.action === "APPROVE" &&
+            !currentPost.deletedAt &&
+            !current.deletedAt
+          )
+            await q.rewindForumReads(
+              tx,
+              currentPost,
+              await q.previousVisibleForumPost(tx, currentPost),
+            );
           await q.repairForumThread(tx, thread.id);
           await q.repairForumBoard(tx, board.id);
           await q.insertForumAudit(tx, {
@@ -1542,6 +1552,12 @@ async function moderateForumThreads(
           if (opening) {
             await q.updateForumPost(tx, opening.id, { isApproved: true });
             const wasApproved = currentRows.find((t) => t.id === thread.id)?.isApproved;
+            if (
+              (!wasApproved || !opening.isApproved) &&
+              !currentRows.find((t) => t.id === thread.id)?.deletedAt &&
+              !opening.deletedAt
+            )
+              await q.rewindForumReads(tx, opening);
             if (
               !wasApproved &&
               !currentRows.find((t) => t.id === thread.id)?.deletedAt &&

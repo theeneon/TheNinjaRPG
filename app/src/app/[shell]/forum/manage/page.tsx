@@ -991,7 +991,7 @@ function ForumStaff({
                     <td className="p-2">
                       {Object.entries(b.permissions)
                         .filter(([key, value]) => value === true && key !== "archived")
-                        .map(([key]) => capabilityLabel(key))
+                        .map(([key]) => capabilityLabel(key, true))
                         .join(", ") || "No access"}
                     </td>
                   </tr>
@@ -1015,10 +1015,10 @@ function ForumStaff({
                 : (g.scope === "BOARD" ? data.boards : data.sections).find(
                     (s) => s.id === g.scopeId,
                   )?.name}{" "}
-              · {g.permissions.map(capabilityLabel).join(", ")}
+              · {g.permissions.map((cap) => capabilityLabel(cap)).join(", ")}
             </p>
             {!!g.denies.length && (
-              <p>Deny: {g.denies.map(capabilityLabel).join(", ")}</p>
+              <p>Deny: {g.denies.map((cap) => capabilityLabel(cap)).join(", ")}</p>
             )}
           </div>
           <Button
@@ -1508,7 +1508,7 @@ function PurgeTopic({
   );
 }
 
-function capabilityLabel(capability: string) {
+function capabilityLabel(capability: string, effective = false) {
   const labels: Record<string, string> = {
     view: "See boards",
     read: "Read topics",
@@ -1516,8 +1516,8 @@ function capabilityLabel(capability: string) {
     reply: "Reply",
     upload: "Embed media",
     vote: "React & vote",
-    edit: "Edit own posts",
-    remove: "Remove own posts",
+    edit: effective ? "Edit own posts" : "Edit any post",
+    remove: effective ? "Remove own posts" : "Remove any post",
     editOthers: "Edit others' posts",
     removeOthers: "Remove others' posts",
     moderate: "Moderate discussions",

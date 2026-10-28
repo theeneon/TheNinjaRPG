@@ -446,20 +446,45 @@ export const saveForumRead = (
   userId: string,
   post: { id: string; threadId: string; createdAt: Date },
 ) =>
-  db
-    .insert(forumRead)
-    .values({
-      userId,
-      threadId: post.threadId,
-      postId: post.id,
-      readAt: post.createdAt,
-    })
-    .onDuplicateKeyUpdate({
-      set: {
-        postId: sql`IF(${forumRead.readAt} < ${post.createdAt} OR (${forumRead.readAt} = ${post.createdAt} AND ${forumRead.postId} < ${post.id}), ${post.id}, ${forumRead.postId})`,
-        readAt: sql`GREATEST(${forumRead.readAt}, ${post.createdAt})`,
-      },
-    });
+  // MySQL evaluates assignments left to right; Drizzle puts readAt before postId.
+  db.execute(sql`
+    INSERT INTO ${forumRead} (userId, threadId, postId, readAt)
+    VALUES (${userId}, ${post.threadId}, ${post.id}, ${sql.param(post.createdAt, forumRead.readAt)})
+    ON DUPLICATE KEY UPDATE
+      postId = IF(${forumRead.readAt} < ${post.createdAt} OR (${forumRead.readAt} = ${post.createdAt} AND ${forumRead.postId} < ${post.id}), ${post.id}, ${forumRead.postId}),
+      readAt = GREATEST(${forumRead.readAt}, ${post.createdAt})
+  `);
+export const previousVisibleForumPost = (
+  db: Client,
+  post: { id: string; threadId: string; createdAt: Date },
+) =>
+  db.query.forumPost.findFirst({
+    where: and(
+      eq(forumPost.threadId, post.threadId),
+      isNull(forumPost.deletedAt),
+      eq(forumPost.isApproved, true),
+      sql`(${forumPost.createdAt} < ${post.createdAt} OR (${forumPost.createdAt} = ${post.createdAt} AND ${forumPost.id} < ${post.id}))`,
+    ),
+    columns: { id: true, createdAt: true },
+    orderBy: [desc(forumPost.createdAt), desc(forumPost.id)],
+  });
+/** Newly published older posts must remain ahead of the reader's resume position. */
+export const rewindForumReads = (
+  db: Client,
+  post: { id: string; threadId: string; createdAt: Date },
+  previous?: { id: string; createdAt: Date },
+) => {
+  const affected = and(
+    eq(forumRead.threadId, post.threadId),
+    sql`(${forumRead.readAt} > ${post.createdAt} OR (${forumRead.readAt} = ${post.createdAt} AND ${forumRead.postId} >= ${post.id}))`,
+  );
+  return previous
+    ? db
+        .update(forumRead)
+        .set({ postId: previous.id, readAt: previous.createdAt })
+        .where(affected)
+    : db.delete(forumRead).where(affected);
+};
 export const saveForumWatch = (db: Client, values: typeof forumWatch.$inferInsert) =>
   db
     .insert(forumWatch)

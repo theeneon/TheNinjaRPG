@@ -272,6 +272,65 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const pending = (await db.query.forumPost.findMany()).find(p => !p.isApproved)!; expect(await admin.alerts()).toHaveLength(1);
     expect((await approver.moderatePost({ postId: pending.id, action: "APPROVE", reason: "Reply reviewed" })).success).toBe(true); expect(await admin.alerts()).toHaveLength(2);
   });
+  it.each([false, true])("rewinds only readers past a newly approved reply, including timestamp ties (%s)", async (sameTime) => {
+    const db = await getTestDatabase(); const id = await create(); const other = await create("other");
+    const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
+    await db.update(forumPost).set({ createdAt: new Date(1000) }).where(eq(forumPost.id, opening.id));
+    const priorAt = new Date(2000); const pendingAt = new Date(sameTime ? 2000 : 3000); const latestAt = new Date(sameTime ? 2000 : 4000);
+    await db.insert(forumPost).values([
+      { id: sameTime ? "a-prior" : "zz-prior", threadId: id, userId: adminId, authorId: adminId, content: "Already published advice", createdAt: priorAt },
+      { id: "m-pending", threadId: id, userId: playerId, authorId: playerId, content: "Pending advice submitted before the staff reply", createdAt: pendingAt, isApproved: false },
+      { id: "z-latest", threadId: id, userId: adminId, authorId: adminId, content: "Later published staff reply", createdAt: latestAt },
+    ]);
+    await db.update(forumThread).set({ nPosts: 3, lastPostId: "z-latest", updatedAt: latestAt }).where(eq(forumThread.id, id));
+    const reader = await client(moderatorId); const behind = await client(); const admin = await client(adminId);
+    await reader.markRead({ postId: "z-latest" }); await behind.markRead({ postId: opening.id });
+    const otherPost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, other) }))[0]!;
+    await reader.markRead({ postId: otherPost.id });
+    const unaffected = (await db.query.forumRead.findMany()).filter(r => r.threadId === other || r.userId === playerId);
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads).toHaveLength(0);
+    expect((await admin.moderatePost({ postId: "m-pending", action: "APPROVE", reason: "Publish reviewed advice" })).success).toBe(true);
+    const unread = await reader.getThreads({ boardId: "general", view: "unread", limit: 20 });
+    expect(unread.threads[0]).toMatchObject({ id, unread: true, resumePostId: sameTime ? "a-prior" : "zz-prior", updatedAt: latestAt, lastPostId: "z-latest" });
+    expect((await reader.resolvePost({ postId: unread.threads[0]!.resumePostId! }))?.threadId).toBe(id);
+    expect((await db.query.forumRead.findMany()).filter(r => r.threadId === other || r.userId === playerId)).toEqual(unaffected);
+    expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, "m-pending") }))?.createdAt).toEqual(pendingAt);
+    await reader.markRead({ postId: "z-latest" });
+    await admin.moderatePost({ postId: "m-pending", action: "APPROVE", reason: "Repeated approval" });
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads).toHaveLength(0);
+    expect((await reader.personal()).reads.find(r => r.threadId === id)?.postId).toBe("z-latest");
+  });
+  it.each(["post", "topic"])("recovers unread opening posts through %s approval without a previous visible post", async (path) => {
+    const db = await getTestDatabase(); const id = await create(); const reader = await client(moderatorId); const admin = await client(adminId);
+    const opening = (await db.query.forumPost.findMany())[0]!;
+    await (await comments(adminId)).createForumComment(commentInput(id, "A later staff reply already read by this reader"));
+    const latest = (await db.query.forumPost.findMany()).find(p => p.id !== opening.id)!;
+    await reader.markRead({ postId: latest.id });
+    await db.update(forumPost).set({ isApproved: false }).where(eq(forumPost.id, opening.id));
+    const approve = () => path === "post"
+      ? admin.moderatePost({ postId: opening.id, action: "APPROVE", reason: "Publish the opening post" })
+      : admin.moderateThreads({ ids: [id], action: "APPROVE", reason: "Publish the opening post" });
+    expect((await approve()).success).toBe(true);
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads[0]).toMatchObject({ id, unread: true, resumePostId: null });
+    await reader.markRead({ postId: latest.id }); await approve();
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads).toHaveLength(0);
+    expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, opening.id) }))?.createdAt).toEqual(opening.createdAt);
+  });
+  it("keeps reading positions when approval does not publish removed content", async () => {
+    const id = await create(); const db = await getTestDatabase(); const reader = await client(moderatorId); const admin = await client(adminId);
+    const post = (await db.query.forumPost.findMany())[0]!; await reader.markRead({ postId: post.id });
+    const before = await db.query.forumRead.findMany();
+    await db.update(forumPost).set({ isApproved: false, deletedAt: new Date() }).where(eq(forumPost.id, post.id));
+    await admin.moderatePost({ postId: post.id, action: "APPROVE", reason: "Approve while removed" });
+    expect(await db.query.forumRead.findMany()).toEqual(before);
+    await db.update(forumPost).set({ isApproved: false, deletedAt: null }).where(eq(forumPost.id, post.id));
+    await db.update(forumThread).set({ deletedAt: new Date() }).where(eq(forumThread.id, id));
+    await admin.moderatePost({ postId: post.id, action: "APPROVE", reason: "Approve in a removed topic" });
+    expect(await db.query.forumRead.findMany()).toEqual(before);
+    await db.update(forumPost).set({ isApproved: false }).where(eq(forumPost.id, post.id));
+    await admin.moderateThreads({ ids: [id], action: "APPROVE", reason: "Approve a removed topic" });
+    expect(await db.query.forumRead.findMany()).toEqual(before);
+  });
   it("keeps older pending reviews reachable without exposing recovery records to approvers", async () => {
     const db = await getTestDatabase();
     await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
