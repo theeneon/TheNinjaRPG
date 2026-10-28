@@ -70,7 +70,10 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
         }
       }
     },
-    (errors) => showFormErrorsToast(errors),
+    (errors) => {
+      setSaveError(null);
+      showFormErrorsToast(errors);
+    },
   );
 
   // Watch for changes to avatar

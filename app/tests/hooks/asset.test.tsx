@@ -5,7 +5,7 @@ import * as client from "@/app/_trpc/client";
 import type { GameAsset } from "@/drizzle/schema";
 import { useAssetEditForm } from "@/hooks/asset";
 import * as toast from "@/libs/toast";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 type Result = { success: boolean; message: string };
 type Callbacks = {
@@ -57,6 +57,10 @@ describe("asset editor save recovery", () => {
     expect(result.current.form.getValues("name")).toBe("Edited forest");
     expect(result.current.isUpdating).toBe(false);
     expect(refetch).not.toHaveBeenCalled(); expect(invalidate).not.toHaveBeenCalled();
+    await act(async () => { result.current.form.setValue("name", ""); await result.current.handleAssetSubmit(); });
+    expect(result.current.saveError).toBeNull();
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => { result.current.form.setValue("name", "Edited forest again"); });
     await act(async () => { await result.current.handleAssetSubmit(); });
     expect(result.current.saveError).toBeNull();
     expect(save).toHaveBeenCalledTimes(2); expect(refetch).toHaveBeenCalledTimes(1);
