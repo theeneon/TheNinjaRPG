@@ -125,17 +125,13 @@ export const listForumThreads = (
         ),
       );
     conditions.push(
-      input.query && !matchingAuthors
-        ? or(like(forumThread.title, pattern), inArray(forumThread.id, matchingPosts))
-        : or(
-            and(
-              matchingAuthors
-                ? inArray(forumThread.userId, matchingAuthors)
-                : undefined,
-              input.query ? like(forumThread.title, pattern) : undefined,
-            ),
-            inArray(forumThread.id, matchingPosts),
-          ),
+      or(
+        and(
+          matchingAuthors ? inArray(forumThread.userId, matchingAuthors) : undefined,
+          input.query ? like(forumThread.title, pattern) : undefined,
+        ),
+        inArray(forumThread.id, matchingPosts),
+      ),
     );
   }
   if (input.since) conditions.push(sql`${forumThread.updatedAt} >= ${input.since}`);
