@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
 import { GameAssetTypes } from "@/drizzle/constants";
@@ -17,6 +17,7 @@ import { gameAssetValidator } from "@/validators/asset";
  */
 export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknown>) => {
   const submitInFlight = useRef(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const utils = api.useUtils();
 
   // Form handling
@@ -43,10 +44,10 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
             utils.misc.getAllGameAssetNames.invalidate(),
           ]);
         } else {
-          form.setError("root", { message: data.message });
+          setSaveError(data.message);
         }
       },
-      onError: (error) => form.setError("root", { message: error.message }),
+      onError: (error) => setSaveError(error.message),
       onSettled: () => {
         submitInFlight.current = false;
       },
@@ -56,7 +57,7 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
   const handleAssetSubmit = form.handleSubmit(
     async (data: ZodGameAssetType) => {
       if (submitInFlight.current) return;
-      form.clearErrors("root");
+      setSaveError(null);
       const newAsset = { ...asset, ...data };
       const diff = calculateContentDiff(asset, newAsset);
       if (diff.length > 0) {
@@ -173,5 +174,5 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
     });
   }
 
-  return { asset, form, formData, handleAssetSubmit, isUpdating };
+  return { asset, form, formData, handleAssetSubmit, isUpdating, saveError };
 };

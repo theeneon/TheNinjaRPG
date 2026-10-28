@@ -83,7 +83,7 @@ function SingleEditAsset({
   const router = useRouter();
   const params = useSearchParams();
   const returnTo = getAssetLibraryReturnTo(params.get("returnTo"));
-  const { form, formData, handleAssetSubmit, isUpdating } = useAssetEditForm(
+  const { form, formData, handleAssetSubmit, isUpdating, saveError } = useAssetEditForm(
     asset,
     refetch,
   );
@@ -207,9 +207,9 @@ function SingleEditAsset({
             allowImageUpload={canSave}
             onAccept={handleAssetSubmit}
           >
-            {form.formState.errors.root?.message && (
+            {saveError && (
               <p role="alert" className="text-destructive col-span-full text-sm">
-                {form.formState.errors.root.message}
+                {saveError}
               </p>
             )}
           </EditContent>
