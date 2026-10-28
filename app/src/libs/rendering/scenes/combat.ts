@@ -108,11 +108,12 @@ export const createCombatScene = async (options: {
     }
     world.addChild(
       terrain.container,
+      effects.ground,
       outlines,
+      labels,
       art.container,
       actors.container,
       effects.container,
-      labels,
     );
     game.stage.addChild(world);
     let zoom = Math.max(1, Math.min(3, options.initialZoom));

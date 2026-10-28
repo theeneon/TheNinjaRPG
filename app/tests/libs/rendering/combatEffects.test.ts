@@ -24,7 +24,7 @@ const setup = () => {
   const grid = getBattleGrid(40, battle, { x: -20, y: -20 });
   const play = vi.fn();
   const effects = createCombatEffects(game, grid, play);
-  const stage = new Container(); stage.addChild(effects.container);
+  const stage = new Container(); stage.addChild(effects.ground, effects.container);
   scopes.push(() => stage.destroy({ children: true, texture: false, textureSource: false }));
   const prefix = `effect-${sequence++}`;
   const assets = [
@@ -38,6 +38,46 @@ const setup = () => {
 };
 
 describe("Pixi combat effects", () => {
+  it("keeps static barrier artwork below overlays with shared position, visibility and lifetime", async () => {
+    const scene = setup();
+    Object.assign(scene.effect, { type: "barrier", staticAssetPath: "obstacle", staticAnimation: "", appearAnimation: "animation", curHealth: 25, maxHealth: 50 });
+    scene.snapshot.assets.push({ id: "obstacle", image: "https://example.com/barrier.png" } as GameAsset);
+    await scene.effects.sync(scene.snapshot);
+    scene.effects.animate(0, false, false, null);
+    const art = scene.effects.ground.children[0]!, overlay = scene.effects.container.children[0]!;
+    expect(art.children[0]?.label).toBe("static");
+    expect(overlay.children).not.toContain(art);
+    expect(overlay.children).toHaveLength(2);
+    expect([art.x, art.y]).toEqual([overlay.x, overlay.y]);
+    scene.effects.animate(40, false, false, null);
+    expect(overlay.children).toHaveLength(1);
+    const bounds = art.getBounds();
+    expect(scene.effects.hit(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.id).toBe(scene.effect.id);
+    scene.effect.latitude = 2;
+    await scene.effects.sync(scene.snapshot);
+    expect([art.x, art.y]).toEqual([overlay.x, overlay.y]);
+    scene.effect.power = 0;
+    await scene.effects.sync(scene.snapshot); scene.effects.animate(50, false, false, null);
+    expect(art.visible).toBe(false); expect(overlay.visible).toBe(false);
+    expect(scene.effects.hit(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)).toBeNull();
+    scene.effect.power = 100;
+    await scene.effects.sync(scene.snapshot); scene.effects.animate(60, false, false, null);
+    expect(art.visible).toBe(true); expect(overlay.visible).toBe(true);
+    scene.snapshot.battle.groundEffects = [];
+    await scene.effects.sync(scene.snapshot);
+    expect(art.destroyed).toBe(true); expect(overlay.destroyed).toBe(true);
+    expect(scene.effects.ground.children).toHaveLength(0);
+  });
+
+  it("picks an animated overlay above later static artwork", async () => {
+    const scene = setup();
+    scene.snapshot.assets.push({ id: "obstacle", image: "https://example.com/overlay-barrier.png" } as GameAsset);
+    scene.snapshot.battle.groundEffects.push({ ...scene.effect, id: "later-static", staticAnimation: "", staticAssetPath: "obstacle" });
+    await scene.effects.sync(scene.snapshot); scene.effects.animate(0, false, false, null);
+    const bounds = scene.effects.ground.children[0]!.getBounds();
+    expect(scene.effects.hit(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.id).toBe(scene.effect.id);
+  });
+
   it("retains depleted effects without replaying sounds or recreating loops", async () => {
     const scene = setup();
     await scene.effects.sync(scene.snapshot);

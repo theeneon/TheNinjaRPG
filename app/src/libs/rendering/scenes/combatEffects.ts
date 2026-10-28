@@ -13,13 +13,17 @@ import { createRenderScope } from "@/libs/rendering/scope";
 import { isObjectChainVisible } from "@/libs/rendering/visibility";
 import type { BarrierTagType } from "@/validators/combat";
 
-/** Effects keep identity through hidden/depleted states and retire their animation leases on expiry. */
+/**
+ * Static artwork stays below targeting and fighters; clips and meters stay above.
+ * Effects keep identity through hidden/depleted states and retire their leases on expiry.
+ */
 export const createCombatEffects = (
   game: GameRenderer,
   grid: Grid<TerrainHex>,
   play: (url: string, volume: number) => void,
 ) => {
   const container = new Container(),
+    ground = new Container(),
     records = new Map<string, EffectRecord>();
   let snapshot: CombatEffectSnapshot | null = null;
   let queued: { url: string; volume: number }[] = [],
@@ -62,6 +66,7 @@ export const createCombatEffects = (
       if (!visible.has(id)) {
         record.displayed = false;
         record.root.visible = false;
+        if (record.ground) record.ground.visible = false;
       }
     const pending: Promise<unknown>[] = [];
     for (const { effect, tile } of displayed) {
@@ -88,6 +93,7 @@ export const createCombatEffects = (
         record = {
           scope,
           root,
+          ground: null,
           effect,
           tile,
           clips: [],
@@ -135,7 +141,12 @@ export const createCombatEffects = (
                 groundY: 0,
               },
             ]).then((art) => {
-              if (!scope.isDisposed()) root.addChildAt(art.container, 0);
+              if (scope.isDisposed()) return;
+              current.ground = art.container;
+              art.container.label = effect.id;
+              art.container.position.copyFrom(root.position);
+              art.container.visible = root.visible;
+              ground.addChild(art.container);
             }),
           );
         if (!initial) loads.push(addClip(effect.appearAnimation, false));
@@ -172,6 +183,10 @@ export const createCombatEffects = (
       record.depleted = depleted;
       record.root.visible = record.ready && !depleted;
       record.root.position.set(-tile.center.x, -tile.center.y);
+      if (record.ground) {
+        record.ground.visible = record.root.visible;
+        record.ground.position.copyFrom(record.root.position);
+      }
     }
     return Promise.all(pending);
   };
@@ -195,6 +210,7 @@ export const createCombatEffects = (
       for (const event of record.events) sound(event, moving);
       record.events.length = 0;
       record.root.visible = record.displayed && !record.depleted;
+      if (record.ground) record.ground.visible = record.root.visible;
       record.clips = record.clips.filter((clip) => {
         if (!clip.renderAt(now - (record.startedAt ?? now), reducedMotion).finished)
           return true;
@@ -209,20 +225,21 @@ export const createCombatEffects = (
     }
   };
   const hit = (x: number, y: number) => {
-    for (let index = container.children.length - 1; index >= 0; index--) {
-      const root = container.children[index],
-        record = root && records.get(root.label);
-      if (!record || !isObjectChainVisible(record.root)) continue;
-      if (record.root.getBounds().containsPoint(x, y))
-        return { id: record.effect.id, tile: record.tile };
-    }
+    for (const layer of [container, ground])
+      for (let index = layer.children.length - 1; index >= 0; index--) {
+        const root = layer.children[index],
+          record = root && records.get(root.label);
+        if (!root || !record || !isObjectChainVisible(root)) continue;
+        if (root.getBounds().containsPoint(x, y))
+          return { id: record.effect.id, tile: record.tile };
+      }
     return null;
   };
   game.own(() => {
     queued = [];
     flushAt = null;
   });
-  return { container, sync, animate, hit };
+  return { container, ground, sync, animate, hit };
 };
 export type CombatEffectSnapshot = {
   battle: ReturnedBattle;
@@ -233,6 +250,7 @@ export type CombatEffectSnapshot = {
 type EffectRecord = {
   scope: GameRenderer;
   root: Container;
+  ground: Container | null;
   effect: GroundEffect | UserEffect;
   tile: TerrainHex;
   clips: Awaited<ReturnType<typeof createSpriteClip>>[];
