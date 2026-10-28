@@ -7,7 +7,7 @@ import { getRelatedReports } from "@/libs/moderation/reportSearch";
 import { buildModBotStats } from "@/libs/moderation/stats";
 import { generateModerationDecision, getAdditionalContext } from "@/libs/moderator";
 import { getServerPusher } from "@/libs/pusher";
-import { findConversationCommentById } from "@/queries/comments";
+import { findConversationCommentById, findForumPostById } from "@/queries/comments";
 import { fetchImage } from "@/queries/conceptart";
 import {
   markConversationCommentReported,
@@ -17,7 +17,6 @@ import { deleteUserNindo, fetchUser } from "@/queries/profile";
 import {
   clearUserBanWithoutActiveReport,
   findConversationForGetInfraction,
-  findForumPostForGetInfraction,
   findUserReviewForUpsertStaffReview,
   insertHistoricalAvatarForUpdateUserAvatar,
   insertReportLogForClearNindo,
@@ -257,10 +256,7 @@ export const reportsRouter = createTRPCRouter({
       const getInfraction = async (system: typeof input.system) => {
         switch (system) {
           case "forum_comment": {
-            const forumPostData = await findForumPostForGetInfraction(
-              ctx.drizzle,
-              input,
-            );
+            const forumPostData = await findForumPostById(ctx.drizzle, input.system_id);
             const threadContext = await getAdditionalContext(
               ctx.drizzle,
               system,

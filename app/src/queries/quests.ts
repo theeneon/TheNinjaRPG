@@ -1173,17 +1173,6 @@ export const insertUserRewardsForUpdateRewards = (
     reason: reason,
   });
 
-/** Build the `village` update for `updateRewards`, setting `tokens`, using predicates on `id`. */
-export const updateVillageForUpdateRewards = (
-  client: Pick<DrizzleClient, "update">,
-  rewards: { reward_tokens: number },
-  user: { villageId: string },
-) =>
-  client
-    .update(village)
-    .set({ tokens: sql`${village.tokens} + ${rewards.reward_tokens}` })
-    .where(eq(village.id, user.villageId));
-
 /** Build the `clan` update for `updateRewards`, setting `points` and `activityPoints`, using predicates on `id`. */
 export const updateClanForUpdateRewards = (
   client: Pick<DrizzleClient, "update">,

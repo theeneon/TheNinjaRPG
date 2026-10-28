@@ -691,7 +691,7 @@ export const insertStoreEntitlementRevocationForApplyFederalRevocation = (
       },
     });
 
-/** Build the `storeEntitlementState` insert for `applyFederalRevocation`, updating duplicate keys. */
+/** Build the entitlement watermark upsert for revocations and transfers, retaining the latest cutoff. */
 export const insertStoreEntitlementStateForApplyFederalRevocation = (
   client: Pick<DrizzleClient, "insert">,
   ownerUserId: string,
@@ -1044,31 +1044,6 @@ export const findStoreEntitlementStateForApplyStoreTransfer = (
       lte(storeEntitlementState.revokedThrough, transfer.occurredAt),
     ),
   });
-
-/** Build the `storeEntitlementState` insert for `applyStoreTransfer`, updating duplicate keys. */
-export const insertStoreEntitlementStateForApplyStoreTransfer = (
-  client: Pick<DrizzleClient, "insert">,
-  effectiveDestination: string,
-  store: "APPLE" | "GOOGLE",
-  isSandbox: false | true,
-  sourceEntitlementState: { revokedThrough: Date },
-) =>
-  client
-    .insert(storeEntitlementState)
-    .values({
-      id: nanoid(),
-      userId: effectiveDestination,
-      store,
-      isSandbox,
-      revokedThrough: sourceEntitlementState.revokedThrough,
-      updatedAt: new Date(),
-    })
-    .onDuplicateKeyUpdate({
-      set: {
-        revokedThrough: sql`GREATEST(${storeEntitlementState.revokedThrough}, ${sourceEntitlementState.revokedThrough})`,
-        updatedAt: new Date(),
-      },
-    });
 
 /**
  * Build the `storePurchase` listing for `applyStoreTransfer`, including predicates on

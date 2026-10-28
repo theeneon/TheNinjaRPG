@@ -48,7 +48,6 @@ import {
   findStoreUserIdAlias,
   insertStoreEntitlementRevocationForApplyFederalRevocation,
   insertStoreEntitlementStateForApplyFederalRevocation,
-  insertStoreEntitlementStateForApplyStoreTransfer,
   insertStorePurchaseForApplyStorePurchase,
   insertStorePurchaseTransferForApplyStoreTransfer,
   insertStoreUserIdAlias,
@@ -1118,12 +1117,12 @@ const applyStoreTransfer = async (
         // Ownership redirects apply to delayed expiries as well as delayed grants. Carry
         // the revocation watermark forward so an already-ended old period cannot become
         // live merely because its purchase webhook lands under the destination later.
-        await insertStoreEntitlementStateForApplyStoreTransfer(
+        await insertStoreEntitlementStateForApplyFederalRevocation(
           client,
           effectiveDestination,
           store,
           isSandbox,
-          sourceEntitlementState,
+          sourceEntitlementState.revokedThrough,
         );
       }
       // A newer transfer may already have moved an older receipt away from sourceUserId.

@@ -653,3 +653,14 @@ export const deleteSectorByNumber = (
   client: Pick<DrizzleClient, "delete">,
   sectorNum: number,
 ) => client.delete(sector).where(eq(sector.sector, sectorNum));
+
+/** Build a village token increment by village ID; reward eligibility stays in callers. */
+export const incrementVillageTokens = (
+  client: Pick<DrizzleClient, "update">,
+  amount: number,
+  villageId: string,
+) =>
+  client
+    .update(village)
+    .set({ tokens: sql`${village.tokens} + ${amount}` })
+    .where(eq(village.id, villageId));

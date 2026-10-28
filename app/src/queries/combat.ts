@@ -2130,17 +2130,6 @@ export const updateTournamentMatchForUpdateTournament2 = (
     .set({ winnerId: result.didWin ? user.userId : target.userId })
     .where(eq(tournamentMatch.battleId, curBattle.id));
 
-/** Build the `village` update for `updateVillageAnbuClan`, setting `tokens`, using predicates on `id`. */
-export const updateVillageForUpdateVillageAnbuClan = (
-  client: Pick<DrizzleClient, "update">,
-  result: { villageTokens: number },
-  user: { villageId: string },
-) =>
-  client
-    .update(village)
-    .set({ tokens: sql`tokens + ${result.villageTokens}` })
-    .where(eq(village.id, user.villageId));
-
 /** Build the `anbuSquad` update for `updateVillageAnbuClan`, setting `pvpActivity`, using predicates on `id`. */
 export const updateAnbuSquadForUpdateVillageAnbuClan = (
   client: Pick<DrizzleClient, "update">,

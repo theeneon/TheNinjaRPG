@@ -254,13 +254,13 @@ export const updateForumPostForEditForumComment = (
 ) =>
   client.update(forumPost).set({ content: sanitized }).where(eq(forumPost.id, postId));
 
-/** Build the `forumPost` lookup for `umPostForDeleteForumComment`, using predicates on `id`. */
-export const findForumPostForDeleteForumComment = (
+/** Build a full forum post lookup by ID; access checks stay in callers. */
+export const findForumPostById = (
   client: Pick<DrizzleClient, "query">,
-  input: { id: string },
+  postId: string,
 ) =>
   client.query.forumPost.findFirst({
-    where: and(eq(forumPost.id, input.id)),
+    where: eq(forumPost.id, postId),
   });
 
 /** Build the `forumPost` deletion for `umPostForDeleteForumComment`, using predicates on `id`. */

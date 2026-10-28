@@ -38,7 +38,7 @@ import {
   findConversationForGetConvo,
   findConversationForGetConvo2,
   findConversationForGetConvo3,
-  findForumPostForDeleteForumComment,
+  findForumPostById,
   findForumPostForEditForumComment,
   findSupportTicketForCreateConversationComment,
   findSupportTicketForExitConversation,
@@ -279,7 +279,7 @@ export const commentsRouter = createTRPCRouter({
       // Query
       const [user, comment] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        findForumPostForDeleteForumComment(ctx.drizzle, input),
+        findForumPostById(ctx.drizzle, input.id),
       ]);
       // Guard
       if (!comment) return errorResponse("Comment not found");

@@ -105,7 +105,6 @@ import {
   updateUserItemForUpdateUser2,
   updateVillageForUpdateClanLeaders,
   updateVillageForUpdateKage,
-  updateVillageForUpdateVillageAnbuClan,
   updateWarForRecoverWarShrine,
   updateWarForRecoverWarShrine2,
   updateWarForRecoverWarShrine3,
@@ -116,6 +115,7 @@ import {
 import { reduceActiveFarmPlotTimers } from "@/queries/farming";
 import { deleteUserItemsWithPositiveQuantity } from "@/queries/item";
 import { incrementNotificationCounters } from "@/queries/misc";
+import { incrementVillageTokens } from "@/queries/village";
 import { warRaidCombatGuard } from "@/queries/war";
 import type { UserWithRelations } from "@/routers/profile";
 import type { DrizzleClient } from "@/server/db";
@@ -1054,11 +1054,7 @@ export const updateVillageAnbuClan = async (
   // Mutate
   await Promise.all([
     ...(result.villageTokens > 0
-      ? [
-          updateVillageForUpdateVillageAnbuClan(client, result, {
-            villageId: user.villageId,
-          }),
-        ]
+      ? [incrementVillageTokens(client, result.villageTokens, user.villageId)]
       : []),
     ...(user.anbuId && result.pvpStreak > 0
       ? [updateAnbuSquadForUpdateVillageAnbuClan(client, { anbuId: user.anbuId })]

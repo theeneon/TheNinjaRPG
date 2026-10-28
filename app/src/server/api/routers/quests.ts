@@ -222,14 +222,13 @@ import {
   updateUserDataForUpsertQuestEntries,
   updateUserDataForUpsertQuestEntry,
   updateUserQuestData,
-  updateVillageForUpdateRewards,
   updateWarForUpdateRewards,
   updateWarForUpdateRewards2,
   updateWarForUpdateRewards3,
   updateWarForUpdateRewards4,
 } from "@/queries/quests";
 import { deleteRequests } from "@/queries/sensei";
-import { fetchSectorVillage } from "@/queries/village";
+import { fetchSectorVillage, incrementVillageTokens } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
 import { fetchUserItems } from "@/routers/item";
 import {
@@ -2200,7 +2199,7 @@ export const updateRewards = async (info: {
       insertUserRewardsForUpdateRewards(client, user, rewards, reason),
     () =>
       rewards.reward_tokens > 0 && user.villageId
-        ? updateVillageForUpdateRewards(client, rewards, { villageId: user.villageId })
+        ? incrementVillageTokens(client, rewards.reward_tokens, user.villageId)
         : undefined,
     () =>
       rewards.reward_clanpoints > 0 && user.clanId

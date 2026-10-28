@@ -35,7 +35,6 @@ import {
   automatedModeration,
   battleAction,
   conversation,
-  forumPost,
   historicalAvatar,
   historicalIp,
   moderationScan,
@@ -731,15 +730,6 @@ export const updateUserDataForAcceptWarning = (
     .update(userData)
     .set({ isWarned: false })
     .where(eq(userData.userId, ctx.userId));
-
-/** Build the `forumPost` lookup for `umPostForGetInfraction`, using predicates on `id`. */
-export const findForumPostForGetInfraction = (
-  client: Pick<DrizzleClient, "query">,
-  input: { system_id: string },
-) =>
-  client.query.forumPost.findFirst({
-    where: eq(forumPost.id, input.system_id),
-  });
 
 /** Build the `conversation` lookup for `getInfraction`, selecting only `isPublic`, using predicates on `id`. */
 export const findConversationForGetInfraction = (
