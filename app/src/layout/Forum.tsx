@@ -9,7 +9,7 @@ import {
   Search,
   ShieldCheck,
 } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
 import type { RouterOutputs } from "@/app/_trpc/client";
@@ -21,6 +21,7 @@ import { ForumAttachments } from "@/layout/ForumAttachments";
 import Link from "@/layout/Link";
 import RichInput from "@/layout/RichInput";
 import UserSearchSelect from "@/layout/UserSearchSelect";
+import { hasForumContent } from "@/libs/forumContent";
 import { showMutationToast } from "@/libs/toast";
 import { canPostAsAi } from "@/utils/permissions";
 import { useUserData } from "@/utils/UserContext";
@@ -266,6 +267,8 @@ export const ForumComposer = ({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const processedQuote = useRef("");
+  const isBlocked = pending || !ready || !!recovery;
   const storageKey = `forum-draft:${user?.userId}:${draftKey}`;
   useEffect(() => {
     try {
@@ -296,8 +299,13 @@ export const ForumComposer = ({
     }
   }, [ready, recovery, storageKey, user, values]);
   useEffect(() => {
-    if (quote) form.setValue("content", `${form.getValues("content")}\n${quote}`);
-  }, [quote, form]);
+    if (!ready || !quote || processedQuote.current === quote) return;
+    processedQuote.current = quote;
+    if (recovery) {
+      form.reset({ ...recovery, content: `${recovery.content}\n${quote}` });
+      setRecovery(null);
+    } else form.setValue("content", `${form.getValues("content")}\n${quote}`);
+  }, [quote, ready, recovery, form]);
   const submit = form.handleSubmit(async (value) => {
     setError("");
     const tags = [
@@ -308,14 +316,7 @@ export const ForumComposer = ({
           .filter(Boolean),
       ),
     ];
-    const draftDocument = new DOMParser().parseFromString(value.content, "text/html");
-    for (const element of draftDocument.querySelectorAll("script, style"))
-      element.remove();
-    if (
-      ((draftDocument.body.textContent ?? "").trim().length < 4 &&
-        !draftDocument.querySelector("img[src], iframe[src]")) ||
-      (title && value.title.trim().length < 4)
-    ) {
+    if (!hasForumContent(value.content) || (title && value.title.trim().length < 4)) {
       setError("Write at least 4 characters in the message and topic title.");
       return;
     }
@@ -402,7 +403,7 @@ export const ForumComposer = ({
               {...form.register("title")}
               maxLength={88}
               placeholder="What would you like to discuss?"
-              disabled={pending}
+              disabled={isBlocked}
             />
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -411,7 +412,7 @@ export const ForumComposer = ({
               <select
                 {...form.register("kind")}
                 className="bg-background mt-1 block h-10 w-full rounded-md border px-2"
-                disabled={pending}
+                disabled={isBlocked}
               >
                 <option value="DISCUSSION">Discussion</option>
                 <option value="QUESTION">Question</option>
@@ -423,7 +424,7 @@ export const ForumComposer = ({
                 id={`${fieldPrefix}-2`}
                 {...form.register("tags")}
                 placeholder="strategy, recruitment"
-                disabled={pending}
+                disabled={isBlocked}
               />
             </label>
           </div>
@@ -450,7 +451,7 @@ export const ForumComposer = ({
           type="ai"
           size="square"
           maxDim={1080}
-          disabled={pending}
+          disabled={isBlocked}
           onUploadComplete={(url) => form.setValue("image", url)}
         />
       )}
@@ -462,7 +463,7 @@ export const ForumComposer = ({
         enableMentions
         autoFocus={false}
         focusEndOnExternalChange={!!quote}
-        disabled={pending}
+        disabled={isBlocked}
         onUploadPendingChange={setUploading}
         onSubmit={submit}
       />
@@ -472,7 +473,7 @@ export const ForumComposer = ({
           onChange={(content) =>
             form.setValue("content", content, { shouldDirty: true })
           }
-          disabled={pending || uploading}
+          disabled={isBlocked || uploading}
         />
       )}
       {error && (
@@ -488,7 +489,7 @@ export const ForumComposer = ({
               ? "Draft saved on this device as you write."
               : "Preparing draft recovery…"}
         </span>
-        <Button type="submit" disabled={pending || uploading || !!recovery}>
+        <Button type="submit" disabled={isBlocked || uploading}>
           {pending ? "Posting…" : title ? "Create topic" : "Post reply"}
         </Button>
       </div>

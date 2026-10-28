@@ -7,6 +7,7 @@ import {
   TAVERN_IMAGE_MAX_SIZE_MB,
   TAVERN_IMAGE_UPLOAD_DAILY_LIMIT,
 } from "@/drizzle/constants";
+import sanitize from "@/utils/sanitize";
 
 /** Uses the editor's existing moderated upload path and account-owned image library. */
 export function ForumAttachments({
@@ -26,7 +27,7 @@ export function ForumAttachments({
   const document =
     typeof window === "undefined"
       ? null
-      : new DOMParser().parseFromString(content, "text/html");
+      : new DOMParser().parseFromString(sanitize(content), "text/html");
   const images = [
     ...new Set(
       Array.from(document?.querySelectorAll("img") ?? [])
@@ -38,7 +39,11 @@ export function ForumAttachments({
     if (!document) return;
     for (const img of document.querySelectorAll("img"))
       if (img.getAttribute("src") === url) img.remove();
-    onChange(document.body.innerHTML);
+    onChange(
+      document.body.textContent?.trim() || document.querySelector("img, iframe")
+        ? document.body.innerHTML
+        : "",
+    );
   };
   const insert = (url: string) => {
     const image = window.document.createElement("img");
