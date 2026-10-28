@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { useController } from "react-hook-form";
-import { ForumComposer } from "@/layout/Forum";
+import { ForumComposer, ForumSearch } from "@/layout/Forum";
 import * as RichInput from "@/layout/RichInput";
 import * as UserContext from "@/utils/UserContext";
 import { ensureDom } from "../setup/dom.mjs";
@@ -17,6 +17,19 @@ beforeEach(() => {
   });
 });
 afterEach(() => { cleanup(); localStorage.removeItem(storageKey); vi.restoreAllMocks(); });
+
+it("keeps search typing separate from the applied query and restores the applied input", async () => {
+  const onSearch = vi.fn();
+  const view = render(<ForumSearch query="applied search" onSearch={onSearch} />);
+  const input = view.getByRole("textbox", { name: "Search forum" }) as HTMLInputElement;
+  expect(input.value).toBe("applied search");
+  fireEvent.change(input, { target: { value: "unfinished search" } });
+  expect(onSearch).not.toHaveBeenCalled();
+  fireEvent.submit(view.container.querySelector("form")!);
+  expect(onSearch).toHaveBeenCalledWith("unfinished search");
+  view.rerender(<ForumSearch query="restored search" onSearch={onSearch} />);
+  await waitFor(() => expect(input.value).toBe("restored search"));
+});
 
 it("restores a saved draft before appending a quote once and retains it after failed submission", async () => {
   localStorage.setItem(storageKey, JSON.stringify({ content: "<p>My saved training question.</p>", title: "", kind: "DISCUSSION", tags: "", image: "" }));

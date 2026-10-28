@@ -490,6 +490,7 @@ function ForumPost({
               id="content"
               height="200px"
               control={form.control}
+              allowImages={board.permissions.upload}
               disabled={edit.isPending}
               autoFocus={false}
             />

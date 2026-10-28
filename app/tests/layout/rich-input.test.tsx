@@ -40,9 +40,9 @@ afterEach(async () => {
   }
 });
 
-const Composer = ({ initial = "", resetValue = "", disabled = false, plainText = false, autoFocus = false, refreshKey = 0, allowClipboardPaste = true }: { initial?: string; resetValue?: string; disabled?: boolean; plainText?: boolean; autoFocus?: boolean; refreshKey?: number; allowClipboardPaste?: boolean }) => {
+const Composer = ({ initial = "", resetValue = "", disabled = false, plainText = false, autoFocus = false, refreshKey = 0, allowClipboardPaste = true, allowImages }: { initial?: string; resetValue?: string; disabled?: boolean; plainText?: boolean; autoFocus?: boolean; refreshKey?: number; allowClipboardPaste?: boolean; allowImages?: boolean }) => {
   const form = useForm({ defaultValues: { comment: initial } });
-  return <form onSubmit={form.handleSubmit(submit)}><RichInput id="comment" label="Message" height="120" control={form.control} autoFocus={autoFocus} disabled={disabled} plainText={plainText} refreshKey={refreshKey} enableMentions allowClipboardPaste={allowClipboardPaste} onUploadPendingChange={uploadPending} onSubmit={form.handleSubmit(submit)} /><button type="button" onClick={() => form.reset({ comment: resetValue })}>Reset draft</button><button type="submit">Save</button></form>;
+  return <form onSubmit={form.handleSubmit(submit)}><RichInput id="comment" label="Message" height="120" control={form.control} autoFocus={autoFocus} disabled={disabled} plainText={plainText} refreshKey={refreshKey} enableMentions allowClipboardPaste={allowClipboardPaste} allowImages={allowImages} onUploadPendingChange={uploadPending} onSubmit={form.handleSubmit(submit)} /><button type="button" onClick={() => form.reset({ comment: resetValue })}>Reset draft</button><button type="submit">Save</button></form>;
 };
 const editorFor = async (view: ReturnType<typeof render>) => {
   await waitFor(() => expect(view.getByRole("button", { name: "Bold" }).hasAttribute("disabled")).toBe(false));
@@ -54,6 +54,31 @@ const DialogComposer = () => {
 };
 
 describe("rich input composer", () => {
+  it("denies new images while preserving formatted clipboard text and recovered media", async () => {
+    const initial = '<p>Saved draft</p><img src="https://example.com/saved.png">';
+    const view = render(<Composer initial={initial} allowImages={false} />);
+    const editor = await editorFor(view);
+    expect(view.queryByRole("button", { name: "Insert image URL" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Upload image" })).toBeNull();
+    expect(view.getByRole("button", { name: "Link" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(view.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(submit.mock.calls[0]?.[0]).toEqual({ comment: initial }));
+    const { default: Quill } = await import("quill");
+    const quill = Quill.find(editor.parentElement!) as InstanceType<typeof Quill>;
+    act(() => quill.setSelection(quill.getLength() - 1, 0, "silent"));
+    view.rerender(<Composer initial={initial} allowImages={false} disabled />);
+    const clipboardData = { files: [], getData: (type: string) => type === "text/html" ? '<p><strong>Pasted advice</strong><a href="https://example.com/guide">Guide</a><img src="https://example.com/new.png"></p>' : "Pasted advice" };
+    fireEvent.paste(editor, { clipboardData });
+    expect(editor.textContent).toBe("Saved draft");
+    view.rerender(<Composer initial={initial} allowImages={false} />);
+    fireEvent.paste(editor, { clipboardData });
+    expect(editor.querySelector("strong")?.textContent).toBe("Pasted advice");
+    expect(editor.querySelector("a")?.getAttribute("href")).toBe("https://example.com/guide");
+    expect([...editor.querySelectorAll("img")].map((img) => img.getAttribute("src"))).toEqual(["https://example.com/saved.png"]);
+    fireEvent.drop(editor, { dataTransfer: { files: [new File(["image"], "image.png", { type: "image/png" })] } });
+    expect(startUpload).not.toHaveBeenCalled();
+  });
+
   it("preserves advanced HTML loaded by form reset while the editor is loading", async () => {
     const initial = '<p>Before</p><iframe src="https://www.youtube.com/embed/test"></iframe><p>After</p>';
     const view = render(<Composer resetValue={initial} />);

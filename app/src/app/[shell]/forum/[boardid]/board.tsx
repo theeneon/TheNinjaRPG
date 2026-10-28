@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import type { RouterOutputs } from "@/app/_trpc/client";
 import { api } from "@/app/_trpc/client";
@@ -34,7 +34,8 @@ export default function Board({
   const { data: user } = useUserData();
   const router = useRouter();
   const utils = api.useUtils();
-  const [query, setQuery] = useState("");
+  const params = useSearchParams();
+  const query = params.get("q") ?? "";
   const [compose, setCompose] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const threads = api.forum.getThreads.useInfiniteQuery(
@@ -129,7 +130,15 @@ export default function Board({
               }}
             />
           )}
-          <ForumSearch onSearch={setQuery} />
+          <ForumSearch
+            query={query}
+            onSearch={(text) => {
+              const url = new URL(window.location.href);
+              if (text) url.searchParams.set("q", text);
+              else url.searchParams.delete("q");
+              window.history.replaceState(null, "", url);
+            }}
+          />
           {board.permissions.moderate && selected.length > 0 && (
             <ForumTopicTools
               ids={selected}

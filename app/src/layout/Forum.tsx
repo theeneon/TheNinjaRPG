@@ -453,6 +453,7 @@ export const ForumComposer = ({
         control={form.control}
         height="200px"
         allowClipboardPaste={uploads}
+        allowImages={uploads}
         enableMentions
         autoFocus={false}
         focusEndOnExternalChange={!!quote}
@@ -488,13 +489,20 @@ export const ForumComposer = ({
     </form>
   );
 };
-export const ForumSearch = ({ onSearch }: { onSearch: (query: string) => void }) => {
-  const [query, setQuery] = useState("");
+export const ForumSearch = ({
+  query,
+  onSearch,
+}: {
+  query: string;
+  onSearch: (query: string) => void;
+}) => {
+  const [draft, setDraft] = useState(query);
+  useEffect(() => setDraft(query), [query]);
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        onSearch(query);
+        onSearch(draft);
       }}
       className="flex gap-2"
     >
@@ -504,8 +512,8 @@ export const ForumSearch = ({ onSearch }: { onSearch: (query: string) => void })
           aria-label="Search forum"
           className="pl-9"
           placeholder="Search titles and posts…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
           maxLength={200}
         />
       </div>

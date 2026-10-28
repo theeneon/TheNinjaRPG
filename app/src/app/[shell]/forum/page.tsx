@@ -1,8 +1,8 @@
 "use client";
 
 import { Bell, ChevronRight, MessageSquare } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useId, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useId, useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +23,16 @@ export default function Forum() {
 }
 
 function ForumHome() {
+  const params = useSearchParams();
+  // Each discussion-view history entry restores its applied filter defaults.
+  return (
+    <ForumBrowse key={`${params.get("view") ?? "boards"}:${params.get("tag") ?? ""}`} />
+  );
+}
+
+function ForumBrowse() {
   const fieldPrefix = useId();
   const { data: user } = useUserData();
-  const router = useRouter();
   const params = useSearchParams();
   const rawView = params.get("view") ?? "boards";
   const view = ["latest", "unread", "watched", "mine", "unanswered", "alerts"].includes(
@@ -33,11 +40,37 @@ function ForumHome() {
   )
     ? rawView
     : "boards";
-  const [query, setQuery] = useState("");
-  const [boardId, setBoardId] = useState("");
-  const filters = useContentFiltering(forumTextFilters);
+  const query = params.get("q") ?? "";
+  const [boardId, setBoardId] = useState(params.get("board") ?? "");
+  const [filterSchema] = useState(() => ({
+    ...forumTextFilters,
+    fields: forumTextFilters.fields.map((field) => ({
+      ...field,
+      defaultValue: params.get(field.id) ?? "",
+    })),
+  }));
+  const filters = useContentFiltering(filterSchema);
   const { author, since, until } = filters.values;
   const { author: setAuthor, since: setSince, until: setUntil } = filters.setters;
+  const {
+    author: appliedAuthor,
+    since: appliedSince,
+    until: appliedUntil,
+  } = filters.debounced;
+  // Persist applied filters without adding history entries or saving unfinished typing.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    for (const [key, value] of [
+      ["board", boardId],
+      ["author", appliedAuthor],
+      ["since", appliedSince],
+      ["until", appliedUntil],
+    ] as const) {
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
+    if (url.href !== window.location.href) window.history.replaceState(null, "", url);
+  }, [boardId, appliedAuthor, appliedSince, appliedUntil]);
   const { data: boards, isPending, error, refetch } = api.forum.getAll.useQuery();
   const topics = api.forum.getThreads.useInfiniteQuery(
     {
@@ -80,10 +113,14 @@ function ForumHome() {
       <ForumNavigation />
       <div className="mb-4">
         <ForumSearch
+          query={query}
           onSearch={(text) => {
-            setQuery(text);
+            const url = new URL(window.location.href);
+            if (text) url.searchParams.set("q", text);
+            else url.searchParams.delete("q");
             if (view === "boards" || view === "alerts")
-              router.replace("/forum?view=latest");
+              url.searchParams.set("view", "latest");
+            window.history.replaceState(null, "", url);
           }}
         />
       </div>
@@ -109,7 +146,12 @@ function ForumHome() {
         ].map(([key, label]) => (
           <Link
             key={key}
-            href={key === "boards" ? "/forum" : `/forum?view=${key}`}
+            href={(() => {
+              const next = new URLSearchParams(params);
+              if (key === "boards") next.delete("view");
+              else if (key) next.set("view", key);
+              return `/forum${next.size ? `?${next}` : ""}`;
+            })()}
             aria-current={view === key ? "page" : undefined}
             className={`rounded-md px-3 py-2 text-sm ${view === key ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}
           >

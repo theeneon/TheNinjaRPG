@@ -71,6 +71,7 @@ export const RichInput = (props: RichInputProps) => {
   const uploadPendingRef = useRef(false);
   const generationRef = useRef(0);
   const blocked = !!props.disabled || uploading;
+  const allowImages = props.allowImages !== false;
   const isSource = props.plainText || sourceMode;
   const userSearchSchema = getSearchValidator({ max: 1 });
   const mentionForm = useForm<z.infer<typeof userSearchSchema>>({
@@ -275,7 +276,7 @@ export const RichInput = (props: RichInputProps) => {
     target?: { index: number; restoreSelection: boolean },
   ) => {
     const editor = quillRef.current;
-    if (!editor || isSource || props.disabled) return;
+    if (!editor || isSource || props.disabled || !allowImages) return;
     const index = target?.index ?? editor.getSelection(true).index;
     editor.insertEmbed(index, "image", url, "user");
     if (dimensions)
@@ -289,6 +290,7 @@ export const RichInput = (props: RichInputProps) => {
       blocked ||
       uploadInFlightRef.current ||
       !props.allowClipboardPaste ||
+      !allowImages ||
       props.plainText ||
       (!isSource && !quillRef.current)
     )
@@ -400,8 +402,8 @@ export const RichInput = (props: RichInputProps) => {
   }, [uploading]);
 
   useEffect(() => {
-    if (props.disabled) generationRef.current++;
-  }, [props.disabled]);
+    if (props.disabled || !allowImages) generationRef.current++;
+  }, [props.disabled, allowImages]);
 
   const submit = () => {
     if (!blocked && !uploadInFlightRef.current) props.onSubmit?.();
@@ -429,7 +431,7 @@ export const RichInput = (props: RichInputProps) => {
   /** Preserve the selected range while the URL popover temporarily owns focus. */
   const openUrlEntry = (kind: "link" | "image") => {
     const editor = quillRef.current;
-    if (!editor || !canEdit) return;
+    if (!editor || !canEdit || (kind === "image" && !allowImages)) return;
     setUrlEntry({ kind, value: "", range: editor.getSelection(true) });
   };
   const closeUrlEntry = () => {
@@ -463,7 +465,7 @@ export const RichInput = (props: RichInputProps) => {
           <span className="sr-only">Uploading image…</span>
         </span>
       )}
-      {!props.plainText && props.allowClipboardPaste && (
+      {!props.plainText && props.allowClipboardPaste && allowImages && (
         <Button
           type="button"
           size="icon"
@@ -613,19 +615,21 @@ export const RichInput = (props: RichInputProps) => {
                 >
                   <Link2 className="h-4 w-4" />
                 </button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  title="Insert image URL"
-                  aria-label="Insert image URL"
-                  className="h-8 w-8"
-                  disabled={!canEdit}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => openUrlEntry("image")}
-                >
-                  <ImagePlus className="h-4 w-4" />
-                </Button>
+                {allowImages && (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    title="Insert image URL"
+                    aria-label="Insert image URL"
+                    className="h-8 w-8"
+                    disabled={!canEdit}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => openUrlEntry("image")}
+                  >
+                    <ImagePlus className="h-4 w-4" />
+                  </Button>
+                )}
               </div>
             )}
             <div className="ml-auto flex shrink-0 items-center gap-1 p-1">
@@ -709,7 +713,7 @@ export const RichInput = (props: RichInputProps) => {
             isDirty={props.isDirty}
             style={{ minHeight: height }}
             onPaste={(event) => {
-              if (props.plainText || !props.allowClipboardPaste) return;
+              if (props.plainText || !props.allowClipboardPaste || !allowImages) return;
               const file = Array.from(event.clipboardData.files).find((item) =>
                 item.type.startsWith("image/"),
               );
@@ -750,6 +754,23 @@ export const RichInput = (props: RichInputProps) => {
               if (file) void uploadImage(file);
             }}
             onPasteCapture={(event) => {
+              if (blocked) return;
+              const editor = quillRef.current;
+              const html = !allowImages ? event.clipboardData.getData("text/html") : "";
+              // Filter only new clipboard embeds; existing media drafts remain recoverable.
+              if (!allowImages && editor && /<img\b/i.test(html)) {
+                event.preventDefault();
+                event.stopPropagation();
+                const range = editor.getSelection(true);
+                const content = editor.clipboard.convert({ html });
+                content.ops = content.ops.filter((op) => typeof op.insert === "string");
+                editor.updateContents(
+                  [{ retain: range.index }, { delete: range.length }, ...content.ops],
+                  "user",
+                );
+                editor.setSelection(range.index + content.length(), 0, "silent");
+                return;
+              }
               if (!props.allowClipboardPaste || !quillRef.current) return;
               const file = Array.from(event.clipboardData.files).find((item) =>
                 item.type.startsWith("image/"),
@@ -781,7 +802,9 @@ export const RichInput = (props: RichInputProps) => {
         accept="image/*"
         className="hidden"
         aria-label="Upload image file"
-        disabled={!canEdit || props.plainText || !props.allowClipboardPaste}
+        disabled={
+          !canEdit || props.plainText || !props.allowClipboardPaste || !allowImages
+        }
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file) void uploadImage(file);
@@ -851,6 +874,7 @@ interface RichInputProps {
   enableMentions?: boolean;
   /** Opt into moderated image paste, drop and file uploads. */
   allowClipboardPaste?: boolean;
+  allowImages?: boolean;
   autoFocus?: boolean;
   /** Place replies after externally inserted quotes without moving the caret during typing. */
   focusEndOnExternalChange?: boolean;

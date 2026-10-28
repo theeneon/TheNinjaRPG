@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
 import { api, type RouterOutputs } from "@/app/_trpc/client";
@@ -205,6 +205,20 @@ function ForumStructure({
     type: "BOARD" | "SECTION";
     id: string;
   } | null>(null);
+  const editRef = useRef<HTMLDivElement>(null);
+  const removeRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!edit) return;
+    const form = editRef.current;
+    form?.querySelector<HTMLHeadingElement>("h2")?.focus({ preventScroll: true });
+    form?.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [edit]);
+  useEffect(() => {
+    if (!remove) return;
+    const form = removeRef.current;
+    form?.focus({ preventScroll: true });
+    form?.scrollIntoView({ block: "start", behavior: "instant" });
+  }, [remove]);
   const repair = api.forum.repairCounters.useMutation({
     onSuccess: async (r) => {
       showMutationToast(r);
@@ -223,37 +237,48 @@ function ForumStructure({
           New board
         </Button>
       </div>
-      {edit?.type === "section" && (
-        <SectionEditor
-          key={edit.id ?? "new-section"}
-          section={data.sections.find((s) => s.id === edit.id)}
-          done={() => {
-            setEdit(null);
-            void refresh();
-          }}
-        />
-      )}
-      {edit?.type === "board" && (
-        <BoardEditor
-          key={edit.id ?? "new-board"}
-          board={data.boards.find((b) => b.id === edit.id)}
-          data={data}
-          done={() => {
-            setEdit(null);
-            void refresh();
-          }}
-        />
+      {edit && (
+        <div ref={editRef} className="scroll-mt-6">
+          {edit.type === "section" && (
+            <SectionEditor
+              key={edit.id ?? "new-section"}
+              section={data.sections.find((s) => s.id === edit.id)}
+              done={() => {
+                setEdit(null);
+                void refresh();
+              }}
+            />
+          )}
+          {edit.type === "board" && (
+            <BoardEditor
+              key={edit.id ?? "new-board"}
+              board={data.boards.find((b) => b.id === edit.id)}
+              data={data}
+              done={() => {
+                setEdit(null);
+                void refresh();
+              }}
+            />
+          )}
+        </div>
       )}
       {remove && (
-        <RemoveStructure
-          key={remove.id}
-          target={remove}
-          data={data}
-          done={() => {
-            setRemove(null);
-            void refresh();
-          }}
-        />
+        <section
+          ref={removeRef}
+          tabIndex={-1}
+          aria-label="Remove container"
+          className="focus-visible:outline-ring scroll-mt-6 rounded-lg focus-visible:outline focus-visible:outline-2"
+        >
+          <RemoveStructure
+            key={remove.id}
+            target={remove}
+            data={data}
+            done={() => {
+              setRemove(null);
+              void refresh();
+            }}
+          />
+        </section>
       )}
       {data.sections.map((section) => (
         <section key={section.id} className="overflow-hidden rounded-lg border">
@@ -370,7 +395,12 @@ function SectionEditor({
         }
       }}
     >
-      <h2 className="font-semibold">{section ? "Edit section" : "New section"}</h2>
+      <h2
+        tabIndex={-1}
+        className="focus-visible:outline-ring rounded-sm font-semibold focus-visible:outline focus-visible:outline-2"
+      >
+        {section ? "Edit section" : "New section"}
+      </h2>
       <label className="block text-sm" htmlFor={`${fieldPrefix}-2`}>
         Name
         <Input
@@ -487,7 +517,12 @@ function BoardEditor({
         }
       }}
     >
-      <h2 className="font-semibold">{board ? "Edit board" : "New board"}</h2>
+      <h2
+        tabIndex={-1}
+        className="focus-visible:outline-ring rounded-sm font-semibold focus-visible:outline focus-visible:outline-2"
+      >
+        {board ? "Edit board" : "New board"}
+      </h2>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm" htmlFor={`${fieldPrefix}-5`}>
           Name
@@ -1350,9 +1385,15 @@ function ForumReview({
               Removal reason: {post.removalReason}
             </p>
           )}
-          <div className="line-clamp-6 text-sm break-words">
-            {parseHtml(post.content)}
-          </div>
+          <details className="group text-sm">
+            <summary aria-label="Read full post" className="cursor-pointer">
+              <span className="font-medium">Read full post</span>
+              <div className="mt-2 line-clamp-6 break-words group-open:hidden">
+                {parseHtml(post.content)}
+              </div>
+            </summary>
+            <div className="mt-2 break-words">{parseHtml(post.content)}</div>
+          </details>
           <div className="flex flex-wrap gap-2">
             {[
               ...(post.deletedAt &&
