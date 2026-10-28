@@ -1040,7 +1040,12 @@ export const forumRouter = createTRPCRouter({
           q.listForumRestrictions(ctx.drizzle),
           ids.length ? q.listForumReviewThreads(ctx.drizzle, reviewInput) : [],
           ids.length ? q.listForumReviewPosts(ctx.drizzle, reviewInput) : [],
-          q.listForumAudit(ctx.drizzle, context.canManage ? null : ids, input.query),
+          q.listForumAudit(
+            ctx.drizzle,
+            context.canManage ? null : reviewInput.moderatedBoardIds,
+            input.query,
+            { actorId: ctx.userId, boardIds: ids },
+          ),
           q.listForumLinkedReports(ctx.drizzle),
         ]);
       const threads = reviewThreads.slice(0, 100);

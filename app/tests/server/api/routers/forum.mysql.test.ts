@@ -264,6 +264,30 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await moderator.administration({ query: id }))?.logs).toEqual([]);
     expect(await listForumAudit(db, [], id)).toEqual([]);
   });
+  it.each(["global", "approval-only"])("keeps visible scoped audit history ahead of unrelated %s events", async (scope) => {
+    const db = await getTestDatabase(); const moderator = await client(moderatorId); const admin = await client(adminId);
+    const id = await create();
+    expect((await moderator.lockThread({ thread_id: id, status: true })).success).toBe(true);
+    await db.insert(forumGrant).values({ id: "approval-scope", userId: moderatorId, scope: "BOARD", scopeId: "other", permissions: ["approve"], denies: [] });
+    await db.update(forumBoard).set({ requireApproval: true }).where(eq(forumBoard.id, "other"));
+    expect((await (await client()).createThread(topicInput("other"))).success).toBe(true);
+    const pending = (await db.query.forumThread.findMany({ where: eq(forumThread.boardId, "other") }))[0]!;
+    expect((await moderator.moderateThreads({ ids: [pending.id], action: "APPROVE", reason: "Review pending discussion" })).success).toBe(true);
+    const visible = (await moderator.administration({ query: "" }))!.logs.map(log => log.id).sort();
+    expect(visible).toHaveLength(2);
+    for (let i = 0; i < 100; i++) {
+      const result = scope === "global"
+        ? await admin.saveGrant({ userId: playerId, scope: "GLOBAL", scopeId: "*", permissions: [], denies: [], reason: `Update player capabilities ${i}` })
+        : await admin.lockThread({ thread_id: pending.id, status: i % 2 === 0 });
+      expect(result.success).toBe(true);
+    }
+    expect((await moderator.administration({ query: id }))?.logs).toHaveLength(1);
+    expect((await moderator.administration({ query: "" }))?.logs.map(log => log.id).sort()).toEqual(visible);
+    expect((await admin.administration({ query: "" }))?.logs).toHaveLength(100);
+    expect(await listForumAudit(db, [], "")).toEqual([]);
+    await db.update(forumGrant).set({ permissions: [] }).where(eq(forumGrant.id, "scoped"));
+    expect((await moderator.administration({ query: "" }))?.logs.map(log => log.action)).toEqual(["topic.approve"]);
+  });
   it("searches reply content by its author and sends mention alerts without requiring a watch", async () => {
     const id = await create(); await (await comments(moderatorId)).createForumComment(commentInput(id, "A unique healing strategy for new players."));
     const result = await (await client()).getThreads({ author: "ForumModerator", query: "healing", limit: 20 }); expect(result.threads.map(t => t.id)).toEqual([id]);
