@@ -1,223 +1,772 @@
-/**
- * Database access for forum; authorization and transaction scopes stay in callers.
- */
-import { eq } from "drizzle-orm";
-import { forumThread } from "@/drizzle/schema";
+/** Database statements for forums; callers own access checks and transaction boundaries. */
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNull,
+  like,
+  ne,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
+import { nanoid } from "nanoid";
+import {
+  forumAlert,
+  forumAudit,
+  forumBoard,
+  forumCase,
+  forumGrant,
+  forumPost,
+  forumReaction,
+  forumRead,
+  forumRestriction,
+  forumRevision,
+  forumSection,
+  forumThread,
+  forumWatch,
+  userBlackList,
+  userData,
+  userDevice,
+  userReport,
+} from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
-/**
- * Internal convenience function to fetch a forum thread by ID.
- * Used by this router and the comments router for thread management operations.
- */
-export const fetchThread = async (client: DrizzleClient, threadId: string) => {
-  return await client.query.forumThread.findFirst({
-    where: eq(forumThread.id, threadId),
+type Client = Pick<
+  DrizzleClient,
+  "query" | "select" | "insert" | "update" | "delete" | "execute"
+>;
+export const listForumBoards = (db: Client) =>
+  db.query.forumBoard.findMany({
+    with: { section: true },
+    orderBy: [asc(forumBoard.position), asc(forumBoard.name)],
   });
-};
-
-import { asc, desc, ne, sql } from "drizzle-orm";
-import { forumBoard, forumPost, userData, userDevice } from "@/drizzle/schema";
-
-/** Build the `forumThread` listing for `umThreadForGetInfiniteThreads`, using predicates on `boardId`, `id`, `name`. */
-export const listForumThreadForGetInfiniteThreads = (
-  client: Pick<DrizzleClient, "query" | "select">,
-  skip: number,
-  limit: number,
-  boardId: undefined | string,
-  boardName: undefined | string,
-  highlightPinned: undefined | false | true,
-) =>
-  client.query.forumThread.findMany({
-    offset: skip,
-    limit: limit,
-    where: eq(
-      forumThread.boardId,
-      boardId ||
-        client
-          .select({ id: forumBoard.id })
-          .from(forumBoard)
-          .where(eq(forumBoard.name, boardName ?? "")),
-    ),
+export const listForumSections = (db: Client) =>
+  db.query.forumSection.findMany({
+    orderBy: [asc(forumSection.position), asc(forumSection.name)],
+  });
+export const findForumActor = (db: Client, id: string) =>
+  db.query.userData.findFirst({
+    where: eq(userData.userId, id),
+    columns: {
+      userId: true,
+      role: true,
+      isBanned: true,
+      isSilenced: true,
+      level: true,
+      username: true,
+    },
+  });
+export const listForumGrants = (db: Client, userId?: string) =>
+  db.query.forumGrant.findMany({
+    where: userId ? eq(forumGrant.userId, userId) : undefined,
+    with: { user: { columns: { username: true } } },
+  });
+export const listForumRestrictions = (db: Client, userId?: string) =>
+  db.query.forumRestriction.findMany({
+    where: userId ? eq(forumRestriction.userId, userId) : undefined,
+    with: { user: { columns: { username: true } } },
+  });
+export const fetchThread = (db: Pick<DrizzleClient, "query">, id: string) =>
+  db.query.forumThread.findFirst({ where: eq(forumThread.id, id) });
+export const findForumPost = (db: Client, id: string) =>
+  db.query.forumPost.findFirst({ where: eq(forumPost.id, id) });
+export const findForumBoardForFetchBoard = (db: Client, id?: string, name?: string) =>
+  db.query.forumBoard.findFirst({
+    where: id ? eq(forumBoard.id, id) : eq(forumBoard.name, name ?? ""),
+    with: { section: true },
+  });
+export const listForumReads = (db: Client, userId: string) =>
+  db.query.forumRead.findMany({ where: eq(forumRead.userId, userId) });
+export const listForumWatches = (db: Client, userId: string) =>
+  db.query.forumWatch.findMany({ where: eq(forumWatch.userId, userId) });
+export const listForumThreads = (
+  db: Client,
+  input: {
+    boards: string[];
+    offset: number;
+    limit: number;
+    query?: string;
+    author?: string;
+    since?: Date;
+    until?: Date;
+    tag?: string;
+    view?: string;
+    userId?: string;
+    pinned?: boolean;
+  },
+) => {
+  const pattern = `%${(input.query ?? "").replace(/[\\%_]/g, "\\$&")}%`;
+  const conditions: (SQL | undefined)[] = [
+    inArray(forumThread.boardId, input.boards),
+    isNull(forumThread.deletedAt),
+    eq(forumThread.isApproved, true),
+  ];
+  const matchingAuthors = input.author
+    ? db
+        .select({ userId: userData.userId })
+        .from(userData)
+        .where(like(userData.username, `%${input.author.replace(/[\\%_]/g, "\\$&")}%`))
+    : undefined;
+  if (input.query || matchingAuthors) {
+    const matchingPosts = db
+      .select({ threadId: forumPost.threadId })
+      .from(forumPost)
+      .where(
+        and(
+          isNull(forumPost.deletedAt),
+          eq(forumPost.isApproved, true),
+          matchingAuthors ? inArray(forumPost.userId, matchingAuthors) : undefined,
+          input.query ? like(forumPost.content, pattern) : undefined,
+        ),
+      );
+    conditions.push(
+      input.query && !matchingAuthors
+        ? or(like(forumThread.title, pattern), inArray(forumThread.id, matchingPosts))
+        : or(
+            and(
+              matchingAuthors
+                ? inArray(forumThread.userId, matchingAuthors)
+                : undefined,
+              input.query ? like(forumThread.title, pattern) : undefined,
+            ),
+            inArray(forumThread.id, matchingPosts),
+          ),
+    );
+  }
+  if (input.since) conditions.push(sql`${forumThread.updatedAt} >= ${input.since}`);
+  if (input.until) conditions.push(sql`${forumThread.updatedAt} <= ${input.until}`);
+  if (input.tag)
+    conditions.push(
+      sql`JSON_CONTAINS(${forumThread.tags}, ${JSON.stringify(input.tag)})`,
+    );
+  if (input.view === "unanswered")
+    conditions.push(
+      eq(forumThread.kind, "QUESTION"),
+      isNull(forumThread.acceptedPostId),
+    );
+  if (input.view === "mine")
+    conditions.push(
+      inArray(
+        forumThread.id,
+        db
+          .select({ threadId: forumPost.threadId })
+          .from(forumPost)
+          .where(
+            and(
+              eq(forumPost.userId, input.userId ?? ""),
+              isNull(forumPost.deletedAt),
+              eq(forumPost.isApproved, true),
+            ),
+          ),
+      ),
+    );
+  if (input.view === "unread")
+    conditions.push(
+      sql`${forumThread.id} NOT IN ${db
+        .select({ threadId: forumRead.threadId })
+        .from(forumRead)
+        .innerJoin(forumThread, eq(forumThread.id, forumRead.threadId))
+        .where(
+          and(
+            eq(forumRead.userId, input.userId ?? ""),
+            sql`(${forumRead.readAt} > ${forumThread.updatedAt} OR (${forumRead.readAt} = ${forumThread.updatedAt} AND ${forumRead.postId} >= ${forumThread.lastPostId}))`,
+          ),
+        )}`,
+    );
+  if (input.view === "watched")
+    conditions.push(
+      or(
+        inArray(
+          forumThread.id,
+          db
+            .select({ scopeId: forumWatch.scopeId })
+            .from(forumWatch)
+            .where(
+              and(
+                eq(forumWatch.userId, input.userId ?? ""),
+                eq(forumWatch.scope, "THREAD"),
+              ),
+            ),
+        ),
+        inArray(
+          forumThread.boardId,
+          db
+            .select({ scopeId: forumWatch.scopeId })
+            .from(forumWatch)
+            .where(
+              and(
+                eq(forumWatch.userId, input.userId ?? ""),
+                eq(forumWatch.scope, "BOARD"),
+              ),
+            ),
+        ),
+      ),
+    );
+  return db.query.forumThread.findMany({
+    where: and(...conditions),
+    offset: input.offset,
+    limit: input.limit,
     with: {
-      user: {
-        columns: { username: true },
-      },
+      user: { columns: { username: true } },
       posts: {
+        where: and(isNull(forumPost.deletedAt), eq(forumPost.isApproved, true)),
+        orderBy: [asc(forumPost.createdAt), asc(forumPost.id)],
         limit: 1,
-        orderBy: asc(forumPost.createdAt),
       },
     },
-    orderBy: highlightPinned
-      ? [desc(forumThread.isPinned), desc(forumThread.createdAt)]
-      : desc(forumThread.createdAt),
+    orderBy: input.pinned
+      ? [desc(forumThread.isPinned), desc(forumThread.updatedAt), desc(forumThread.id)]
+      : [desc(forumThread.updatedAt), desc(forumThread.id)],
   });
-
-/** Build the `forumBoard` lookup for `umBoardForFetchBoard`, using predicates on `id` and `name`. */
-export const findForumBoardForFetchBoard = (
-  client: Pick<DrizzleClient, "query">,
-  boardId: undefined | string,
-  boardName: undefined | string,
-) =>
-  client.query.forumBoard.findFirst({
-    where: boardId
-      ? eq(forumBoard.id, boardId ?? "")
-      : eq(forumBoard.name, boardName ?? ""),
-  });
-
-/** Mark the account's news feed as read by clearing its unreadNews counter. */
-export const readNews = async (client: DrizzleClient, userId: string) => {
-  await client
-    .update(userData)
-    .set({ unreadNews: 0 })
-    .where(eq(userData.userId, userId));
 };
-
-/** Build the `userData` lookup for `fetchForumPageData`, using predicates on `userId`. */
-export const findUserDataForFetchForumPageData = (
-  client: Pick<DrizzleClient, "query">,
-  userId: string,
+export const listForumPosts = (
+  db: Client,
+  threadId: string,
+  offset = 0,
+  limit = 100,
+  includeRemoved = false,
 ) =>
-  client.query.userData.findFirst({
+  db.query.forumPost.findMany({
+    where: and(
+      eq(forumPost.threadId, threadId),
+      includeRemoved
+        ? undefined
+        : and(isNull(forumPost.deletedAt), eq(forumPost.isApproved, true)),
+    ),
+    offset,
+    limit,
+    orderBy: [asc(forumPost.createdAt), asc(forumPost.id)],
+    with: {
+      user: {
+        columns: {
+          userId: true,
+          username: true,
+          avatar: true,
+          rank: true,
+          isOutlaw: true,
+          level: true,
+          role: true,
+          federalStatus: true,
+        },
+      },
+      reactions: { columns: { userId: true, reaction: true } },
+    },
+  });
+export const countForumPosts = (db: Client, threadId: string) =>
+  db
+    .select({ count: sql<number>`count(*)`.mapWith(Number) })
+    .from(forumPost)
+    .where(
+      and(
+        eq(forumPost.threadId, threadId),
+        isNull(forumPost.deletedAt),
+        eq(forumPost.isApproved, true),
+      ),
+    );
+export const forumPostPosition = (
+  db: Client,
+  post: { threadId: string; id: string; createdAt: Date },
+) =>
+  db
+    .select({ count: sql<number>`count(*)`.mapWith(Number) })
+    .from(forumPost)
+    .where(
+      and(
+        eq(forumPost.threadId, post.threadId),
+        isNull(forumPost.deletedAt),
+        eq(forumPost.isApproved, true),
+        sql`(${forumPost.createdAt} < ${post.createdAt} OR (${forumPost.createdAt} = ${post.createdAt} AND ${forumPost.id} <= ${post.id}))`,
+      ),
+    );
+export const insertForumThread = (
+  db: Client,
+  values: typeof forumThread.$inferInsert,
+) => db.insert(forumThread).values(values);
+export const insertForumPost = (db: Client, values: typeof forumPost.$inferInsert) =>
+  db.insert(forumPost).values(values);
+export const updateForumThread = (
+  db: Client,
+  id: string,
+  values: Partial<typeof forumThread.$inferInsert>,
+  guard?: SQL,
+) =>
+  db
+    .update(forumThread)
+    .set(values)
+    .where(and(eq(forumThread.id, id), guard));
+export const updateForumPost = (
+  db: Client,
+  id: string,
+  values: Partial<typeof forumPost.$inferInsert>,
+  guard?: SQL,
+) =>
+  db
+    .update(forumPost)
+    .set(values)
+    .where(and(eq(forumPost.id, id), guard));
+export const updateForumPosts = (
+  db: Client,
+  ids: string[],
+  values: Partial<typeof forumPost.$inferInsert>,
+  threadId: string,
+) =>
+  db
+    .update(forumPost)
+    .set(values)
+    .where(and(inArray(forumPost.id, ids), eq(forumPost.threadId, threadId)));
+/** Existing parent rows serialize posting with lock/archive/slow-mode changes; no missing-row locks. */
+export const lockForumThread = (db: Client, id: string) =>
+  db.select().from(forumThread).where(eq(forumThread.id, id)).for("update");
+export const lockForumBoard = (db: Client, id: string) =>
+  db
+    .select({
+      ...getTableColumns(forumBoard),
+      sectionPolicy: forumSection.policy,
+      sectionArchived: forumSection.archived,
+    })
+    .from(forumBoard)
+    .innerJoin(forumSection, eq(forumSection.id, forumBoard.sectionId))
+    .where(eq(forumBoard.id, id))
+    .for("update");
+export const lastForumPostByAuthor = (db: Client, threadId: string, authorId: string) =>
+  db.query.forumPost.findFirst({
+    where: and(eq(forumPost.threadId, threadId), eq(forumPost.authorId, authorId)),
+    orderBy: desc(forumPost.createdAt),
+  });
+const forumThreadRecount = (id: string | SQL) => ({
+  lastPostId: sql`(SELECT id FROM ${forumPost} WHERE ${forumPost.threadId} = ${id} AND ${forumPost.deletedAt} IS NULL AND ${forumPost.isApproved} = true ORDER BY ${forumPost.createdAt} DESC, ${forumPost.id} DESC LIMIT 1)`,
+  nPosts: sql`(SELECT COUNT(*) FROM ${forumPost} WHERE ${forumPost.threadId} = ${id} AND ${forumPost.deletedAt} IS NULL AND ${forumPost.isApproved} = true)`,
+  updatedAt: sql`COALESCE((SELECT MAX(${forumPost.createdAt}) FROM ${forumPost} WHERE ${forumPost.threadId} = ${id} AND ${forumPost.deletedAt} IS NULL AND ${forumPost.isApproved} = true), ${forumThread.createdAt})`,
+  acceptedPostId: sql`IF(EXISTS (SELECT 1 FROM ${forumPost} WHERE ${forumPost.id} = ${forumThread.acceptedPostId} AND ${forumPost.threadId} = ${id} AND ${forumPost.deletedAt} IS NULL AND ${forumPost.isApproved} = true), ${forumThread.acceptedPostId}, NULL)`,
+});
+export const repairForumThread = (db: Client, id: string) =>
+  db.update(forumThread).set(forumThreadRecount(id)).where(eq(forumThread.id, id));
+export const repairForumBoardThreads = (db: Client, boardId: string) =>
+  db
+    .update(forumThread)
+    .set(forumThreadRecount(sql`${forumThread.id}`))
+    .where(eq(forumThread.boardId, boardId));
+export const repairForumBoard = (db: Client, id: string) =>
+  db
+    .update(forumBoard)
+    .set({
+      nThreads: sql`(SELECT COUNT(*) FROM ${forumThread} WHERE ${forumThread.boardId} = ${id} AND ${forumThread.deletedAt} IS NULL AND ${forumThread.isApproved} = true)`,
+      nPosts: sql`(SELECT COALESCE(SUM(${forumThread.nPosts}), 0) FROM ${forumThread} WHERE ${forumThread.boardId} = ${id} AND ${forumThread.deletedAt} IS NULL AND ${forumThread.isApproved} = true)`,
+      updatedAt: sql`COALESCE((SELECT MAX(${forumThread.updatedAt}) FROM ${forumThread} WHERE ${forumThread.boardId} = ${id} AND ${forumThread.deletedAt} IS NULL AND ${forumThread.isApproved} = true), ${forumBoard.createdAt})`,
+    })
+    .where(eq(forumBoard.id, id));
+export const insertForumAudit = (
+  db: Client,
+  values: Omit<typeof forumAudit.$inferInsert, "id">,
+) => db.insert(forumAudit).values({ id: nanoid(), ...values });
+export const insertForumRevision = (
+  db: Client,
+  values: Omit<typeof forumRevision.$inferInsert, "id">,
+) => db.insert(forumRevision).values({ id: nanoid(), ...values });
+export const listForumRevisions = (db: Client, id: string) =>
+  db.query.forumRevision.findMany({
+    where: eq(forumRevision.postId, id),
+    orderBy: desc(forumRevision.createdAt),
+    limit: 50,
+  });
+export const saveForumSection = (
+  db: Client,
+  values: typeof forumSection.$inferInsert,
+) => db.insert(forumSection).values(values).onDuplicateKeyUpdate({ set: values });
+export const saveForumBoard = (
+  db: Client,
+  values: typeof forumBoard.$inferInsert,
+  existing = false,
+) =>
+  existing
+    ? db
+        .update(forumBoard)
+        .set({ ...values, id: undefined })
+        .where(eq(forumBoard.id, values.id))
+    : db.insert(forumBoard).values(values);
+export const moveForumBoards = (db: Client, sectionId: string, destinationId: string) =>
+  db
+    .update(forumBoard)
+    .set({ sectionId: destinationId })
+    .where(eq(forumBoard.sectionId, sectionId));
+export const moveForumThreads = (db: Client, boardId: string, destinationId: string) =>
+  db
+    .update(forumThread)
+    .set({ boardId: destinationId })
+    .where(eq(forumThread.boardId, boardId));
+export const deleteEmptyForumSection = (db: Client, id: string) =>
+  db
+    .delete(forumSection)
+    .where(
+      and(
+        eq(forumSection.id, id),
+        sql`NOT EXISTS (SELECT 1 FROM ${forumBoard} WHERE ${forumBoard.sectionId} = ${id})`,
+      ),
+    );
+export const deleteEmptyForumBoard = (db: Client, id: string) =>
+  db
+    .delete(forumBoard)
+    .where(
+      and(
+        eq(forumBoard.id, id),
+        sql`NOT EXISTS (SELECT 1 FROM ${forumThread} WHERE ${forumThread.boardId} = ${id})`,
+        sql`NOT EXISTS (SELECT 1 FROM (SELECT parentId FROM ForumBoard) children WHERE children.parentId = ${id})`,
+      ),
+    );
+export const saveForumGrant = (db: Client, values: typeof forumGrant.$inferInsert) =>
+  db
+    .insert(forumGrant)
+    .values(values)
+    .onDuplicateKeyUpdate({
+      set: { permissions: values.permissions, denies: values.denies },
+    });
+export const deleteForumGrant = (db: Client, id: string) =>
+  db.delete(forumGrant).where(eq(forumGrant.id, id));
+export const saveForumRestriction = (
+  db: Client,
+  values: typeof forumRestriction.$inferInsert,
+) => db.insert(forumRestriction).values(values).onDuplicateKeyUpdate({ set: values });
+export const deleteForumRestriction = (db: Client, id: string) =>
+  db.delete(forumRestriction).where(eq(forumRestriction.id, id));
+export const saveForumRead = (
+  db: Client,
+  userId: string,
+  post: { id: string; threadId: string; createdAt: Date },
+) =>
+  db
+    .insert(forumRead)
+    .values({
+      userId,
+      threadId: post.threadId,
+      postId: post.id,
+      readAt: post.createdAt,
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        postId: sql`IF(${forumRead.readAt} < ${post.createdAt} OR (${forumRead.readAt} = ${post.createdAt} AND ${forumRead.postId} < ${post.id}), ${post.id}, ${forumRead.postId})`,
+        readAt: sql`GREATEST(${forumRead.readAt}, ${post.createdAt})`,
+      },
+    });
+export const saveForumWatch = (db: Client, values: typeof forumWatch.$inferInsert) =>
+  db
+    .insert(forumWatch)
+    .values(values)
+    .onDuplicateKeyUpdate({ set: { push: values.push } });
+export const deleteForumWatch = (
+  db: Client,
+  userId: string,
+  scope: "BOARD" | "THREAD",
+  scopeId: string,
+) =>
+  db
+    .delete(forumWatch)
+    .where(
+      and(
+        eq(forumWatch.userId, userId),
+        eq(forumWatch.scope, scope),
+        eq(forumWatch.scopeId, scopeId),
+      ),
+    );
+export const listForumWatchers = (db: Client, boardId: string, threadId: string) =>
+  db.query.forumWatch.findMany({
+    where: or(
+      and(eq(forumWatch.scope, "BOARD"), eq(forumWatch.scopeId, boardId)),
+      and(eq(forumWatch.scope, "THREAD"), eq(forumWatch.scopeId, threadId)),
+    ),
+  });
+export const insertForumAlerts = (
+  db: Client,
+  values: (typeof forumAlert.$inferInsert)[],
+) =>
+  db
+    .insert(forumAlert)
+    .values(values)
+    .onDuplicateKeyUpdate({ set: { postId: sql`${forumAlert.postId}` } });
+export const listForumAlerts = (db: Client, id: string) =>
+  db
+    .select({
+      id: forumAlert.id,
+      postId: forumAlert.postId,
+      threadId: forumAlert.threadId,
+      createdAt: forumAlert.createdAt,
+      readAt: forumAlert.readAt,
+      boardId: forumThread.boardId,
+      title: forumThread.title,
+    })
+    .from(forumAlert)
+    .innerJoin(forumThread, eq(forumThread.id, forumAlert.threadId))
+    .innerJoin(forumPost, eq(forumPost.id, forumAlert.postId))
+    .where(
+      and(
+        eq(forumAlert.userId, id),
+        isNull(forumThread.deletedAt),
+        eq(forumThread.isApproved, true),
+        isNull(forumPost.deletedAt),
+        eq(forumPost.isApproved, true),
+      ),
+    )
+    .orderBy(desc(forumAlert.createdAt))
+    .limit(100);
+export const readForumAlerts = (db: Client, userId: string, threadId?: string) =>
+  db
+    .update(forumAlert)
+    .set({ readAt: new Date() })
+    .where(
+      and(
+        eq(forumAlert.userId, userId),
+        threadId ? eq(forumAlert.threadId, threadId) : undefined,
+        isNull(forumAlert.readAt),
+      ),
+    );
+export const setForumReaction = (
+  db: Client,
+  values: typeof forumReaction.$inferInsert,
+  active: boolean,
+) =>
+  active
+    ? db
+        .insert(forumReaction)
+        .values(values)
+        .onDuplicateKeyUpdate({ set: { reaction: values.reaction } })
+    : db
+        .delete(forumReaction)
+        .where(
+          and(
+            eq(forumReaction.userId, values.userId),
+            eq(forumReaction.postId, values.postId),
+            eq(forumReaction.reaction, values.reaction),
+          ),
+        );
+export const listForumAudit = (db: Client, boardIds: string[], query: string) =>
+  db
+    .select({ ...getTableColumns(forumAudit), actorName: userData.username })
+    .from(forumAudit)
+    .leftJoin(userData, eq(userData.userId, forumAudit.actorId))
+    .where(
+      and(
+        or(inArray(forumAudit.boardId, boardIds), isNull(forumAudit.boardId)),
+        query
+          ? or(
+              like(forumAudit.action, `%${query}%`),
+              like(forumAudit.reason, `%${query}%`),
+              like(userData.username, `%${query}%`),
+              eq(forumAudit.targetId, query),
+              eq(forumAudit.actorId, query),
+            )
+          : undefined,
+      ),
+    )
+    .orderBy(desc(forumAudit.createdAt))
+    .limit(100);
+export const listForumReviewThreads = (db: Client, boardIds: string[]) =>
+  db.query.forumThread.findMany({
+    where: and(
+      inArray(forumThread.boardId, boardIds),
+      or(sql`${forumThread.deletedAt} IS NOT NULL`, eq(forumThread.isApproved, false)),
+    ),
+    orderBy: desc(forumThread.updatedAt),
+    limit: 100,
+  });
+export const listForumReviewPosts = (db: Client, boardIds: string[]) =>
+  db
+    .select({
+      post: forumPost,
+      thread: forumThread,
+      review: forumCase,
+      assigneeName: userData.username,
+    })
+    .from(forumPost)
+    .innerJoin(forumThread, eq(forumThread.id, forumPost.threadId))
+    .leftJoin(forumCase, eq(forumCase.postId, forumPost.id))
+    .leftJoin(userData, eq(userData.userId, forumCase.assigneeId))
+    .where(
+      and(
+        inArray(forumThread.boardId, boardIds),
+        or(
+          sql`${forumPost.deletedAt} IS NOT NULL`,
+          eq(forumPost.isApproved, false),
+          eq(forumPost.isReported, true),
+        ),
+      ),
+    )
+    .orderBy(desc(forumPost.createdAt))
+    .limit(100);
+export const readNews = (db: Pick<DrizzleClient, "update">, userId: string) =>
+  db.update(userData).set({ unreadNews: 0 }).where(eq(userData.userId, userId));
+export const updateUserDataForCreateThread = (db: Client, ctx: { userId: string }) =>
+  db
+    .update(userData)
+    .set({ unreadNews: sql`LEAST(${userData.unreadNews} + 1, 1000)` })
+    .where(ne(userData.userId, ctx.userId));
+export const selectDistinctUserDeviceForNotifyNewsSubscribers = (
+  db: Pick<DrizzleClient, "selectDistinct">,
+) => db.selectDistinct({ userId: userDevice.userId }).from(userDevice);
+export const findUserDataForFetchForumPageData = (db: Client, userId: string) =>
+  db.query.userData.findFirst({
     where: eq(userData.userId, userId),
     columns: { userId: true, role: true, unreadNews: true },
   });
 
-/** Build the `forumBoard` listing for `umBoardForGetAll`. */
-export const listForumBoardForGetAll = (client: Pick<DrizzleClient, "query">) =>
-  client.query.forumBoard.findMany({
-    orderBy: asc(forumBoard.createdAt),
-  });
+export const findForumRestriction = (db: Client, id: string) =>
+  db.query.forumRestriction.findFirst({ where: eq(forumRestriction.id, id) });
+export const lockForumSection = (db: Client, id: string) =>
+  db.select().from(forumSection).where(eq(forumSection.id, id)).for("update");
 
-/** Build the `forumThread` insert for `umThreadForCreateThread`. */
-export const insertForumThreadForCreateThread = (
-  client: Pick<DrizzleClient, "insert">,
-  threadId: string,
-  input: { title: string; image: null | string; board_id: string },
-  effectiveUserId: string,
-) =>
-  client.insert(forumThread).values({
-    id: threadId,
-    title: input.title,
-    image: input.image,
-    boardId: input.board_id,
-    userId: effectiveUserId,
-  });
-
-/** Build a forum post insert for new threads and comments; posting guards stay in callers. */
-export const insertForumPostForCreateThread = (
-  client: Pick<DrizzleClient, "insert">,
-  postId: string,
-  sanitized: string,
-  threadId: string,
-  effectiveUserId: string,
-  ctx: { userId: string },
-) =>
-  client.insert(forumPost).values({
-    id: postId,
-    content: sanitized,
-    threadId: threadId,
-    userId: effectiveUserId,
-    authorId: ctx.userId,
-  });
-
-/**
- * Build the `forumBoard` update for `umBoardForCreateThread`, setting `nThreads` and
- * `updatedAt`, using predicates on `id`.
- */
-export const updateForumBoardForCreateThread = (
-  client: Pick<DrizzleClient, "update">,
-  input: { board_id: string },
-) =>
-  client
-    .update(forumBoard)
-    .set({ nThreads: sql`nThreads + 1`, updatedAt: new Date() })
-    .where(eq(forumBoard.id, input.board_id));
-
-/** Build the `userData` update for `createThread`, setting `unreadNews`, using predicates on `userId`. */
-export const updateUserDataForCreateThread = (
-  client: Pick<DrizzleClient, "update">,
-  ctx: { userId: string },
-) =>
-  client
-    .update(userData)
-    .set({ unreadNews: sql`LEAST(unreadNews + 1, 1000)` })
-    .where(ne(userData.userId, ctx.userId));
-
-/** Build the `forumThread` update for `umThreadForPinThread`, setting `isPinned`, using predicates on `id`. */
-export const updateForumThreadForPinThread = (
-  client: Pick<DrizzleClient, "update">,
-  input: { status: false | true },
-  thread: { id: string },
-) =>
-  client
-    .update(forumThread)
-    .set({ isPinned: input.status })
-    .where(eq(forumThread.id, thread.id));
-
-/** Build the `forumThread` update for `umThreadForLockThread`, setting `isLocked`, using predicates on `id`. */
-export const updateForumThreadForLockThread = (
-  client: Pick<DrizzleClient, "update">,
-  input: { status: false | true },
-  thread: { id: string },
-) =>
-  client
-    .update(forumThread)
-    .set({ isLocked: input.status })
-    .where(eq(forumThread.id, thread.id));
-
-/** Build the `forumThread` deletion for `umThreadForDeleteThread`, using predicates on `id`. */
-export const deleteForumThreadForDeleteThread = (
-  client: Pick<DrizzleClient, "delete">,
-  thread: { id: string },
-) => client.delete(forumThread).where(eq(forumThread.id, thread.id));
-
-/** Build the `forumBoard` update for `umBoardForDeleteThread`, setting `nThreads`, using predicates on `id`. */
-export const updateForumBoardForDeleteThread = (
-  client: Pick<DrizzleClient, "update">,
-  thread: { boardId: string },
-) =>
-  client
-    .update(forumBoard)
-    .set({ nThreads: sql`GREATEST(nThreads - 1, 0)` })
-    .where(eq(forumBoard.id, thread.boardId));
-
-/** Build the `forumPost` deletion for `umPostForDeleteThread`, using predicates on `threadId`. */
-export const deleteForumPostForDeleteThread = (
-  client: Pick<DrizzleClient, "delete">,
-  thread: { id: string },
-) => client.delete(forumPost).where(eq(forumPost.threadId, thread.id));
-
-/** Build the `userDevice` distinct selection for `notifyNewsSubscribers`. */
-export const selectDistinctUserDeviceForNotifyNewsSubscribers = (
-  client: Pick<DrizzleClient, "selectDistinct">,
-) => client.selectDistinct({ userId: userDevice.userId }).from(userDevice);
-
-/** Build the board summary lookup with its thread count for public metadata. */
-export const findForumBoardMetadata = (
-  client: Pick<DrizzleClient, "query">,
+export const acceptForumAnswer = (
+  db: Client,
+  id: string,
+  postId: string | null,
   boardId: string,
 ) =>
-  client.query.forumBoard.findFirst({
-    columns: { name: true, summary: true, nThreads: true },
-    where: eq(forumBoard.id, boardId),
-  });
+  updateForumThread(
+    db,
+    id,
+    { acceptedPostId: postId },
+    and(
+      eq(forumThread.boardId, boardId),
+      isNull(forumThread.deletedAt),
+      eq(forumThread.kind, "QUESTION"),
+      postId
+        ? sql`EXISTS (SELECT 1 FROM ${forumPost} WHERE ${forumPost.id} = ${postId} AND ${forumPost.threadId} = ${id} AND ${forumPost.deletedAt} IS NULL AND ${forumPost.isApproved} = true)`
+        : undefined,
+    ),
+  );
 
-/** Build the thread title, post count and owning-board lookup for canonical public metadata. */
-export const findForumThreadMetadata = (
-  client: Pick<DrizzleClient, "query">,
-  threadId: string,
+export const readForumAlertsThrough = (
+  db: Client,
+  userId: string,
+  post: { threadId: string; id: string; createdAt: Date },
 ) =>
-  client.query.forumThread.findFirst({
-    columns: { title: true, nPosts: true, boardId: true },
-    where: eq(forumThread.id, threadId),
-  });
+  db
+    .update(forumAlert)
+    .set({ readAt: new Date() })
+    .where(
+      and(
+        eq(forumAlert.userId, userId),
+        eq(forumAlert.threadId, post.threadId),
+        isNull(forumAlert.readAt),
+        sql`${forumAlert.postId} IN (SELECT id FROM ${forumPost} WHERE ${forumPost.threadId} = ${post.threadId} AND (${forumPost.createdAt} < ${post.createdAt} OR (${forumPost.createdAt} = ${post.createdAt} AND ${forumPost.id} <= ${post.id})))`,
+      ),
+    );
 
-/** Build a name-only board lookup without loading the board summary or counters. */
-export const findForumBoardNameById = (
-  client: Pick<DrizzleClient, "query">,
+export const insertForumPosts = (
+  db: Client,
+  values: (typeof forumPost.$inferInsert)[],
+) => db.insert(forumPost).values(values);
+
+export const saveForumCase = (db: Client, values: typeof forumCase.$inferInsert) =>
+  db.insert(forumCase).values(values).onDuplicateKeyUpdate({ set: values });
+export const listForumLinkedReports = (db: Client) =>
+  db
+    .select({
+      id: userReport.id,
+      status: userReport.status,
+      postId: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${userReport.infraction}, '$.id'))`,
+    })
+    .from(userReport)
+    .where(eq(userReport.system, "forum_comment"))
+    .orderBy(desc(userReport.createdAt))
+    .limit(1000);
+
+export const countForumBoardThreads = (db: Client, boardId: string) =>
+  db
+    .select({ count: sql<number>`COUNT(*)`.mapWith(Number) })
+    .from(forumThread)
+    .where(eq(forumThread.boardId, boardId));
+
+export const listForumNotificationActors = (
+  db: Client,
   boardId: string,
+  threadId: string,
+  names: string[],
 ) =>
-  client.query.forumBoard.findFirst({
-    columns: { name: true },
-    where: eq(forumBoard.id, boardId),
+  db
+    .select({
+      userId: userData.userId,
+      role: userData.role,
+      isBanned: userData.isBanned,
+      isSilenced: userData.isSilenced,
+    })
+    .from(userData)
+    .where(
+      or(
+        inArray(
+          userData.userId,
+          db
+            .select({ userId: forumWatch.userId })
+            .from(forumWatch)
+            .where(
+              or(
+                and(eq(forumWatch.scope, "BOARD"), eq(forumWatch.scopeId, boardId)),
+                and(eq(forumWatch.scope, "THREAD"), eq(forumWatch.scopeId, threadId)),
+              ),
+            ),
+        ),
+        names.length ? inArray(userData.username, names) : undefined,
+      ),
+    );
+export const listForumNotificationGrants = (db: Client, userIds: string[]) =>
+  db.query.forumGrant.findMany({ where: inArray(forumGrant.userId, userIds) });
+
+export const listForumNotificationBlocks = (db: Client, actorId: string) =>
+  db.query.userBlackList.findMany({
+    where: or(
+      eq(userBlackList.creatorUserId, actorId),
+      eq(userBlackList.targetUserId, actorId),
+    ),
   });
+
+export const purgeForumThread = (db: Client, id: string) =>
+  db
+    .delete(forumThread)
+    .where(and(eq(forumThread.id, id), sql`${forumThread.deletedAt} IS NOT NULL`));
+export const purgeForumThreadPosts = (db: Client, id: string) =>
+  db.delete(forumPost).where(eq(forumPost.threadId, id));
+export const purgeForumPostRevisions = (db: Client, threadId: string) =>
+  db
+    .delete(forumRevision)
+    .where(
+      inArray(
+        forumRevision.postId,
+        db
+          .select({ id: forumPost.id })
+          .from(forumPost)
+          .where(eq(forumPost.threadId, threadId)),
+      ),
+    );
+export const purgeForumPostReactions = (db: Client, threadId: string) =>
+  db
+    .delete(forumReaction)
+    .where(
+      inArray(
+        forumReaction.postId,
+        db
+          .select({ id: forumPost.id })
+          .from(forumPost)
+          .where(eq(forumPost.threadId, threadId)),
+      ),
+    );
+export const purgeForumPostCases = (db: Client, threadId: string) =>
+  db
+    .delete(forumCase)
+    .where(
+      inArray(
+        forumCase.postId,
+        db
+          .select({ id: forumPost.id })
+          .from(forumPost)
+          .where(eq(forumPost.threadId, threadId)),
+      ),
+    );
+export const purgeForumThreadReads = (db: Client, id: string) =>
+  db.delete(forumRead).where(eq(forumRead.threadId, id));
+export const purgeForumThreadWatches = (db: Client, id: string) =>
+  db
+    .delete(forumWatch)
+    .where(and(eq(forumWatch.scope, "THREAD"), eq(forumWatch.scopeId, id)));
+export const purgeForumThreadAlerts = (db: Client, id: string) =>
+  db.delete(forumAlert).where(eq(forumAlert.threadId, id));

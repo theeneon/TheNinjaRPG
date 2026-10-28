@@ -2,7 +2,7 @@ import { stubRateLimitTransport } from "../../../setup/rateLimit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { Table } from "drizzle-orm";
 import { FORUM_MIN_LEVEL, MESSAGING_MIN_LEVEL } from "@/drizzle/constants";
-import { conversationComment, forumPost, userNindo } from "@/drizzle/schema";
+import { conversationComment, forumBoard, forumPost, forumThread, userNindo } from "@/drizzle/schema";
 import * as moderation from "@/libs/moderation/defer";
 import * as pusher from "@/libs/pusher";
 import { commentsRouter } from "@/routers/comments";
@@ -16,28 +16,37 @@ const user = {
   level: Math.max(FORUM_MIN_LEVEL, MESSAGING_MIN_LEVEL),
 };
 const comment = {
-  id: "post", userId: user.userId, threadId: "thread", conversationId: "conversation",
+  id: "post", authorId: user.userId, content: "A normal game conversation", isLocked: false, isApproved: true, deletedAt: null, userId: user.userId, threadId: "thread", conversationId: "conversation",
   createdAt: new Date("2026-01-01T00:00:00Z"),
 };
 const input = { object_id: "post", comment: "A normal game conversation", quoteIds: null, senderId: null };
 const trigger = vi.fn();
 const defer = vi.fn();
 
-const makeClient = (write: (table: Table) => Promise<unknown> = async () => ({ rowsAffected: 1 }), isPublic = true) => ({
+const board = { id: "board", name: "Discussion", sectionId: "section", parentId: null, policy: {}, archived: false, slowModeSeconds: 0, requireApproval: false, section: { id: "section", policy: {}, archived: false } };
+const thread = { id: "thread", boardId: "board", isLocked: false, isApproved: true, deletedAt: null };
+const makeClient = (write: (table: Table) => Promise<unknown> = async () => ({ rowsAffected: 1 }), isPublic = true) => { const client = {
   query: {
     userData: { findFirst: async () => user },
-    forumThread: { findFirst: async () => ({ id: "thread" }) },
-    forumBoard: { findFirst: async () => ({ id: "board", name: "Discussion" }) },
+    forumThread: { findFirst: async () => thread },
+    forumBoard: { findFirst: async () => board, findMany: async () => [board] },
+    forumSection: { findMany: async () => [board.section] },
+    userBlackList: { findMany: async () => [] },
+    forumGrant: { findMany: async () => [] },
+    forumRestriction: { findMany: async () => [] },
+    forumWatch: { findMany: async () => [] },
     forumPost: { findFirst: async () => comment },
     conversationComment: { findFirst: async () => comment },
     conversation: { findFirst: async () => ({ id: "conversation", isPublic, isEnabled: true, isStaffAvailable: false, users: [{ userId: user.userId }] }) },
     parentalControl: { findMany: async () => [] },
     userNindo: { findFirst: async () => ({ userId: user.userId }) },
   },
+  transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(client),
+  select: () => ({ from: (table: Table) => ({ innerJoin: () => ({ where: () => ({ for: async () => [{ ...board, sectionPolicy: {}, sectionArchived: false }] }) }), where: () => ({ for: async () => table === forumThread ? [thread] : table === forumBoard ? [board] : [{ id: "section", policy: {}, archived: false }] }) }) }),
   insert: (table: Table) => ({ values: () => write(table) }),
   update: (table: Table) => ({ set: () => ({ where: () => write(table) }) }),
   selectDistinct: () => ({ from: () => ({ innerJoin: () => ({ where: async () => [] }) }) }),
-}) as unknown as DrizzleClient;
+}; return client as unknown as DrizzleClient; };
 
 const cases = [
   { name: "public conversation creation", table: conversationComment, relationType: "comment", run: (db: DrizzleClient, text = input.comment) => callerForDatabase(commentsRouter, user.userId, db).createConversationComment({ ...input, comment: text }) },
@@ -103,13 +112,19 @@ describe("posting moderation scheduling", () => {
     expect(defer).toHaveBeenCalledTimes(1);
   });
 
-  it.each([cases[0]!, cases[2]!, cases[4]!])("still schedules a scan for saved $name content when a counter write fails", async ({ run, table }) => {
+  it.each([cases[0]!])("still schedules a scan for saved $name content when a counter write fails", async ({ run, table }) => {
     const db = makeClient(async (target) => {
       if (target !== table) throw new Error("Counter write failed");
       return { rowsAffected: 1 };
     });
     await expect(run(db)).rejects.toThrow("Counter write failed");
     expect(defer).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([cases[2]!, cases[4]!])("does not schedule moderation when atomic $name storage fails", async ({ run, table }) => {
+    const db = makeClient(async target => { if (target !== table) throw new Error("Counter write failed"); return { rowsAffected: 1 }; });
+    await expect(run(db)).rejects.toThrow("Counter write failed");
+    expect(defer).not.toHaveBeenCalled();
   });
 
   it("keeps new private messages unscanned and private edits scanned", async () => {

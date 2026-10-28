@@ -7,7 +7,7 @@ import { unflaggedModeration } from "../../../../setup/moderation";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { TERR_BOT_ID } from "@/drizzle/constants";
-import { forumPost, moderationScan, userData, userReport } from "@/drizzle/schema";
+import { forumBoard, forumSection, forumThread, forumPost, moderationScan, userData, userReport } from "@/drizzle/schema";
 import * as moderator from "@/libs/moderator";
 import { reportsRouter } from "@/server/api/routers/reports";
 import { insertUsers } from "../../../../setup/factories";
@@ -19,9 +19,12 @@ const reportInput = { system: "forum_comment" as const, system_id: "target-post"
 describeWithDatabase("moderation report evidence and dashboard", () => {
   beforeEach(async () => {
     const db = await getTestDatabase();
-    await resetTables(moderationScan, userReport, forumPost, userData);
+    await resetTables(moderationScan, userReport, forumPost, forumThread, forumBoard, forumSection, userData);
     await insertUsers([{ userId: "reporter" }, { userId: "target" }, { userId: "staff", role: "MODERATOR" }]);
     stubProfile("fetchUser", async (_client: unknown, id: string) => db.query.userData.findFirst({ where: eq(userData.userId, id) }));
+    await db.insert(forumSection).values({ id: "section", name: "General", summary: "", policy: {} });
+    await db.insert(forumBoard).values({ id: "board", name: "Discussion", summary: "", sectionId: "section" });
+    await db.insert(forumThread).values({ id: "thread", boardId: "board", title: "Discussion", userId: "target" });
     await db.insert(forumPost).values([
       { id: "context-post", threadId: "thread", userId: "reporter", authorId: "staff", content: "Earlier conversation", createdAt: new Date(Date.now() - 60_000) },
       { id: "target-post", threadId: "thread", userId: "target", authorId: "target", content: "The actual reported message", createdAt: new Date(Date.now() - 30_000) },

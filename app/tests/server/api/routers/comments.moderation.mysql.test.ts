@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import * as next from "next/server";
 import OpenAI from "openai";
 import { FORUM_MIN_LEVEL } from "@/drizzle/constants";
-import { forumPost, forumThread, moderationScan, userData } from "@/drizzle/schema";
+import { forumBoard, forumSection, forumPost, forumThread, moderationScan, userData } from "@/drizzle/schema";
 import { classifyNsfwImage, moderateContent } from "@/libs/moderator";
 import { commentsRouter } from "@/server/api/routers/comments";
 import { insertUsers } from "../../../setup/factories";
@@ -35,8 +35,10 @@ describeWithDatabase("comment and image moderation provider recovery", () => {
     // Keep rate limiting active while isolating all HTTP from real services.
     stubRateLimitTransport({ unexpectedRequestMessage: "Unexpected HTTP request in moderation tests" });
     const db = await getTestDatabase();
-    await resetTables(moderationScan, forumPost, forumThread, userData);
+    await resetTables(moderationScan, forumPost, forumThread, forumBoard, forumSection, userData);
     await insertUsers([{ userId: "poster", level: FORUM_MIN_LEVEL }]);
+    await db.insert(forumSection).values({ id: "section", name: "General", summary: "", policy: {} });
+    await db.insert(forumBoard).values({ id: "board", name: "Discussion", summary: "", sectionId: "section" });
     await db.insert(forumThread).values({
       id: "thread", title: "Game discussion", userId: "poster", boardId: "board",
     });
@@ -55,7 +57,7 @@ describeWithDatabase("comment and image moderation provider recovery", () => {
       .createForumComment({ object_id: "thread", comment: "A normal game conversation", quoteIds: null, senderId: null });
     expect(result.success).toBe(true);
     expect(provider).not.toHaveBeenCalled();
-    expect(deferred).toHaveLength(1);
+    expect(deferred).toHaveLength(2);
     await deferred[0]!();
     expect(provider).toHaveBeenCalledTimes(2);
     const posts = await db.query.forumPost.findMany();

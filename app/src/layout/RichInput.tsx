@@ -126,6 +126,7 @@ export const RichInput = (props: RichInputProps) => {
     value,
     disabled: blocked,
     autoFocus: props.autoFocus ?? true,
+    focusEndOnExternalChange: props.focusEndOnExternalChange,
   }));
 
   useEffect(() => {
@@ -197,6 +198,8 @@ export const RichInput = (props: RichInputProps) => {
           "silent",
         );
         editor.history.clear();
+        if (options.focusEndOnExternalChange && !options.disabled)
+          editor.setSelection(editor.getLength() - 1, 0, "silent");
         lastValueRef.current = options.value;
         editor.on("text-change", onEditorChange);
         // editor-change also reports silent selection updates used by mentions.
@@ -235,7 +238,9 @@ export const RichInput = (props: RichInputProps) => {
     if (!editor) return;
     editor.setContents(editor.clipboard.convert(richTextInput(value)), "silent");
     editor.history.clear();
-  }, [value]);
+    if (props.focusEndOnExternalChange && !blocked)
+      editor.setSelection(editor.getLength() - 1, 0, "silent");
+  }, [value, props.focusEndOnExternalChange, blocked]);
 
   useEffect(() => {
     quillRef.current?.enable(!blocked);
@@ -847,6 +852,8 @@ interface RichInputProps {
   /** Opt into moderated image paste, drop and file uploads. */
   allowClipboardPaste?: boolean;
   autoFocus?: boolean;
+  /** Place replies after externally inserted quotes without moving the caret during typing. */
+  focusEndOnExternalChange?: boolean;
   /** Retain literal text for consumers that do not accept HTML. */
   plainText?: boolean;
   /** Let containing forms block submission until image insertion finishes. */

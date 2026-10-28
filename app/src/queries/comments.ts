@@ -4,8 +4,6 @@
 
 import type { SupportTicketStatus, UserRole } from "@/drizzle/constants";
 
-import { fetchThread } from "@/queries/forum";
-
 /**
  * Fetches comments from the database.
  * @param client - The DrizzleClient instance used for database operations.
@@ -83,67 +81,13 @@ export const listNotificationUserCandidates = (
     },
   });
 
-/**
- * One page of a forum thread: the thread row, its posts and the totals the pager needs.
- *
- * Lives here rather than inline in getForumComments because the thread route also calls
- * it during its server render, to seed the client query. Sharing the function is what
- * keeps the seeded payload the same shape as the one the procedure returns -- a
- * hand-rolled copy in the page would drift the moment a column is added here.
- */
-export const fetchForumThreadPage = async (
-  client: DrizzleClient,
-  input: { thread_id: string; limit: number; cursor?: number | null },
-) => {
-  const currentCursor = input.cursor ? input.cursor : 0;
-  const skip = currentCursor * input.limit;
-  const [thread, comments, counts] = await Promise.all([
-    fetchThread(client, input.thread_id),
-    client.query.forumPost.findMany({
-      offset: skip,
-      limit: input.limit,
-      where: eq(forumPost.threadId, input.thread_id),
-      with: {
-        user: {
-          columns: {
-            userId: true,
-            username: true,
-            avatar: true,
-            rank: true,
-            isOutlaw: true,
-            level: true,
-            role: true,
-            federalStatus: true,
-          },
-        },
-      },
-      orderBy: [asc(forumPost.createdAt)],
-    }),
-    client
-      .select({ count: sql`count(*)`.mapWith(Number) })
-      .from(forumPost)
-      .where(eq(forumPost.threadId, input.thread_id)),
-  ]);
-  const nextCursor = comments.length < input.limit ? null : currentCursor + 1;
-  const totalComments = counts?.[0]?.count || 0;
-  return {
-    thread: thread,
-    data: comments,
-    nextCursor: nextCursor,
-    totalComments: totalComments,
-    totalPages: Math.ceil(totalComments / input.limit),
-  };
-};
-
 import type { SQL } from "drizzle-orm";
-import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
 import {
   conversation,
   conversationComment,
-  forumPost,
-  forumThread,
   supportTicket,
   supportTicketActivity,
   user2conversation,
@@ -208,49 +152,6 @@ export const insertUserReportCommentForCreateReportComment = (
     reportId: input.object_id,
     content: sanitize(input.comment),
   });
-
-/** Build the `forumThread` update for `umThreadForCreateForumComment`, setting `nPosts`, using predicates on `id`. */
-export const updateForumThreadForCreateForumComment = (
-  client: Pick<DrizzleClient, "update">,
-  thread: { id: string },
-) =>
-  client
-    .update(forumThread)
-    .set({ nPosts: sql`nPosts + 1` })
-    .where(eq(forumThread.id, thread.id));
-
-/** Build the `forumPost` lookup for `umPostForEditForumComment`, using predicates on `id` and `userId`. */
-export const findForumPostForEditForumComment = (
-  client: Pick<DrizzleClient, "query">,
-  input: { object_id: string },
-  ctx: { userId: string },
-) =>
-  client.query.forumPost.findFirst({
-    where: and(eq(forumPost.id, input.object_id), eq(forumPost.userId, ctx.userId)),
-  });
-
-/** Build the `forumPost` update for `umPostForEditForumComment`, setting `content`, using predicates on `id`. */
-export const updateForumPostForEditForumComment = (
-  client: Pick<DrizzleClient, "update">,
-  sanitized: string,
-  postId: string,
-) =>
-  client.update(forumPost).set({ content: sanitized }).where(eq(forumPost.id, postId));
-
-/** Build a full forum post lookup by ID; access checks stay in callers. */
-export const findForumPostById = (
-  client: Pick<DrizzleClient, "query">,
-  postId: string,
-) =>
-  client.query.forumPost.findFirst({
-    where: eq(forumPost.id, postId),
-  });
-
-/** Build the `forumPost` deletion for `umPostForDeleteForumComment`, using predicates on `id`. */
-export const deleteForumPostForDeleteForumComment = (
-  client: Pick<DrizzleClient, "delete">,
-  input: { id: string },
-) => client.delete(forumPost).where(eq(forumPost.id, input.id));
 
 /** Build the `userData` lookup for `getUserConversations`, using predicates on `userId`. */
 export const findUserDataForGetUserConversations = (

@@ -1,7 +1,7 @@
 /**
  * Database access for moderator; authorization and transaction scopes stay in callers.
  */
-import { and, desc, eq, lt, ne } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, ne } from "drizzle-orm";
 import type { Moderation } from "openai/resources/moderations";
 import type { AutomoderationCategory } from "@/drizzle/constants";
 import {
@@ -150,6 +150,8 @@ export const selectForumPostForGetAdditionalContext = (
     .where(
       and(
         eq(forumPost.threadId, conversationId),
+        eq(forumPost.isApproved, true),
+        isNull(forumPost.deletedAt),
         excludeId ? ne(forumPost.id, excludeId) : undefined,
         lt(forumPost.createdAt, timestamp || new Date()),
       ),

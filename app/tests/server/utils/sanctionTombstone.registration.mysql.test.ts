@@ -8,6 +8,9 @@ import {
   bloodline,
   bloodlineRolls,
   forumPost,
+  forumBoard,
+  forumSection,
+  forumThread,
   questHistory,
   sanctionTombstone,
   storeUserIdAlias,
@@ -194,6 +197,9 @@ describeWithDatabase("registration claims current sanction sources", () => {
       bloodline,
       bloodlineRolls,
       forumPost,
+      forumThread,
+      forumBoard,
+      forumSection,
       questHistory,
       sanctionTombstone,
       storeUserIdAlias,
@@ -413,7 +419,7 @@ describeWithDatabase("registration claims current sanction sources", () => {
       });
       const clearing = callerForDatabase(reportsRouter, "staff", delayed).clear(input);
       const flag = decision === "ban" ? "isBanned" : "isSilenced";
-      const message = decision === "ban" ? "You are banned" : "You are silenced";
+      const message = "You cannot remove this post";
       const protectedAction = () =>
         callerForDatabase(commentsRouter, "Concurrent", database).deleteForumComment({
           id: "replacement-post",
@@ -428,6 +434,9 @@ describeWithDatabase("registration claims current sanction sources", () => {
           ).confirmDeletion({ userId: "Concurrent" }),
         ).toMatchObject({ success: true });
         expect(await register("Concurrent")).toMatchObject({ success: true });
+        await database.insert(forumSection).values({ id: "section", name: "General", summary: "", policy: {} });
+        await database.insert(forumBoard).values({ id: "board", name: "Discussion", summary: "", sectionId: "section" });
+        await database.insert(forumThread).values({ id: "thread", boardId: "board", title: "Discussion", userId: "Concurrent" });
         await database
           .insert(forumPost)
           .values({

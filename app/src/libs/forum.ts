@@ -1,12 +1,111 @@
-import * as Sentry from "@sentry/nextjs";
+import { FORUM_THREAD_POSTS_PER_PAGE } from "@/drizzle/constants";
+import { canAdminForum, forumBoardPermissions } from "@/libs/forumAccess";
 import {
+  countForumPosts,
+  fetchThread,
+  findForumActor,
   findForumBoardForFetchBoard,
+  findForumPost,
   findUserDataForFetchForumPageData,
-  listForumThreadForGetInfiniteThreads,
+  forumPostPosition,
+  listForumBoards,
+  listForumGrants,
+  listForumPosts,
+  listForumReads,
+  listForumRestrictions,
+  listForumSections,
+  listForumThreads,
+  listForumWatches,
 } from "@/queries/forum";
 import type { DrizzleClient } from "@/server/db";
 import { canCreateNews } from "@/utils/permissions";
 
+/** One access snapshot shared by all forum reads and mutations, including server-rendered pages. */
+export const getForumContext = async (
+  client: DrizzleClient,
+  userId?: string | null,
+) => {
+  const [boards, sections, actor, grants, restrictions] = await Promise.all([
+    listForumBoards(client),
+    listForumSections(client),
+    userId ? findForumActor(client, userId) : null,
+    userId ? listForumGrants(client, userId) : [],
+    userId ? listForumRestrictions(client, userId) : [],
+  ]);
+  const canManage =
+    !!actor &&
+    !actor.isBanned &&
+    !actor.isSilenced &&
+    (canAdminForum(actor.role) ||
+      grants.some(
+        (g) =>
+          g.scope === "GLOBAL" &&
+          g.permissions.includes("manage") &&
+          !grants.some((d) => d.scope === "GLOBAL" && d.denies.includes("manage")),
+      ));
+  const accessibleBoards = boards.map((board) => {
+    const permissions = forumBoardPermissions(
+      actor ?? null,
+      board,
+      boards,
+      grants,
+      canManage,
+    );
+    const publicRead = forumBoardPermissions(null, board, boards, []).read;
+    const restriction = restrictions.find(
+      (r) => (!r.boardId || r.boardId === board.id) && r.expiresAt > new Date(),
+    );
+    if (restriction) {
+      permissions.create = false;
+      permissions.reply = false;
+      permissions.edit = false;
+      permissions.vote = false;
+    }
+    return {
+      ...board,
+      permissions,
+      publicRead,
+      restriction: restriction
+        ? { reason: restriction.reason, expiresAt: restriction.expiresAt }
+        : null,
+    };
+  });
+  const sorted = accessibleBoards.sort(
+    (a, b) =>
+      (a.section?.position ?? 0) - (b.section?.position ?? 0) ||
+      a.sectionId.localeCompare(b.sectionId) ||
+      a.position - b.position ||
+      a.name.localeCompare(b.name),
+  );
+  const ordered: typeof sorted = [];
+  const visited = new Set<string>();
+  const append = (board: (typeof sorted)[number]) => {
+    if (visited.has(board.id)) return;
+    visited.add(board.id);
+    ordered.push(board);
+    for (const child of sorted.filter(
+      (b) => b.parentId === board.id && b.sectionId === board.sectionId,
+    ))
+      append(child);
+  };
+  for (const board of sorted.filter(
+    (b) =>
+      !b.parentId ||
+      !sorted.some(
+        (parent) => parent.id === b.parentId && parent.sectionId === b.sectionId,
+      ),
+  ))
+    append(board);
+  for (const board of sorted) append(board);
+  return {
+    actor: actor ?? null,
+    boards: ordered,
+    sections,
+    grants,
+    canManage,
+  };
+};
+export type ForumContext = Awaited<ReturnType<typeof getForumContext>>;
 export const getInfiniteThreads = async (props: {
   client: DrizzleClient;
   limit: number;
@@ -14,67 +113,179 @@ export const getInfiniteThreads = async (props: {
   cursor?: number | null;
   boardId?: string;
   boardName?: string;
+  context?: ForumContext;
+  query?: string;
+  author?: string;
+  since?: Date;
+  until?: Date;
+  tag?: string;
+  view?: string;
 }) => {
-  const { client, boardId, boardName, cursor, limit, highlightPinned } = props;
-  if (!boardId && !boardName) return { board: null, threads: [], nextCursor: null };
-  const currentCursor = cursor ? cursor : 0;
-  const skip = currentCursor * limit;
-  const [board, threads] = await Promise.all([
-    fetchBoard(client, boardId, boardName),
-    listForumThreadForGetInfiniteThreads(
-      client,
-      skip,
-      limit,
-      boardId,
-      boardName,
-      highlightPinned,
-    ),
+  const context = props.context ?? (await getForumContext(props.client));
+  const board = context.boards.find((b) =>
+    props.boardId ? b.id === props.boardId : b.name === props.boardName,
+  );
+  if ((props.boardId || props.boardName) && !board?.permissions.read)
+    return { board: null, threads: [], nextCursor: null };
+  const allowed = context.boards.filter(
+    (b) => b.permissions.read && (!board || b.id === board.id),
+  );
+  if (
+    allowed.length === 0 ||
+    (["mine", "unread", "watched"].includes(props.view ?? "") && !context.actor)
+  )
+    return { board: board ?? null, threads: [], nextCursor: null };
+  const [threads, reads] = await Promise.all([
+    listForumThreads(props.client, {
+      boards: allowed.map((b) => b.id),
+      offset: (props.cursor ?? 0) * props.limit,
+      limit: props.limit + 1,
+      query: props.query,
+      author: props.author,
+      since: props.since,
+      until: props.until,
+      tag: props.tag,
+      view: props.view,
+      userId: context.actor?.userId,
+      pinned: props.highlightPinned,
+    }),
+    context.actor ? listForumReads(props.client, context.actor.userId) : [],
   ]);
-  if (!board) return { board: null, threads: [], nextCursor: null };
-  const nextCursor = threads.length < limit ? null : currentCursor + 1;
-  return { board, threads, nextCursor };
+  return {
+    board: board ?? null,
+    threads: threads.slice(0, props.limit).map((thread) => {
+      const read = reads.find((r) => r.threadId === thread.id);
+      return {
+        ...thread,
+        boardName: allowed.find((b) => b.id === thread.boardId)?.name ?? "Forum",
+        unread:
+          !!context.actor &&
+          (!read ||
+            read.readAt < thread.updatedAt ||
+            (read.readAt.getTime() === thread.updatedAt.getTime() &&
+              !!thread.lastPostId &&
+              read.postId < thread.lastPostId)),
+        resumePostId: read?.postId ?? null,
+      };
+    }),
+    nextCursor: threads.length > props.limit ? (props.cursor ?? 0) + 1 : null,
+  };
 };
 export type InfiniteThreads = ReturnType<typeof getInfiniteThreads>;
-
-export const fetchBoard = async (
-  client: DrizzleClient,
-  boardId?: string,
-  boardName?: string,
-) => {
-  if (!boardId && !boardName) return null;
-  const entry = await findForumBoardForFetchBoard(client, boardId, boardName);
-  return entry ?? null;
-};
-
+export const fetchBoard = findForumBoardForFetchBoard;
 export const fetchForumPageData = async (
   client: DrizzleClient,
   boardName: string,
   userId: string | null,
 ) => {
-  const initialThreadsPromise = getInfiniteThreads({
-    client,
-    boardName,
-    limit: 10,
-  });
-
-  const userDataPromise = userId
-    ? findUserDataForFetchForumPageData(client, userId).catch((error) => {
-        if (error.message?.includes("not found")) {
-          return null;
-        }
-        console.error("Failed to fetch user:", error);
-        Sentry.captureException(error, {
-          tags: { source: "forum-fetch-user" },
-        });
-        return null;
-      })
-    : Promise.resolve(null);
-
   const [initialThreads, userRow] = await Promise.all([
-    initialThreadsPromise,
-    userDataPromise,
+    getInfiniteThreads({ client, boardName, limit: 10 }),
+    userId ? findUserDataForFetchForumPageData(client, userId) : null,
   ]);
-  const pageUser = userRow ?? null;
-  const canPost = pageUser && canCreateNews(pageUser.role);
-  return { initialThreads, userData: pageUser, canPost };
+  return {
+    initialThreads,
+    userData: userRow ?? null,
+    canPost: userRow ? canCreateNews(userRow.role) : null,
+  };
+};
+export const fetchForumThreadPage = async (
+  client: DrizzleClient,
+  input: { thread_id: string; limit: number; cursor?: number | null },
+  context?: ForumContext,
+) => {
+  const [access, thread] = await Promise.all([
+    context ?? getForumContext(client),
+    fetchThread(client, input.thread_id),
+  ]);
+  const board = access.boards.find((b) => b.id === thread?.boardId);
+  const visible =
+    thread && !thread.deletedAt && thread.isApproved && board?.permissions.read;
+  if (!visible)
+    return {
+      thread: null,
+      data: [],
+      nextCursor: null,
+      totalComments: 0,
+      totalPages: 0,
+      board: null,
+    };
+  const [comments, counts] = await Promise.all([
+    listForumPosts(client, thread.id, (input.cursor ?? 0) * input.limit, input.limit),
+    countForumPosts(client, thread.id),
+  ]);
+  const totalComments = counts[0]?.count ?? 0;
+  return {
+    thread,
+    data: comments,
+    nextCursor:
+      ((input.cursor ?? 0) + 1) * input.limit < totalComments
+        ? (input.cursor ?? 0) + 1
+        : null,
+    totalComments,
+    totalPages: Math.ceil(totalComments / input.limit),
+    board,
+  };
+};
+/** A stable post ID resolves its current topic and page after moves, deletions and splits. */
+export const resolveForumPost = async (
+  client: DrizzleClient,
+  postId: string,
+  context: ForumContext,
+) => {
+  const post = await findForumPost(client, postId);
+  if (!post || post.deletedAt || !post.isApproved) return null;
+  const thread = await fetchThread(client, post.threadId);
+  if (
+    !thread ||
+    thread.deletedAt ||
+    !thread.isApproved ||
+    !context.boards.find((b) => b.id === thread.boardId)?.permissions.read
+  )
+    return null;
+  const position = await forumPostPosition(client, post);
+  return {
+    boardId: thread.boardId,
+    threadId: thread.id,
+    postId,
+    page: Math.floor(
+      Math.max(0, (position[0]?.count ?? 1) - 1) / FORUM_THREAD_POSTS_PER_PAGE,
+    ),
+  };
+};
+export const forumPersonalState = async (client: DrizzleClient, userId: string) => {
+  const [reads, watches] = await Promise.all([
+    listForumReads(client, userId),
+    listForumWatches(client, userId),
+  ]);
+  return { reads, watches };
+};
+
+/** Parent policies are read after the caller locks their section; stale permissions cannot authorize a write. */
+export const forumWriteSnapshotMatches = async (
+  client: DrizzleClient,
+  context: ForumContext,
+  boardId: string,
+) => {
+  const boards = await listForumBoards(client);
+  const current = boards.find((b) => b.id === boardId);
+  const previous = context.boards.find((b) => b.id === boardId);
+  return (
+    !!current &&
+    !!previous &&
+    current.sectionId === previous.sectionId &&
+    current.parentId === previous.parentId &&
+    current.requireApproval === previous.requireApproval &&
+    current.slowModeSeconds === previous.slowModeSeconds &&
+    forumBoardPermissions(null, current, boards, [], false).read ===
+      previous.publicRead &&
+    JSON.stringify(
+      forumBoardPermissions(
+        context.actor,
+        current,
+        boards,
+        context.grants,
+        context.canManage,
+      ),
+    ) === JSON.stringify(previous.permissions)
+  );
 };

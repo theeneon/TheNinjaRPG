@@ -29,6 +29,7 @@ export const PUBLIC_PAGE_ROUTES = [
   "/event",
   "/farm",
   "/forum",
+  "/forum/manage",
   "/forum/[boardid]",
   "/forum/[boardid]/[threadid]",
   "/globalanbuhq",

@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
+import { getForumContext } from "@/libs/forum";
 import { buildMetadata, noindexMetadata } from "@/libs/seo";
-import { findForumBoardMetadata } from "@/queries/forum";
 import { drizzleDB } from "@/server/db";
 
 export async function generateMetadata(props: {
   params: Promise<{ boardid: string }>;
 }): Promise<Metadata> {
   const params = await props.params;
-  const board = await findForumBoardMetadata(drizzleDB, params.boardid);
+  const board = (await getForumContext(drizzleDB)).boards.find(
+    (b) => b.id === params.boardid && b.permissions.read,
+  );
   if (!board) return noindexMetadata("Board Not Found");
   return buildMetadata({
     title: `${board.name} Forum`,

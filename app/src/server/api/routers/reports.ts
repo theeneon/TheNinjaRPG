@@ -2,13 +2,15 @@ import { notExists } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { BanState } from "@/drizzle/constants";
+import { getForumContext, resolveForumPost } from "@/libs/forum";
 import { buildModerationEvidence } from "@/libs/moderation/evidence";
 import { getRelatedReports } from "@/libs/moderation/reportSearch";
 import { buildModBotStats } from "@/libs/moderation/stats";
 import { generateModerationDecision, getAdditionalContext } from "@/libs/moderator";
 import { getServerPusher } from "@/libs/pusher";
-import { findConversationCommentById, findForumPostById } from "@/queries/comments";
+import { findConversationCommentById } from "@/queries/comments";
 import { fetchImage } from "@/queries/conceptart";
+import { findForumPost } from "@/queries/forum";
 import {
   markConversationCommentReported,
   markForumPostReported,
@@ -256,12 +258,26 @@ export const reportsRouter = createTRPCRouter({
       const getInfraction = async (system: typeof input.system) => {
         switch (system) {
           case "forum_comment": {
-            const forumPostData = await findForumPostById(ctx.drizzle, input.system_id);
+            const forumAccess = await getForumContext(ctx.drizzle, ctx.userId);
+            const readable = await resolveForumPost(
+              ctx.drizzle,
+              input.system_id,
+              forumAccess,
+            );
+            if (!readable) return { infraction: undefined, context: [] };
+            const forumPostData = await findForumPost(ctx.drizzle, input.system_id);
+            if (
+              !forumPostData ||
+              forumPostData.threadId !== readable.threadId ||
+              forumPostData.deletedAt ||
+              !forumPostData.isApproved
+            )
+              return { infraction: undefined, context: [] };
             const threadContext = await getAdditionalContext(
               ctx.drizzle,
               system,
               forumPostData?.createdAt,
-              forumPostData?.threadId,
+              readable.threadId,
             );
             return { infraction: forumPostData, context: threadContext };
           }

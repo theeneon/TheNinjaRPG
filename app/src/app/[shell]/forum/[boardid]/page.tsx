@@ -1,6 +1,7 @@
+import { auth } from "@clerk/nextjs/server";
 import { notFound } from "next/navigation";
 import { FORUM_BOARD_THREADS_PER_PAGE } from "@/drizzle/constants";
-import { getInfiniteThreads } from "@/libs/forum";
+import { getForumContext, getInfiniteThreads } from "@/libs/forum";
 import { drizzleDB } from "@/server/db";
 import Board from "./board";
 
@@ -14,6 +15,7 @@ export default async function BoardPage(props: {
   const params = await props.params;
   const initialThreads = await getInfiniteThreads({
     client: drizzleDB,
+    context: await getForumContext(drizzleDB, (await auth()).userId),
     boardId: params.boardid,
     limit: FORUM_BOARD_THREADS_PER_PAGE,
     cursor: 0,

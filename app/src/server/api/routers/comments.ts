@@ -3,11 +3,7 @@ import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import {
-  FORUM_MIN_LEVEL,
-  forumLevelMessage,
-  IMG_AVATAR_DEFAULT,
-} from "@/drizzle/constants";
+import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
 import {
   type Conversation,
   conversationComment,
@@ -16,6 +12,8 @@ import {
   userData,
 } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
+import { fetchForumThreadPage, getForumContext } from "@/libs/forum";
+import { createForumReply, editForumPost, removeForumPost } from "@/libs/forumActions";
 import { deferModeration } from "@/libs/moderation/defer";
 import {
   conversationReadRestriction,
@@ -29,17 +27,13 @@ import {
   deleteConversationCommentForExitConversation,
   deleteConversationForExitConversation,
   deleteConversationMembership,
-  deleteForumPostForDeleteForumComment,
   fetchComments,
-  fetchForumThreadPage,
   fetchPrivateConversationSenders,
   findConversationCommentById,
   findConversationCommentForEditConversationComment,
   findConversationForGetConvo,
   findConversationForGetConvo2,
   findConversationForGetConvo3,
-  findForumPostById,
-  findForumPostForEditForumComment,
   findSupportTicketForCreateConversationComment,
   findSupportTicketForExitConversation,
   findSupportTicketForUpdateSupportTicketStatusAfterComment,
@@ -57,15 +51,12 @@ import {
   updateConversationCommentForEditConversationComment,
   updateConversationCommentForReactConversationComment,
   updateConversationForCreateConversationComment,
-  updateForumPostForEditForumComment,
-  updateForumThreadForCreateForumComment,
   updateSupportTicketForUpdateSupportTicketStatusAfterComment,
   updateUser2conversationForGetConversationComments,
   updateUserDataForCreateConversationComment,
   updateUserDataForCreateConversationComment2,
   updateUserDataForGetUserConversations,
 } from "@/queries/comments";
-import { fetchThread, insertForumPostForCreateThread } from "@/queries/forum";
 import { fetchCommunicationPolicies } from "@/queries/parentalControls";
 import { fetchUser } from "@/queries/profile";
 import {
@@ -184,113 +175,30 @@ export const commentsRouter = createTRPCRouter({
     .input(
       z.object({
         thread_id: z.string(),
-        cursor: z.number().nullish(),
-        limit: z.number().min(1).max(100),
+        cursor: z.number().int().min(0).nullish(),
+        limit: z.number().int().min(1).max(100),
       }),
     )
     .query(async ({ ctx, input }) => {
-      return await fetchForumThreadPage(ctx.drizzle, input);
+      return await fetchForumThreadPage(
+        ctx.drizzle,
+        input,
+        await getForumContext(ctx.drizzle, ctx.userId),
+      );
     }),
   createForumComment: protectedProcedure
-    .meta({ mcp: { description: "Post a comment on a forum thread" } })
     .use(ratelimitMiddleware)
     .input(mutateCommentSchema)
     .output(baseServerResponse)
-    .mutation(async ({ ctx, input }) => {
-      // Query
-      const [user, thread, sender, moderated] = await Promise.all([
-        fetchUser(ctx.drizzle, ctx.userId),
-        fetchThread(ctx.drizzle, input.object_id),
-        input.senderId ? fetchUser(ctx.drizzle, input.senderId) : null,
-        moderateUserText(input.comment),
-      ]);
-      // Resolve effective poster (allow staff to post as AI)
-      const effectiveUserId = resolveSenderId(user, sender);
-      // Guard
-      if (user.isBanned) return errorResponse("You are banned");
-      if (user.isSilenced) return errorResponse("You are silenced");
-      if (user.level < FORUM_MIN_LEVEL) {
-        return errorResponse(forumLevelMessage);
-      }
-      if (!thread) {
-        return errorResponse("Thread not found");
-      }
-      if (!moderated.success) return moderated;
-      // Mutate
-      const sanitized = moderated.sanitized;
-      const createdId = nanoid();
-      await Promise.all([
-        insertForumPostForCreateThread(
-          ctx.drizzle,
-          createdId,
-          sanitized,
-          thread.id,
-          effectiveUserId,
-          ctx,
-        ).then(() =>
-          deferModeration(ctx.drizzle, {
-            content: sanitized,
-            userId: ctx.userId,
-            relationType: "forumPost",
-            relationId: createdId,
-            contextId: thread.id,
-          }),
-        ),
-        updateForumThreadForCreateForumComment(ctx.drizzle, thread),
-      ]);
-      return { success: true, message: "Comment posted" };
-    }),
+    .mutation(({ ctx, input }) => createForumReply(ctx.drizzle, ctx.userId, input)),
   editForumComment: protectedProcedure
-    .meta({ mcp: { description: "Edit your forum comment" } })
     .input(mutateCommentSchema)
     .output(baseServerResponse)
-    .mutation(async ({ ctx, input }) => {
-      // Query
-      const [user, comment, moderated] = await Promise.all([
-        fetchUser(ctx.drizzle, ctx.userId),
-        findForumPostForEditForumComment(ctx.drizzle, input, ctx),
-        moderateUserText(input.comment),
-      ]);
-      // Guard
-      if (user.isBanned) return errorResponse("You are banned");
-      if (user.isSilenced) return errorResponse("You are silenced");
-      if (!comment) return errorResponse("Comment not found");
-      if (!moderated.success) return moderated;
-      // Mutate
-      const postId = input.object_id;
-      const sanitized = moderated.sanitized;
-      await updateForumPostForEditForumComment(ctx.drizzle, sanitized, postId);
-      deferModeration(ctx.drizzle, {
-        content: sanitized,
-        userId: ctx.userId,
-        relationType: "forumPost",
-        relationId: postId,
-        contextId: comment.threadId,
-        createdAt: comment.createdAt,
-      });
-      return { success: true, message: "Comment edited" };
-    }),
+    .mutation(({ ctx, input }) => editForumPost(ctx.drizzle, ctx.userId, input)),
   deleteForumComment: protectedProcedure
-    .meta({ mcp: { description: "Delete your forum comment" } })
     .input(deleteCommentSchema)
     .output(baseServerResponse)
-    .mutation(async ({ ctx, input }) => {
-      // Query
-      const [user, comment] = await Promise.all([
-        fetchUser(ctx.drizzle, ctx.userId),
-        findForumPostById(ctx.drizzle, input.id),
-      ]);
-      // Guard
-      if (!comment) return errorResponse("Comment not found");
-      if (user.isBanned) return errorResponse("You are banned");
-      if (user.isSilenced) return errorResponse("You are silenced");
-      if (!canDeleteComment(user, comment.userId)) {
-        return errorResponse("You can only delete own comments");
-      }
-      // Mutate
-      await deleteForumPostForDeleteForumComment(ctx.drizzle, input);
-      return { success: true, message: "Comment deleted" };
-    }),
+    .mutation(({ ctx, input }) => removeForumPost(ctx.drizzle, ctx.userId, input.id)),
   /**
    * Conversation POSTS
    * Creating, editing, deleting and getting comments on forum threads
