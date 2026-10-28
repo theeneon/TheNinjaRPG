@@ -553,6 +553,14 @@ export const forumRouter = createTRPCRouter({
           const currentPost = await q.findForumPost(tx, post.id);
           if (!currentPost || currentPost.threadId !== thread.id)
             return errorResponse("This post moved. Refresh before moderating it.");
+          if (
+            input.action === "APPROVE" &&
+            !board.permissions.moderate &&
+            (current.deletedAt || currentPost.deletedAt)
+          )
+            return errorResponse(
+              "This post is no longer available for approval. Refresh the review queue.",
+            );
           if (input.action === "APPROVE" && !current.isApproved)
             return errorResponse("Approve the topic to publish its opening post");
           if (input.action === "APPROVE" && currentPost.isApproved)
@@ -1546,6 +1554,14 @@ async function moderateForumThreads(
         const [current] = await q.lockForumThread(tx, thread.id);
         if (!current || current.boardId !== thread.boardId)
           return errorResponse("Topic moved. Refresh before moderating it.");
+        if (
+          input.action === "APPROVE" &&
+          current.deletedAt &&
+          !context.boards.find((b) => b.id === current.boardId)?.permissions.moderate
+        )
+          return errorResponse(
+            "A selected topic is no longer available for approval. Refresh the review queue.",
+          );
         currentRows.push(current);
       }
       for (const thread of selected) {

@@ -399,6 +399,63 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const pending = (await db.query.forumPost.findMany()).find(p => !p.isApproved)!; expect(await admin.alerts()).toHaveLength(1);
     expect((await approver.moderatePost({ postId: pending.id, action: "APPROVE", reason: "Reply reviewed" })).success).toBe(true); expect(await admin.alerts()).toHaveLength(2);
   });
+  it.each(["post", "topic", "parent"])("rejects approval-only access to a removed %s before changing content or evidence", async (target) => {
+    const db = await getTestDatabase(); const id = await create();
+    const post = (await db.query.forumPost.findMany())[0]!;
+    await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
+    await db.update(forumPost).set({ isApproved: false }).where(eq(forumPost.id, post.id));
+    if (target === "topic") await db.update(forumThread).set({ isApproved: false }).where(eq(forumThread.id, id));
+    const admin = await client(adminId); const approver = await client(moderatorId);
+    const remove = () => target === "post"
+      ? admin.moderatePost({ postId: post.id, action: "REMOVE", reason: "Retain declined content for moderators" })
+      : admin.moderateThreads({ ids: [id], action: "REMOVE", reason: "Retain declined topic for moderators" });
+    const approve = (api: typeof approver) => target === "topic"
+      ? api.moderateThreads({ ids: [id], action: "APPROVE", reason: "Review the selected topic" })
+      : api.moderatePost({ postId: post.id, action: "APPROVE", reason: "Review the selected post" });
+    for (const stale of [false, true]) {
+      await remove();
+      const snapshot = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumBoard.findMany(), db.query.forumAudit.findMany(), db.query.forumAlert.findMany(), db.query.forumRead.findMany()]);
+      const before = await snapshot();
+      // Removal after preload must be checked using the locked resource, too.
+      if (stale) {
+        await db.update(forumPost).set({ deletedAt: null }).where(eq(forumPost.id, post.id));
+        await db.update(forumThread).set({ deletedAt: null }).where(eq(forumThread.id, id));
+      }
+      const database = stale ? new Proxy(db, { get(database, key, receiver) {
+        if (key === "transaction") return async (work: Parameters<DrizzleClient["transaction"]>[0]) => {
+          const removedPost = before[0].find(p => p.id === post.id)!; const removedThread = before[1].find(t => t.id === id)!;
+          await db.update(forumPost).set({ deletedAt: removedPost.deletedAt }).where(eq(forumPost.id, post.id));
+          await db.update(forumThread).set({ deletedAt: removedThread.deletedAt }).where(eq(forumThread.id, id));
+          return database.transaction(work);
+        };
+        return Reflect.get(database, key, receiver);
+      } }) : db;
+      const result = await approve(await client(moderatorId, database));
+      expect(result).toMatchObject({ success: false, message: expect.stringContaining("Refresh") });
+      expect(await snapshot()).toEqual(before);
+      const workspace = await approver.administration({ query: "" });
+      expect(workspace?.posts).toHaveLength(0); expect(workspace?.threads).toHaveLength(0); expect(workspace?.logs).toHaveLength(0);
+      expect(await approver.revisions({ postId: post.id })).toEqual([]);
+    }
+    expect((await approve(admin)).success).toBe(true);
+    expect((await db.query.forumPost.findFirst())?.isApproved).toBe(true);
+    expect((await db.query.forumAudit.findMany()).some(a => a.action === (target === "topic" ? "topic.approve" : "post.approve"))).toBe(true);
+  });
+  it.each([false, true])("rejects an entire approval batch containing a removed topic, removed first %s", async (removedFirst) => {
+    const db = await getTestDatabase(); const live = await create(); const removed = await create();
+    await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
+    await db.update(forumThread).set({ isApproved: false }); await db.update(forumPost).set({ isApproved: false });
+    const admin = await client(adminId); const approver = await client(moderatorId);
+    await admin.moderateThreads({ ids: [removed], action: "REMOVE", reason: "Decline the second pending topic" });
+    const snapshot = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumBoard.findMany(), db.query.forumAudit.findMany(), db.query.forumAlert.findMany()]);
+    const before = await snapshot();
+    const result = await approver.moderateThreads({ ids: removedFirst ? [removed, live] : [live, removed], action: "APPROVE", reason: "Review selected pending topics" });
+    expect(result).toMatchObject({ success: false, message: expect.stringContaining("Refresh") });
+    expect(await snapshot()).toEqual(before);
+    expect((await approver.moderateThreads({ ids: [live], action: "APPROVE", reason: "Publish the available topic" })).success).toBe(true);
+    expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, live) }))?.isApproved).toBe(true);
+    expect((await admin.moderateThreads({ ids: [removed], action: "APPROVE", reason: "Review retained moderator evidence" })).success).toBe(true);
+  });
   it.each([false, true])("rewinds only readers past a newly approved reply, including timestamp ties (%s)", async (sameTime) => {
     const db = await getTestDatabase(); const id = await create(); const other = await create("other");
     const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
