@@ -124,15 +124,9 @@ describe("daily-quest cron", () => {
 
   beforeEach(() => {
     vi.spyOn(nextHeaders, "cookies").mockResolvedValue(undefined as never);
-    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(
-      mocks.lock as never,
-    );
-    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(
-      mocks.handleError as never,
-    );
-    vi.spyOn(quests, "upsertQuestEntries").mockImplementation(
-      mocks.upsertQuestEntries as never,
-    );
+    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(mocks.lock);
+    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(mocks.handleError);
+    vi.spyOn(quests, "upsertQuestEntries").mockImplementation(mocks.upsertQuestEntries);
     stubCronAuth(() => null);
     stubDatabase({
       query: {

@@ -54,17 +54,13 @@ describe("PvP reset crons", () => {
   beforeEach(() => {
     vi.spyOn(nextHeaders, "cookies").mockResolvedValue(undefined as never);
     vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(
-      mocks.dailyLock as never,
+      mocks.dailyLock,
     );
     vi.spyOn(gameSettings, "lockWithWeeklyTimer").mockImplementation(
-      mocks.weeklyLock as never,
+      mocks.weeklyLock,
     );
-    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(
-      mocks.handleError as never,
-    );
-    vi.spyOn(gameSettings, "getGameSetting").mockImplementation(
-      mocks.getSetting as never,
-    );
+    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(mocks.handleError);
+    vi.spyOn(gameSettings, "getGameSetting").mockImplementation(mocks.getSetting);
     stubCronAuth(() => null);
     const update = mocks.update;
     stubDatabase({

@@ -55,20 +55,14 @@ describe("daily-overworld-ai route", () => {
 
   beforeEach(() => {
     vi.spyOn(nextHeaders, "cookies").mockResolvedValue(undefined as never);
-    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(
-      mocks.lock as never,
-    );
-    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(
-      mocks.handleError as never,
-    );
-    vi.spyOn(overworld, "resolveOverworldPosition").mockImplementation(
-      mocks.resolve as never,
-    );
+    vi.spyOn(gameSettings, "lockWithDailyTimer").mockImplementation(mocks.lock);
+    vi.spyOn(gameSettings, "handleEndpointError").mockImplementation(mocks.handleError);
+    vi.spyOn(overworld, "resolveOverworldPosition").mockImplementation(mocks.resolve);
     vi.spyOn(overworld, "snapOverworldPositionToWalkable").mockImplementation(
-      mocks.snap as never,
+      mocks.snap,
     );
     vi.spyOn(sectorMaps, "fetchPublishedSectorMaps").mockImplementation(
-      mocks.fetchMaps as never,
+      mocks.fetchMaps,
     );
     stubCronAuth(mocks.authenticate);
     stubDatabase({

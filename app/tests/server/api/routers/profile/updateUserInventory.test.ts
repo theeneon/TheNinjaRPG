@@ -93,7 +93,6 @@ describeWithDatabase("profile updates preserve ownership lists", () => {
       equipped: true,
     });
   });
-  afterEach(() => vi.restoreAllMocks());
 
   it.each(["HEAD_EVENT", "CODING-ADMIN"] as const)(
     "preserves ownership when %s submits a full profile form",

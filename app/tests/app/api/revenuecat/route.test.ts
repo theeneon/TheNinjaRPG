@@ -46,14 +46,12 @@ beforeEach(() => {
     REVENUECAT_IOS_APP_ID: "ios-app",
     REVENUECAT_WEBHOOK_SECRET: "webhook-secret",
   });
-  vi.spyOn(Sentry, "captureException").mockImplementation(
-    mocks.captureException as never,
-  );
+  vi.spyOn(Sentry, "captureException").mockImplementation(mocks.captureException);
   vi.spyOn(nextHeaders, "headers").mockResolvedValue(
     new Headers({ authorization: "webhook-secret" }) as never,
   );
   vi.spyOn(grants, "transferStorePurchases").mockImplementation(
-    mocks.transferStorePurchases as never,
+    mocks.transferStorePurchases,
   );
   mocks.captureException.mockReset();
   mocks.transferStorePurchases

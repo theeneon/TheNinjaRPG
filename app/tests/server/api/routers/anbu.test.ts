@@ -297,10 +297,7 @@ function makeDrizzleMock(
 
 describe("ANBU router request permissions and concurrency", () => {
   const queuePush = vi.fn();
-  afterEach(() => {
-    resetServerModuleStubs();
-    vi.restoreAllMocks();
-  });
+  afterEach(resetServerModuleStubs);
   beforeEach(() => {
     queuePush.mockReset();
     vi.spyOn(nativePush, "deferPushToUsers").mockImplementation(queuePush);
