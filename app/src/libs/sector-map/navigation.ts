@@ -41,9 +41,8 @@ export interface WindowNav {
  * cross-border pathfinding (rendering stays per-sector); the center sector
  * occupies unified offset (W, H). Rotated cube-edge-seam neighbors and missing
  * (polar) neighbors are marked impassable (blocked, cost 9999) so paths stop
- * cleanly at those borders. Each authored tile's normalized walk cost remains
- * authoritative, including equal standard costs for water and ground. Returns
- * null when no center map is provided.
+ * cleanly at those borders. All existing terrain is traversable; zero-cost
+ * palette entries use the standard walking cost. Returns null without a map.
  */
 export const buildWindowNav = (
   entries: WindowNavEntry[],
@@ -89,10 +88,8 @@ export const buildWindowNav = (
         tile.cost = 9999;
         return tile;
       }
-      tile.blocked = mapTile.blocked || mapTile.walkCost <= 0;
-      // The authored walk cost is authoritative. Standard water has the same
-      // cost as ground because ninja can traverse it with chakra.
-      tile.cost = mapTile.walkCost + 1;
+      tile.blocked = false;
+      tile.cost = Math.max(1, mapTile.walkCost) + 1;
       return tile;
     });
   return {

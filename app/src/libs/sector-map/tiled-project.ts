@@ -106,7 +106,7 @@ EDIT A SECTOR
   1. File > Open... > sector-<n>.json  (keep everything together as unzipped)
   2. Terrain layer: paint with the palette on the right. Each colour is a biome
      (green = grass/ground, tan = sand/desert, blue = ocean, white = ice,
-     dark = blocked rock, brown = road). The palette always contains EVERY
+     dark = dense terrain, brown = road). The palette always contains EVERY
      terrain kind - you can paint water, ice or desert into any sector, not
      just the terrains the sector already has.
   3. Objects layer (trees, rocks, spawns, exits, ...):

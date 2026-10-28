@@ -85,8 +85,8 @@ export const prepareSectorGrid = (
       const ny = tile.row / sectorHeight - 0.5;
       tile.level = noiseGen(nx, ny) / 2 + 0.5;
       tile.assetStrength = 0;
-      // Effective path cost comes from the authored map. Standard water uses
-      // the same walk cost as ground; explicit obstacles remain blocked below.
+      // Every sector terrain shade is traversable; zero-cost palette entries
+      // use the standard walking cost, including shaded ground and water.
       const spec = resolveTerrainSpec(
         authoredTile?.terrain ?? baseBiome,
         terrainRegistry,
@@ -95,8 +95,8 @@ export const prepareSectorGrid = (
       // them off the hex instead of re-doing the lookup + resolve for all 676 tiles
       tile.spec = spec;
       tile.authored = authoredTile;
-      tile.cost = (authoredTile ? authoredTile.walkCost : 1) + 1;
-      tile.blocked = authoredTile?.blocked || authoredTile?.walkCost === 0;
+      tile.cost = Math.max(1, authoredTile?.walkCost ?? 1) + 1;
+      tile.blocked = false;
       tile.zone = authoredTile?.zone;
       // Combat arena for battles on this tile: the authored per-tile override
       // wins, else the terrain's configured arena

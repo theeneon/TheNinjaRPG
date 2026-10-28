@@ -131,7 +131,6 @@ const findNearestWalkableEdgeTile = (
   preferred: SectorPoint,
 ): SectorPoint | null => {
   const candidates = map.tiles.filter((tile) => {
-    if (tile.blocked || tile.walkCost <= 0) return false;
     if (edge === "north") return tile.y === map.height - 1;
     if (edge === "south") return tile.y === 0;
     if (edge === "west") return tile.x === 0;
@@ -1878,11 +1877,11 @@ const SectorScene = (props: SectorProps & { centerEntry: SectorWindowEntry }) =>
         const x = questMarker.longitude as number;
         const y = questMarker.latitude as number;
         const target = findHex(gridRef.current, { x, y });
-        if (!target || target.blocked) {
+        if (!target) {
           showMutationToast({
-            id: "sector-blocked-terrain",
+            id: "sector-missing-tile",
             success: false,
-            message: "That terrain cannot be walked on",
+            message: "That location is outside the map",
           });
           return false;
         }
@@ -1903,16 +1902,6 @@ const SectorScene = (props: SectorProps & { centerEntry: SectorWindowEntry }) =>
           hitLocation.latitude === target.row
         )
           return true;
-        if (target.blocked) {
-          // Quest markers can sit above blocked tiles, so repeated clicks on
-          // them reuse one toast instead of stacking a new one per click.
-          showMutationToast({
-            id: "sector-blocked-terrain",
-            success: false,
-            message: "That terrain cannot be walked on",
-          });
-          return false;
-        }
         if (clickedSector === sectorRef.current) {
           pendingCrossRef.current = null;
           pendingWorldTargetRef.current = null;

@@ -12,23 +12,23 @@ import {
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { findNearestReachableCoordinate } from "@/libs/sector-map/validation";
 
-/** Small all-walkable map with the given tiles blocked and spawn.default at `spawn`. */
+/** Small map with the given tiles missing and spawn.default at `spawn`. */
 const makeMap = (
-  blocked: [number, number][],
+  missing: [number, number][],
   spawn: { x: number; y: number } | null = { x: 0, y: 0 },
   size = 6,
 ): Pick<NormalizedSectorMap, "width" | "height" | "tiles" | "anchors"> => {
-  const blockedKeys = new Set(blocked.map(([x, y]) => `${x},${y}`));
+  const missingKeys = new Set(missing.map(([x, y]) => `${x},${y}`));
   const tiles: NormalizedSectorMap["tiles"] = [];
   for (let x = 0; x < size; x++) {
     for (let y = 0; y < size; y++) {
-      const isBlocked = blockedKeys.has(`${x},${y}`);
+      if (missingKeys.has(`${x},${y}`)) continue;
       tiles.push({
         x,
         y,
-        terrain: isBlocked ? "mountain" : "ground",
-        walkCost: isBlocked ? 0 : 1,
-        blocked: isBlocked,
+        terrain: "ground",
+        walkCost: 1,
+        blocked: false,
         zone: "wilderness",
         battleBiome: "ground",
       });
@@ -42,7 +42,7 @@ const makeMap = (
   };
 };
 
-/** Every tile in column `x` blocked: splits a map into a west and an east pocket. */
+/** Missing column `x` splits a map into a west and an east pocket. */
 const wallAtColumn = (x: number, size = 6): [number, number][] =>
   Array.from({ length: size }, (_, y) => [x, y] as [number, number]);
 
@@ -123,11 +123,17 @@ describe("findNearestReachableCoordinate", () => {
     });
   });
 
-  it("moves a blocked coordinate to the nearest walkable tile", () => {
+  it("moves a missing coordinate to the nearest existing tile", () => {
     const result = findNearestReachableCoordinate(makeMap([[3, 3]]), { x: 3, y: 3 });
     expect(result).not.toBeNull();
     expect(result).not.toEqual({ x: 3, y: 3 });
     expect(Math.max(Math.abs(result!.x - 3), Math.abs(result!.y - 3))).toBe(1);
+  });
+
+  it("keeps a shaded coordinate reachable without relocating it", () => {
+    const map = makeMap([]);
+    Object.assign(map.tiles.find((tile) => tile.x === 3 && tile.y === 3)!, { blocked: true, walkCost: 0 });
+    expect(findNearestReachableCoordinate(map, { x: 3, y: 3 })).toEqual({ x: 3, y: 3 });
   });
 
   it("moves a walkable tile cut off from spawn into the spawn's region", () => {
@@ -163,7 +169,7 @@ describe("random quest sectors", () => {
 });
 
 describe("snapQuestTargetsToReachable", () => {
-  it("moves an instantiated target off blocked terrain and marks it checked", () => {
+  it("moves an instantiated target off a missing tile and marks it checked", () => {
     const quest = makeQuest("q1", [moveObjective("m1")]);
     const user = makeUser(quest);
     const { trackers } = getNewTrackers(user, [{ task: "any" }]);
@@ -189,7 +195,7 @@ describe("snapQuestTargetsToReachable", () => {
     expect(snapQuestTargetsToReachable(user, trackers, new Map())).toBe(false);
   });
 
-  it("re-checks a persisted legacy target that sits on blocked terrain", () => {
+  it("re-checks a persisted target whose tile is missing", () => {
     const quest = makeQuest("q1", [moveObjective("m1", { locationType: "random" })]);
     const legacy = [
       { id: "q1", goals: [{ id: "m1", sector: 5, longitude: 3, latitude: 3 }] },

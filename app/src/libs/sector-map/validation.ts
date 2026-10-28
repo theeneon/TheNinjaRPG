@@ -72,16 +72,15 @@ export const getSectorTile = (
 };
 
 /**
- * The canonical walkability predicate shared by movement, BFS reachability and
- * validation: in bounds AND tile exists AND not blocked AND walkCost > 0
+ * Sector terrain is traversable regardless of its authored shade. Movement and
+ * reachability require an existing tile at an integer, in-bounds coordinate.
  */
 export const isWalkableCoordinate = (
   map: Pick<NormalizedSectorMap, "width" | "height" | "tiles">,
   coordinate: SectorCoordinate,
 ) => {
   if (!isCoordinateInSectorMap(map, coordinate)) return false;
-  const tile = getSectorTile(map, coordinate);
-  return !!tile && !tile.blocked && tile.walkCost > 0;
+  return !!getSectorTile(map, coordinate);
 };
 
 /**
@@ -167,19 +166,11 @@ export const findNearestWalkableCoordinate = (
     return { x: fallback.x, y: fallback.y };
   }
 
-  const candidates = map.tiles
-    .filter((tile) => !tile.blocked && tile.walkCost > 0)
-    .sort((a, b) => {
-      const distA = Math.max(
-        Math.abs(a.x - coordinate.x),
-        Math.abs(a.y - coordinate.y),
-      );
-      const distB = Math.max(
-        Math.abs(b.x - coordinate.x),
-        Math.abs(b.y - coordinate.y),
-      );
-      return distA - distB;
-    });
+  const candidates = [...map.tiles].sort((a, b) => {
+    const distA = Math.max(Math.abs(a.x - coordinate.x), Math.abs(a.y - coordinate.y));
+    const distB = Math.max(Math.abs(b.x - coordinate.x), Math.abs(b.y - coordinate.y));
+    return distA - distB;
+  });
   const candidate = candidates[0];
   return candidate ? { x: candidate.x, y: candidate.y } : null;
 };
@@ -214,7 +205,7 @@ const getConnectedWalkableKeys = (
  * Resolve a destination a player can actually walk to: the coordinate itself
  * when it is walkable and connected to the sector's "spawn.default" anchor,
  * else the nearest such tile by Chebyshev distance. Maps whose spawn anchor is
- * missing or blocked fall back to plain walkability. Returns null only when
+ * missing or outside the map fall back to plain walkability. Returns null only when
  * the map has no walkable tiles at all.
  */
 export const findNearestReachableCoordinate = (
@@ -313,7 +304,7 @@ export const validateNormalizedSectorMap = (
   if (!anchorsByKey.has("spawn.default")) {
     errors.push("Missing required anchor spawn.default");
   }
-  if (!map.tiles.some((tile) => !tile.blocked && tile.walkCost > 0)) {
+  if (map.tiles.length === 0) {
     errors.push("Sector map has no walkable tiles");
   }
 

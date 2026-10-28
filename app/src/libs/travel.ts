@@ -73,7 +73,6 @@ export const findLandingNear = (
   maxDistance = 3,
 ) => {
   const candidates = sectorMap.tiles.filter((tile) => {
-    if (tile.blocked || tile.walkCost <= 0) return false;
     const distance = Math.max(Math.abs(tile.x - target.x), Math.abs(tile.y - target.y));
     return distance >= minDistance && distance <= maxDistance;
   });
@@ -87,9 +86,7 @@ export const findGlobalTravelDestination = (
   sectorMap: Pick<NormalizedSectorMap, "tiles">,
   randomIndex: (upperBound: number) => number,
 ) => {
-  const walkableTiles = sectorMap.tiles.filter(
-    (tile) => !tile.blocked && tile.walkCost > 0,
-  );
+  const walkableTiles = sectorMap.tiles;
   if (walkableTiles.length === 0) return null;
 
   const index = randomIndex(walkableTiles.length);

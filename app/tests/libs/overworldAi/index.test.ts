@@ -98,25 +98,25 @@ describe("snapOverworldPositionToWalkable", () => {
     ],
   } as unknown as NormalizedSectorMap;
 
-  it("moves a blocked roll to the nearest walkable tile", () => {
+  it("keeps a roll on shaded terrain", () => {
     expect(
       snapOverworldPositionToWalkable(
         { sector: 10, longitude: 0, latitude: 0 },
         map,
       ),
-    ).toEqual({ sector: 10, longitude: 1, latitude: 0 });
+    ).toEqual({ sector: 10, longitude: 0, latitude: 0 });
   });
 
-  it("returns null when a sector map has no walkable tile", () => {
-    const blocked = {
+  it("returns null when a sector map has no tiles", () => {
+    const empty = {
       ...map,
-      tiles: [{ x: 0, y: 0, blocked: true, walkCost: 0 }],
+      tiles: [],
       width: 1,
     } as unknown as NormalizedSectorMap;
     expect(
       snapOverworldPositionToWalkable(
         { sector: 10, longitude: 0, latitude: 0 },
-        blocked,
+        empty,
       ),
     ).toBeNull();
   });

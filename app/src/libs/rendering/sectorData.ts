@@ -18,6 +18,9 @@ export const buildSectorTerrainData = (
       const shore =
         tile.authored?.terrain === "dessert" && tile.authored.decoration === false;
       const colors = shore ? SHORE_COLORS : road ? ROAD_COLORS : spec.colors;
+      // Dense terrain keeps its authored shade independently of walkability.
+      const isDenseTerrain =
+        !tile.hasStructure && (tile.authored?.blocked || tile.authored?.walkCost === 0);
       const variant = shore
         ? tile.level < 0.4
           ? 0
@@ -30,7 +33,7 @@ export const buildSectorTerrainData = (
             : tile.level < 0.6
               ? 1
               : 2
-          : tile.blocked && !spec.isWater
+          : isDenseTerrain && !spec.isWater
             ? 2
             : tile.level < 0.5
               ? 0

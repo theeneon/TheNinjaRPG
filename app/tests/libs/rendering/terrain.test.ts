@@ -7,6 +7,9 @@ import type { GameRenderer } from "@/libs/rendering/runtime";
 import { buildSectorTerrainData } from "@/libs/rendering/sectorData";
 import { hexTerrainAt } from "@/libs/rendering/terrainData";
 import { prepareSectorGrid } from "@/libs/sector-map/sector-grid";
+import { PathCalculator } from "@/libs/hexgrid";
+import { buildWindowNav } from "@/libs/sector-map/navigation";
+import { isReachableCoordinate, isWalkableCoordinate } from "@/libs/sector-map/validation";
 import { mergeTerrainSpecs } from "@/libs/sector-map/terrains";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 
@@ -112,6 +115,30 @@ describe("shared hex terrain textures", () => {
 });
 
 describe("shared hex terrain data", () => {
+  it.each(["ground", "dessert", "snow", "ice", "ocean"] as const)("keeps shaded %s walkable in rendering, window navigation and server validation", (terrain) => {
+    const map = mapOf(3, 1);
+    map.tiles = map.tiles.map((tile) => ({ ...tile, terrain, battleBiome: terrain, blocked: tile.x === 1, walkCost: tile.x === 1 ? 0 : 1 }));
+    const before = structuredClone(map);
+    const { grid, data } = prepare(map);
+    const tile = grid.getHex({ col: 1, row: 0 })!;
+    expect(tile.blocked).toBe(false);
+    expect(tile.cost).toBe(2);
+    expect(new PathCalculator(grid).getShortestPath(grid.getHex({ col: 0, row: 0 })!, tile)).toBeDefined();
+    const nav = buildWindowNav([{ dx: 0, dy: 0, map }], 10)!;
+    expect(nav.toUnified(0, 0, 1, 0)?.blocked).toBe(false);
+    expect(isWalkableCoordinate(map, { x: 1, y: 0 })).toBe(true);
+    expect(isReachableCoordinate(map, { x: 0, y: 0 }, { x: 2, y: 0 })).toBe(true);
+    expect(isWalkableCoordinate(map, { x: -1, y: 0 })).toBe(false);
+    // Movement does not rewrite the authored palette or its shaded appearance.
+    expect(map).toEqual(before);
+    if (terrain !== "ocean") {
+      const batch = data.batches.find((batch) => batch.tiles.some((entry) => entry.key === "1,0"))!;
+      const start = batch.tiles.find((entry) => entry.key === "1,0")!.start * 4;
+      const color = Number.parseInt(tile.spec!.colors[2]!.slice(1), 16);
+      expect([...batch.rawColors.slice(start, start + 4)]).toEqual([color >> 16, (color >> 8) & 255, color & 255, 255]);
+    }
+  });
+
   it.each([false, true])("outlines exposed faces at their terrain height (light layout: %s)", (light) => {
     const { grid, data } = prepare(mapOf(2, 1), light);
     const [land, water] = grid.toArray();

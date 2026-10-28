@@ -87,9 +87,8 @@ const buildTerrainImage = (
 
 /**
  * The paintable terrain palette, derived from the terrain library. Every
- * terrain gets its regular tile plus a variant: land kinds an impassable
- * "blocked" rock/thicket, water kinds an impassable lake (their regular tile
- * is swimmable). The built-in ground/dessert keys additionally carry the road
+ * terrain gets its regular tile plus a dense land or lake variant; all sector
+ * terrain is traversable. The built-in ground/dessert keys also carry the road
  * and beach/shoreline looks. Every download's terrain tileset is topped up
  * with all of these, so a creator can paint ANY terrain in ANY sector.
  */
@@ -108,7 +107,7 @@ const buildTerrainPalette = (terrains: Map<string, TerrainSpec>) => {
     // dedup never matches and the whole palette is appended as a duplicate.
     const battleBiome = spec.battleBiome;
     if (spec.isWater) {
-      // Impassable water (lakes/ponds in land sectors)
+      // Lake/pond palette variant.
       palette.push({
         terrain: spec.key,
         zone: "water",
