@@ -1029,7 +1029,11 @@ function CreateAssetDialog({
   const [assetType, setAssetType] = useState<GameAssetType>(
     type === "ALL" ? "STATIC" : type,
   );
-  const [assetFolder, setAssetFolder] = useState(folder ?? "");
+  const isSelectedFolderValid =
+    gameAssetValidator.shape.folder.safeParse(folder).success;
+  const [assetFolder, setAssetFolder] = useState(
+    isSelectedFolderValid ? (folder ?? "") : "",
+  );
   const [error, setError] = useState("");
   // Enter and the confirmation button can submit before pending state re-renders.
   const createInFlight = useRef(false);
@@ -1120,11 +1124,22 @@ function CreateAssetDialog({
             onChange={(event) => setAssetFolder(event.target.value)}
           />
           <datalist id="new-asset-folders">
-            {(allFolders ?? []).map(({ folder }) => (
-              <option key={folder} value={folder} />
-            ))}
+            {(allFolders ?? [])
+              .filter(
+                ({ folder }) =>
+                  gameAssetValidator.shape.folder.safeParse(folder).success,
+              )
+              .map(({ folder }) => (
+                <option key={folder} value={folder} />
+              ))}
           </datalist>
           <p className="text-muted-foreground text-xs">
+            {!isSelectedFolderValid && (
+              <>
+                “{folder}” uses an unsupported folder name. Choose another folder or
+                leave this empty.{" "}
+              </>
+            )}
             Choose an existing folder or use a new name. Use letters and numbers. Leave
             empty to keep it unfiled.
           </p>

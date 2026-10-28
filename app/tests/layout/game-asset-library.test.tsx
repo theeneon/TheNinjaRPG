@@ -21,6 +21,7 @@ import { ensureDom } from "../setup/dom.mjs";
 
 type Page = { data: GameAsset[]; nextCursor: number | null };
 type Result = { success: boolean; message: string };
+type CreateInput = Pick<GameAsset, "name" | "type" | "folder">;
 const asset: GameAsset = {
   id: "forest", name: "Forest", type: "STATIC", image: "https://example.com/forest.webp",
   url: "https://example.com/forest.webp", folder: "Scenes", frames: 1, speed: 50,
@@ -32,6 +33,8 @@ let cache: QueryClient;
 let deleted: boolean;
 let failReads: boolean;
 let hasMore: boolean;
+let folders: { folder: string; count: number }[];
+const create = vi.fn(async (_input: CreateInput): Promise<Result> => ({ success: false, message: "Creation checked" }));
 const read = vi.fn(async (cursor: number | null): Promise<Page> => {
   if (failReads) throw new Error("Temporarily unavailable");
   return cursor
@@ -42,6 +45,7 @@ const read = vi.fn(async (cursor: number | null): Promise<Page> => {
 beforeEach(() => {
   ensureDom();
   deleted = false; failReads = false; hasMore = false; read.mockClear();
+  folders = []; create.mockClear();
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   vi.spyOn(navigation, "useRouter").mockReturnValue({ push: vi.fn() } as never);
   vi.spyOn(navigation, "useSearchParams").mockReturnValue(new URLSearchParams() as never);
@@ -73,13 +77,48 @@ beforeEach(() => {
         queryKey: ["assets"], queryFn: ({ pageParam }) => read(pageParam),
         initialPageParam: null as number | null, ...options,
       }) },
-      getAllFolders: { useQuery: () => ({ data: [] }) },
+      getAllFolders: { useQuery: () => ({ data: folders }) },
       getNameTags: { useQuery: () => ({ data: { tags: [] } }) },
+      create: { useMutation: (options: UseMutationOptions<Result, Error, CreateInput>) => useMutation({ mutationFn: (input) => create(input), ...options }) },
       delete: { useMutation: (options: UseMutationOptions<Result, Error, { id: string }>) => useMutation({
         mutationFn: async () => { deleted = true; return { success: true, message: "Deleted" }; },
         ...options,
       }) },
     },
+  });
+});
+
+describe("asset library creation folders", () => {
+  it("keeps legacy browsing while offering only supported creation folders", async () => {
+    vi.spyOn(navigation, "useSearchParams").mockReturnValue(new URLSearchParams({ folder: "QA Folder%" }) as never);
+    folders = [{ folder: "QA Folder%", count: 1 }, { folder: "Scenes", count: 1 }, { folder: "a".repeat(192), count: 1 }];
+    const view = render(<QueryClientProvider client={cache}><GameAssetLibrary /></QueryClientProvider>);
+    expect(view.getByText("Folder: QA Folder%")).toBeDefined();
+    fireEvent.click(view.getByRole("button", { name: "New asset" }));
+    const dialog = within(view.getByRole("dialog", { name: "New asset" }));
+    const folder = dialog.getByLabelText("Folder (optional)") as HTMLInputElement;
+    expect(folder.value).toBe("");
+    expect(dialog.getByText(/“QA Folder%” uses an unsupported folder name/)).toBeDefined();
+    expect(Array.from(view.container.querySelectorAll("#new-asset-folders option"), (option) => option.getAttribute("value"))).toEqual(["Scenes"]);
+
+    fireEvent.change(dialog.getByLabelText("Asset name"), { target: { value: "Test asset" } });
+    fireEvent.change(folder, { target: { value: "QA Folder%" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Create & add media" }));
+    expect(dialog.getByRole("alert").textContent).toContain("Folder name can only contain letters and numbers");
+    expect(create).not.toHaveBeenCalled();
+    expect(folder.value).toBe("QA Folder%");
+  });
+
+  it.each([undefined, "", "Scenes"])("preserves a supported creation default: %s", async (folder) => {
+    vi.spyOn(navigation, "useSearchParams").mockReturnValue(new URLSearchParams(folder === undefined ? {} : { folder }) as never);
+    const view = render(<QueryClientProvider client={cache}><GameAssetLibrary /></QueryClientProvider>);
+    fireEvent.click(view.getByRole("button", { name: "New asset" }));
+    const dialog = within(view.getByRole("dialog", { name: "New asset" }));
+    expect((dialog.getByLabelText("Folder (optional)") as HTMLInputElement).value).toBe(folder ?? "");
+    expect(dialog.queryByText(/unsupported folder name/)).toBeNull();
+    fireEvent.change(dialog.getByLabelText("Asset name"), { target: { value: "Test asset" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Create & add media" }));
+    await waitFor(() => expect(create).toHaveBeenCalledWith({ name: "Test asset", type: "STATIC", folder: folder ?? "" }));
   });
 });
 
