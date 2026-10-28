@@ -105,12 +105,20 @@ function ForumBrowse() {
     onSuccess: () => utils.forum.alerts.invalidate(),
   });
   const sectionIds = [...new Set(boards?.map((b) => b.sectionId) ?? [])];
+  const hasAppliedFilters = Boolean(
+    query ||
+      boardId ||
+      appliedAuthor ||
+      appliedSince ||
+      appliedUntil ||
+      params.get("tag"),
+  );
   return (
     <ContentBox
       title="Community forum"
       subtitle="Ask, share and write the next chapter of Seichi."
     >
-      <ForumNavigation />
+      <ForumNavigation showBrowseLinks={hasAppliedFilters} />
       <div className="mb-4">
         <ForumSearch
           query={query}

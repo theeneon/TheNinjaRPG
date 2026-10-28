@@ -28,26 +28,36 @@ import { canPostAsAi } from "@/utils/permissions";
 import { useUserData } from "@/utils/UserContext";
 import { getSearchValidator } from "@/validators/register";
 
-export const ForumNavigation = () => {
+export const ForumNavigation = ({
+  showBrowseLinks = true,
+}: {
+  showBrowseLinks?: boolean;
+}) => {
   const { data: context } = api.forum.getContext.useQuery();
+  const canAccessStaffWorkspace = context?.canManage || context?.canModerate;
+  if (!showBrowseLinks && !canAccessStaffWorkspace) return null;
   return (
     <nav
       aria-label="Forum navigation"
       className="mb-4 flex flex-wrap items-center gap-2 text-sm"
     >
-      <Link
-        href="/forum"
-        className="hover:bg-accent rounded-md border px-3 py-2 font-medium"
-      >
-        All boards
-      </Link>
-      <Link
-        href="/forum?view=latest"
-        className="hover:bg-accent rounded-md border px-3 py-2"
-      >
-        Latest discussions
-      </Link>
-      {(context?.canManage || context?.canModerate) && (
+      {showBrowseLinks && (
+        <>
+          <Link
+            href="/forum"
+            className="hover:bg-accent rounded-md border px-3 py-2 font-medium"
+          >
+            All boards
+          </Link>
+          <Link
+            href="/forum?view=latest"
+            className="hover:bg-accent rounded-md border px-3 py-2"
+          >
+            Latest discussions
+          </Link>
+        </>
+      )}
+      {canAccessStaffWorkspace && (
         <Link
           href="/forum/manage"
           className="hover:bg-accent ml-auto flex items-center gap-2 rounded-md border px-3 py-2"
