@@ -571,16 +571,37 @@ export const listForumAudit = (db: Client, boardIds: string[], query: string) =>
     )
     .orderBy(desc(forumAudit.createdAt))
     .limit(100);
-export const listForumReviewThreads = (db: Client, boardIds: string[]) =>
+export const listForumReviewThreads = (
+  db: Client,
+  input: {
+    boardIds: string[];
+    moderatedBoardIds: string[];
+    offset: number;
+    limit: number;
+  },
+) =>
   db.query.forumThread.findMany({
     where: and(
-      inArray(forumThread.boardId, boardIds),
+      inArray(forumThread.boardId, input.boardIds),
       or(sql`${forumThread.deletedAt} IS NOT NULL`, eq(forumThread.isApproved, false)),
+      or(
+        inArray(forumThread.boardId, input.moderatedBoardIds),
+        and(eq(forumThread.isApproved, false), isNull(forumThread.deletedAt)),
+      ),
     ),
-    orderBy: desc(forumThread.updatedAt),
-    limit: 100,
+    orderBy: [desc(forumThread.updatedAt), desc(forumThread.id)],
+    offset: input.offset,
+    limit: input.limit,
   });
-export const listForumReviewPosts = (db: Client, boardIds: string[]) =>
+export const listForumReviewPosts = (
+  db: Client,
+  input: {
+    boardIds: string[];
+    moderatedBoardIds: string[];
+    offset: number;
+    limit: number;
+  },
+) =>
   db
     .select({
       post: forumPost,
@@ -594,16 +615,25 @@ export const listForumReviewPosts = (db: Client, boardIds: string[]) =>
     .leftJoin(userData, eq(userData.userId, forumCase.assigneeId))
     .where(
       and(
-        inArray(forumThread.boardId, boardIds),
+        inArray(forumThread.boardId, input.boardIds),
         or(
           sql`${forumPost.deletedAt} IS NOT NULL`,
           eq(forumPost.isApproved, false),
           eq(forumPost.isReported, true),
         ),
+        or(
+          inArray(forumThread.boardId, input.moderatedBoardIds),
+          and(
+            eq(forumPost.isApproved, false),
+            isNull(forumPost.deletedAt),
+            isNull(forumThread.deletedAt),
+          ),
+        ),
       ),
     )
-    .orderBy(desc(forumPost.createdAt))
-    .limit(100);
+    .orderBy(desc(forumPost.createdAt), desc(forumPost.id))
+    .offset(input.offset)
+    .limit(input.limit);
 export const readNews = (db: Pick<DrizzleClient, "update">, userId: string) =>
   db.update(userData).set({ unreadNews: 0 }).where(eq(userData.userId, userId));
 export const updateUserDataForCreateThread = (db: Client, ctx: { userId: string }) =>

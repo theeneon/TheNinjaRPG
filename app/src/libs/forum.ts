@@ -170,10 +170,16 @@ export const fetchForumPageData = async (
   boardName: string,
   userId: string | null,
 ) => {
-  const [initialThreads, userRow] = await Promise.all([
-    getInfiniteThreads({ client, boardName, limit: 10 }),
+  const [context, userRow] = await Promise.all([
+    getForumContext(client, userId),
     userId ? findUserDataForFetchForumPageData(client, userId) : null,
   ]);
+  const initialThreads = await getInfiniteThreads({
+    client,
+    boardName,
+    limit: 10,
+    context,
+  });
   return {
     initialThreads,
     userData: userRow ?? null,

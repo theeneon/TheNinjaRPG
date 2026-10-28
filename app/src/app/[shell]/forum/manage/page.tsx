@@ -35,9 +35,10 @@ export default function ForumManagement() {
   const { data: user } = useUserData();
   const [tab, setTab] = useState("review");
   const [query, setQuery] = useState("");
+  const [reviewPage, setReviewPage] = useState(0);
   const debouncedQuery = useDebouncedValue(query);
   const data = api.forum.administration.useQuery(
-    { query: debouncedQuery },
+    { query: debouncedQuery, reviewPage },
     { enabled: !!user, placeholderData: (previous) => previous },
   );
   const utils = api.useUtils();
@@ -109,7 +110,32 @@ export default function ForumManagement() {
           {tab === "restrictions" && (
             <ForumRestrictions data={data.data} refresh={refresh} />
           )}
-          {tab === "review" && <ForumReview data={data.data} refresh={refresh} />}
+          {tab === "review" && (
+            <>
+              <nav aria-label="Review pages" className="mb-4 flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  disabled={reviewPage === 0 || data.isFetching}
+                  onClick={() => setReviewPage((page) => page - 1)}
+                >
+                  Previous
+                </Button>
+                <span className="text-sm">Page {reviewPage + 1}</span>
+                <Button
+                  variant="outline"
+                  disabled={!data.data.hasMoreReviews || data.isFetching}
+                  onClick={() => setReviewPage((page) => page + 1)}
+                >
+                  Next
+                </Button>
+              </nav>
+              {data.isPlaceholderData ? (
+                <Loader explanation="Loading review page…" />
+              ) : (
+                <ForumReview key={reviewPage} data={data.data} refresh={refresh} />
+              )}
+            </>
+          )}
           {tab === "analytics" && <ForumAnalytics />}
           {tab === "logs" && (
             <div className="space-y-3">
@@ -1183,8 +1209,8 @@ function ForumReview({
       </div>
       <p className="text-muted-foreground text-xs">
         Reports keep their existing evidence, decisions and game enforcement workflow.
-        Forum restrictions are managed separately here. Lists show up to 100 recent
-        items.
+        Forum restrictions are managed separately here. Each page shows up to 100 topics
+        and 100 posts.
       </p>
       <details className="rounded-md border p-3">
         <summary className="cursor-pointer text-sm font-medium">

@@ -987,22 +987,37 @@ export const forumRouter = createTRPCRouter({
       };
     }),
   administration: protectedProcedure
-    .input(z.object({ query: z.string().trim().max(200).default("") }))
+    .input(
+      z.object({
+        query: z.string().trim().max(200).default(""),
+        reviewPage: z.number().int().min(0).default(0),
+      }),
+    )
     .query(async ({ ctx, input }) => {
       const context = await getForumContext(ctx.drizzle, ctx.userId);
       const ids = context.boards
         .filter((b) => b.permissions.moderate || b.permissions.approve)
         .map((b) => b.id);
       if (!context.canManage && !ids.length) return null;
-      const [grants, restrictions, threads, posts, logs, linkedReports] =
+      const reviewInput = {
+        boardIds: ids,
+        moderatedBoardIds: context.boards
+          .filter((b) => b.permissions.moderate)
+          .map((b) => b.id),
+        offset: input.reviewPage * 100,
+        limit: 101,
+      };
+      const [grants, restrictions, reviewThreads, reviewPosts, logs, linkedReports] =
         await Promise.all([
           context.canManage ? q.listForumGrants(ctx.drizzle) : [],
           q.listForumRestrictions(ctx.drizzle),
-          ids.length ? q.listForumReviewThreads(ctx.drizzle, ids) : [],
-          ids.length ? q.listForumReviewPosts(ctx.drizzle, ids) : [],
+          ids.length ? q.listForumReviewThreads(ctx.drizzle, reviewInput) : [],
+          ids.length ? q.listForumReviewPosts(ctx.drizzle, reviewInput) : [],
           q.listForumAudit(ctx.drizzle, ids, input.query),
           q.listForumLinkedReports(ctx.drizzle),
         ]);
+      const threads = reviewThreads.slice(0, 100);
+      const posts = reviewPosts.slice(0, 100);
       return {
         sections: context.canManage ? context.sections : [],
         boards: context.boards.filter(
@@ -1010,6 +1025,7 @@ export const forumRouter = createTRPCRouter({
         ),
         canManage: context.canManage,
         grants,
+        hasMoreReviews: reviewThreads.length > 100 || reviewPosts.length > 100,
         linkedReports: linkedReports.filter((r) =>
           posts.some(
             (p) =>
@@ -1025,17 +1041,8 @@ export const forumRouter = createTRPCRouter({
             (!!r.boardId &&
               !!context.boards.find((b) => b.id === r.boardId)?.permissions.moderate),
         ),
-        threads: threads.filter(
-          (t) =>
-            context.boards.find((b) => b.id === t.boardId)?.permissions.moderate ||
-            (!t.isApproved && !t.deletedAt),
-        ),
-        posts: posts.filter(
-          (p) =>
-            context.boards.find((b) => b.id === p.thread.boardId)?.permissions
-              .moderate ||
-            (!p.post.isApproved && !p.post.deletedAt && !p.thread.deletedAt),
-        ),
+        threads,
+        posts,
         logs: logs.filter(
           (l) =>
             context.canManage ||

@@ -272,6 +272,41 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const pending = (await db.query.forumPost.findMany()).find(p => !p.isApproved)!; expect(await admin.alerts()).toHaveLength(1);
     expect((await approver.moderatePost({ postId: pending.id, action: "APPROVE", reason: "Reply reviewed" })).success).toBe(true); expect(await admin.alerts()).toHaveLength(2);
   });
+  it("keeps older pending reviews reachable without exposing recovery records to approvers", async () => {
+    const db = await getTestDatabase();
+    await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
+    await db.insert(forumThread).values({ id: "pending", boardId: "general", title: "Pending discussion", userId: playerId, isApproved: false, createdAt: new Date(1000), updatedAt: new Date(1000) });
+    await db.insert(forumPost).values({ id: "pending-post", threadId: "pending", userId: playerId, authorId: playerId, content: "Opening post awaiting approval", isApproved: false, createdAt: new Date(1000) });
+    await db.insert(forumThread).values(Array.from({ length: 100 }, (_, i) => ({ id: `removed-${i}`, boardId: "general", title: "Removed discussion", userId: playerId, deletedAt: new Date(2000), createdAt: new Date(2000), updatedAt: new Date(2000) })));
+    await db.insert(forumPost).values(Array.from({ length: 100 }, (_, i) => ({ id: `removed-post-${i}`, threadId: `removed-${i}`, userId: playerId, authorId: playerId, content: "Retained removed content", deletedAt: new Date(2000), createdAt: new Date(2000) })));
+    await db.insert(forumPost).values({ id: "removed-topic-pending-post", threadId: "removed-0", userId: playerId, authorId: playerId, content: "Pending content in a removed topic", isApproved: false, createdAt: new Date(2000) });
+    const approver = await (await client(moderatorId)).administration({ query: "" });
+    expect(approver?.threads.map(t => t.id)).toEqual(["pending"]);
+    expect(approver?.posts.map(p => p.post.id)).toEqual(["pending-post"]);
+    expect(approver?.hasMoreReviews).toBe(false);
+    const admin = await client(adminId);
+    const first = await admin.administration({ query: "" });
+    expect(first?.threads).toHaveLength(100); expect(first?.posts).toHaveLength(100); expect(first?.hasMoreReviews).toBe(true);
+    const second = await admin.administration({ query: "", reviewPage: 1 });
+    expect(second?.threads.map(t => t.id)).toEqual(["pending"]);
+    expect(second?.posts.some(p => p.post.id === "pending-post")).toBe(true);
+    expect(second?.hasMoreReviews).toBe(false);
+    expect(second?.posts.some(p => first?.posts.some(firstPost => firstPost.post.id === p.post.id))).toBe(false);
+  });
+  it("paginates approval-only queues after board scope and recovery visibility", async () => {
+    const db = await getTestDatabase();
+    await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
+    await db.insert(forumThread).values(Array.from({ length: 102 }, (_, i) => ({ id: `pending-${i}`, boardId: i === 101 ? "private-board" : "general", title: "Pending discussion", userId: playerId, isApproved: false, updatedAt: new Date(1000) })));
+    await db.insert(forumPost).values(Array.from({ length: 102 }, (_, i) => ({ id: `pending-post-${i}`, threadId: `pending-${i}`, userId: playerId, authorId: playerId, content: "Pending reply", isApproved: false, createdAt: new Date(1000) })));
+    const approver = await client(moderatorId);
+    const first = await approver.administration({ query: "" });
+    const second = await approver.administration({ query: "", reviewPage: 1 });
+    expect(first?.threads).toHaveLength(100); expect(first?.posts).toHaveLength(100); expect(first?.hasMoreReviews).toBe(true);
+    expect(second?.threads).toHaveLength(1); expect(second?.posts).toHaveLength(1); expect(second?.hasMoreReviews).toBe(false);
+    const topics = [...first!.threads, ...second!.threads]; const posts = [...first!.posts, ...second!.posts];
+    expect(new Set(topics.map(t => t.id)).size).toBe(101); expect(new Set(posts.map(p => p.post.id)).size).toBe(101);
+    expect(topics.every(t => t.boardId === "general")).toBe(true); expect(posts.every(p => p.thread.boardId === "general")).toBe(true);
+  });
   it("rejects a post moved after preload and an author removal after a post lock", async () => {
     const topicId = await create(); const privateId = await create("private-board", adminId); const db = await getTestDatabase(); const post = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, topicId) }))[0]!;
     const beforeTransaction = (change: () => Promise<unknown>) => new Proxy(db, { get(target, key, receiver) { if (key === "transaction") return async (work: Parameters<DrizzleClient["transaction"]>[0]) => { await change(); return target.transaction(work); }; return Reflect.get(target, key, receiver); } });
