@@ -84,6 +84,8 @@ export const createHexTerrain = async (
     own(geometry, shader);
   };
   colorMesh(data.ground, "#696969", 1, false);
+  // Opaque faces cover buried dirt edges; recessed outlines stay below flat land.
+  colorMesh(data.groundEdges, "#555555", 0.25, true);
   data.batches.forEach((batch, index) => {
     const colors = new Float32Array(batch.colors);
     const geometry = new Geometry({
@@ -148,8 +150,11 @@ void main() {
     const state = new State();
     state.blend = false;
     own(geometry, shader, state);
+    if (batch.layer !== data.batches[index + 1]?.layer) {
+      const edges = data.edges.get(batch.layer);
+      if (edges) colorMesh(edges, "#555555", 0.25, true);
+    }
   });
-  colorMesh(data.edges, "#555555", 0.25, true);
   if (showBoundary) colorMesh(data.boundary, "#ffc23e", 0.85, true);
   const dispose = () => {
     if (disposed) return;

@@ -2583,7 +2583,7 @@ export const WORLD_DAY_SECONDS = 15 * 60;
 export const WORLD_NIGHT_SECONDS = 15 * 60;
 export const WORLD_CYCLE_TRANSITION_SECONDS = 45;
 export const WORLD_DAY_BRIGHTNESS = 1;
-export const WORLD_NIGHT_BRIGHTNESS = 0.38;
+export const WORLD_NIGHT_BRIGHTNESS = 0.55;
 
 // Farming occupation
 export const FARM_STARTING_PLOTS = 5;

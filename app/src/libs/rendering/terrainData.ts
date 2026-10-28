@@ -12,17 +12,19 @@ import { parseHexColor } from "@/utils/color";
 /**
  * Renderer-free buffers in the grid's Y-up world units, retaining per-tile face
  * offsets for picking. lightLayout omits ground depth, textures and wave animation.
+ * Surface outlines share their face layer so higher faces cover lower outlines.
  */
 export const buildHexTerrainData = (
   grid: Grid<TerrainHex>,
   look: (tile: TerrainHex) => TerrainLook,
   lightLayout: boolean,
 ) => {
-  const { points, groundPoints, groundEdges } = getHexPoints();
+  const { points, groundPoints, groundEdges: groundEdgeIndices } = getHexPoints();
   const tileUVArray = calculateHexUVCoordinates(grid.toArray()[0], points);
   const groups = new Map<string, TerrainBatchBuilder>();
   const ground: number[] = [],
-    edges: number[] = [];
+    groundEdges: number[] = [];
+  const edges = new Map<number, number[]>();
   const perimeter = new Map<string, { count: number; points: number[] }>();
   const faceOffsets = new Map<string, number>();
   let animatedTiles = 0;
@@ -34,6 +36,11 @@ export const buildHexTerrainData = (
       lightLayout,
     );
     faceOffsets.set(`${tile.col},${tile.row}`, offsetLength);
+    let faceEdges = edges.get(offsetLayer);
+    if (!faceEdges) {
+      faceEdges = [];
+      edges.set(offsetLayer, faceEdges);
+    }
     const kind = lightLayout ? "solid" : material.texture ? "image" : "noise";
     const texture = lightLayout ? null : material.texture;
     const key = `${offsetLayer}:${kind}:${texture ?? ""}`;
@@ -74,7 +81,7 @@ export const buildHexTerrainData = (
     tile.corners.forEach((a, index) => {
       const b = tile.corners[(index + 1) % tile.corners.length];
       if (!b) return;
-      edges.push(a.x, a.y + offsetLength, b.x, b.y + offsetLength);
+      faceEdges.push(a.x, a.y + offsetLength, b.x, b.y + offsetLength);
       const key = [a, b]
         .map((point) => `${point.x.toFixed(4)},${point.y.toFixed(4)}`)
         .sort()
@@ -89,10 +96,10 @@ export const buildHexTerrainData = (
         const point = corners[index];
         if (point) ground.push(point.x, point.y);
       }
-      for (const edge of groundEdges)
+      for (const edge of groundEdgeIndices)
         for (const index of edge) {
           const point = corners[index];
-          if (point) edges.push(point.x, point.y);
+          if (point) groundEdges.push(point.x, point.y);
         }
     }
   }
@@ -108,7 +115,10 @@ export const buildHexTerrainData = (
         waves: new Float32Array(batch.waves),
       })),
     ground: new Float32Array(ground),
-    edges: new Float32Array(edges),
+    groundEdges: new Float32Array(groundEdges),
+    edges: new Map(
+      [...edges].map(([layer, points]) => [layer, new Float32Array(points)]),
+    ),
     boundary: new Float32Array(
       [...perimeter.values()]
         .filter((edge) => edge.count === 1)

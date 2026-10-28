@@ -40,6 +40,22 @@ const renderer = (texture: (path: string) => Promise<Texture>) => {
 };
 
 describe("shared hex terrain textures", () => {
+  it("covers buried dirt and recessed outlines with higher tile faces", async () => {
+    const { data } = prepare(mapOf(5, 3));
+    const { game } = renderer(async () => Texture.WHITE);
+    const terrain = await createHexTerrain(game, data);
+    const meshes = terrain.container.children as Mesh[];
+    const faces = meshes.filter((mesh) => mesh.geometry.attributes.aTint);
+    const dirtEdges = meshes.find((mesh) => mesh.geometry.topology === "line-list")!;
+    expect(meshes.indexOf(dirtEdges)).toBeLessThan(meshes.indexOf(faces[0]!));
+    data.batches.forEach((batch, index) => {
+      const outline = meshes.find((mesh) => mesh.geometry.getBuffer("aPosition").data === data.edges.get(batch.layer))!;
+      expect(meshes.indexOf(outline)).toBeGreaterThan(meshes.indexOf(faces[index]!));
+      const higherFace = data.batches.findIndex((next) => next.layer > batch.layer);
+      if (higherFace !== -1) expect(meshes.indexOf(outline)).toBeLessThan(meshes.indexOf(faces[higherFace]!));
+    });
+  });
+
   it("keeps terrain geometry, palette and picking when one optional image fails", async () => {
     const { grid, data } = prepare(mapOf(3, 2));
     const failedTexture = data.batches.find((batch) => batch.kind === "image")!.texture;
