@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createGlobeControls } from "@/libs/rendering/scenes/globeControls";
 import type { GlobeCamera } from "@/libs/rendering/scenes/globeProjection";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 
 ensureDom();
 

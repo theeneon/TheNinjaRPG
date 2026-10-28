@@ -21,7 +21,7 @@ Mirror the source layer under `tests/`: `app/` for routes, `components/` and
 and `server/`. Router suites live in `server/api/routers/`; API infrastructure
 checks stay in `server/api/`. Group a feature into a directory when it has several
 suites, such as `server/api/routers/combat/`, `libs/quest/`, `libs/native/` or
-`libs/threejs/`. Use descriptive behavior names within those directories.
+`libs/rendering/`. Use descriptive behavior names within those directories.
 
 Migration tests belong in `drizzle/` and execute the committed SQL against
 representative rows. Native Android tests live in `native/android/` and run with
