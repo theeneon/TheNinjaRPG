@@ -8,8 +8,8 @@ import * as moderation from "@/libs/moderation/defer";
 import { commentsRouter } from "@/routers/comments";
 import { forumRouter } from "@/routers/forum";
 import type { DrizzleClient } from "@/server/db";
-import { insertUsers } from "../../setup/factories";
-import { callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { insertUsers } from "../../../setup/factories";
+import { callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../../setup/testDatabase";
 
 const playerId = "forum-player"; const adminId = "forum-admin"; const moderatorId = "forum-scoped-moderator";
 const topicInput = (board_id = "general") => ({ board_id, title: "Learning the shinobi arts", content: "<p>A useful game discussion.</p>", senderId: null, image: null });

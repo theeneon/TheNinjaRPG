@@ -65,6 +65,7 @@ import {
   claimUserSnapshot,
   updateUserItemQuantityAtomically,
 } from "@/server/utils/concurrency";
+import { isMysqlDuplicateKeyError } from "@/server/utils/mysqlErrors";
 import {
   appendQueueEntries,
   cancelQueuedCraft,
@@ -455,6 +456,9 @@ export const occupationRouter = createTRPCRouter({
           );
         } catch (error) {
           await returnCraftMaterials(ctx.drizzle, ctx.userId, materials);
+          // Concurrent appends can claim the same unique slot; the losing craft is refunded.
+          if (isMysqlDuplicateKeyError(error))
+            return errorResponse("Your crafting queue changed. Please try again.");
           throw error;
         }
         return {

@@ -27,10 +27,11 @@ import {
 } from "@/server/utils/userQueue";
 import { insertItems, insertUserItems, insertUsers } from "../../../setup/factories";
 import { queueMasteries } from "../../../setup/queues";
-import { failStatements } from "../../../setup/statements";
+import { beforeStatements, failStatements } from "../../../setup/statements";
 import type { MasteryTrainingQueueEntry } from "@/validators/train";
 import {
   callerFor,
+  callerForDatabase,
   describeWithDatabase,
   getTestDatabase,
   recordQueries,
@@ -836,6 +837,23 @@ describeWithDatabase("crafting queue", () => {
       0,
     );
     expect(ore.reduce((sum, row) => sum + row.quantity, 0) + held).toBe(30);
+  });
+
+  it("refunds materials and returns a recoverable rejection when a concurrent append takes the queue slot", async () => {
+    await insertUser(CRAFTER);
+    await setupRecipe();
+    await insertUserItems([
+      { id: "ore-stack", userId: USER_ID, itemId: "ore", quantity: 30 },
+      { id: "busy", userId: USER_ID, itemId: "blade", craftingFinishedAt: minutesFromNow(15) },
+    ]);
+    const database = await getTestDatabase();
+    const collision = beforeStatements(database, userQueue, [async () => {
+      throw new Error("Duplicate entry 'queuer-CRAFT-1' for key 'UserQueue_userId_kind_position_key'");
+    }]);
+    const result = await callerForDatabase(occupationRouter, USER_ID, collision).craftItem({ itemId: "blade", quantity: 1 });
+    expect(result).toMatchObject({ success: false, message: "Your crafting queue changed. Please try again." });
+    expect(await readCraftQueue()).toEqual([]);
+    expect((await readItems()).filter(row => row.itemId === "ore").reduce((sum, row) => sum + row.quantity, 0)).toBe(30);
   });
 
   it("starts a queued craft once under concurrent settlement", async () => {
