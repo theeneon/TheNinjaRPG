@@ -308,9 +308,12 @@ export const ForumComposer = ({
           .filter(Boolean),
       ),
     ];
+    const draftDocument = new DOMParser().parseFromString(value.content, "text/html");
+    for (const element of draftDocument.querySelectorAll("script, style"))
+      element.remove();
     if (
-      (value.content.replace(/<[^>]*>/g, "").trim().length < 4 &&
-        !/<(?:img|iframe)\b/i.test(value.content)) ||
+      ((draftDocument.body.textContent ?? "").trim().length < 4 &&
+        !draftDocument.querySelector("img[src], iframe[src]")) ||
       (title && value.title.trim().length < 4)
     ) {
       setError("Write at least 4 characters in the message and topic title.");
