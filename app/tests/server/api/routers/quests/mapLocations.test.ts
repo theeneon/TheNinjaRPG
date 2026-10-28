@@ -50,7 +50,8 @@ describeWithDatabase("public quest map locations", () => {
   });
 
   it("rejects a map that moves a public entrance away from its visible structure", () => {
-    const locations = [{ id: "tower", sector: 724, longitude: 0, latitude: 0, assetId: "asset", name: "Tower", description: "", scale: 1 }];
+    // A smaller published map must not relocate an authored entrance onto another tile.
+    const locations = [{ id: "tower", sector: 724, longitude: 2, latitude: 0, assetId: "asset", name: "Tower", description: "", scale: 1 }];
     const map = { width: 2, height: 1, anchors: [], tiles: [
       { x: 0, y: 0, blocked: true, walkCost: 0, terrain: "ground", battleBiome: "ground", zone: "wilderness" },
       { x: 1, y: 0, blocked: false, walkCost: 1, terrain: "ground", battleBiome: "ground", zone: "wilderness" },
