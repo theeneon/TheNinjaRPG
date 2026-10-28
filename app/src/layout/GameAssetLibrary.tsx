@@ -822,7 +822,9 @@ function AssetTile({
       onClick={onToggle}
       className={cn(
         "bg-background/90 text-foreground hover:bg-background relative z-20 size-[44px] shrink-0 rounded-full p-0 shadow-sm",
-        view === "grid" && "absolute right-2 bottom-2",
+        // Keep the gallery control compact while retaining a 44px hit area.
+        view === "grid" &&
+          "absolute right-[8px] bottom-[8px] size-[28px] after:absolute after:-inset-[8px]",
       )}
     >
       {loading ? (
@@ -838,7 +840,7 @@ function AssetTile({
     <div data-asset-id={asset.id} className="min-w-0">
       <div
         className={cn(
-          "group relative min-w-0 overflow-hidden text-left transition-colors",
+          "group relative isolate min-w-0 overflow-hidden text-left transition-colors",
           view === "grid"
             ? "border-border bg-background hover:border-primary/60 rounded-lg border"
             : "hover:bg-accent/50 flex w-full items-center gap-3 p-3",
