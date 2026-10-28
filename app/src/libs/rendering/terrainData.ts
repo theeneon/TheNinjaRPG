@@ -82,13 +82,18 @@ export const buildHexTerrainData = (
       const b = tile.corners[(index + 1) % tile.corners.length];
       if (!b) return;
       faceEdges.push(a.x, a.y + offsetLength, b.x, b.y + offsetLength);
+      // Match neighbors at grid height, but draw the perimeter on the visible face.
       const key = [a, b]
         .map((point) => `${point.x.toFixed(4)},${point.y.toFixed(4)}`)
         .sort()
         .join(":");
       const previous = perimeter.get(key);
       if (previous) previous.count++;
-      else perimeter.set(key, { count: 1, points: [a.x, a.y, b.x, b.y] });
+      else
+        perimeter.set(key, {
+          count: 1,
+          points: [a.x, a.y + offsetLength, b.x, b.y + offsetLength],
+        });
     });
     if (!lightLayout) {
       const corners = createGroundCorners(tile.corners, offsetLength, length);

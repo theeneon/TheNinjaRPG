@@ -112,6 +112,30 @@ describe("shared hex terrain textures", () => {
 });
 
 describe("shared hex terrain data", () => {
+  it.each([false, true])("outlines exposed faces at their terrain height (light layout: %s)", (light) => {
+    const { grid, data } = prepare(mapOf(2, 1), light);
+    const [land, water] = grid.toArray();
+    expect(data.boundary.length).toBe(10 * 4);
+    if (light) expect(data.faceOffsets.get("1,0")).toBe(0);
+    else expect(data.faceOffsets.get("1,0")).toBeLessThan(0);
+    for (const tile of [land!, water!]) {
+      const offset = data.faceOffsets.get(`${tile.col},${tile.row}`)!;
+      const exposedEdges = tile.corners.flatMap((a, index) => {
+        const b = tile.corners[(index + 1) % tile.corners.length]!;
+        const neighbor = tile === land ? water! : land!;
+        // Shared grid edges are interior even when the two faces have different heights.
+        if ([a, b].every((point) => neighbor.corners.some((corner) => Math.hypot(point.x - corner.x, point.y - corner.y) < 1e-4))) return [];
+        return [a.x, a.y + offset, b.x, b.y + offset];
+      });
+      expect(exposedEdges).toHaveLength(5 * 4);
+      for (let index = 0; index < exposedEdges.length; index += 4) {
+        expect(Array.from({ length: data.boundary.length / 4 }, (_, edge) =>
+          exposedEdges.slice(index, index + 4).every((value, coordinate) => Math.abs(value - data.boundary[edge * 4 + coordinate]!) < 1e-4),
+        ).some(Boolean)).toBe(true);
+      }
+    }
+  });
+
   it("picks each authored tile on its recessed face without renderer hit objects", () => {
     const { grid, data } = prepare(mapOf(26, 26));
     for (const tile of grid) {
