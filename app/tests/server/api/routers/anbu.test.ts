@@ -21,35 +21,13 @@ import {
   removeFromSquad,
 } from "@/routers/anbu";
 
-type AnbuTestMocks = {
-  fetchActor: ReturnType<typeof vi.fn>;
-  fetchPendingRequest: ReturnType<typeof vi.fn>;
-  fetchUser: ReturnType<typeof vi.fn>;
-  fetchRequest: ReturnType<typeof vi.fn>;
-  fetchRequests: ReturnType<typeof vi.fn>;
-  insertRequest: ReturnType<typeof vi.fn>;
-  notify: ReturnType<typeof vi.fn>;
-};
-
-const suiteMocks: AnbuTestMocks = {
-  fetchActor: vi.fn(),
-  fetchPendingRequest: vi.fn(),
-  fetchUser: vi.fn(),
-  fetchRequest: vi.fn(),
-  fetchRequests: vi.fn(),
-  insertRequest: vi.fn(),
-  notify: vi.fn(),
-};
-
-const {
-  fetchActor: fetchActorMock,
-  fetchPendingRequest: fetchPendingRequestMock,
-  fetchUser: fetchUserMock,
-  fetchRequest: fetchRequestMock,
-  fetchRequests: fetchRequestsMock,
-  insertRequest: insertRequestMock,
-  notify: notifyMock,
-} = suiteMocks;
+const fetchActorMock = vi.fn();
+const fetchPendingRequestMock = vi.fn();
+const fetchUserMock = vi.fn();
+const fetchRequestMock = vi.fn();
+const fetchRequestsMock = vi.fn();
+const insertRequestMock = vi.fn();
+const notifyMock = vi.fn();
 
 /** Stable string form of a drizzle SQL predicate for assertion (cols + params). */
 function describeSql(node: unknown): string {
@@ -71,13 +49,11 @@ function describeSql(node: unknown): string {
 describe("ANBU request squad identity", () => {
   afterEach(resetServerModuleStubs);
   beforeEach(() => {
-    stubProfile("fetchUser", (...args: never[]) =>
-      (suiteMocks.fetchUser as unknown as (...a: never[]) => unknown)(...args),
-    );
+    stubProfile("fetchUser", fetchUserMock);
     stubProfile("updateNindo", (() => undefined) as never);
-    for (const name of ["fetchRequest", "fetchRequests", "insertRequest"] as const) {
-      stubSparring(name, suiteMocks[name]);
-    }
+    stubSparring("fetchRequest", fetchRequestMock);
+    stubSparring("fetchRequests", fetchRequestsMock);
+    stubSparring("insertRequest", insertRequestMock);
     vi.clearAllMocks();
   });
 
@@ -328,13 +304,11 @@ describe("ANBU router request permissions and concurrency", () => {
   beforeEach(() => {
     queuePush.mockReset();
     vi.spyOn(nativePush, "deferPushToUsers").mockImplementation(queuePush);
-    stubProfile("fetchUser", (...args: never[]) =>
-      (suiteMocks.fetchUser as unknown as (...a: never[]) => unknown)(...args),
-    );
+    stubProfile("fetchUser", fetchUserMock);
     stubProfile("updateNindo", (() => undefined) as never);
-    for (const name of ["fetchRequest", "fetchRequests", "insertRequest"] as const) {
-      stubSparring(name, suiteMocks[name]);
-    }
+    stubSparring("fetchRequest", fetchRequestMock);
+    stubSparring("fetchRequests", fetchRequestsMock);
+    stubSparring("insertRequest", insertRequestMock);
     vi.clearAllMocks();
   });
 
@@ -716,13 +690,11 @@ describe("ANBU router request permissions and concurrency", () => {
 describe("ANBU membership invariants", () => {
   afterEach(resetServerModuleStubs);
   beforeEach(() => {
-    stubProfile("fetchUser", (...args: never[]) =>
-      (suiteMocks.fetchUser as unknown as (...a: never[]) => unknown)(...args),
-    );
+    stubProfile("fetchUser", fetchUserMock);
     stubProfile("updateNindo", (() => undefined) as never);
-    for (const name of ["fetchRequest", "fetchRequests", "insertRequest"] as const) {
-      stubSparring(name, suiteMocks[name]);
-    }
+    stubSparring("fetchRequest", fetchRequestMock);
+    stubSparring("fetchRequests", fetchRequestsMock);
+    stubSparring("insertRequest", insertRequestMock);
     vi.clearAllMocks();
   });
 
@@ -784,6 +756,6 @@ describe("ANBU membership invariants", () => {
 
 // Notification transport belongs to the current test, including nested suites.
 beforeEach(() => {
-  vi.spyOn(Pusher.prototype, "trigger").mockImplementation(suiteMocks.notify as never);
+  vi.spyOn(Pusher.prototype, "trigger").mockImplementation(notifyMock);
 });
 afterEach(() => vi.restoreAllMocks());
