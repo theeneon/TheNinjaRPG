@@ -99,7 +99,6 @@ import {
   findJutsuReskinForEvolveJutsu,
   findJutsuReskinForUpdateReskin,
   findPetSpeciesForUpdate,
-  findUserDataForUpdateReskin,
   findUserJutsuForRemoveReskin,
   findUserJutsuForUpdateReskin,
   insertActionLogForAdjustUserJutsu,
@@ -183,6 +182,7 @@ import {
   debitUserMoney,
   fetchLoadoutUser,
   fetchUser,
+  findUserDataForGetUsername,
   findUserRoleById,
   incrementUserMoney,
 } from "@/queries/profile";
@@ -1947,7 +1947,7 @@ export const jutsuRouter = createTRPCRouter({
         await Promise.all([
           fetchUser(ctx.drizzle, ctx.userId),
           fetchReskin(ctx.drizzle, input.reskinId),
-          findUserDataForUpdateReskin(ctx.drizzle, username),
+          findUserDataForGetUsername(ctx.drizzle, { username }),
           findJutsuForUpdateReskin(ctx.drizzle, jutsuId),
           findJutsuReskinForUpdateReskin(ctx.drizzle, targetUserId, jutsuId, input),
           findUserJutsuForUpdateReskin(ctx.drizzle, targetUserId, jutsuId),

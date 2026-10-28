@@ -1107,7 +1107,7 @@ export const updateUserItemForUpdateAi = (
     .set({ dropChancePerc: chance })
     .where(and(eq(userItem.userId, ai.userId), eq(userItem.itemId, id)));
 
-/** Build the `userData` lookup for `getUsername`, selecting only `username` and `userId`, using predicates on `username`. */
+/** Look up username and user ID by username; execution stays with the caller. */
 export const findUserDataForGetUsername = (
   client: Pick<DrizzleClient, "query">,
   input: { username: string },

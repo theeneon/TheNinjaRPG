@@ -940,19 +940,6 @@ export const selectUserDataForUpdateReskin = (
     .from(userData)
     .where(eq(userData.username, username));
 
-/**
- * Build the `userData` lookup for `updateReskin`, selecting only `userId` and
- * `username`, using predicates on `username`.
- */
-export const findUserDataForUpdateReskin = (
-  client: Pick<DrizzleClient, "query">,
-  username: string,
-) =>
-  client.query.userData.findFirst({
-    columns: { userId: true, username: true },
-    where: eq(userData.username, username),
-  });
-
 /** Build the `jutsu` lookup for `updateReskin`, selecting only `id` and `name`, using predicates on `id`. */
 export const findJutsuForUpdateReskin = (
   client: Pick<DrizzleClient, "query">,
