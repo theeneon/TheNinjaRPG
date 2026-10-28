@@ -190,6 +190,9 @@ describe("optional tower-defense projectile artwork", () => {
     fixture.pointer("pointerdown", 400, 220);
     fixture.pointer("pointerup", 400, 220);
     expect(onTileClick).toHaveBeenCalledTimes(1);
+    const wheel = new window.WheelEvent("wheel", { deltaY: 420, cancelable: true });
+    fixture.game.canvas.dispatchEvent(wheel);
+    expect(wheel.defaultPrevented).toBe(false);
     expect(console.warn).toHaveBeenCalledWith("Tower defense projectile artwork unavailable", failure);
     scene.dispose();
     fixture.pointer("pointerdown", 400, 220);

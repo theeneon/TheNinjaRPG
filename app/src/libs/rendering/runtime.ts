@@ -28,6 +28,7 @@ export const createGameRenderer = async (options: {
   width?: number;
   background?: number;
   backgroundAlpha?: number;
+  touchAction?: "none" | "auto";
   onError: (error: unknown) => void;
 }) => {
   const { mount, signal, scene } = options;
@@ -68,7 +69,7 @@ export const createGameRenderer = async (options: {
   const canvas = renderer.canvas as HTMLCanvasElement;
   canvas.style.display = "block";
   canvas.style.width = "100%";
-  canvas.style.touchAction = "none";
+  canvas.style.touchAction = options.touchAction ?? "none";
   mount.appendChild(canvas);
   installRenderCapture();
   const unregister = registerRenderCanvas(scene, canvas, "pixi");

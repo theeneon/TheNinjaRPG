@@ -4,14 +4,14 @@ import type { GameRenderer } from "@/libs/rendering/runtime";
 import { ensureDom } from "../../setup-dom.mjs";
 
 ensureDom();
-const setup = () => {
+const setup = (zoom = true) => {
   const canvas = document.createElement("canvas");
   canvas.getBoundingClientRect = () => new DOMRect(0, 0, 390, 390);
   const listeners = new window.AbortController();
   const taps: number[][] = [], zooms: number[] = [];
   let enabled = true;
   createMapControls({ canvas, renderer: { width: 390, height: 390 }, listen: (type: string, callback: EventListener) => canvas.addEventListener(type, callback, { signal: listeners.signal }) } as GameRenderer, {
-    enabled: () => enabled, tap: (x, y) => taps.push([x, y]), zoom: (factor) => zooms.push(factor),
+    enabled: () => enabled, tap: (x, y) => taps.push([x, y]), ...(zoom ? { zoom: (factor: number) => zooms.push(factor) } : {}),
   });
   const event = (type: string, id: number, x: number, y: number) => {
     const pointer = new window.MouseEvent(type, { clientX: x, clientY: y, button: 0 });
@@ -22,6 +22,20 @@ const setup = () => {
 };
 
 describe("map gesture ownership", () => {
+  it("releases wheel scrolling without zoom while preserving taps and rejecting multi-touch taps", () => {
+    const scene = setup(false);
+    try {
+      const wheel = new window.WheelEvent("wheel", { deltaY: 420, cancelable: true });
+      scene.canvas.dispatchEvent(wheel);
+      expect(wheel.defaultPrevented).toBe(false);
+      scene.event("pointerdown", 1, 100, 100); scene.event("pointerup", 1, 102, 102);
+      expect(scene.taps).toEqual([[102, 102]]);
+      scene.event("pointerdown", 2, 100, 100); scene.event("pointerdown", 3, 200, 100);
+      scene.event("pointermove", 3, 250, 100); scene.event("pointerup", 3, 250, 100); scene.event("pointerup", 2, 100, 100);
+      expect(scene.zooms).toEqual([]);
+      expect(scene.taps).toHaveLength(1);
+    } finally { scene.dispose(); }
+  });
   it("dispatches taps but never dispatches drags that return to their start", () => {
     const scene = setup();
     try {

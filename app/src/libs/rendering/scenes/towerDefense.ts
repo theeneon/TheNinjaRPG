@@ -142,7 +142,6 @@ export const createTowerDefenseScene = async (options: {
       throw new DOMException("Tower defense cancelled", "AbortError");
     createMapControls(game, {
       enabled: () => true,
-      zoom: () => {},
       tap: (x, y) => {
         const tile = hexTerrainAt(
           data.grid,

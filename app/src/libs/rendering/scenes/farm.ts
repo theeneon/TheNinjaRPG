@@ -28,6 +28,7 @@ export const createFarmScene = async (options: {
   const game = await createGameRenderer({
     ...options,
     scene: "farm",
+    touchAction: "auto",
     background: 0x87ae73,
     height: (width) => Math.max(360, width * 0.55),
   });

@@ -5,7 +5,7 @@ export const createMapControls = (
   game: GameRenderer,
   options: {
     enabled: () => boolean;
-    zoom: (factor: number) => void;
+    zoom?: (factor: number) => void;
     tap: (x: number, y: number) => void;
   },
 ) => {
@@ -56,7 +56,7 @@ export const createMapControls = (
     contact.moved ||= Math.hypot(p.x - contact.startX, p.y - contact.startY) > 10;
     const after = distance();
     if (options.enabled() && contacts.size > 1 && before > 1 && after > 1)
-      options.zoom(after / before);
+      options.zoom?.(after / before);
   });
   game.listen("pointerup", (event) => {
     const contact = contacts.get(event.pointerId),
@@ -82,7 +82,7 @@ export const createMapControls = (
     revision++;
   });
   game.listen("wheel", (event) => {
-    if (!options.enabled()) return;
+    if (!options.enabled() || !options.zoom) return;
     event.preventDefault();
     const delta =
       event.deltaY *

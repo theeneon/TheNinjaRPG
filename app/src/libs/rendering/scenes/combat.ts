@@ -38,6 +38,7 @@ export const createCombatScene = async (options: {
   onZoom: (zoom: number) => void;
   play: (url: string, volume: number) => void;
   initialZoom: number;
+  interactive?: boolean;
   lightLayout: boolean;
   seed?: string;
   scene?: RenderScene;
@@ -52,6 +53,7 @@ export const createCombatScene = async (options: {
   const game = await createGameRenderer({
     ...options,
     scene: options.scene ?? "combat",
+    touchAction: options.interactive === false ? "auto" : "none",
     width: options.viewport
       ? options.viewport.width * (options.viewport.magnify ?? 1)
       : undefined,
@@ -141,7 +143,7 @@ export const createCombatScene = async (options: {
         camera.y + (game.renderer.height / 2 - y) / scale(),
       );
     const controls = createMapControls(game, {
-      enabled: () => true,
+      enabled: () => options.interactive !== false,
       tap: (x, y) => {
         const tile = tileAt(x, y);
         if (tile) options.onTap(tile);
