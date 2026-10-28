@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "1d107e0b-97a1-4427-917f-2f09a2ed76ae",
-  "prevId": "2404b6d0-cf53-4dcc-846b-c7461e566d90",
+  "id": "2404b6d0-cf53-4dcc-846b-c7461e566d90",
+  "prevId": "89358fe8-e41d-422f-bb5c-77fceff1917b",
   "tables": {
     "AbEvent": {
       "name": "AbEvent",
@@ -5784,14 +5784,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": true
-        },
-        "publicationPending": {
-          "name": "publicationPending",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         },
         "userId": {
           "name": "userId",
@@ -17446,13 +17438,6 @@
         },
         "avatarLight": {
           "name": "avatarLight",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "avatar3d": {
-          "name": "avatar3d",
           "type": "varchar(191)",
           "primaryKey": false,
           "notNull": false,

@@ -3,7 +3,7 @@ import { reportsRouter } from "@/routers/reports";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { forumAlert, forumAudit, forumBoard, forumGrant, forumPost, forumReaction, forumRead, forumRestriction, forumRevision, forumSection, forumThread, forumWatch, userData, userReport, poll, pollOption, userPollVote, userUpload, forumCase } from "@/drizzle/schema";
-import { fetchForumThreadPage, getForumContext, getInfiniteThreads } from "@/libs/forum";
+import { fetchForumPageData, fetchForumThreadPage, getForumContext, getInfiniteThreads } from "@/libs/forum";
 import * as moderation from "@/libs/moderation/defer";
 import { commentsRouter } from "@/routers/comments";
 import { forumRouter } from "@/routers/forum";
@@ -361,6 +361,30 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const audit = (await db.query.forumAudit.findMany()).find(a => a.action === "post.moderator-remove");
     expect(audit?.reason).toBe("Moderator removal");
   });
+  it.each(["News", "History", "ANBU HQ"])("preserves the %s game destination through supported structure edits", async (name) => {
+    const db = await getTestDatabase(); const admin = await client(adminId);
+    if (name !== "News") await db.insert(forumBoard).values({ id: "game-destination", name, summary: "", sectionId: "public" });
+    const board = (await fetchForumPageData(db, name, adminId)).initialThreads.board!;
+    const { permissions: _, publicRead: _publicRead, ...values } = (await getForumContext(db, adminId)).boards.find(b => b.id === board.id)!;
+    const save = { ...values, reason: "Update the game discussion destination" };
+    const before = await db.query.forumAudit.findMany();
+    for (const renamed of [`Renamed ${name}`, name.toLowerCase()]) {
+      expect(await admin.saveBoard({ ...save, name: renamed })).toMatchObject({ success: false, message: expect.stringContaining("game page") });
+      expect((await fetchForumPageData(db, name, adminId)).initialThreads.board?.id).toBe(board.id);
+    }
+    expect((await admin.removeStructure({ type: "BOARD", id: board.id, destinationId: "other", reason: "Consolidate this game destination" })).success).toBe(false);
+    expect(await db.query.forumAudit.findMany()).toEqual(before);
+    expect((await (await client()).saveBoard(save)).success).toBe(false);
+    expect((await admin.saveBoard({ ...save, summary: "Updated destination summary", parentId: "other", archived: true })).success).toBe(true);
+    expect((await admin.removeStructure({ type: "BOARD", id: "other", destinationId: "general", reason: "Remove the destination ancestor" })).success).toBe(false);
+    expect((await admin.removeStructure({ type: "SECTION", id: "public", reason: "Remove the populated section" })).success).toBe(false);
+    expect((await admin.removeStructure({ type: "SECTION", id: "public", destinationId: "private", reason: "Move boards while removing their section" })).success).toBe(true);
+    expect((await fetchForumPageData(db, name, adminId)).initialThreads.board?.id).toBe(board.id);
+    expect((await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, board.id) }))?.sectionId).toBe("private");
+    expect((await admin.saveBoard({ ...save, sectionId: "private", parentId: null, archived: false })).success).toBe(true);
+    expect((await admin.saveBoard({ ...save, sectionId: "private", parentId: null, name: "Replacement destination" })).success).toBe(false);
+    expect((await admin.removeStructure({ type: "BOARD", id: board.id, reason: "Remove an empty game destination" })).success).toBe(false);
+  });
   it("rejects stale public News publication after its guest access changes", async () => {
     const db = await getTestDatabase();
     const stale = new Proxy(db, { get(target, key, receiver) { if (key === "transaction") return async (work: Parameters<DrizzleClient["transaction"]>[0]) => { await db.update(forumBoard).set({ policy: { read: "STAFF", create: "STAFF" } }).where(eq(forumBoard.id, "news")); return target.transaction(work); }; return Reflect.get(target, key, receiver); } });
@@ -415,15 +439,52 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const broadcasts = ["callDiscordNews", "callFacebookNews", "callRedditNews", "callTwitterNews", "callInstagramNews"].map(name => vi.spyOn(socials, name as "callDiscordNews").mockResolvedValue(undefined as never));
     const id = await create("news", adminId); const admin = await client(adminId); const reader = await client(moderatorId);
     await reader.watch({ scope: "THREAD", scopeId: id, active: true, push: false });
-    await db.insert(forumPost).values(["news-reply-1", "news-reply-2"].map(postId => ({ id: postId, threadId: id, userId: playerId, authorId: playerId, content: "Reply awaiting review", isApproved: false })));
+    await db.insert(forumPost).values(["news-reply-1", "news-reply-2"].map(postId => ({ id: postId, threadId: id, userId: playerId, authorId: playerId, content: "Reply awaiting review", isApproved: false, publicationIntent: { threadId: id, opening: false } })));
     await admin.moderateThreads({ ids: [id], action: "REMOVE", reason: "Retain the announcement" });
     for (const postId of ["news-reply-1", "news-reply-2"]) await admin.moderatePost({ postId, action: "APPROVE", reason: "Approve the retained reply" });
     expect(await reader.alerts()).toHaveLength(0);
     await admin.moderateThreads({ ids: [id], action: "RESTORE", reason: "Restore the announcement" });
     expect(await reader.alerts()).toHaveLength(2);
-    expect((await db.query.forumPost.findMany()).every(p => !p.publicationPending)).toBe(true);
+    expect((await db.query.forumPost.findMany()).every(p => !p.publicationIntent)).toBe(true);
     expect((await db.query.userData.findFirst({ where: eq(userData.userId, moderatorId) }))?.unreadNews).toBe(1);
     expect(broadcasts[0]).toHaveBeenCalledTimes(1);
+  });
+  it.each(["foreign", "news"])("keeps original News opening identity when the deferred %s opening is restored after merging", async (deferred) => {
+    const db = await getTestDatabase(); const admin = await client(adminId); const reader = await client(moderatorId);
+    const broadcasts = ["callDiscordNews", "callFacebookNews", "callRedditNews", "callTwitterNews", "callInstagramNews"].map(name => vi.spyOn(socials, name as "callDiscordNews").mockResolvedValue(undefined as never));
+    await db.update(forumBoard).set({ requireApproval: true, policy: { create: "MEMBERS" } }).where(eq(forumBoard.id, deferred === "foreign" ? "general" : "news"));
+    expect((await (await client(deferred === "foreign" ? playerId : adminId)).createThread(topicInput("general"))).success).toBe(true);
+    const sourceId = (await db.query.forumThread.findMany())[0]!.id;
+    const sourceOpening = (await db.query.forumPost.findMany())[0]!;
+    await db.update(forumPost).set({ createdAt: new Date(1000) }).where(eq(forumPost.id, sourceOpening.id));
+    const hold = async (threadId: string, postId: string) => {
+      expect((await admin.moderatePost({ postId, action: "REMOVE", reason: "Retain the pending opening" })).success).toBe(true);
+      expect((await admin.moderateThreads({ ids: [threadId], action: "APPROVE", reason: "Approve while the opening remains hidden" })).success).toBe(true);
+    };
+    if (deferred === "foreign") await hold(sourceId, sourceOpening.id);
+    const newsResult = await (await client(deferred === "news" ? playerId : adminId)).createThread({ ...topicInput("news"), title: "Original News announcement", content: "The original News opening body." });
+    expect(newsResult.success).toBe(true);
+    const news = { threadId: (await db.query.forumThread.findMany()).find(t => t.boardId === "news")!.id };
+    const newsOpening = (await db.query.forumPost.findMany()).find(p => p.threadId === news.threadId)!;
+    await db.update(forumPost).set({ createdAt: new Date(2000) }).where(eq(forumPost.id, newsOpening.id));
+    if (deferred === "news") await hold(news.threadId!, newsOpening.id);
+    expect(broadcasts[0]).toHaveBeenCalledTimes(deferred === "news" ? 0 : 1);
+    await reader.watch({ scope: "THREAD", scopeId: news.threadId!, active: true, push: false });
+    if (deferred === "foreign") await reader.markRead({ postId: newsOpening.id });
+    expect((await admin.restructureTopic({ threadId: sourceId, action: "MERGE", targetThreadId: news.threadId, reason: "Merge the related context", postIds: [] })).success).toBe(true);
+    const held = deferred === "foreign" ? sourceOpening : newsOpening;
+    expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, held.id) }))?.publicationIntent).toEqual({ threadId: deferred === "foreign" ? sourceId : news.threadId, opening: true });
+    for (let i = 0; i < 2; i++) expect((await admin.moderateThreads({ ids: [news.threadId!], action: "APPROVE", reason: "Repeated review keeps opening intent" })).success).toBe(true);
+    expect((await admin.moderatePost({ postId: held.id, action: "RESTORE", reason: "Publish the reviewed opening" })).success).toBe(true);
+    expect(await reader.resolvePost({ postId: held.id })).toMatchObject({ threadId: news.threadId });
+    expect(await reader.alerts()).toHaveLength(1);
+    expect((await reader.getThreads({ boardId: "news", view: "unread", limit: 20 })).threads.map(t => t.id)).toContain(news.threadId!);
+    expect(broadcasts[0]).toHaveBeenCalledTimes(1);
+    expect(broadcasts[0]!.mock.calls[0]?.slice(0, 2)).toEqual(["Original News announcement", "The original News opening body."]);
+    expect((await db.query.userData.findFirst({ where: eq(userData.userId, moderatorId) }))?.unreadNews).toBe(1);
+    await admin.moderatePost({ postId: held.id, action: "REMOVE", reason: "Retain the published opening" });
+    await admin.moderatePost({ postId: held.id, action: "RESTORE", reason: "Restore the published opening" });
+    expect(broadcasts[0]).toHaveBeenCalledTimes(1); expect(await reader.alerts()).toHaveLength(1);
   });
   it("supports approval-only staff and notifies watchers and mentions once after approval", async () => {
     const db = await getTestDatabase(); await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped")); await db.update(forumBoard).set({ requireApproval: true }).where(eq(forumBoard.id, "general"));
@@ -443,7 +504,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const db = await getTestDatabase(); const id = await create();
     const post = (await db.query.forumPost.findMany())[0]!;
     await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
-    await db.update(forumPost).set({ isApproved: false }).where(eq(forumPost.id, post.id));
+    await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: id, opening: true } }).where(eq(forumPost.id, post.id));
     if (target === "topic") await db.update(forumThread).set({ isApproved: false }).where(eq(forumThread.id, id));
     const admin = await client(adminId); const approver = await client(moderatorId);
     const remove = () => target === "post"
@@ -484,7 +545,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
   it.each([false, true])("rejects an entire approval batch containing a removed topic, removed first %s", async (removedFirst) => {
     const db = await getTestDatabase(); const live = await create(); const removed = await create();
     await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
-    await db.update(forumThread).set({ isApproved: false }); await db.update(forumPost).set({ isApproved: false });
+    await db.update(forumThread).set({ isApproved: false }); await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: live, opening: true } }).where(eq(forumPost.threadId, live)); await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: removed, opening: true } }).where(eq(forumPost.threadId, removed));
     const admin = await client(adminId); const approver = await client(moderatorId);
     await admin.moderateThreads({ ids: [removed], action: "REMOVE", reason: "Decline the second pending topic" });
     const snapshot = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumBoard.findMany(), db.query.forumAudit.findMany(), db.query.forumAlert.findMany()]);
@@ -503,7 +564,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const priorAt = new Date(2000); const pendingAt = new Date(sameTime ? 2000 : 3000); const latestAt = new Date(sameTime ? 2000 : 4000);
     await db.insert(forumPost).values([
       { id: sameTime ? "a-prior" : "zz-prior", threadId: id, userId: adminId, authorId: adminId, content: "Already published advice", createdAt: priorAt },
-      { id: "m-pending", threadId: id, userId: playerId, authorId: playerId, content: "Pending advice submitted before the staff reply", createdAt: pendingAt, isApproved: false },
+      { id: "m-pending", threadId: id, userId: playerId, authorId: playerId, content: "Pending advice submitted before the staff reply", createdAt: pendingAt, isApproved: false, publicationIntent: { threadId: id, opening: false } },
       { id: "z-latest", threadId: id, userId: adminId, authorId: adminId, content: "Later published staff reply", createdAt: latestAt },
     ]);
     await db.update(forumThread).set({ nPosts: 3, lastPostId: "z-latest", updatedAt: latestAt }).where(eq(forumThread.id, id));
@@ -530,7 +591,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     await (await comments(adminId)).createForumComment(commentInput(id, "A later staff reply already read by this reader"));
     const latest = (await db.query.forumPost.findMany()).find(p => p.id !== opening.id)!;
     await reader.markRead({ postId: latest.id });
-    await db.update(forumPost).set({ isApproved: false }).where(eq(forumPost.id, opening.id));
+    await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: id, opening: true } }).where(eq(forumPost.id, opening.id));
     const approve = () => path === "post"
       ? admin.moderatePost({ postId: opening.id, action: "APPROVE", reason: "Publish the opening post" })
       : admin.moderateThreads({ ids: [id], action: "APPROVE", reason: "Publish the opening post" });
@@ -546,7 +607,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
     await db.update(forumPost).set({ createdAt: new Date(1000) }).where(eq(forumPost.id, opening.id));
     await db.insert(forumPost).values([
-      { id: "pending-restore", threadId: id, userId: adminId, authorId: adminId, content: "Advice approved while hidden", createdAt: new Date(2000), isApproved: seen },
+      { id: "pending-restore", threadId: id, userId: adminId, authorId: adminId, content: "Advice approved while hidden", createdAt: new Date(2000), isApproved: seen, publicationIntent: seen ? null : { threadId: id, opening: false } },
       { id: "latest-restore", threadId: id, userId: adminId, authorId: adminId, content: "Later reply already read", createdAt: new Date(3000) },
     ]);
     const reader = await client(); const behind = await client(moderatorId); const admin = await client(adminId);
@@ -593,31 +654,31 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
   });
   it.each(["COPY", "SPLIT", "MERGE"] as const)("retains deferred publication through %s without exposing hidden posts", async (action) => {
     const db = await getTestDatabase(); const id = await create(); const destination = await create(); const admin = await client(adminId);
-    await db.insert(forumPost).values({ id: "restructure-pending", threadId: id, userId: playerId, authorId: playerId, content: "Deferred advice", isApproved: false });
+    await db.insert(forumPost).values({ id: "restructure-pending", threadId: id, userId: playerId, authorId: playerId, content: "Deferred advice", isApproved: false, publicationIntent: { threadId: id, opening: false } });
     await admin.moderatePost({ postId: "restructure-pending", action: "REMOVE", reason: "Retain pending advice" });
     await admin.moderatePost({ postId: "restructure-pending", action: "APPROVE", reason: "Approve hidden advice" });
     const result = await admin.restructureTopic({ threadId: id, action, boardId: "general", targetThreadId: destination, title: "Restructured discussion", reason: "Reorganize related advice", postIds: ["restructure-pending"] });
     expect(result.success).toBe(true);
     const pending = await db.query.forumPost.findFirst({ where: eq(forumPost.id, "restructure-pending") });
-    expect(pending).toMatchObject({ threadId: action === "COPY" ? id : result.threadId, publicationPending: true, deletedAt: expect.any(Date) });
+    expect(pending).toMatchObject({ threadId: action === "COPY" ? id : result.threadId, publicationIntent: { threadId: id, opening: false }, deletedAt: expect.any(Date) });
     expect(await (await client()).resolvePost({ postId: "restructure-pending" })).toBeNull();
-    if (action === "COPY") expect((await db.query.forumPost.findMany({ where: eq(forumPost.threadId, result.threadId!) })).every(p => !p.publicationPending && !p.deletedAt)).toBe(true);
+    if (action === "COPY") expect((await db.query.forumPost.findMany({ where: eq(forumPost.threadId, result.threadId!) })).every(p => !p.publicationIntent && !p.deletedAt)).toBe(true);
     expect((await admin.moderatePost({ postId: "restructure-pending", action: "RESTORE", reason: "Publish the reviewed advice" })).success).toBe(true);
-    expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, "restructure-pending") }))?.publicationPending).toBe(false);
+    expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, "restructure-pending") }))?.publicationIntent).toBeNull();
     expect(await (await client()).resolvePost({ postId: "restructure-pending" })).not.toBeNull();
   });
   it("keeps reading positions when approval does not publish removed content", async () => {
     const id = await create(); const db = await getTestDatabase(); const reader = await client(moderatorId); const admin = await client(adminId);
     const post = (await db.query.forumPost.findMany())[0]!; await reader.markRead({ postId: post.id });
     const before = await db.query.forumRead.findMany();
-    await db.update(forumPost).set({ isApproved: false, deletedAt: new Date() }).where(eq(forumPost.id, post.id));
+    await db.update(forumPost).set({ isApproved: false, deletedAt: new Date(), publicationIntent: { threadId: id, opening: true } }).where(eq(forumPost.id, post.id));
     await admin.moderatePost({ postId: post.id, action: "APPROVE", reason: "Approve while removed" });
     expect(await db.query.forumRead.findMany()).toEqual(before);
-    await db.update(forumPost).set({ isApproved: false, deletedAt: null }).where(eq(forumPost.id, post.id));
+    await db.update(forumPost).set({ isApproved: false, deletedAt: null, publicationIntent: { threadId: id, opening: true } }).where(eq(forumPost.id, post.id));
     await db.update(forumThread).set({ deletedAt: new Date() }).where(eq(forumThread.id, id));
     await admin.moderatePost({ postId: post.id, action: "APPROVE", reason: "Approve in a removed topic" });
     expect(await db.query.forumRead.findMany()).toEqual(before);
-    await db.update(forumPost).set({ isApproved: false }).where(eq(forumPost.id, post.id));
+    await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: id, opening: true } }).where(eq(forumPost.id, post.id));
     await admin.moderateThreads({ ids: [id], action: "APPROVE", reason: "Approve a removed topic" });
     expect(await db.query.forumRead.findMany()).toEqual(before);
   });

@@ -8,6 +8,7 @@ import {
   getTableColumns,
   gte,
   inArray,
+  isNotNull,
   isNull,
   like,
   ne,
@@ -327,6 +328,18 @@ export const updateForumPosts = (
     .update(forumPost)
     .set(values)
     .where(and(inArray(forumPost.id, ids), eq(forumPost.threadId, threadId)));
+/** The held opening keeps its identity even when older posts move ahead of it. */
+export const approveForumOpening = (db: Client, threadId: string) =>
+  db
+    .update(forumPost)
+    .set({ isApproved: true })
+    .where(
+      and(
+        eq(forumPost.threadId, threadId),
+        sql`JSON_UNQUOTE(JSON_EXTRACT(${forumPost.publicationIntent}, '$.threadId')) = ${threadId}`,
+        sql`JSON_EXTRACT(${forumPost.publicationIntent}, '$.opening') = true`,
+      ),
+    );
 export const listPendingForumPublications = (
   db: Client,
   threadId: string,
@@ -335,12 +348,13 @@ export const listPendingForumPublications = (
   db.query.forumPost.findMany({
     where: and(
       eq(forumPost.threadId, threadId),
-      eq(forumPost.publicationPending, true),
+      isNotNull(forumPost.publicationIntent),
       eq(forumPost.isApproved, true),
       isNull(forumPost.deletedAt),
       postId ? eq(forumPost.id, postId) : undefined,
     ),
     orderBy: [asc(forumPost.createdAt), asc(forumPost.id)],
+    with: { user: { columns: { avatar: true } } },
   });
 export const claimForumPublications = (
   db: Client,
@@ -349,12 +363,12 @@ export const claimForumPublications = (
 ) =>
   db
     .update(forumPost)
-    .set({ publicationPending: false })
+    .set({ publicationIntent: null })
     .where(
       and(
         eq(forumPost.threadId, threadId),
         inArray(forumPost.id, postIds),
-        eq(forumPost.publicationPending, true),
+        isNotNull(forumPost.publicationIntent),
         eq(forumPost.isApproved, true),
         isNull(forumPost.deletedAt),
       ),

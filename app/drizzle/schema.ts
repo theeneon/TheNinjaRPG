@@ -1378,8 +1378,8 @@ export const forumPost = mysqlTable("ForumPost", {
   removalReason: text("removalReason"),
   isLocked: boolean("isLocked").default(false).notNull(),
   isApproved: boolean("isApproved").default(true).notNull(),
-  /** Approval can precede visibility; first-publication effects wait for restoration. */
-  publicationPending: boolean("publicationPending").default(false).notNull(),
+  /** Retain original opening identity while approval and visibility are deferred. */
+  publicationIntent: json("publicationIntent").$type<{ threadId: string; opening: boolean }>(),
   userId: varchar("userId", { length: 191 }).notNull(),
   threadId: varchar("threadId", { length: 191 }).notNull(),
   authorId: varchar("authorId", { length: 191 }).notNull(),

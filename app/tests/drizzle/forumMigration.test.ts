@@ -8,11 +8,12 @@ import { describeWithDatabase } from "../setup/testDatabase";
 describeWithDatabase("forum structure migration", () => {
   it("preserves grouped and multilingual boards, counts, activity and news policy", async () => {
     const connection = await mysql.createConnection({ uri: process.env.TEST_MYSQL_URL, multipleStatements: true });
-    const tables = ["ForumBoard", "ForumThread", "ForumPost", "ForumAlert", "ForumAudit", "ForumGrant", "ForumReaction", "ForumRead", "ForumRestriction", "ForumRevision", "ForumSection", "ForumWatch", "ForumCase"];
+    const tables = ["UserData", "ForumBoard", "ForumThread", "ForumPost", "ForumAlert", "ForumAudit", "ForumGrant", "ForumReaction", "ForumRead", "ForumRestriction", "ForumRevision", "ForumSection", "ForumWatch", "ForumCase"];
     const prefix = `ForumMigration_${randomBytes(4).toString("hex")}_`;
     const rename = (sql: string) => sql.replace(new RegExp(`\\b(${tables.join("|")})\\b`, "g"), table => `${prefix}${table}`);
     try {
       await connection.query(rename(`
+        CREATE TABLE UserData(userId varchar(191) PRIMARY KEY, avatar3d varchar(191));
         CREATE TABLE ForumBoard(id varchar(191) PRIMARY KEY, name varchar(191) NOT NULL, summary text NOT NULL, \`group\` varchar(191) NOT NULL, createdAt datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updatedAt datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), nPosts int NOT NULL DEFAULT 0, nThreads int NOT NULL DEFAULT 0, UNIQUE INDEX ForumBoard_name_key(name));
         CREATE TABLE ForumThread(id varchar(191) PRIMARY KEY, title varchar(191) NOT NULL, image varchar(512), createdAt datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), updatedAt datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), boardId varchar(191) NOT NULL, userId varchar(191) NOT NULL, nPosts int NOT NULL DEFAULT 0, isPinned boolean NOT NULL DEFAULT false, isLocked boolean NOT NULL DEFAULT false, INDEX ForumThread_boardId_idx(boardId), INDEX ForumThread_userId_idx(userId));
         CREATE TABLE ForumPost(id varchar(191) PRIMARY KEY, content text NOT NULL, createdAt datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), userId varchar(191) NOT NULL, threadId varchar(191) NOT NULL, authorId varchar(191) NOT NULL, isReported boolean NOT NULL DEFAULT false, INDEX ForumPost_threadId_idx(threadId), INDEX ForumPost_userId_idx(userId));
@@ -20,7 +21,9 @@ describeWithDatabase("forum structure migration", () => {
         INSERT INTO ForumThread(id,title,boardId,userId) VALUES('topic','Question topic','questions','author');
         INSERT INTO ForumPost(id,content,userId,authorId,threadId,createdAt) VALUES('opening','Opening','author','author','topic','2026-01-01 00:00:00.000'),('answer','Answer','author','author','topic','2026-01-02 00:00:00.000');
       `));
-      for (const name of ["0122_flashy_mac_gargan.sql", "0123_lovely_rumiko_fujikawa.sql", "0124_fair_nightcrawler.sql", "0125_puzzling_magdalene.sql", "0126_grey_lightspeed.sql"]) await connection.query(rename(readFileSync(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")));
+      for (const name of ["0122_woozy_valkyrie.sql", "0123_flashy_mac_gargan.sql", "0124_lovely_rumiko_fujikawa.sql", "0125_fair_nightcrawler.sql", "0126_puzzling_magdalene.sql", "0127_grey_lightspeed.sql"]) await connection.query(rename(readFileSync(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")));
+      const [userColumns] = await connection.query<mysql.RowDataPacket[]>(rename("SHOW COLUMNS FROM UserData"));
+      expect(userColumns.map(c => c.Field)).toEqual(["userId"]);
       const [sections] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT * FROM ForumSection"));
       expect(sections.map(s => s.name).sort()).toEqual(["Main Broadcast", "忍者"]);
       expect(sections.find(s => s.name === "忍者")?.summary).toBe("物語");
@@ -31,8 +34,8 @@ describeWithDatabase("forum structure migration", () => {
       expect(boards.find(b => b.id === "questions")).toMatchObject({ nPosts: 2, nThreads: 1 });
       const [topics] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT * FROM ForumThread"));
       expect(topics[0]).toMatchObject({ nPosts: 2, kind: "QUESTION", lastPostId: "answer" });
-      const [posts] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT publicationPending FROM ForumPost"));
-      expect(posts.map(p => p.publicationPending)).toEqual([0, 0]);
+      const [posts] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT publicationIntent FROM ForumPost"));
+      expect(posts.map(p => p.publicationIntent)).toEqual([null, null]);
     } finally {
       await connection.query(`DROP TABLE IF EXISTS ${tables.map(table => `\`${prefix}${table}\``).join(", ")}`);
       await connection.end();

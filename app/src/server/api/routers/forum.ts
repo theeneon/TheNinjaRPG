@@ -49,6 +49,9 @@ import {
   forumStructureBoardSchema,
 } from "@/validators/forum";
 
+// Built-in game pages resolve these boards by name.
+const gameDestinationBoards = new Set(["News", "History", "ANBU HQ"]);
+
 export const forumRouter = createTRPCRouter({
   uploads: protectedProcedure.query(({ ctx }) =>
     q.listForumUploads(ctx.drizzle, ctx.userId),
@@ -396,6 +399,7 @@ export const forumRouter = createTRPCRouter({
             authorId: ctx.userId,
             content,
             isApproved,
+            publicationIntent: isApproved ? null : { threadId, opening: true },
           });
           await q.repairForumBoard(tx, board.id);
           if (board.name === "News" && board.publicRead && isApproved)
@@ -572,7 +576,7 @@ export const forumRouter = createTRPCRouter({
             input.action === "RESTORE"
               ? { deletedAt: null, removedBy: null, removalReason: null }
               : input.action === "APPROVE"
-                ? { isApproved: true, publicationPending: true }
+                ? { isApproved: true }
                 : input.action === "DISMISS_REPORT"
                   ? { isReported: false }
                   : { isLocked: input.action === "LOCK" };
@@ -1152,6 +1156,14 @@ export const forumRouter = createTRPCRouter({
             const currentBoards = await q.listForumBoards(tx);
             const current = currentBoards.find((b) => b.id === id);
             if (input.id && !current) return errorResponse("Board no longer exists");
+            if (
+              current &&
+              gameDestinationBoards.has(current.name) &&
+              input.name !== current.name
+            )
+              return errorResponse(
+                "This board is linked to a game page and must keep its name",
+              );
             if (current && current.sectionId !== before?.sectionId)
               return errorResponse("Board moved. Refresh before saving.");
             if (
@@ -1248,6 +1260,10 @@ export const forumRouter = createTRPCRouter({
                   context.boards.find((b) => b.id === input.id)?.sectionId
               )
                 return errorResponse("Board moved. Refresh and try again.");
+              if (gameDestinationBoards.has(board.name))
+                return errorResponse(
+                  "This board is linked to a game page and cannot be removed; archive it instead",
+                );
               if (currentBoards.some((b) => b.parentId === input.id))
                 return errorResponse("Move nested boards before removing their parent");
               if (
@@ -1566,16 +1582,7 @@ async function moderateForumThreads(
                     };
         await q.updateForumThread(tx, thread.id, values);
         if (input.action === "APPROVE") {
-          const posts = await q.listForumPosts(tx, thread.id, 0, 1, true);
-          const opening = posts[0];
-          if (opening) {
-            const wasApproved = currentRows.find((t) => t.id === thread.id)?.isApproved;
-            await q.updateForumPost(tx, opening.id, {
-              isApproved: true,
-              publicationPending:
-                !wasApproved || !opening.isApproved || opening.publicationPending,
-            });
-          }
+          await q.approveForumOpening(tx, thread.id);
         }
         if (input.action === "APPROVE" || input.action === "RESTORE") {
           const current = currentRows.find((t) => t.id === thread.id)!;
@@ -1654,8 +1661,12 @@ async function prepareForumPublication(
       mentionedUserNames: forumMentionNames(post.content),
     });
   if (board.name === "News" && board.publicRead) {
-    const [opening] = await q.listForumPosts(db, thread.id, 0, 1, true);
-    if (opening && posts.some((post) => post.id === opening.id)) {
+    const opening = posts.find(
+      (post) =>
+        post.publicationIntent?.opening &&
+        post.publicationIntent.threadId === thread.id,
+    );
+    if (opening) {
       await q.updateUserDataForCreateThread(db, { userId: opening.authorId });
       approvedNews.push({
         title: thread.title,

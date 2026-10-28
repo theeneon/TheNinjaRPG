@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "89358fe8-e41d-422f-bb5c-77fceff1917b",
-  "prevId": "7889bcfb-d0d0-4362-abc9-dd271132de76",
+  "id": "7889bcfb-d0d0-4362-abc9-dd271132de76",
+  "prevId": "c6c2daf8-83ee-4941-9e2f-3dc4c4a5863d",
   "tables": {
     "AbEvent": {
       "name": "AbEvent",
@@ -5587,60 +5587,6 @@
           "name": "ForumBoard_id",
           "columns": [
             "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "ForumCase": {
-      "name": "ForumCase",
-      "columns": {
-        "postId": {
-          "name": "postId",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "assigneeId": {
-          "name": "assigneeId",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum('OPEN','IN_REVIEW','RESOLVED')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'OPEN'"
-        },
-        "decision": {
-          "name": "decision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "datetime(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(CURRENT_TIMESTAMP(3))"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "ForumCase_postId": {
-          "name": "ForumCase_postId",
-          "columns": [
-            "postId"
           ]
         }
       },
@@ -17417,13 +17363,6 @@
         },
         "avatarLight": {
           "name": "avatarLight",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "avatar3d": {
-          "name": "avatar3d",
           "type": "varchar(191)",
           "primaryKey": false,
           "notNull": false,

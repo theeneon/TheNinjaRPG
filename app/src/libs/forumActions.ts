@@ -109,6 +109,7 @@ export const createForumReply = async (
         userId: effectiveUserId,
         authorId: userId,
         isApproved,
+        publicationIntent: isApproved ? null : { threadId: thread.id, opening: false },
       });
       await repairForumThread(tx, thread.id);
       await repairForumBoard(tx, board.id);

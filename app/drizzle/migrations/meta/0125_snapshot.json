@@ -1,8 +1,8 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "2404b6d0-cf53-4dcc-846b-c7461e566d90",
-  "prevId": "89358fe8-e41d-422f-bb5c-77fceff1917b",
+  "id": "89358fe8-e41d-422f-bb5c-77fceff1917b",
+  "prevId": "7889bcfb-d0d0-4362-abc9-dd271132de76",
   "tables": {
     "AbEvent": {
       "name": "AbEvent",
@@ -6248,27 +6248,6 @@
         "lastPostId": {
           "name": "lastPostId",
           "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "pollId": {
-          "name": "pollId",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "summary": {
-          "name": "summary",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "summaryUpdatedAt": {
-          "name": "summaryUpdatedAt",
-          "type": "datetime(3)",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
@@ -17438,13 +17417,6 @@
         },
         "avatarLight": {
           "name": "avatarLight",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "avatar3d": {
-          "name": "avatar3d",
           "type": "varchar(191)",
           "primaryKey": false,
           "notNull": false,
