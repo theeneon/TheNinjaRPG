@@ -2,13 +2,16 @@
 import {
   and,
   asc,
+  count,
   desc,
   eq,
   getTableColumns,
+  gte,
   inArray,
   isNull,
   like,
   ne,
+  notInArray,
   or,
   type SQL,
   sql,
@@ -32,6 +35,7 @@ import {
   userData,
   userDevice,
   userReport,
+  userUpload,
 } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 
@@ -770,3 +774,115 @@ export const purgeForumThreadWatches = (db: Client, id: string) =>
     .where(and(eq(forumWatch.scope, "THREAD"), eq(forumWatch.scopeId, id)));
 export const purgeForumThreadAlerts = (db: Client, id: string) =>
   db.delete(forumAlert).where(eq(forumAlert.threadId, id));
+
+/** Reuse moderated post-image uploads; the library is always scoped to its owner. */
+export const listForumUploads = (db: Client, userId: string) =>
+  db.query.userUpload.findMany({
+    where: eq(userUpload.userId, userId),
+    orderBy: desc(userUpload.createdAt),
+    limit: 30,
+  });
+
+export const forumParticipation = (db: Client, boardIds: string[], since: Date) =>
+  db
+    .select({
+      boardId: forumThread.boardId,
+      posts: count(),
+      participants: sql<number>`COUNT(DISTINCT ${forumPost.authorId})`.mapWith(Number),
+    })
+    .from(forumPost)
+    .innerJoin(forumThread, eq(forumThread.id, forumPost.threadId))
+    .where(
+      and(
+        inArray(forumThread.boardId, boardIds),
+        isNull(forumThread.deletedAt),
+        eq(forumThread.isApproved, true),
+        isNull(forumPost.deletedAt),
+        eq(forumPost.isApproved, true),
+        gte(forumPost.createdAt, since),
+      ),
+    )
+    .groupBy(forumThread.boardId);
+export const forumTopicMetrics = (db: Client, boardIds: string[], since: Date) =>
+  db
+    .select({
+      boardId: forumThread.boardId,
+      topics:
+        sql<number>`SUM(CASE WHEN ${forumThread.createdAt} >= ${since} AND ${forumThread.deletedAt} IS NULL AND ${forumThread.isApproved} = 1 THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+      unanswered:
+        sql<number>`SUM(CASE WHEN ${forumThread.kind} = 'QUESTION' AND ${forumThread.acceptedPostId} IS NULL AND ${forumThread.deletedAt} IS NULL AND ${forumThread.isApproved} = 1 THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+      pending:
+        sql<number>`SUM(CASE WHEN ${forumThread.isApproved} = 0 AND ${forumThread.deletedAt} IS NULL THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+      removed:
+        sql<number>`SUM(CASE WHEN ${forumThread.deletedAt} IS NOT NULL THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+    })
+    .from(forumThread)
+    .where(inArray(forumThread.boardId, boardIds))
+    .groupBy(forumThread.boardId);
+export const forumPostMetrics = (db: Client, boardIds: string[]) =>
+  db
+    .select({
+      boardId: forumThread.boardId,
+      pendingPosts:
+        sql<number>`SUM(CASE WHEN ${forumPost.isApproved} = 0 AND ${forumPost.deletedAt} IS NULL AND ${forumThread.deletedAt} IS NULL THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+      reported:
+        sql<number>`SUM(CASE WHEN ${forumPost.isReported} = 1 AND ${forumPost.deletedAt} IS NULL THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+      removedPosts:
+        sql<number>`SUM(CASE WHEN ${forumPost.deletedAt} IS NOT NULL THEN 1 ELSE 0 END)`.mapWith(
+          Number,
+        ),
+    })
+    .from(forumPost)
+    .innerJoin(forumThread, eq(forumThread.id, forumPost.threadId))
+    .where(inArray(forumThread.boardId, boardIds))
+    .groupBy(forumThread.boardId);
+export const forumDailyActivity = (db: Client, boardIds: string[], since: Date) =>
+  db
+    .select({
+      date: sql<string>`DATE_FORMAT(${forumPost.createdAt}, '%Y-%m-%d')`,
+      posts: count(),
+    })
+    .from(forumPost)
+    .innerJoin(forumThread, eq(forumThread.id, forumPost.threadId))
+    .where(
+      and(
+        inArray(forumThread.boardId, boardIds),
+        isNull(forumThread.deletedAt),
+        eq(forumThread.isApproved, true),
+        isNull(forumPost.deletedAt),
+        eq(forumPost.isApproved, true),
+        gte(forumPost.createdAt, since),
+      ),
+    )
+    .groupBy(sql`DATE_FORMAT(${forumPost.createdAt}, '%Y-%m-%d')`)
+    .orderBy(sql`DATE_FORMAT(${forumPost.createdAt}, '%Y-%m-%d')`);
+export const forumReviewerWorkload = (db: Client, boardIds: string[], since: Date) =>
+  db
+    .select({
+      actorId: forumAudit.actorId,
+      username: userData.username,
+      actions: count(),
+    })
+    .from(forumAudit)
+    .leftJoin(userData, eq(userData.userId, forumAudit.actorId))
+    .where(
+      and(
+        inArray(forumAudit.boardId, boardIds),
+        gte(forumAudit.createdAt, since),
+        notInArray(forumAudit.action, ["post.author-edit", "post.author-remove"]),
+      ),
+    )
+    .groupBy(forumAudit.actorId, userData.username)
+    .orderBy(desc(count()));

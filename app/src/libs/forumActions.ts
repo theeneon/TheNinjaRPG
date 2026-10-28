@@ -218,7 +218,7 @@ export const editForumPost = async (
       await insertForumAudit(tx, {
         actorId: userId,
         boardId: board.id,
-        action: "post.edit",
+        action: own ? "post.author-edit" : "post.edit",
         targetId: post.id,
         reason,
         before: { content: post.content },

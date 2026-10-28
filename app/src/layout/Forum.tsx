@@ -17,6 +17,7 @@ import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import ContentImageSelector from "@/layout/ContentImageSelector";
+import { ForumAttachments } from "@/layout/ForumAttachments";
 import Link from "@/layout/Link";
 import RichInput from "@/layout/RichInput";
 import UserSearchSelect from "@/layout/UserSearchSelect";
@@ -462,6 +463,15 @@ export const ForumComposer = ({
         onUploadPendingChange={setUploading}
         onSubmit={submit}
       />
+      {uploads && (
+        <ForumAttachments
+          content={values.content ?? ""}
+          onChange={(content) =>
+            form.setValue("content", content, { shouldDirty: true })
+          }
+          disabled={pending || uploading}
+        />
+      )}
       {error && (
         <p role="alert" className="text-destructive text-sm">
           {error}

@@ -1406,6 +1406,9 @@ export const forumThread = mysqlTable("ForumThread", {
   tags: json("tags").$type<string[]>().default([]).notNull(),
   acceptedPostId: varchar("acceptedPostId", { length: 191 }),
   lastPostId: varchar("lastPostId", { length: 191 }),
+  pollId: varchar("pollId", { length: 191 }),
+  summary: text("summary"),
+  summaryUpdatedAt: datetime("summaryUpdatedAt", { mode: "date", fsp: 3 }),
 }, (t) => ({ boardIdIdx: index("ForumThread_boardId_idx").on(t.boardId, t.updatedAt, t.id), userIdIdx: index("ForumThread_userId_idx").on(t.userId) }));
 export const forumThreadRelations = relations(forumThread, ({ one, many }) => ({
   user: one(userData, { fields: [forumThread.userId], references: [userData.userId] }),

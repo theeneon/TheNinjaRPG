@@ -2,7 +2,7 @@ import * as socials from "@/libs/socials";
 import { reportsRouter } from "@/routers/reports";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
-import { forumAlert, forumAudit, forumBoard, forumGrant, forumPost, forumReaction, forumRead, forumRestriction, forumRevision, forumSection, forumThread, forumWatch, userData, userReport } from "@/drizzle/schema";
+import { forumAlert, forumAudit, forumBoard, forumGrant, forumPost, forumReaction, forumRead, forumRestriction, forumRevision, forumSection, forumThread, forumWatch, userData, userReport, poll, pollOption, userPollVote, userUpload, forumCase } from "@/drizzle/schema";
 import { fetchForumThreadPage, getForumContext, getInfiniteThreads } from "@/libs/forum";
 import * as moderation from "@/libs/moderation/defer";
 import { commentsRouter } from "@/routers/comments";
@@ -24,7 +24,7 @@ const create = async (boardId = "general", id = playerId) => {
 describeWithDatabase("forum authorization, administration and discussion lifecycle", () => {
   beforeEach(async () => {
     const db = await getTestDatabase();
-    await resetTables(userReport, forumAlert, forumAudit, forumGrant, forumReaction, forumRead, forumRestriction, forumRevision, forumWatch, forumPost, forumThread, forumBoard, forumSection, userData);
+    await resetTables(userPollVote, pollOption, poll, userUpload, forumCase, userReport, forumAlert, forumAudit, forumGrant, forumReaction, forumRead, forumRestriction, forumRevision, forumWatch, forumPost, forumThread, forumBoard, forumSection, userData);
     await insertUsers([{ userId: playerId, username: "ForumPlayer", level: 50 }, { userId: adminId, username: "ForumAdmin", level: 50, role: "MODERATOR-ADMIN" }, { userId: moderatorId, username: "ForumModerator", level: 50 }]);
     await db.insert(forumSection).values([{ id: "public", name: "Community", summary: "", policy: {} }, { id: "private", name: "Staff", summary: "", policy: { view: "STAFF", read: "STAFF", create: "STAFF" } }]);
     await db.insert(forumBoard).values([{ id: "general", name: "General discussion", summary: "", sectionId: "public" }, { id: "other", name: "Other board", summary: "", sectionId: "public" }, { id: "private-board", name: "Private discussions", summary: "", sectionId: "private" }, { id: "news", name: "News", summary: "", sectionId: "public", policy: { create: "STAFF" } }]);
@@ -187,6 +187,42 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
   });
 
 
+
+  it("embeds live polls with shared votes, checks board voting permissions and records summaries", async () => {
+    const db = await getTestDatabase(); const id = await create();
+    await db.update(userData).set({ rank: "JONIN" }).where(eq(userData.userId, playerId));
+    await db.insert(poll).values({ id: "community-poll", title: "Next community guide", description: "<p>Choose a useful guide.</p>", createdByUserId: adminId });
+    await db.insert(pollOption).values([{ id: "healing", pollId: "community-poll", text: "Healing", createdByUserId: adminId }, { id: "raids", pollId: "community-poll", text: "Raids", createdByUserId: adminId }]);
+    const admin = await client(adminId); const player = await client();
+    const extras = { threadId: id, pollId: "community-poll", summary: "Community advice: focus on one role and keep resources for equipment.", reason: "Summarize useful answers and link our public poll" };
+    expect((await player.saveTopicExtras(extras)).success).toBe(false);
+    expect((await admin.saveTopicExtras(extras)).success).toBe(true);
+    expect((await db.query.forumThread.findFirst())?.summary).toBe(extras.summary);
+    expect((await player.votePoll({ threadId: id, optionId: "healing" })).success).toBe(true);
+    let embedded = await player.threadPoll({ threadId: id }); expect(embedded?.totalVotes).toBe(1); expect(embedded?.userOptionId).toBe("healing"); expect(embedded?.description).not.toContain("<p>");
+    expect((await player.votePoll({ threadId: id, optionId: "raids" })).success).toBe(true);
+    embedded = await player.threadPoll({ threadId: id }); expect(embedded?.totalVotes).toBe(1); expect(embedded?.userOptionId).toBe("raids");
+    expect((await player.votePoll({ threadId: id, optionId: null })).success).toBe(true); expect((await player.threadPoll({ threadId: id }))?.totalVotes).toBe(0);
+    await db.update(forumBoard).set({ policy: { vote: "NONE" } }).where(eq(forumBoard.id, "general"));
+    expect((await player.votePoll({ threadId: id, optionId: "healing" })).success).toBe(false);
+    await db.update(forumBoard).set({ sectionId: "private" }).where(eq(forumBoard.id, "general")); expect(await player.threadPoll({ threadId: id })).toBeNull();
+  });
+  it("scopes attachment libraries and analytics to the viewer's account and boards", async () => {
+    const db = await getTestDatabase();
+    await db.insert(userUpload).values([{ id: "own-image", userId: playerId, imageUrl: "https://example.com/own.png" }, { id: "other-image", userId: adminId, imageUrl: "https://example.com/other.png" }]);
+    const player = await client(); expect((await player.uploads()).map(upload => upload.id)).toEqual(["own-image"]); expect(await player.analytics({ days: 30 })).toBeNull();
+    const id = await create(); await (await comments()).createForumComment(commentInput(id)); await create("private-board", adminId);
+    const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
+    expect((await (await comments()).editForumComment(commentInput(opening.id, "Updated author advice."))).success).toBe(true);
+    await (await client(moderatorId)).lockThread({ thread_id: id, status: true });
+    const scoped = await (await client(moderatorId)).analytics({ days: 7 }); expect(scoped?.boards.map(b => b.id)).toEqual(["general"]); expect(scoped?.boards[0]).toMatchObject({ topics: 1, posts: 2, participants: 1 }); expect(scoped?.daily.reduce((n, d) => n + d.posts, 0)).toBe(2); expect(scoped?.reviewers[0]?.actions).toBe(1); expect(scoped?.reviewers.some(r => r.actorId === playerId)).toBe(false);
+    const all = await (await client(adminId)).analytics({ days: 30 }); expect(all?.boards.find(b => b.id === "private-board")?.posts).toBe(1);
+  });
+  it("rejects stale public News publication after its guest access changes", async () => {
+    const db = await getTestDatabase();
+    const stale = new Proxy(db, { get(target, key, receiver) { if (key === "transaction") return async (work: Parameters<DrizzleClient["transaction"]>[0]) => { await db.update(forumBoard).set({ policy: { read: "STAFF", create: "STAFF" } }).where(eq(forumBoard.id, "news")); return target.transaction(work); }; return Reflect.get(target, key, receiver); } });
+    expect((await (await client(adminId, stale)).createThread(topicInput("news"))).success).toBe(false); expect(await db.query.forumThread.findMany()).toHaveLength(0);
+  });
   it("publishes approved public News once and keeps private News private", async () => {
     const db = await getTestDatabase();
     const broadcasts = ["callDiscordNews", "callFacebookNews", "callRedditNews", "callTwitterNews", "callInstagramNews"].map(name => vi.spyOn(socials, name as "callDiscordNews").mockResolvedValue(undefined as never));

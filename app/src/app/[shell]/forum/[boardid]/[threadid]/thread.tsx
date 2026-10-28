@@ -16,6 +16,7 @@ import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";
 import { ForumComposer, ForumNavigation, ForumWatchButton } from "@/layout/Forum";
 import { ForumRestructureTools, ForumTopicTools } from "@/layout/ForumModeration";
+import { ForumPoll, ForumTopicExtras } from "@/layout/ForumPoll";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
 import Pagination from "@/layout/Pagination";
@@ -225,6 +226,24 @@ export default function Thread({
             </div>
             <ForumWatchButton scope="THREAD" scopeId={thread.id} />
           </div>
+          {thread.summary && (
+            <section
+              aria-label="Staff topic summary"
+              className="rounded-lg border bg-muted/30 p-4"
+            >
+              <h2 className="font-semibold">Discussion at a glance</h2>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
+                {thread.summary}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Staff summary
+                {thread.summaryUpdatedAt
+                  ? ` · Updated ${thread.summaryUpdatedAt.toISOString().slice(0, 10)}`
+                  : ""}
+              </p>
+            </section>
+          )}
+          {thread.pollId && <ForumPoll threadId={thread.id} />}
           {thread.acceptedPostId && (
             <Link
               href={`/forum/${thread.boardId}/${thread.id}?post=${thread.acceptedPostId}`}
@@ -250,6 +269,9 @@ export default function Thread({
                 />
               )}
             </>
+          )}
+          {board.permissions.moderate && tools && (
+            <ForumTopicExtras key={thread.id} thread={thread} onDone={refresh} />
           )}
           {board.permissions.moderate && tools && (
             <ForumRestructureTools

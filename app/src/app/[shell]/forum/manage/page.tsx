@@ -10,6 +10,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import ContentBox from "@/layout/ContentBox";
 import { ForumNavigation } from "@/layout/Forum";
+import { ForumAnalytics } from "@/layout/ForumAnalytics";
 import { ForumTopicTools } from "@/layout/ForumModeration";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
@@ -78,6 +79,10 @@ export default function ForumManagement() {
                 ? [["restrictions", "Posting restrictions"]]
                 : []),
               ["logs", "Audit log"],
+              ...(data.data.canManage ||
+              data.data.boards.some((b) => b.permissions.moderate)
+                ? [["analytics", "Community analytics"]]
+                : []),
             ].map(([key, label]) => (
               <Button
                 key={key}
@@ -95,6 +100,7 @@ export default function ForumManagement() {
             <ForumRestrictions data={data.data} refresh={refresh} />
           )}
           {tab === "review" && <ForumReview data={data.data} refresh={refresh} />}
+          {tab === "analytics" && <ForumAnalytics />}
           {tab === "logs" && (
             <div className="space-y-3">
               <label className="block text-sm" htmlFor={`${fieldPrefix}-1`}>

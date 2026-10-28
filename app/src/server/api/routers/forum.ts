@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { FORUM_MIN_LEVEL, forumLevelMessage } from "@/drizzle/constants";
-import { forumPost } from "@/drizzle/schema";
+import { forumPost, poll } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
 import {
   forumPersonalState,
@@ -14,6 +14,7 @@ import {
 import { deferForumAlerts, editForumPost, removeForumPost } from "@/libs/forumActions";
 import { forumMentionNames, hasForumContent } from "@/libs/forumContent";
 import { deferModeration } from "@/libs/moderation/defer";
+import { getVoteCountsForPolls, processPollWithVotes } from "@/libs/poll";
 import {
   callDiscordNews,
   callFacebookNews,
@@ -22,7 +23,9 @@ import {
   callTwitterNews,
 } from "@/libs/socials";
 import * as q from "@/queries/forum";
+import { fetchPoll, fetchUserVote, listPollForGetPolls } from "@/queries/poll";
 import { fetchUser } from "@/queries/profile";
+import { pollRouter } from "@/server/api/routers/poll";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -36,6 +39,8 @@ import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlE
 import { announcement, isPushEnabled, sendPushToUsers } from "@/server/utils/push";
 import { processMentions } from "@/utils/chat";
 import { checkForBadWords, moderateUserText } from "@/utils/profanity";
+import { htmlToPlainText } from "@/utils/sanitize";
+import { addDays } from "@/utils/time";
 import {
   forumBoardSchema,
   forumCapabilities,
@@ -44,6 +49,164 @@ import {
 } from "@/validators/forum";
 
 export const forumRouter = createTRPCRouter({
+  uploads: protectedProcedure.query(({ ctx }) =>
+    q.listForumUploads(ctx.drizzle, ctx.userId),
+  ),
+  threadPoll: publicProcedure
+    .input(z.object({ threadId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const [context, thread] = await Promise.all([
+        getForumContext(ctx.drizzle, ctx.userId),
+        q.fetchThread(ctx.drizzle, input.threadId),
+      ]);
+      const board = context.boards.find((b) => b.id === thread?.boardId);
+      if (
+        !thread?.pollId ||
+        !board?.permissions.read ||
+        thread.deletedAt ||
+        !thread.isApproved
+      )
+        return null;
+      const [polls, counts, vote] = await Promise.all([
+        listPollForGetPolls(ctx.drizzle, eq(poll.id, thread.pollId), 0, 1),
+        getVoteCountsForPolls(ctx.drizzle, [thread.pollId]),
+        ctx.userId ? fetchUserVote(ctx.drizzle, ctx.userId, thread.pollId) : null,
+      ]);
+      const found = polls[0];
+      return found
+        ? {
+            ...processPollWithVotes(
+              found,
+              counts.optionVoteMap.get(found.id),
+              counts.totalVoteMap.get(found.id) ?? 0,
+            ),
+            description: htmlToPlainText(found.description),
+            userOptionId: vote?.optionId ?? null,
+            canVote: !!context.actor && board.permissions.vote && !thread.isLocked,
+          }
+        : null;
+    }),
+  votePoll: protectedProcedure
+    .input(z.object({ threadId: z.string(), optionId: z.string().nullable() }))
+    .output(baseServerResponse)
+    .mutation(async ({ ctx, input }) => {
+      const [context, thread] = await Promise.all([
+        getForumContext(ctx.drizzle, ctx.userId),
+        q.fetchThread(ctx.drizzle, input.threadId),
+      ]);
+      const board = context.boards.find((b) => b.id === thread?.boardId);
+      if (
+        !thread?.pollId ||
+        !board?.permissions.vote ||
+        thread.deletedAt ||
+        !thread.isApproved ||
+        thread.isLocked
+      )
+        return errorResponse("Voting is unavailable in this topic");
+      const caller = pollRouter.createCaller(ctx);
+      return input.optionId
+        ? caller.vote({ pollId: thread.pollId, optionId: input.optionId })
+        : caller.retractVote({ pollId: thread.pollId });
+    }),
+  saveTopicExtras: protectedProcedure
+    .input(
+      z.object({
+        threadId: z.string(),
+        pollId: z.string().nullable(),
+        summary: z.string().trim().max(2000),
+        reason: z.string().trim().min(3).max(1000),
+      }),
+    )
+    .output(baseServerResponse)
+    .mutation(async ({ ctx, input }) => {
+      const [context, thread, selectedPoll, summaryCheck] = await Promise.all([
+        getForumContext(ctx.drizzle, ctx.userId),
+        q.fetchThread(ctx.drizzle, input.threadId),
+        input.pollId ? fetchPoll(ctx.drizzle, input.pollId) : null,
+        checkForBadWords(input.summary),
+      ]);
+      const board = context.boards.find((b) => b.id === thread?.boardId);
+      if (!thread || !board?.permissions.moderate || thread.deletedAt)
+        return errorResponse("You cannot manage this topic");
+      if (input.pollId && !selectedPoll) return errorResponse("Poll no longer exists");
+      if (!summaryCheck.success) return summaryCheck;
+      // Topic metadata and its audit evidence require two statements and must commit together.
+      return retryOnDeadlock(() =>
+        ctx.drizzle.transaction(async (tx) => {
+          await q.lockForumSection(tx, board.sectionId);
+          await q.lockForumBoard(tx, board.id);
+          const [current] = await q.lockForumThread(tx, thread.id);
+          if (
+            !current ||
+            current.deletedAt ||
+            current.boardId !== board.id ||
+            !(await forumWriteSnapshotMatches(tx, context, board.id))
+          )
+            return errorResponse("Topic or access changed. Refresh and try again.");
+          const after = {
+            pollId: input.pollId,
+            summary: input.summary || null,
+            summaryUpdatedAt: input.summary ? new Date() : null,
+          };
+          await q.updateForumThread(tx, thread.id, after);
+          await q.insertForumAudit(tx, {
+            actorId: ctx.userId,
+            boardId: board.id,
+            targetId: thread.id,
+            action: "topic.extras",
+            reason: input.reason,
+            before: { pollId: current.pollId, summary: current.summary },
+            after,
+          });
+          return { success: true, message: "Poll and summary saved" };
+        }),
+      );
+    }),
+  analytics: protectedProcedure
+    .input(
+      z.object({
+        days: z.union([z.literal(7), z.literal(30), z.literal(90)]).default(30),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const context = await getForumContext(ctx.drizzle, ctx.userId);
+      const boards = context.boards.filter(
+        (b) => b.permissions.moderate || context.canManage,
+      );
+      if (!boards.length && !context.canManage) return null;
+      const ids = boards.map((b) => b.id);
+      const since = addDays(new Date(), -input.days);
+      if (!ids.length) return { boards: [], daily: [], reviewers: [], since };
+      const [participation, topics, posts, daily, reviewers] = await Promise.all([
+        q.forumParticipation(ctx.drizzle, ids, since),
+        q.forumTopicMetrics(ctx.drizzle, ids, since),
+        q.forumPostMetrics(ctx.drizzle, ids),
+        q.forumDailyActivity(ctx.drizzle, ids, since),
+        q.forumReviewerWorkload(ctx.drizzle, ids, since),
+      ]);
+      return {
+        since,
+        daily,
+        reviewers,
+        boards: boards.map((board) => ({
+          id: board.id,
+          name: board.name,
+          posts: 0,
+          participants: 0,
+          topics: 0,
+          unanswered: 0,
+          pending: 0,
+          removed: 0,
+          pendingPosts: 0,
+          reported: 0,
+          removedPosts: 0,
+          ...participation.find((p) => p.boardId === board.id),
+          ...topics.find((t) => t.boardId === board.id),
+          ...posts.find((p) => p.boardId === board.id),
+        })),
+      };
+    }),
+
   getAll: publicProcedure.query(async ({ ctx }) =>
     (await getForumContext(ctx.drizzle, ctx.userId)).boards
       .filter((b) => b.permissions.view)
