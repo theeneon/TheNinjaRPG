@@ -23,7 +23,7 @@ describe("travel actor snapshots", () => {
     const result = recipes([player({ isNpc: true, npcPlacementId: "one", npcInteractionType }), player({ isNpc: true, npcPlacementId: "two", npcInteractionType })], { minBracket: 8 });
     expect(result.map((recipe) => recipe.key)).toEqual(["npc:one", "npc:two"]);
     expect(result[0]?.parts.map((part) => part.kind)).toEqual(["avatar", npcInteractionType === "HOSTILE" ? "attack" : "talk"]);
-    expect(result[0]?.parts[0]?.image).toBe("avatar.webp");
+    expect(result[0]?.parts[0]).toMatchObject({ image: "avatar.webp", rendition: 256 });
   });
   it("omits restricted attack actions while preserving healing and profile details", () => {
     expect(recipes([player({ rank: "STUDENT" })])[0]?.parts.map((part) => part.kind)).toEqual(["marker", "marker", "avatar", "heal", "info"]);

@@ -21,7 +21,7 @@ describe("combat fighter recipes", () => {
     const fighter = user({ isAi: true, isOriginal: true, isSummon: true, controllerId: "viewer" });
     const parts = combatActorParts(fighter, tile, battle, "viewer");
     expect(parts.map((part) => part.kind)).toEqual(["aiAvatar", "star", "tombstone"]);
-    expect(parts[0]).toMatchObject({ image: "portrait.webp", size: 32, y: 18 });
+    expect(parts[0]).toMatchObject({ image: "portrait.webp", size: 32, y: 18, rendition: 256 });
     expect(parts[0]?.mask).toBeUndefined();
     expect(parts[1]?.image).toBe(IMG_BATTLEFIELD_STAR);
     expect(combatActorParts(fighter, tile, battle, "someone-else").some((part) => part.kind === "star")).toBe(false);

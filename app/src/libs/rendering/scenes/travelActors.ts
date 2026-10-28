@@ -388,7 +388,7 @@ const userParts = (user: SectorUser, tile: TerrainHex) => {
       user.isNpc ? 1.3 : 0.8,
       0.5,
       1,
-      user.isNpc ? {} : { mask: IMG_SECTOR_USER_SPRITE_MASK },
+      user.isNpc ? { rendition: 256 } : { mask: IMG_SECTOR_USER_SPRITE_MASK },
     ),
   );
   if (user.isNpc)

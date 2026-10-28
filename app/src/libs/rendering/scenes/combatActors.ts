@@ -85,7 +85,9 @@ export const createCombatActors = (
         shadowSprite.height = tile.height * 0.5;
         shadowSprite.scale.y *= -1;
         shadowSprite.position.set(tile.width / 2, tile.height * 0.3);
-        root.addChild(shadowSprite, artRoot);
+        const halo = new Graphics();
+        // Threat sits behind the fighter and its status meters.
+        root.addChild(shadowSprite, halo, artRoot);
         const noMarker = user.isAi && user.isOriginal;
         const offset = noMarker ? tile.height / 8 : 0;
         const meter = (color: number, index: number) =>
@@ -104,8 +106,6 @@ export const createCombatActors = (
         root.addChild(hp.container);
         if (sp) root.addChild(sp.container);
         if (cp) root.addChild(cp.container);
-        const halo = new Graphics();
-        root.addChild(halo);
         root.label = user.userId;
         container.addChild(root);
         scope.own(() => {
@@ -211,28 +211,35 @@ export const createCombatActors = (
     record.halo.visible = ratio !== undefined;
     if (ratio !== undefined && ratio !== record.haloRatio) {
       record.haloRatio = ratio;
-      const size = target.height * (user.isAi && user.isOriginal ? 1.75 : 1.08);
-      record.halo
-        .clear()
-        .circle(
-          target.width / 2,
-          target.height * (user.isAi && user.isOriginal ? 0.9 : 1),
-          size * 0.4775,
-        )
-        .stroke({ color: 0x252b26, alpha: 0.65, width: size * 0.045 });
+      const hasPortrait = !(user.isAi && user.isOriginal);
+      const size = target.height * (hasPortrait ? 1.08 : 1.75);
+      // Leave the bottom quarter open where the portrait pin tapers to its point.
+      const start = hasPortrait ? (Math.PI * 5) / 4 : Math.PI / 2;
+      const sweep = Math.PI * (hasPortrait ? 1.5 : 2);
+      const y = target.height * (hasPortrait ? 1 : 0.9);
+      record.halo.clear();
+      if (hasPortrait)
+        record.halo.arc(target.width / 2, y, size * 0.4775, start, start - sweep, true);
+      else record.halo.circle(target.width / 2, y, size * 0.4775);
+      record.halo.stroke({
+        color: 0x252b26,
+        alpha: 0.65,
+        width: size * 0.03,
+        cap: "round",
+      });
       if (ratio > 0)
         record.halo
           // The threat arc is independent of the track's retained path endpoint.
           .beginPath()
           .arc(
             target.width / 2,
-            target.height * (user.isAi && user.isOriginal ? 0.9 : 1),
+            y,
             size * 0.4775,
-            Math.PI / 2,
-            Math.PI / 2 - Math.PI * 2 * Math.max(0, Math.min(1, ratio)),
+            start,
+            start - sweep * Math.max(0, Math.min(1, ratio)),
             true,
           )
-          .stroke({ color: 0xfbbf24, width: size * 0.045 });
+          .stroke({ color: 0xfbbf24, width: size * 0.03, cap: "round" });
     }
   };
   const animate = (
@@ -349,7 +356,11 @@ export const combatActorParts = (
   });
   const parts: WorldSpriteDescription[] = [];
   if (user.isAi && user.isOriginal) {
-    parts.push(part("aiAvatar", user.avatar || IMG_AVATAR_DEFAULT, h * 1.6, h * 0.9));
+    parts.push(
+      part("aiAvatar", user.avatar || IMG_AVATAR_DEFAULT, h * 1.6, h * 0.9, {
+        rendition: 256,
+      }),
+    );
     if (user.isSummon && user.controllerId === playerId)
       parts.push(part("star", IMG_BATTLEFIELD_STAR, h / 2.5, h * 0.2));
   } else {

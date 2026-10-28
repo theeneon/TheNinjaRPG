@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { Assets, BufferImageSource, Container, Graphics, Texture } from "pixi.js";
 import type { ReturnedBattle } from "@/libs/combat/types";
 import { getBattleGrid } from "@/libs/combat/util";
+import * as maskedTextures from "@/libs/rendering/maskedTextures";
 import type { GameRenderer } from "@/libs/rendering/runtime";
 import { createCombatActors } from "@/libs/rendering/scenes/combatActors";
 import { makeBattleUser, makeCompleteBattle } from "../combat/helpers/battleScenario";
@@ -12,19 +13,21 @@ beforeEach(() => {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   vi.spyOn(Assets, "load").mockImplementation(async () => new Texture({ source: new BufferImageSource({ resource: new Uint8Array(16 * 16 * 4), width: 16, height: 16 }) }));
   vi.spyOn(Assets, "unload").mockResolvedValue(undefined);
+  vi.spyOn(maskedTextures, "acquireMaskedTexture").mockImplementation(() => ({ resource: Promise.resolve(Texture.WHITE), release() {} }));
 });
 afterEach(() => { for (const cleanup of cleanups.splice(0)) cleanup(); vi.restoreAllMocks(); });
-const setup = async () => {
+const setup = async (isAi = true) => {
   const owned = new Set<() => void>(), stage = new Container();
   const game = { own: (cleanup: () => void) => owned.add(cleanup), disown: (cleanup: () => void) => owned.delete(cleanup), isDisposed: () => false, signal: new AbortController().signal } as unknown as GameRenderer;
   cleanups.push(() => { stage.destroy({ children: true, texture: false, textureSource: false }); for (const cleanup of owned) cleanup(); });
-  const user = makeBattleUser("actor", { longitude: 3, latitude: 1, avatar: `https://example.com/actor-${sequence++}.png`, isAi: true, isOriginal: true });
+  const user = makeBattleUser("actor", { longitude: 3, latitude: 1, avatar: `https://example.com/actor-${sequence++}.png`, isAi, isOriginal: true });
   const battle = makeCompleteBattle({ usersState: [user], usersEffects: [], width: 12, height: 10 }) as unknown as ReturnedBattle;
   const grid = getBattleGrid(40, battle, { x: -20, y: -20 });
   const step = vi.fn(), actors = createCombatActors(game, grid, step);
   stage.addChild(actors.container); actors.sync({ battle }); await actors.ready();
   const root = actors.container.children[0]!;
-  return { actors, root, user, battle, owned, step };
+  const halo = root.children.find((child) => child instanceof Graphics) as Graphics;
+  return { actors, root, halo, user, battle, grid, owned, step };
 };
 
 describe("combat actor reconciliation", () => {
@@ -41,10 +44,9 @@ describe("combat actor reconciliation", () => {
     expect(actors.animate({ now: 1034, delta: 0, reducedMotion: true }, user.userId, undefined)).toBe(false);
   });
   it("keeps unchanged aggro geometry and shows an empty ring for zero threat", async () => {
-    const { actors, root, user, battle } = await setup();
+    const { actors, halo, user, battle } = await setup();
     const aggro = new Map([[user.userId, { enmity: 0, ratio: 0, isHighest: false }]]);
     actors.sync({ battle, aggro });
-    const halo = root.children.at(-1) as Graphics;
     expect(halo.visible).toBe(true);
     const instructions = [...halo.context.instructions];
     actors.sync({ battle, aggro });
@@ -52,8 +54,7 @@ describe("combat actor reconciliation", () => {
     actors.sync({ battle }); expect(halo.visible).toBe(false);
   });
   it("keeps changing threat arcs within the fighter's ring", async () => {
-    const { actors, root, user, battle } = await setup();
-    const halo = root.children.at(-1) as Graphics;
+    const { actors, halo, user, battle } = await setup();
     actors.sync({ battle, aggro: new Map([[user.userId, { enmity: 0, ratio: 0, isHighest: false }]]) });
     const track = { ...halo.getLocalBounds() };
     for (const ratio of [0.25, 1, 0.5, 0]) {
@@ -63,6 +64,17 @@ describe("combat actor reconciliation", () => {
       expect(bounds.minY).toBeCloseTo(track.minY);
       expect(bounds.maxX).toBeCloseTo(track.maxX);
       expect(bounds.maxY).toBeCloseTo(track.maxY);
+    }
+  });
+  it("keeps portrait threat behind artwork and meters, clear of the pin's point", async () => {
+    const { actors, root, halo, user, battle, grid } = await setup(false);
+    const tile = grid.getHex({ col: user.longitude, row: user.latitude })!;
+    expect(root.getChildIndex(halo)).toBe(1);
+    for (const ratio of [0, 0.25, 0.5, 1]) {
+      actors.sync({ battle, aggro: new Map([[user.userId, { enmity: ratio * 100, ratio, isHighest: ratio === 1 }]]) });
+      const bounds = halo.getLocalBounds();
+      expect(bounds.minY).toBeGreaterThan(tile.height * 0.6);
+      expect(bounds.maxY).toBeGreaterThan(tile.height * 1.5);
     }
   });
   it("removes absent actors and their asset scopes immediately", async () => {
