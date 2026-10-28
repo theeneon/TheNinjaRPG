@@ -3154,8 +3154,6 @@ export const IMG_ICON_TWITTER =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJMi2fCxtsO4cexqW2RDgkE3zZbNXSFGitmnar.png";
 export const IMG_ICON_YOUTUBE =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJy7pL6jukVH2MI5Lo4ehEfAXvZdcmtWqPg7rp.png";
-export const IMG_ICON_FORUM =
-  "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJTwT9cY5IU29dZYJPoOKSh5vmlqatMub3EigH.png";
 export const IMG_ICON_MOVE =
   "https://uploadthing.b-cdn.net/f/Hzww9EQvYURJepKSYSyV3OvUJQExAi0bGoIZDF74LqSnHRdp.png";
 export const IMG_ICON_HEAL =
