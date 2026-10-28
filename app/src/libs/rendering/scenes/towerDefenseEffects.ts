@@ -29,7 +29,19 @@ export const createTowerDefenseEffects = async (game: GameRenderer) => {
     impacts = new Container(),
     numbers = new Container();
   container.addChild(projectiles, impacts, numbers);
-  const shuriken = await game.assets.texture(TD_SHURIKEN_IMAGE_URL, 50);
+  const shuriken = await game.assets
+    .texture(TD_SHURIKEN_IMAGE_URL, 50)
+    .catch((error: unknown) => {
+      if (
+        game.signal.aborted ||
+        game.isDisposed() ||
+        (error instanceof Error && error.name === "AbortError")
+      )
+        throw error;
+      // A plain projectile preserves targeting and hit feedback when its art is missing.
+      console.warn("Tower defense projectile artwork unavailable", error);
+      return Texture.WHITE;
+    });
   if (game.isDisposed()) throw new DOMException("Effects cancelled", "AbortError");
   const projectileRecords = new Map<
     string,

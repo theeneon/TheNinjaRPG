@@ -102,15 +102,30 @@ export const createFarmScene = async (options: {
       if (active && plot?.cropImage !== entry.image) {
         const path = plot?.cropImage;
         entry.image = path ?? null;
+        entry.crop.texture = entry.glow.texture = Texture.EMPTY;
         if (path)
-          void game.assets.texture(path).then((texture) => {
-            if (game.isDisposed() || entry.crop.destroyed || entry.image !== path)
-              return;
-            entry.crop.texture = texture;
-            entry.glow.texture = texture;
-            entry.crop.width = entry.crop.height = entry.cropSize;
-            game.invalidate();
-          }, options.onError);
+          void game.assets.texture(path).then(
+            (texture) => {
+              if (game.isDisposed() || entry.crop.destroyed || entry.image !== path)
+                return;
+              entry.crop.texture = texture;
+              entry.glow.texture = texture;
+              entry.crop.width = entry.crop.height = entry.cropSize;
+              game.invalidate();
+            },
+            (error: unknown) => {
+              if (
+                game.signal.aborted ||
+                game.isDisposed() ||
+                entry.crop.destroyed ||
+                entry.image !== path ||
+                (error instanceof Error && error.name === "AbortError")
+              )
+                return;
+              // Soil and plot controls remain usable without the crop/glow artwork.
+              console.warn("Farm crop artwork unavailable", error);
+            },
+          );
       }
       const isHovered = entry.slot === hovered;
       entry.soil.tint = isHovered ? 0xe2f7d3 : 0xffffff;
