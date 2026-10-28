@@ -472,15 +472,17 @@ export const previousVisibleForumPost = (
     columns: { id: true, createdAt: true },
     orderBy: [desc(forumPost.createdAt), desc(forumPost.id)],
   });
-/** Newly published older posts must remain ahead of the reader's resume position. */
+/** Keep newly visible posts ahead of resume positions; removals can target just their own cursor. */
 export const rewindForumReads = (
   db: Client,
   post: { id: string; threadId: string; createdAt: Date },
   previous?: { id: string; createdAt: Date },
+  guard?: SQL,
 ) => {
   const affected = and(
     eq(forumRead.threadId, post.threadId),
     sql`(${forumRead.readAt} > ${post.createdAt} OR (${forumRead.readAt} = ${post.createdAt} AND ${forumRead.postId} >= ${post.id}))`,
+    guard,
   );
   return previous
     ? db

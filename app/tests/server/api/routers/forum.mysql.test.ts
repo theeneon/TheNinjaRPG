@@ -147,6 +147,69 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await api.restructureTopic({ threadId: id, action: "MERGE", targetThreadId: copy.threadId, reason: "Merge duplicate guide", postIds: [] })).success).toBe(true);
     expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }))?.deletedAt).toBeInstanceOf(Date);
   });
+  it.each([1000, 2500, 3000, 4000])("keeps merged contributions discoverable at timestamp %d", async (sourceTime) => {
+    const db = await getTestDatabase(); const source = await create(); const target = await create(); const other = await create("other");
+    const sourcePost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, source) }))[0]!;
+    const targetPost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, target) }))[0]!;
+    await db.update(forumPost).set({ id: "m-merge-source", createdAt: new Date(sourceTime) }).where(eq(forumPost.id, sourcePost.id));
+    await db.update(forumPost).set({ createdAt: new Date(2000) }).where(eq(forumPost.id, targetPost.id));
+    await db.insert(forumPost).values([
+      { id: "z-target-latest", threadId: target, userId: playerId, authorId: playerId, content: "Destination reply already read", createdAt: new Date(3000) },
+      { id: "merge-removed", threadId: source, userId: playerId, authorId: playerId, content: "Removed source post", createdAt: new Date(500), deletedAt: new Date() },
+      { id: "merge-pending", threadId: source, userId: playerId, authorId: playerId, content: "Pending source post", createdAt: new Date(700), isApproved: false },
+    ]);
+    const reader = await client(); const behind = await client(moderatorId); const admin = await client(adminId);
+    await admin.repairCounters({ boardId: "general" });
+    await reader.markRead({ postId: "z-target-latest" }); await behind.markRead({ postId: targetPost.id });
+    const otherPost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, other) }))[0]!;
+    await reader.markRead({ postId: otherPost.id }); const otherRead = (await reader.personal()).reads.find(r => r.threadId === other);
+    const merge = () => admin.restructureTopic({ threadId: source, action: "MERGE", targetThreadId: target, postIds: [], reason: "Combine related discussions" });
+    expect((await merge()).success).toBe(true);
+    const resumed = (await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.find(t => t.id === target)!;
+    expect(resumed).toMatchObject({ nPosts: 3, unread: true, resumePostId: sourceTime < 2000 ? null : sourceTime <= 3000 ? targetPost.id : "z-target-latest" });
+    expect((await behind.personal()).reads.find(r => r.threadId === target)?.postId).toBe(sourceTime < 2000 ? undefined : targetPost.id);
+    expect((await reader.personal()).reads.find(r => r.threadId === other)).toEqual(otherRead);
+    expect((await reader.resolvePost({ postId: "m-merge-source" }))?.threadId).toBe(target);
+    expect((await reader.getThreads({ boardId: "general", limit: 20 })).threads.some(t => t.id === source)).toBe(false);
+    if (resumed.resumePostId) expect((await reader.resolvePost({ postId: resumed.resumePostId }))?.threadId).toBe(target);
+    await reader.markRead({ postId: sourceTime > 3000 ? "m-merge-source" : "z-target-latest" });
+    const reads = (await reader.personal()).reads;
+    expect((await merge()).success).toBe(false);
+    expect((await reader.personal()).reads).toEqual(reads);
+    expect((await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.some(t => t.id === target)).toBe(false);
+  });
+  it.each(["staff", "author"])("preserves usable reading positions after %s removes a saved cursor", async (path) => {
+    const db = await getTestDatabase(); const id = await create(); const other = await create("other");
+    const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;
+    await db.update(forumPost).set({ createdAt: new Date(1000) }).where(eq(forumPost.id, opening.id));
+    await db.insert(forumPost).values(Array.from({ length: 44 }, (_, i) => ({
+      id: `cursor-${String(i + 2).padStart(2, "0")}`, threadId: id, userId: playerId, authorId: playerId, content: `Discussion chapter ${i + 2}`,
+      createdAt: new Date((i + 2 === 28 || i + 2 === 29 ? 30 : i + 2) * 1000), isApproved: i + 2 !== 29,
+    })));
+    await db.update(forumPost).set({ deletedAt: new Date() }).where(eq(forumPost.id, "cursor-27"));
+    const reader = await client(); const admin = await client(adminId); const behind = await client(moderatorId);
+    await admin.repairCounters({ boardId: "general" });
+    await reader.markRead({ postId: "cursor-30" }); await admin.markRead({ postId: "cursor-45" }); await behind.markRead({ postId: opening.id });
+    const otherPost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, other) }))[0]!;
+    await reader.markRead({ postId: otherPost.id });
+    const unaffected = (await db.query.forumRead.findMany()).filter(r => r.threadId !== id || r.userId !== playerId);
+    expect((await reader.resolvePost({ postId: "cursor-30" }))?.page).toBe(2);
+    const remove = (postId: string) => path === "staff"
+      ? admin.moderatePost({ postId, action: "REMOVE", reason: "Remove an off-topic message" })
+      : comments().then(api => api.deleteForumComment({ id: postId }));
+    expect((await remove("cursor-30")).success).toBe(true);
+    const resumed = (await reader.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.find(t => t.id === id)!;
+    expect(resumed).toMatchObject({ unread: true, resumePostId: "cursor-28" });
+    expect(await reader.resolvePost({ postId: resumed.resumePostId! })).toMatchObject({ threadId: id, page: 2 });
+    expect(await reader.resolvePost({ postId: "cursor-30" })).toBeNull();
+    expect((await db.query.forumRead.findMany()).filter(r => r.threadId !== id || r.userId !== playerId)).toEqual(unaffected);
+    expect((await admin.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.some(t => t.id === id)).toBe(false);
+    await reader.markRead({ postId: "cursor-45" }); await reader.markRead({ postId: "cursor-28" });
+    expect((await reader.personal()).reads.find(r => r.threadId === id)?.postId).toBe("cursor-45");
+    expect((await remove(opening.id)).success).toBe(true);
+    expect((await behind.personal()).reads.some(r => r.threadId === id)).toBe(false);
+    expect((await behind.getThreads({ boardId: "general", view: "unread", limit: 20 })).threads.find(t => t.id === id)).toMatchObject({ unread: true, resumePostId: null });
+  });
   it("clears only source reading positions moved by a split and preserves direct post links", async () => {
     const db = await getTestDatabase(); const id = await create(); const other = await create("other");
     const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }))[0]!;

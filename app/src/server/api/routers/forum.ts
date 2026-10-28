@@ -832,8 +832,18 @@ export const forumRouter = createTRPCRouter({
                 source.id,
                 selected.map((p) => p.id),
               );
-            if (input.action === "MERGE")
+            if (input.action === "MERGE") {
+              const first = selected.find((p) => !p.deletedAt && p.isApproved);
+              if (first) {
+                const movedPost = { ...first, threadId: id };
+                await q.rewindForumReads(
+                  tx,
+                  movedPost,
+                  await q.previousVisibleForumPost(tx, movedPost),
+                );
+              }
               await q.updateForumThread(tx, source.id, { deletedAt: new Date() });
+            }
           }
           await q.repairForumThread(tx, source.id);
           await q.repairForumThread(tx, id);

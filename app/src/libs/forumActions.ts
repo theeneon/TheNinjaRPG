@@ -3,7 +3,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
 import { FORUM_MIN_LEVEL, forumLevelMessage } from "@/drizzle/constants";
-import { forumPost } from "@/drizzle/schema";
+import { forumPost, forumRead } from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
 import { forumWriteSnapshotMatches, getForumContext } from "@/libs/forum";
 import { forumBoardPermissions } from "@/libs/forumAccess";
@@ -25,8 +25,10 @@ import {
   lockForumBoard,
   lockForumSection,
   lockForumThread,
+  previousVisibleForumPost,
   repairForumBoard,
   repairForumThread,
+  rewindForumReads,
   updateForumPost,
 } from "@/queries/forum";
 import { fetchUser } from "@/queries/profile";
@@ -299,6 +301,12 @@ export const removeForumPost = async (
         return errorResponse(
           "This post changed, is locked or was already removed. Refresh and try again.",
         );
+      await rewindForumReads(
+        tx,
+        post,
+        await previousVisibleForumPost(tx, post),
+        eq(forumRead.postId, post.id),
+      );
       await repairForumThread(tx, thread.id);
       await repairForumBoard(tx, board.id);
       await insertForumAudit(tx, {
