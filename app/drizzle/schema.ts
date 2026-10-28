@@ -5649,7 +5649,7 @@ export const supportTicket = mysqlTable(
       .notNull(),
     status: mysqlEnum("status", consts.SupportTicketStatuses).default("OPEN").notNull(),
     isPublic: boolean("isPublic").default(false).notNull(),
-    tags: json("tags").$type<string[]>().default([]).notNull().default([]),
+    tags: json("tags").$type<string[]>().notNull().default([]),
     conversationId: varchar("conversationId", { length: 191 }).notNull(),
     createdByUserId: varchar("createdByUserId", { length: 191 }).notNull(),
     assignedToUserId: varchar("assignedToUserId", { length: 191 }),

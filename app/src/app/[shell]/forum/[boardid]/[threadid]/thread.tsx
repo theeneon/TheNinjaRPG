@@ -264,7 +264,6 @@ export default function Thread({
                   thread={thread}
                   onDone={() => {
                     setTools(false);
-                    void refresh();
                   }}
                 />
               )}

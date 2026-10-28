@@ -135,7 +135,6 @@ export default function Board({
               ids={selected}
               onDone={() => {
                 setSelected([]);
-                void threads.refetch();
               }}
             />
           )}

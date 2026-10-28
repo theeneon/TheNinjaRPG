@@ -855,7 +855,6 @@ function ForumStaff({
             if (result.success) {
               setReason("");
               await refresh();
-              void effective.refetch();
             } else setError(result.message);
           } catch (e) {
             setError(e instanceof Error ? e.message : "Permissions could not be saved");
@@ -1238,7 +1237,6 @@ function ForumReview({
           }
           onDone={() => {
             setSelected([]);
-            void refresh();
           }}
         />
       )}
