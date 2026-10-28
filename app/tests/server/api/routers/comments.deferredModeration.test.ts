@@ -42,7 +42,7 @@ const makeClient = (write: (table: Table) => Promise<unknown> = async () => ({ r
     userNindo: { findFirst: async () => ({ userId: user.userId }) },
   },
   transaction: async (callback: (tx: unknown) => Promise<unknown>) => callback(client),
-  select: () => ({ from: (table: Table) => ({ innerJoin: () => ({ where: () => ({ for: async () => [{ ...board, sectionPolicy: {}, sectionArchived: false }] }) }), where: () => ({ for: async () => table === forumThread ? [thread] : table === forumBoard ? [board] : [{ id: "section", policy: {}, archived: false }] }) }) }),
+  select: () => ({ from: (table: Table) => ({ innerJoin: () => ({ where: () => ({ for: async () => [{ ...board, sectionArchived: false }] }) }), where: () => ({ for: async () => table === forumThread ? [thread] : table === forumBoard ? [board] : [{ id: "section", policy: {}, archived: false }] }) }) }),
   insert: (table: Table) => ({ values: () => write(table) }),
   update: (table: Table) => ({ set: () => ({ where: () => write(table) }) }),
   selectDistinct: () => ({ from: () => ({ innerJoin: () => ({ where: async () => [] }) }) }),

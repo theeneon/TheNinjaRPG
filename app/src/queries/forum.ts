@@ -400,7 +400,6 @@ export const lockForumBoard = (db: Client, id: string) =>
   db
     .select({
       ...getTableColumns(forumBoard),
-      sectionPolicy: forumSection.policy,
       sectionArchived: forumSection.archived,
     })
     .from(forumBoard)
@@ -619,17 +618,11 @@ export const listForumAlerts = (db: Client, id: string) =>
     )
     .orderBy(desc(forumAlert.createdAt))
     .limit(100);
-export const readForumAlerts = (db: Client, userId: string, threadId?: string) =>
+export const readForumAlerts = (db: Client, userId: string) =>
   db
     .update(forumAlert)
     .set({ readAt: new Date() })
-    .where(
-      and(
-        eq(forumAlert.userId, userId),
-        threadId ? eq(forumAlert.threadId, threadId) : undefined,
-        isNull(forumAlert.readAt),
-      ),
-    );
+    .where(and(eq(forumAlert.userId, userId), isNull(forumAlert.readAt)));
 export const setForumReaction = (
   db: Client,
   values: typeof forumReaction.$inferInsert,

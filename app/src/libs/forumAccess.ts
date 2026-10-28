@@ -101,7 +101,6 @@ export const forumPermissions = (
     policy,
   };
 };
-export type ForumPermissions = ReturnType<typeof forumPermissions>;
 
 type ForumActor = Parameters<typeof forumPermissions>[0];
 type ForumGrants = Parameters<typeof forumPermissions>[3];
