@@ -13,7 +13,6 @@ import {
   findGameSettingForFetchPetArtProvider,
   insertGameSettings,
   selectGameSettingForFetchDmgConfig,
-  updateGameSettingForClaimGameTimer,
   updateGameSettingForUpdate,
   updateGameSettingForUpdateGameSetting,
 } from "@/queries/gamesettings";
@@ -73,7 +72,7 @@ const claimGameTimer = async (
   const timer = await getGameSetting(client, name);
   const now = new Date();
   const claim = isEligible(timer.time, now)
-    ? await updateGameSettingForClaimGameTimer(client, now, timer)
+    ? await updateGameSettingForUpdate(client, 0, now, timer, timer.time)
     : undefined;
   const isClaimed = claim?.rowsAffected === 1;
   let ownsClaim = isClaimed;

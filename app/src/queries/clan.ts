@@ -775,22 +775,7 @@ export const insertMpvpBattleQueueForChallengeClan = (
     defenderEntityId: defender.id,
   });
 
-/** Build the `mpvpBattleUser` insert for `challengeClan`. */
-export const insertMpvpBattleUserForChallengeClan = (
-  client: Pick<DrizzleClient, "insert">,
-  entryId: string,
-  user: { userId: string },
-  clanBattleId: string,
-) =>
-  client.insert(mpvpBattleUser).values({
-    id: entryId,
-    userId: user.userId,
-    clanBattleId: clanBattleId,
-    side: "ATTACKER",
-    slot: 0, // First attacker gets slot 0
-  });
-
-/** Build the `mpvpBattleUser` insert for `joinClanBattle`. */
+/** Build clan-battle participant inserts for challenge and join operations. */
 export const insertMpvpBattleUserForJoinClanBattle = (
   client: Pick<DrizzleClient, "insert">,
   entryId: string,

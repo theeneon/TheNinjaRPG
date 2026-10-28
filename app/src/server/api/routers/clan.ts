@@ -61,7 +61,6 @@ import {
   insertClanForCreateClan,
   insertConversationForPurchaseHideout,
   insertMpvpBattleQueueForChallengeClan,
-  insertMpvpBattleUserForChallengeClan,
   insertMpvpBattleUserForJoinClanBattle,
   insertSectorForPurchaseHideout,
   insertVillageForPurchaseHideout,
@@ -1266,7 +1265,14 @@ export const clanRouter = createTRPCRouter({
           challenger,
           defender,
         ),
-        insertMpvpBattleUserForChallengeClan(ctx.drizzle, entryId, user, clanBattleId),
+        insertMpvpBattleUserForJoinClanBattle(
+          ctx.drizzle,
+          entryId,
+          user,
+          { clanBattleId },
+          "ATTACKER",
+          0,
+        ),
       ]);
       const failedInsert = inserted.find((result) => result.status === "rejected");
       // Cleanup can release the status claim before the parallel membership insert.

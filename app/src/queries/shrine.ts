@@ -571,20 +571,6 @@ export const insertMpvpBattleQueueForChallengeShrine = (
     sector: input.sectorNumber,
   });
 
-/** Build the `mpvpBattleUser` insert for `challengeShrine`. */
-export const insertMpvpBattleUserForChallengeShrine = (
-  client: Pick<DrizzleClient, "insert">,
-  user: { userId: string },
-  shrineBattleId: string,
-) =>
-  client.insert(mpvpBattleUser).values({
-    id: nanoid(),
-    userId: user.userId,
-    clanBattleId: shrineBattleId,
-    side: "ATTACKER",
-    slot: 0, // First attacker gets slot 0
-  });
-
 /** Build the `userData` update for `challengeShrine`, setting `status`, using predicates on `userId`. */
 export const updateUserDataForChallengeShrine2 = (
   client: Pick<DrizzleClient, "update">,
@@ -621,7 +607,7 @@ export const findMpvpBattleQueueForJoinShrineBattle = (
     },
   });
 
-/** Build the `mpvpBattleUser` insert for `joinShrineBattle`. */
+/** Build shrine-battle participant inserts for challenge and join operations. */
 export const insertMpvpBattleUserForJoinShrineBattle = (
   client: Pick<DrizzleClient, "insert">,
   user: { userId: string },

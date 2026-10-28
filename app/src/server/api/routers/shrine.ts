@@ -45,7 +45,6 @@ import {
   findUserDataForJoinShrineBattle,
   findVillageForGetBoostTemplate,
   insertMpvpBattleQueueForChallengeShrine,
-  insertMpvpBattleUserForChallengeShrine,
   insertMpvpBattleUserForJoinShrineBattle,
   listMpvpBattleQueueForGetShrineBattles,
   listSectorForGetCapturedSectors,
@@ -780,10 +779,11 @@ export const shrineRouter = createTRPCRouter({
         );
 
         try {
-          await insertMpvpBattleUserForChallengeShrine(
+          await insertMpvpBattleUserForJoinShrineBattle(
             ctx.drizzle,
             user,
-            shrineBattleId,
+            { shrineBattleId, side: "ATTACKER" },
+            0,
           );
         } catch (userInsertError) {
           // Compensating delete: remove the queue we just created

@@ -38,18 +38,7 @@ export const updateGameSettingForUpdateGameSetting = (
     .set({ value, time })
     .where(eq(gameSetting.name, setting.name));
 
-/** Build the `gameSetting` update for `claimGameTimer`, setting `value` and `time`, using predicates on `id` and `time`. */
-export const updateGameSettingForClaimGameTimer = (
-  client: Pick<DrizzleClient, "update">,
-  now: Date,
-  timer: { id: string; time: Date },
-) =>
-  client
-    .update(gameSetting)
-    .set({ value: 0, time: now })
-    .where(and(eq(gameSetting.id, timer.id), eq(gameSetting.time, timer.time)));
-
-/** Build the `gameSetting` update for `update`, setting `value` and `time`, using predicates on `id` and `time`. */
+/** Build a game-setting value/time update guarded by its ID and expected timestamp. */
 export const updateGameSettingForUpdate = (
   client: Pick<DrizzleClient, "update">,
   value: number,
