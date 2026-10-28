@@ -521,7 +521,8 @@ export function GameAssetLibrary() {
           {listing.isError && (
             <div role="alert" className="border-destructive/30 rounded-lg border p-4">
               <p className="font-medium">
-                Could not load {assets.length ? "more assets" : "the asset library"}.
+                Could not load{" "}
+                {listing.isFetchNextPageError ? "more assets" : "the asset library"}.
               </p>
               <p className="text-muted-foreground mt-1 text-sm">
                 Your filters are saved. Try loading the assets again.
@@ -530,7 +531,9 @@ export function GameAssetLibrary() {
                 variant="outline"
                 className="mt-3"
                 onClick={() =>
-                  void (assets.length ? listing.fetchNextPage() : listing.refetch())
+                  void (listing.isFetchNextPageError
+                    ? listing.fetchNextPage()
+                    : listing.refetch())
                 }
               >
                 Try again
