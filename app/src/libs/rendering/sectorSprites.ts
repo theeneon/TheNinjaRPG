@@ -68,6 +68,8 @@ export const sectorSpriteDescriptions = (options: {
         y: tile.y + h * (scale / 2 - 0.5 + 0.1 * scale) + h * (object.offsetY ?? 0),
         groundY: tile.y + h * (object.offsetY ?? 0),
         small: asset.small === true,
+        rendition: asset.small ? 50 : 128,
+        nearest: true,
         wind: asset.windAffected ? (Math.floor(seed * 4) * Math.PI) / 2 : null,
         rotation: asset.randomRotation ? seed * Math.PI * 2 : 0,
       });

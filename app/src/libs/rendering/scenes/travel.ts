@@ -79,17 +79,18 @@ export const createTravelScene = async (options: {
     const transform = () => {
       const s = scale();
       world.scale.set(s, -s);
+      // Move the whole map on backing pixels so nearest-sampled wall joints stay stable.
       world.position.set(
-        game.renderer.width / 2 - (camera?.x ?? 0) * s,
-        game.renderer.height / 2 + (camera?.y ?? 0) * s,
+        Math.round(game.renderer.width / 2 - (camera?.x ?? 0) * s),
+        Math.round(game.renderer.height / 2 + (camera?.y ?? 0) * s),
       );
     };
     game.setResize(transform);
     const pick = (x: number, y: number): TravelPick => {
       const snapshot = options.getSnapshot(),
         s = scale();
-      const wx = (x - game.renderer.width / 2) / s + (camera?.x ?? 0);
-      const wy = (game.renderer.height / 2 - y) / s + (camera?.y ?? 0);
+      const wx = (x - world.position.x) / s;
+      const wy = (world.position.y - y) / s;
       let tile: TravelPick["tile"] = null;
       for (const [sector, entry] of sectors) {
         const hit = hexTerrainAt(
