@@ -3530,16 +3530,14 @@ export const getBattleClaimIds = (info: {
 
 /**
  * From copy/mirror transfer candidates, pick the effects a single cast applies.
- * Two ordered concerns (do NOT collapse into one pass):
- *   1. dedupe by `type`, keeping the strongest effect per type (unique-per-type);
- *   2. rank survivors by (priority rank asc, strength desc, id asc) and take the
- *      top `cap`. Types absent from `rank` fall to a shared tail rank.
- * Step 1 must run before step 2, or one type could consume two capped slots.
+ * Rank individual instances by (priority rank asc, strength desc, id asc),
+ * then take the top `cap`. Repeated types each consume a slot. Types absent
+ * from `rank` fall to a shared tail rank.
  *
  * Strength is the MAGNITUDE of `getPower(e).power` (percentage magnitudes clamped
  * to 100): the damage-modifier pass negates `decrease*` powers in place, so a
  * signed comparison would rank a strong reduction below a weak boost and keep the
- * weakest duplicate on dedupe. Comparing static vs percentage magnitudes within a
+ * weaker instance ahead of a stronger one. Comparing static vs percentage magnitudes within a
  * tier is a coarse heuristic, consistent with the rest of the engine (no
  * cross-calculation normalization exists anywhere) — accepted limitation.
  */
@@ -3558,25 +3556,7 @@ export const selectTransferEffects = (
     );
   }
   const rankOf = (type: string) => rank.get(type) ?? Number.MAX_SAFE_INTEGER;
-  const strongestByType = new Map<string, UserEffect>();
-  for (const effect of candidates) {
-    const current = strongestByType.get(effect.type);
-    if (!current) {
-      strongestByType.set(effect.type, effect);
-      continue;
-    }
-    // Higher magnitude wins; on an exact tie keep the lower id so the surviving
-    // source metadata (fromEffectId provenance) is deterministic, not input-ordered.
-    const power = magnitudeOf.get(effect.id) ?? 0;
-    const currentPower = magnitudeOf.get(current.id) ?? 0;
-    if (
-      power > currentPower ||
-      (power === currentPower && effect.id.localeCompare(current.id) < 0)
-    ) {
-      strongestByType.set(effect.type, effect);
-    }
-  }
-  return [...strongestByType.values()]
+  return [...candidates]
     .sort((a, b) => {
       const byRank = rankOf(a.type) - rankOf(b.type);
       if (byRank !== 0) return byRank;

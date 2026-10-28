@@ -268,13 +268,13 @@ const isMirrorableEffect = (e: UserEffect): boolean =>
  * Shared candidate gate for a transfer source effect: not from a passive/gear
  * origin, not ground-derived (the carry-forward pass drops `fromGround` effects at
  * end of round, so a clone would vanish while still consuming a capped slot), not
- * a type already held, still active, and not depleted (a fully absorbed shield
+ * a source already transferred, still active, and not depleted (a fully absorbed shield
  * keeps rounds > 0 at power 0 — transferring it would burn a slot for nothing).
  */
-const isTransferCandidate = (e: UserEffect, heldTypes: Set<string>): boolean =>
+const isTransferCandidate = (e: UserEffect, heldSourceIds: Set<string>): boolean =>
   !TRANSFER_EXCLUDED_SOURCE_TYPES.has(e.fromType || "") &&
   !e.fromGround &&
-  !heldTypes.has(e.type) &&
+  !heldSourceIds.has(e.id) &&
   isEffectActive(e) &&
   Math.abs(getPower(e).power) > 0;
 
@@ -303,7 +303,7 @@ const getTransferBudget = (
       e.rounds > 0,
   );
   return {
-    heldTypes: new Set(active.map((e) => e.type)),
+    heldSourceIds: new Set(active.map((e) => e.fromEffectId!)),
     remaining: cap - active.length,
   };
 };
@@ -334,7 +334,7 @@ const applyTransferClones = (
     return `${source.type} (${getPower(source).qualifier})`;
   });
 
-/** Copy positive effects from opponent to self (priority-ranked, capped, unique per type) */
+/** Copy positive effects from opponent to self (priority-ranked, capped by instance) */
 export const copy = (
   effect: UserEffect,
   usersEffects: UserEffect[],
@@ -366,7 +366,7 @@ export const copy = (
       // with a fromEffectId) out of the copy budget, and `isCopyableEffect` — the
       // same predicate that gates the candidates below — scopes the budget to
       // exactly what `copy` can produce.
-      const { heldTypes, remaining } = getTransferBudget(
+      const { heldSourceIds, remaining } = getTransferBudget(
         usersEffects,
         user.userId,
         user.userId,
@@ -384,7 +384,7 @@ export const copy = (
         (e) =>
           e.targetId === target.userId &&
           isCopyableEffect(e) &&
-          isTransferCandidate(e, heldTypes),
+          isTransferCandidate(e, heldSourceIds),
       );
 
       const selected = selectTransferEffects(candidates, COPY_PRIORITY_RANK, remaining);
@@ -418,7 +418,7 @@ export const copy = (
   }
 };
 
-/** Mirror negative effects from self to target (priority-ranked, capped, unique per type) */
+/** Mirror negative effects from self to target (priority-ranked, capped by instance) */
 export const mirror = (
   effect: UserEffect,
   usersEffects: UserEffect[],
@@ -450,7 +450,7 @@ export const mirror = (
       // target. The budget shares `isMirrorableEffect` with the candidate filter
       // below, so it counts exactly what `mirror` can produce — the same
       // construction as the copy budget's `isCopyableEffect` scope.
-      const { heldTypes, remaining } = getTransferBudget(
+      const { heldSourceIds, remaining } = getTransferBudget(
         usersEffects,
         target.userId,
         user.userId,
@@ -484,7 +484,7 @@ export const mirror = (
           (e) =>
             e.targetId === user.userId &&
             isMirrorableEffect(e) &&
-            isTransferCandidate(e, heldTypes),
+            isTransferCandidate(e, heldSourceIds),
         )
         .map(scaleDrainForMirror);
 

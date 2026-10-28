@@ -119,7 +119,9 @@ describe("copy/mirror priority constants", () => {
     expect(COPY_PRIORITY_RANK.get("decreasedamagetaken")).toBe(0);
     expect(COPY_PRIORITY_RANK.get("lifesteal")).toBe(1);
     expect(COPY_PRIORITY_RANK.get("increasestat")).toBe(5);
-    // absorb and reflect share a tier
+    expect(COPY_PRIORITY_RANK.get("shield")).toBe(2);
+    expect(COPY_PRIORITY_RANK.get("increaseheal")).toBe(4);
+    // absorb, reflect and shield share a tier
     expect(COPY_PRIORITY_RANK.get("absorb")).toBe(COPY_PRIORITY_RANK.get("reflect"));
   });
 
@@ -157,30 +159,19 @@ describe("selectTransferEffects", () => {
     expect(selectTransferEffects([cand("shield", 10)], testRank, 0)).toEqual([]);
   });
 
-  it("dedupes by type, keeping the highest-power effect per type", () => {
+  it("keeps repeated types ordered by strength", () => {
     const result = selectTransferEffects(
-      [cand("shield", 10), cand("shield", 40), cand("shield", 25)],
-      testRank,
-      4,
+      [cand("shield", 10), cand("shield", 40), cand("shield", 25)], testRank, 4,
     );
-    expect(result).toHaveLength(1);
-    expect(result[0]?.type).toBe("shield");
-    expect(result[0]?.power).toBe(40);
+    expect(result.map((e) => e.power)).toEqual([40, 25, 10]);
   });
 
-  it("dedupes equal-power same-type effects by lower id, independent of input order", () => {
-    // Same type + equal power but distinct identity. The dedup survivor must be the
-    // lower id in BOTH orders, so which source's clone is transferred is deterministic.
-    // (The final sort's id tie-break only orders survivors — it cannot pick which of
-    // two equal-power same-type effects the dedup keeps.)
-    const lowId = cand("shield", 30, { id: "shield-aaa" });
-    const highId = cand("shield", 30, { id: "shield-bbb" });
-    const forward = selectTransferEffects([lowId, highId], testRank, 4);
-    const reversed = selectTransferEffects([highId, lowId], testRank, 4);
-    expect(forward).toHaveLength(1);
-    expect(reversed).toHaveLength(1);
-    expect(forward[0]?.id).toBe("shield-aaa");
-    expect(reversed[0]?.id).toBe("shield-aaa");
+  it("orders equal-power instances deterministically regardless of input order", () => {
+    const low = cand("shield", 30, { id: "aaa" });
+    const high = cand("shield", 30, { id: "bbb" });
+    for (const candidates of [[low, high], [high, low]]) {
+      expect(selectTransferEffects(candidates, testRank, 4).map((e) => e.id)).toEqual(["aaa", "bbb"]);
+    }
   });
 
   it("orders by rank then power and applies the cap", () => {
@@ -209,17 +200,17 @@ describe("selectTransferEffects", () => {
     expect(result.map((e) => e.id)).toEqual(["aaa", "bbb"]);
   });
 
-  it("dedupes before capping so one type cannot consume two slots", () => {
+  it("allows the strongest same-type instances to consume multiple slots", () => {
     const result = selectTransferEffects(
       [
         cand("increasedamagegiven", 50), // rank 0, strongest of its type
-        cand("increasedamagegiven", 45), // rank 0 duplicate — must not take a slot
+        cand("increasedamagegiven", 45), // rank 0, second strongest instance
         cand("lifesteal", 10), // rank 1
       ],
       testRank,
       2,
     );
-    expect(result.map((e) => e.type)).toEqual(["increasedamagegiven", "lifesteal"]);
+    expect(result.map((e) => e.type)).toEqual(["increasedamagegiven", "increasedamagegiven"]);
     expect(result[0]?.power).toBe(50);
   });
 
@@ -233,13 +224,13 @@ describe("selectTransferEffects", () => {
     expect(result.map((e) => e.id)).toEqual(["reduction"]);
   });
 
-  it("dedupes negated same-type effects by magnitude (keeps the strongest)", () => {
+  it("orders negated same-type effects by magnitude", () => {
     const weak = cand("decreasedamagetaken", 5, { id: "weak" });
     weak.power = -5;
     const strong = cand("decreasedamagetaken", 40, { id: "strong" });
     strong.power = -40;
     const result = selectTransferEffects([weak, strong], COPY_PRIORITY_RANK, 4);
-    expect(result.map((e) => e.id)).toEqual(["strong"]);
+    expect(result.map((e) => e.id)).toEqual(["strong", "weak"]);
   });
 });
 
@@ -250,7 +241,7 @@ describe("copy tag: ceiling + priority", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("copies at most 4, one per type, highest-priority first", () => {
+  it("copies at most 4, highest-priority first", () => {
     const effects: UserEffect[] = [
       oppBuff("increasedamagegiven", 40),
       oppBuff("decreasedamagetaken", 30),
@@ -266,10 +257,10 @@ describe("copy tag: ceiling + priority", () => {
     );
     expect(copied).toHaveLength(4);
     expect(copied.map((e) => e.type).sort()).toEqual<string[]>(
-      ["absorb", "decreasedamagetaken", "increasedamagegiven", "lifesteal"].sort(),
+      ["shield", "decreasedamagetaken", "increasedamagegiven", "lifesteal"].sort(),
     );
-    // shield + increaseheal (lower tiers) were NOT copied
-    expect(copied.map((e) => e.type)).not.toContain("shield");
+    // Absorb loses to the stronger shield in their shared tier.
+    expect(copied.map((e) => e.type)).not.toContain("absorb");
     expect(effects.length).toBe(before + 4);
   });
 
@@ -356,10 +347,10 @@ describe("copy tag: ceiling + priority", () => {
     expect(res?.txt).toContain("no copyable effects");
   });
 
-  it("skips a type already actively copied (unique per type across casts)", () => {
+  it("skips the exact source already actively copied", () => {
     const effects: UserEffect[] = [
       oppBuff("lifesteal", 20, { id: "held", targetId: SELF, creatorId: SELF, fromEffectId: "srcL" }),
-      oppBuff("lifesteal", 99), // stronger, but type already held -> skipped
+      oppBuff("lifesteal", 99, { id: "srcL" }),
     ];
     const before = effects.length;
     copy(copyTag(), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
@@ -477,10 +468,10 @@ describe("mirror tag: ceiling + priority + wound", () => {
     expect(mirrored.map((e) => e.type)).toContain("afterburn");
   });
 
-  it("skips a type already actively mirrored (unique per type across casts)", () => {
+  it("skips the exact source already actively mirrored", () => {
     const effects: UserEffect[] = [
       selfDebuff("poison", 20, { id: "held", targetId: OPP, creatorId: SELF, fromEffectId: "srcP" }),
-      selfDebuff("poison", 99), // stronger, but type already held -> skipped
+      selfDebuff("poison", 99, { id: "srcP" }),
     ];
     const before = effects.length;
     mirror(mirrorTag(), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
@@ -524,5 +515,43 @@ describe("mirror tag: ceiling + priority + wound", () => {
     expect(res?.txt).toContain("cannot mirror effects onto themselves");
     expect(effects.filter((e) => e.fromEffectId)).toHaveLength(0);
     expect(effects.length).toBe(before);
+  });
+});
+
+describe("transfer instances across casts", () => {
+  beforeEach(() => vi.spyOn(Math, "random").mockReturnValue(0));
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["copy", "mirror"] as ("copy" | "mirror")[])("%s transfers four strongest instances and refills expired slots", (type) => {
+    const transfer = type === "copy" ? copy : mirror;
+    const source = type === "copy" ? oppBuff : selfDebuff;
+    const tagType = type === "copy" ? "increasedamagegiven" : "increasedamagetaken";
+    const landingId = type === "copy" ? SELF : OPP;
+    const sources = [10, 50, 20, 40, 30].map((power) => source(tagType, power));
+    const effects = [...sources];
+    const clones = () => effects.filter((e) => e.targetId === landingId && e.creatorId === SELF && e.fromEffectId);
+    const cast = () => transfer(transferTag(type), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
+    cast();
+    expect(clones().map((e) => e.power)).toEqual([50, 40, 30, 20]);
+    expect(clones().map((e) => e.fromEffectId)).toEqual([sources[1]!.id, sources[3]!.id, sources[4]!.id, sources[2]!.id]);
+    cast();
+    expect(clones()).toHaveLength(4);
+    clones()[0]!.rounds = 0;
+    cast();
+    const active = clones().filter((e) => e.rounds! > 0);
+    expect(active).toHaveLength(4);
+    expect(active.map((e) => e.power)).toEqual([40, 30, 20, 50]);
+    expect(sources.map((e) => e.power)).toEqual([10, 50, 20, 40, 30]);
+  });
+
+  it.each(["copy", "mirror"] as ("copy" | "mirror")[])("%s fills remaining slots with new sources of a held type", (type) => {
+    const source = type === "copy" ? oppBuff : selfDebuff;
+    const tagType = type === "copy" ? "increasedamagegiven" : "increasedamagetaken";
+    const effects = [source(tagType, 10), source(tagType, 20)];
+    const transfer = type === "copy" ? copy : mirror;
+    transfer(transferTag(type), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
+    effects.push(source(tagType, 30), source(tagType, 40), source(tagType, 50));
+    transfer(transferTag(type), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
+    expect(effects.filter((e) => e.fromEffectId).map((e) => e.power)).toEqual([20, 10, 50, 40]);
   });
 });
