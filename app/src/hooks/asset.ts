@@ -80,39 +80,22 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
   );
 
   // Subscribe to media/type changes without react-hook-form's compiler-incompatible watch.
-  const imageUrl = useWatch({
+  const [imageUrl, soundUrl, type] = useWatch({
     control: form.control,
-    name: "image",
-  });
-  const soundUrl = useWatch({
-    control: form.control,
-    name: "url",
-  });
-  const type = useWatch({
-    control: form.control,
-    name: "type",
+    name: ["image", "url", "type"],
   });
 
   // Start with empty array
   const formData: FormEntry<keyof ZodGameAssetType>[] = [];
 
-  // For scene backgrounds
-  if (type === "SCENE_BACKGROUND") {
+  // Scene artwork keeps landscape backgrounds and portrait characters at 512px.
+  if (type === "SCENE_BACKGROUND" || type === "SCENE_CHARACTER") {
     formData.push({
       id: "image",
       label: "Artwork",
       type: "avatar",
       href: imageUrl,
-      size: "landscape",
-      maxDim: 512,
-    });
-  } else if (type === "SCENE_CHARACTER") {
-    formData.push({
-      id: "image",
-      label: "Artwork",
-      type: "avatar",
-      href: imageUrl,
-      size: "portrait",
+      size: type === "SCENE_BACKGROUND" ? "landscape" : "portrait",
       maxDim: 512,
     });
   } else if (type !== "SFX") {
@@ -145,22 +128,12 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
     { id: "hidden", type: "boolean", label: "Hidden in game" },
   );
 
-  if (type === "MUSIC") {
+  if (type === "MUSIC" || type === "SFX") {
     formData.push({
       id: "url",
       type: "audio",
       href: soundUrl,
-      label: "Music",
-      doubleWidth: true,
-    });
-  }
-
-  if (type === "SFX") {
-    formData.push({
-      id: "url",
-      type: "audio",
-      href: soundUrl,
-      label: "Sound effect",
+      label: type === "MUSIC" ? "Music" : "Sound effect",
       doubleWidth: true,
     });
   }
