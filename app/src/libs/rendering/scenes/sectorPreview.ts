@@ -95,14 +95,7 @@ export const createSectorPreview = async (options: {
       for (let index = art.entries.length - 1; index >= 0; index--) {
         const entry = art.entries[index];
         if (!entry?.description.structureId) continue;
-        const bounds = entry.sprite.getBounds();
-        if (
-          x >= bounds.minX &&
-          x <= bounds.maxX &&
-          y >= bounds.minY &&
-          y <= bounds.maxY
-        )
-          return entry;
+        if (entry.sprite.getBounds().containsPoint(x, y)) return entry;
       }
       return null;
     };

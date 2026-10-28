@@ -42,7 +42,6 @@ import ContentBox from "@/layout/ContentBox";
 import Countdown from "@/layout/Countdown";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
-import type { TowerDefenseHandle } from "@/layout/TowerDefense";
 import TowerDefenseUpgrades from "@/layout/TowerDefenseUpgrades";
 import { getFirstOfNextMonth } from "@/utils/time";
 import { useUserData } from "@/utils/UserContext";
@@ -98,9 +97,6 @@ const TowerDefensePage: React.FC = () => {
     runtimeStateRef,
     playerHitEventsRef,
   } = useTowerDefense(userData?.userId);
-
-  // Ref for infrequent scene updates
-  const canvasRef = useRef<TowerDefenseHandle>(null);
 
   // PERFORMANCE: Fetch game assets at page level (stable across re-renders)
   const { data: gameAssets } = api.misc.getAllGameAssetNames.useQuery({
@@ -377,7 +373,6 @@ const TowerDefensePage: React.FC = () => {
       <div className="relative w-full overflow-hidden rounded-lg border bg-slate-900">
         {gameState.seed && gameState.state && (
           <TowerDefenseCanvas
-            ref={canvasRef}
             seed={gameState.seed}
             initialGridSize={gameState.state.gridSize}
             initialPlayerPosition={gameState.state.playerPosition}

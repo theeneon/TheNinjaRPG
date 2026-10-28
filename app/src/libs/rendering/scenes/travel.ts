@@ -105,13 +105,7 @@ export const createTravelScene = async (options: {
       for (let index = entries.length - 1; index >= 0; index--) {
         const entry = entries[index];
         if (!entry?.description.structureId && !entry?.description.locationId) continue;
-        const bounds = entry.sprite.getBounds();
-        if (
-          x >= bounds.minX &&
-          x <= bounds.maxX &&
-          y >= bounds.minY &&
-          y <= bounds.maxY
-        ) {
+        if (entry.sprite.getBounds().containsPoint(x, y)) {
           structureId ??= entry.description.structureId ?? null;
           locationId ??= entry.description.locationId ?? null;
         }

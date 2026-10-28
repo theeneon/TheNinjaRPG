@@ -1,5 +1,5 @@
 import type React from "react";
-import { memo, useEffect, useImperativeHandle, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { GameAsset } from "@/drizzle/schema";
 import { useGameScene } from "@/hooks/game-scene";
 import WebGlError from "@/layout/WebGLError";
@@ -12,9 +12,7 @@ import type {
 } from "@/validators/towerDefense";
 
 /** Stable entity refs allow server updates to reach the renderer without a React render. */
-const TowerDefenseInner = (
-  props: TowerDefenseProps & { ref?: React.Ref<TowerDefenseHandle> },
-) => {
+const TowerDefenseInner = (props: TowerDefenseProps) => {
   const mount = useRef<HTMLDivElement>(null),
     latest = useRef(props);
   latest.current = props;
@@ -45,24 +43,12 @@ const TowerDefenseInner = (
   useEffect(() => {
     scene.current?.refresh();
   }, [props.active, scene]);
-  useImperativeHandle(
-    props.ref,
-    () => ({
-      updateGrid: (size) => scene.current?.updateGrid(size),
-      updateRange: (range) => scene.current?.updateRange(range),
-    }),
-    [scene],
-  );
   if (error) return <WebGlError />;
   return <div ref={mount} className="w-full" />;
 };
 const TowerDefense = memo(TowerDefenseInner);
 export default TowerDefense;
 
-export interface TowerDefenseHandle {
-  updateGrid: (gridSize: number) => void;
-  updateRange: (range: number) => void;
-}
 interface TowerDefenseProps {
   active: boolean;
   onFrame: (delta: number) => void;

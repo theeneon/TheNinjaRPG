@@ -81,7 +81,6 @@ export const createTowerDefenseScene = async (options: {
     let scale = 1,
       centerX = 0,
       centerY = 0,
-      currentRange = -1,
       rangeKey = "",
       occupancy = "",
       audioUrl = "";
@@ -174,8 +173,7 @@ export const createTowerDefenseScene = async (options: {
       const size = snapshot.runtime.state?.gridSize ?? requestedSize;
       if (size !== requestedSize) requestGrid(size);
       const ability = snapshot.runtime.abilities[0],
-        newRange = ability?.range ?? 1;
-      if (newRange !== currentRange) currentRange = newRange;
+        currentRange = ability?.range ?? 1;
       const playerTile = data.grid.getHex(player),
         nextRangeKey = `${currentRange}:${player.col},${player.row}`;
       if (nextRangeKey !== rangeKey && playerTile) {
@@ -253,12 +251,6 @@ export const createTowerDefenseScene = async (options: {
     return {
       dispose: game.dispose,
       refresh: game.invalidate,
-      updateGrid: requestGrid,
-      updateRange: (value: number) => {
-        currentRange = value;
-        rangeKey = "";
-        game.invalidate();
-      },
     };
   } catch (error) {
     game.dispose();

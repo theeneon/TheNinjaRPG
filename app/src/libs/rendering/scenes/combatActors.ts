@@ -295,13 +295,7 @@ export const createCombatActors = (
       if (!record) continue;
       for (const entry of record.art?.entries ?? []) {
         if (!isObjectChainVisible(entry.sprite)) continue;
-        const bounds = entry.sprite.getBounds();
-        if (
-          x >= bounds.minX &&
-          x <= bounds.maxX &&
-          y >= bounds.minY &&
-          y <= bounds.maxY
-        )
+        if (entry.sprite.getBounds().containsPoint(x, y))
           return { userId: record.user.userId, tile: record.target };
       }
     }

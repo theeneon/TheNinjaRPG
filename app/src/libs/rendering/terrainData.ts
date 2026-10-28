@@ -16,11 +16,7 @@ export const buildHexTerrainData = (
   lightLayout: boolean,
 ) => {
   const { points, groundPoints, groundEdges } = getHexPoints();
-  const { tileUVArray } = calculateHexUVCoordinates(
-    grid.toArray()[0],
-    points,
-    groundPoints,
-  );
+  const tileUVArray = calculateHexUVCoordinates(grid.toArray()[0], points);
   const groups = new Map<string, TerrainBatchBuilder>();
   const ground: number[] = [],
     edges: number[] = [];

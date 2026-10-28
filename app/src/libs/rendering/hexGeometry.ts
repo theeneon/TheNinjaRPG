@@ -30,52 +30,15 @@ export const getHexPoints = () => {
 };
 
 /**
- * Calculates UV coordinates for tile and ground geometries based on the first tile's corners
+ * Calculates UV coordinates for tile faces based on the first tile's corners
  */
 export const calculateHexUVCoordinates = (
   firstTile: TerrainHex | undefined,
   points: number[],
-  groundPoints: number[],
 ) => {
-  let groundUVArray: Float32Array | null = null;
-  let tileUVArray: Float32Array | null = null;
-
-  if (!firstTile) {
-    return { groundUVArray, tileUVArray };
-  }
+  if (!firstTile) return null;
 
   const corners = firstTile.corners;
-  const length = Math.abs((corners?.[5]?.x || 0) - (corners?.[0]?.x || 0)) / 3;
-
-  // Ground UV coordinates
-  const canonicalGroundCorners = [
-    { x: corners?.[0]?.x ?? 0, y: (corners?.[0]?.y ?? 0) - length },
-    { x: corners?.[1]?.x ?? 0, y: (corners?.[1]?.y ?? 0) - length },
-    { x: corners?.[1]?.x ?? 0, y: corners?.[1]?.y ?? 0 },
-    { x: corners?.[0]?.x ?? 0, y: corners?.[0]?.y ?? 0 },
-    { x: corners?.[5]?.x ?? 0, y: corners?.[5]?.y ?? 0 },
-    { x: corners?.[4]?.x ?? 0, y: corners?.[4]?.y ?? 0 },
-    { x: corners?.[4]?.x ?? 0, y: (corners?.[4]?.y ?? 0) - length },
-    { x: corners?.[5]?.x ?? 0, y: (corners?.[5]?.y ?? 0) - length },
-  ];
-  const minX = Math.min(...canonicalGroundCorners.map((c) => c.x));
-  const maxX = Math.max(...canonicalGroundCorners.map((c) => c.x));
-  const minY = Math.min(...canonicalGroundCorners.map((c) => c.y));
-  const maxY = Math.max(...canonicalGroundCorners.map((c) => c.y));
-  const uvWidth = maxX - minX;
-  const uvHeight = maxY - minY;
-  const canonicalGroundUVs = canonicalGroundCorners.map(
-    (corner) =>
-      [(corner.x - minX) / uvWidth, (corner.y - minY) / uvHeight] as [number, number],
-  );
-  const uvNumbers: number[] = [];
-  groundPoints.forEach((p) => {
-    const uv = canonicalGroundUVs[p];
-    if (uv) {
-      uvNumbers.push(uv[0], uv[1]);
-    }
-  });
-  groundUVArray = new Float32Array(uvNumbers);
 
   // Tile (top face) UV coordinates
   const canonicalTileCorners = corners.map((c) => ({ x: c.x, y: c.y }));
@@ -99,9 +62,7 @@ export const calculateHexUVCoordinates = (
       tileUVNumbers.push(uv[0], uv[1]);
     }
   });
-  tileUVArray = new Float32Array(tileUVNumbers);
-
-  return { groundUVArray, tileUVArray };
+  return new Float32Array(tileUVNumbers);
 };
 
 /**

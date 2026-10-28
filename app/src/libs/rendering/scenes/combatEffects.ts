@@ -213,8 +213,7 @@ export const createCombatEffects = (
       const root = container.children[index],
         record = root && records.get(root.label);
       if (!record || !isObjectChainVisible(record.root)) continue;
-      const bounds = record.root.getBounds();
-      if (x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY)
+      if (record.root.getBounds().containsPoint(x, y))
         return { id: record.effect.id, tile: record.tile };
     }
     return null;
