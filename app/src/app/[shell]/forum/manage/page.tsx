@@ -1016,7 +1016,6 @@ function ForumStaff({
                     ? error.message
                     : "Assignment could not be removed";
                 setError(message);
-                showMutationToast({ success: false, message });
               }
             }}
           >
@@ -1144,7 +1143,6 @@ function ForumRestrictions({
                     ? error.message
                     : "Restriction could not be lifted";
                 setError(message);
-                showMutationToast({ success: false, message });
               }
             }}
           >
