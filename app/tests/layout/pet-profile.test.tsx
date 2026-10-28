@@ -27,7 +27,7 @@ import { petSpeciesFixture } from "../libs/pets/helpers/species";
 import { petJutsuFixture, petSkillFixture } from "../libs/pets/helpers/abilities";
 import { IncreaseStatTag } from "@/validators/combat";
 import type { PetTask } from "@/validators/petTasks";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 // These workflows render multiple dialogs and large forms in one interaction.
 setDefaultTimeout(20_000);

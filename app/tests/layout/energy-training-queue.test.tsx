@@ -5,7 +5,7 @@ import { getUserCaps } from "@/drizzle/constants";
 import { EnergyTrainingQueue, useEnergyTrainingQueue } from "@/layout/EnergyTrainingQueue";
 import type { UserWithRelations } from "@/routers/profile";
 import type { UserDeltaResponse } from "@/validators/userCache";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { createToastMock } from "../setup/toastMock";
 
 type Result = UserDeltaResponse;

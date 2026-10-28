@@ -5,7 +5,7 @@ import * as logbook from "@/layout/Logbook";
 import { PyramidRunBoundary } from "@/layout/PyramidRunBoundary";
 import * as routing from "@/utils/routing";
 import * as userContext from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const replace = vi.fn();
 beforeEach(() => {

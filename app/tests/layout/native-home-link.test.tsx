@@ -13,7 +13,7 @@ import * as Welcome from "@/layout/Welcome";
 import * as native from "@/libs/native";
 import * as UserContext from "@/utils/UserContext";
 import * as routing from "@/utils/routing";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const navigate = vi.fn();
 let onUrl: (url: string) => void;

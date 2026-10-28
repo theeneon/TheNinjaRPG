@@ -12,7 +12,7 @@ import * as RichInput from "@/layout/RichInput";
 import * as UserSearchSelect from "@/layout/UserSearchSelect";
 import * as toast from "@/libs/toast";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 import { actualDialog } from "../../setup/preload";
 
 type Result = RouterOutputs["poll"]["createPoll"];

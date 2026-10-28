@@ -15,7 +15,7 @@ import { type UserEvent, usePusherHandler } from "@/layout/PusherHandler";
 import type UserRequestSystem from "@/layout/UserRequestSystem";
 import * as toast from "@/libs/toast";
 import * as routing from "@/utils/routing";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 type HomeRequest = ComponentProps<typeof UserRequestSystem>["requests"][number];
 type Result = { success: boolean; message: string };

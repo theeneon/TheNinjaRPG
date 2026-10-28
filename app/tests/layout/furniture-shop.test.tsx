@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 const { act, cleanup, fireEvent, render } = await import("@testing-library/react");
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { UserWithRelations } from "@/server/api/routers/profile";

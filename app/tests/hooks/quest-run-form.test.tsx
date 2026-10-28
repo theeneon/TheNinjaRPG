@@ -12,7 +12,7 @@ import {
   RaidObjective,
   SimpleObjective,
 } from "@/validators/objectives";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const tickets = [{ ids: ["ticket"], number: 2 }];
 const floor = InstantStartBattleObjective.parse({

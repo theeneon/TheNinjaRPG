@@ -8,7 +8,7 @@ import * as Loader from "@/layout/Loader";
 import * as Welcome from "@/layout/Welcome";
 import type { UserWithRelations } from "@/routers/profile";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const push = vi.fn();
 const referral = vi.fn();

@@ -4,6 +4,7 @@ import type { Clerk } from "@clerk/shared/types";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { type TRPCClient, TRPCClientError } from "@trpc/client";
+import * as trpcClient from "@trpc/client";
 import { createTRPCReact, getQueryKey } from "@trpc/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { toast as sonnerToast } from "sonner";
@@ -69,7 +70,10 @@ const mountArenaMutation = (activeSession: NonNullable<Clerk["session"]>) => {
     toast.showMutationToast({ success: false, message: error.message });
   });
   const ArenaChallenge = () => {
-    const mutation = testApi.combat.startArenaBattle.useMutation({ onSuccess, onError });
+    const mutation = testApi.combat.startArenaBattle.useMutation({
+      onSuccess,
+      onError,
+    });
     attack = () => mutation.mutateAsync({ aiId: "opponent", autoCombat: false });
     return null;
   };
@@ -121,7 +125,9 @@ it("leaves a same-session mutation successful", async () => {
     Response.json([{ result: { data: superjson.serialize({ success: true }) } }]),
   );
   const { attack, onSuccess, onError } = mountArenaMutation(session("a"));
-  await act(async () => { await expect(attack()).resolves.toEqual({ success: true }); });
+  await act(async () => {
+    await expect(attack()).resolves.toEqual({ success: true });
+  });
   expect(queryClient.isMutating()).toBe(0);
   expect(onSuccess).toHaveBeenCalledTimes(1);
   expect(onError).not.toHaveBeenCalled();
@@ -132,7 +138,9 @@ it("sends captured profile causes through the provider without replacing session
   const requests: Headers[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
     requests.push(new Headers(init?.headers));
-    return Response.json([{ result: { data: superjson.serialize({ userData: { money: 100 } }) } }]);
+    return Response.json([
+      { result: { data: superjson.serialize({ userData: { money: 100 } }) } },
+    ]);
   });
   let refresh!: () => Promise<void>;
   const Player = () => {
@@ -143,11 +151,18 @@ it("sends captured profile causes through the provider without replacing session
   };
   mountProvider(session("a"), <Player />);
   await waitFor(() => expect(queryClient.isFetching()).toBe(0));
-  await act(async () => { await refresh(); });
-  expect(requests.map((headers) => JSON.parse(headers.get(QUERY_METRICS_HEADER)!)["profile.getUser"].trigger)).toEqual([
-    "initial", "invalidation",
-  ]);
-  expect(requests.every((headers) => headers.get("Authorization") === "Bearer a")).toBe(true);
+  await act(async () => {
+    await refresh();
+  });
+  expect(
+    requests.map(
+      (headers) =>
+        JSON.parse(headers.get(QUERY_METRICS_HEADER)!)["profile.getUser"].trigger,
+    ),
+  ).toEqual(["initial", "invalidation"]);
+  expect(requests.every((headers) => headers.get("Authorization") === "Bearer a")).toBe(
+    true,
+  );
 });
 
 it("coalesces a retired account's late batch while every query and mutation settles as failed", async () => {
@@ -484,6 +499,18 @@ it.each([true, false])(
 it.each([true, false])(
   "reports only exhausted query retries: recover=%s",
   async (recover) => {
+    // Exercise the real retry link and policy without waiting through its backoff.
+    const retryLink = trpcClient.retryLink;
+    const delays: number[] = [];
+    vi.spyOn(trpcClient, "retryLink").mockImplementation((options) =>
+      retryLink({
+        ...options,
+        retryDelayMs: (attempt) => {
+          delays.push(options.retryDelayMs?.(attempt) ?? 0);
+          return 0;
+        },
+      }),
+    );
     const capture = vi.spyOn(Sentry, "captureException");
     let attempts = 0;
     const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
@@ -507,6 +534,7 @@ it.each([true, false])(
       }),
     ]);
     expect(fetch).toHaveBeenCalledTimes(recover ? 2 : 4);
+    expect(delays).toEqual(recover ? [2_000] : [2_000, 4_000, 8_000]);
     expect(settled[0]?.status).toBe(recover ? "fulfilled" : "rejected");
     expect(queryClient.isFetching()).toBe(0);
     expect(toastMessages()).toEqual(
@@ -518,5 +546,4 @@ it.each([true, false])(
     );
     expect(capture).not.toHaveBeenCalled();
   },
-  20_000,
 );

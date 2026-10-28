@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import * as clerk from "@clerk/nextjs";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";

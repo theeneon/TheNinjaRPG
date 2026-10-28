@@ -7,7 +7,7 @@ import * as dialog from "@/components/ui/dialog";
 import * as Modal from "@/layout/Modal";
 import * as UserSearchSelect from "@/layout/UserSearchSelect";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 import { actualDialog, actualModal } from "../../setup/preload";
 
 let purchaseCount: number;

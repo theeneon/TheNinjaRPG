@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { renderToString } from "react-dom/server";

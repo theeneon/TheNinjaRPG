@@ -2,7 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it } from "bun:test";
 import { useNativeShell } from "@/hooks/useNativeShell";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const Probe = () => {
   const native = useNativeShell();

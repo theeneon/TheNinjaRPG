@@ -19,7 +19,7 @@ import * as ais from "@/libs/ais";
 import * as toast from "@/libs/toast";
 import type { AiWithRelations } from "@/routers/profile";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const save = vi.fn();
 const names = { useQuery: () => ({ data: [], isPending: false }) };

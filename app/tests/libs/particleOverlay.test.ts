@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { afterEach, describe, expect, it } from "bun:test";
 import {
   CONFETTI_OVERLAY_ID,

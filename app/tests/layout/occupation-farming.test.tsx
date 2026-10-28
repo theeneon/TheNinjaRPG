@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";

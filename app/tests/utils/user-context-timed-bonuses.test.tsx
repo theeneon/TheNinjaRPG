@@ -8,7 +8,7 @@ import * as client from "@/app/_trpc/client";
 import * as pusher from "@/layout/PusherHandler";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
 import { UserContext, UserContextProvider } from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 const BASE = Date.UTC(2026, 9, 24, 12);

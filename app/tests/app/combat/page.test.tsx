@@ -9,7 +9,7 @@ import * as preferences from "@/hooks/combat";
 import * as tutorial from "@/hooks/tutorial";
 import type { BattleState } from "@/libs/combat/types";
 import * as userContext from "@/utils/UserContext";
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 import { makeCompleteBattle, makeUser } from "../../libs/combat/helpers/battleScenario";
 import { dungeonBattleState } from "../../setup/dungeon";
 

@@ -39,7 +39,7 @@ on:
       - ".github/scripts/render-scene-catalog.mjs"
       - ".github/scripts/apply-visual-check.mjs"
       - ".github/scripts/check-audit-media.mjs"
-      - ".github/scripts/check-audit-media.test.mjs"
+      - "app/tests/scripts/check-audit-media.test.mjs"
       - ".agents/skills/tnr-content-audit/**"
       - "app/src/app/api/content-review/**"
       - "app/src/app/*/manual/review/battlefield/**"
@@ -368,7 +368,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            app/tests/scripts
       - name: Apply the battlefield check
         env:
           PROPOSALS: ${{ needs.audit.outputs.proposals }}
@@ -387,7 +389,7 @@ jobs:
         env:
           PROPOSALS_FILE: checked.json
         run: |
-          node --test .github/scripts/check-audit-media.test.mjs
+          node --test app/tests/scripts/check-audit-media.test.mjs
           node .github/scripts/check-audit-media.mjs
       - name: Submit suggestions
         env:

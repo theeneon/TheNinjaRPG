@@ -10,7 +10,7 @@ import { PetTaskDispatch, PetTasks } from "@/layout/PetTasks";
 import * as RewardChoice from "@/layout/RewardChoice";
 import * as toast from "@/libs/toast";
 import * as UserContext from "@/utils/UserContext";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const testApi = createTRPCReact<AppRouter>();
 let queryClient: QueryClient;

@@ -4,7 +4,7 @@ import {
   nativeWidgetAccountAction,
   shouldClearNativeAccountState,
 } from "@/libs/native/accountCleanup";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
 

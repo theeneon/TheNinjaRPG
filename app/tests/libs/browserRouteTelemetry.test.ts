@@ -23,7 +23,7 @@ const origin = "https://www.theninja-rpg.com";
 
 describe("public browser route labels", () => {
   it("covers every page and has no obsolete routes", async () => {
-    const root = new URL("../../src/app/[shell]/", import.meta.url);
+    const root = new URL("../../src/app/[shell]", import.meta.url);
     const files = await readdir(root, { recursive: true });
     const routes = files.filter((file) => file === "page.tsx" || file.endsWith("/page.tsx"))
       .map((file) => "/" + file.replace(/(^|\/)page\.tsx$/, ""));

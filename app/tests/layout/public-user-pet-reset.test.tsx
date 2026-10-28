@@ -9,7 +9,7 @@ import * as client from "@/app/_trpc/client";
 import type { RouterInputs } from "@/app/_trpc/client";
 import { ResetPetImageGeneration } from "@/layout/PublicUser";
 import * as toast from "@/libs/toast";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const testApi = createTRPCReact<AppRouter>();
 let queryClient: QueryClient;

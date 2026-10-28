@@ -1,4 +1,4 @@
-import { ensureDom } from "../../setup-dom.mjs";
+import { ensureDom } from "../../setup/dom.mjs";
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 const { cleanup, fireEvent, render, waitFor } = await import("@testing-library/react");
 import { useState } from "react";

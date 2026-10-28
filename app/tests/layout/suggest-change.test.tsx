@@ -1,4 +1,4 @@
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { createToastMock } from "../setup/toastMock";
 const { cleanup, fireEvent, render } = await import("@testing-library/react");
 import type { HTMLAttributes, ReactNode } from "react";

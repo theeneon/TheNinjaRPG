@@ -1,42 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import * as Sentry from "@sentry/node";
+import * as nextHeaders from "next/headers";
+import { env } from "@/env/server.mjs";
+import * as grants from "@/server/utils/purchases/grant";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { POST } from "@/app/api/webhooks/revenuecat/route";
 
 interface RevenueCatRouteMocks {
   captureException: ReturnType<typeof vi.fn>;
   transferStorePurchases: ReturnType<typeof vi.fn>;
 }
 
-const getMocks = (): RevenueCatRouteMocks => {
-  const globals = globalThis as typeof globalThis & {
-    __revenueCatRouteMocks?: RevenueCatRouteMocks;
-  };
-  globals.__revenueCatRouteMocks ??= {
-    captureException: vi.fn(),
-    transferStorePurchases: vi.fn(),
-  };
-  return globals.__revenueCatRouteMocks;
+const mocks: RevenueCatRouteMocks = {
+  captureException: vi.fn(),
+  transferStorePurchases: vi.fn(),
 };
-
-const mocks = getMocks();
-
-vi.mock("@sentry/node", () => ({ captureException: getMocks().captureException }));
-vi.mock("next/headers", () => ({
-  headers: vi.fn().mockResolvedValue(new Headers({ authorization: "webhook-secret" })),
-}));
-vi.mock("@/env/server.mjs", () => ({
-  env: {
-    REVENUECAT_ANDROID_APP_ID: "android-app",
-    REVENUECAT_IOS_APP_ID: "ios-app",
-    REVENUECAT_WEBHOOK_SECRET: "webhook-secret",
-  },
-}));
-vi.mock("@/server/utils/purchases/grant", () => ({
-  extendStoreSubscription: vi.fn(),
-  grantStorePurchase: vi.fn(),
-  revokeFederalStatus: vi.fn(),
-  transferStorePurchases: getMocks().transferStorePurchases,
-}));
-
-import { POST } from "@/app/api/webhooks/revenuecat/route";
 
 const transferRequest = (environment?: string) =>
   new Request("https://example.test/api/webhooks/revenuecat", {
@@ -54,11 +31,37 @@ const transferRequest = (environment?: string) =>
     }),
   });
 
+let originalConfiguration: Pick<
+  typeof env,
+  "REVENUECAT_ANDROID_APP_ID" | "REVENUECAT_IOS_APP_ID" | "REVENUECAT_WEBHOOK_SECRET"
+>;
 beforeEach(() => {
+  originalConfiguration = {
+    REVENUECAT_ANDROID_APP_ID: env.REVENUECAT_ANDROID_APP_ID,
+    REVENUECAT_IOS_APP_ID: env.REVENUECAT_IOS_APP_ID,
+    REVENUECAT_WEBHOOK_SECRET: env.REVENUECAT_WEBHOOK_SECRET,
+  };
+  Object.assign(env, {
+    REVENUECAT_ANDROID_APP_ID: "android-app",
+    REVENUECAT_IOS_APP_ID: "ios-app",
+    REVENUECAT_WEBHOOK_SECRET: "webhook-secret",
+  });
+  vi.spyOn(Sentry, "captureException").mockImplementation(mocks.captureException);
+  vi.spyOn(nextHeaders, "headers").mockResolvedValue(
+    new Headers({ authorization: "webhook-secret" }) as never,
+  );
+  vi.spyOn(grants, "transferStorePurchases").mockImplementation(
+    mocks.transferStorePurchases,
+  );
   mocks.captureException.mockReset();
   mocks.transferStorePurchases
     .mockReset()
     .mockResolvedValue({ destinationUserId: "account-b", rowsAffected: 1 });
+});
+
+afterEach(() => {
+  Object.assign(env, originalConfiguration);
+  vi.restoreAllMocks();
 });
 
 describe("RevenueCat TRANSFER environment scoping", () => {
@@ -72,7 +75,9 @@ describe("RevenueCat TRANSFER environment scoping", () => {
       rowsAffected: 2,
     });
     expect(mocks.transferStorePurchases).toHaveBeenCalledTimes(2);
-    expect(mocks.transferStorePurchases.mock.calls.map(([, transfer]) => transfer)).toEqual([
+    expect(
+      mocks.transferStorePurchases.mock.calls.map(([, transfer]) => transfer),
+    ).toEqual([
       expect.objectContaining({ eventId: "transfer-event", isSandbox: false }),
       expect.objectContaining({ eventId: "transfer-event", isSandbox: true }),
     ]);

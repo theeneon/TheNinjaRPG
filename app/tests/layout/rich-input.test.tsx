@@ -7,7 +7,7 @@ import * as uploadthing from "@/utils/uploadthing";
 import * as toast from "@/libs/toast";
 import * as UserSearchSelect from "@/layout/UserSearchSelect";
 import { actualDialog, actualRichInput as RichInput } from "../setup/preload";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const startUpload = vi.fn();
 const submit = vi.fn();

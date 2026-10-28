@@ -10,7 +10,7 @@ import type { TerrainHex } from "@/libs/hexgrid";
 import { intersectUsers } from "@/libs/threejs/sector";
 import type { SectorUser } from "@/libs/threejs/types";
 import type { UserWithRelations } from "@/routers/profile";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 beforeEach(() => {
   ensureDom();

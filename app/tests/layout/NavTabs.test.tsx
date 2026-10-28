@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as storage from "@/hooks/localstorage";
 import NavTabs from "@/layout/NavTabs";
 import { Tabs, TabsContent } from "@/components/ui/tabs";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 
 const animationFrameDescriptor = Object.getOwnPropertyDescriptor(
   globalThis,

@@ -5,7 +5,7 @@ import NativeStore from "@/components/native/NativeStore";
 import { STORE_FEDERAL_PRODUCTS } from "@/drizzle/constants";
 import { purchases as nativePurchases } from "@/libs/native";
 import type { StorePackage } from "@/libs/native/purchases";
-import { ensureDom } from "../setup-dom.mjs";
+import { ensureDom } from "../setup/dom.mjs";
 import { createToastMock } from "../setup/toastMock";
 
 type AsyncMock = ReturnType<

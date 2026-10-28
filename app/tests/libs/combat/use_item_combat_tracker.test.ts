@@ -1,40 +1,17 @@
+import { trackerQuest as makeQuest } from "../../setup/quest";
 import { describe, expect, it } from "bun:test";
 import { buildCombatTrackerTasks, hydrateUserForQuests } from "@/libs/combat/util";
 import { getNewTrackers } from "@/libs/quest";
 import { makeBattleUser } from "./helpers/battleScenario";
 import type { CombatResult, CompleteBattle } from "@/libs/combat/types";
 
-// Guards the full updateUser (database.ts) seam for the use_specific_item_combat objective:
-// buildCombatTrackerTasks reads usedActions from battle state, hydrateUserForQuests rebuilds the
-// user from extraState, and getNewTrackers credits the objective. Proves the combat item-use
-// tracking logic is correct end-to-end, so a "use item in combat didn't work" report is NOT a
-// defect in this path — its cause is elsewhere and still needs a separate root-cause pass.
+// Exercise combat task construction, quest hydration and objective credit together.
 const makeResult = (didWin: number): CombatResult =>
   ({
     didWin,
     outcome: didWin > 0 ? "Won" : "Lost",
     notifications: [],
   }) as unknown as CombatResult;
-
-const makeQuest = (id: string, objectives: Record<string, unknown>[]) => ({
-  id,
-  name: `Quest ${id}`,
-  questType: "daily" as const,
-  hidden: false,
-  consecutiveObjectives: false,
-  maxAttempts: 100,
-  maxCompletes: 100,
-  requiredVillage: null,
-  requiredBloodlineId: null,
-  prerequisiteQuestId: null,
-  requiredLevel: null,
-  maxLevel: null,
-  medicalRank: null,
-  huntingRank: null,
-  gatheringRank: null,
-  endsAt: null,
-  content: { objectives, reward: {}, sceneBackground: "", sceneCharacters: [] },
-});
 
 const runUpdateUserSeam = (
   battle: CompleteBattle,
