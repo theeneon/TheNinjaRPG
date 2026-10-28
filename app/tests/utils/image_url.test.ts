@@ -48,7 +48,7 @@ describe("image URL utilities", () => {
     );
   });
 
-  it("does not force optimizer detection on Three.js texture URLs", () => {
+  it("does not force optimizer detection on game texture URLs", () => {
     expect(textureImageUrl("https://utfs.io/f/extensionless-key", 50)).toBe(
       "https://uploadthing.b-cdn.net/f/extensionless-key?width=50",
     );

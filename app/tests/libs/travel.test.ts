@@ -43,20 +43,15 @@ describe("findGlobalTravelDestination", () => {
     });
   });
 
-  it("never selects blocked tiles", () => {
+  it("includes shaded terrain among landing tiles", () => {
     const map = makeMap(3, 1, new Set(["1,0"]));
 
     expect(findGlobalTravelDestination(map, () => 0)).toEqual({ x: 0, y: 0 });
-    expect(findGlobalTravelDestination(map, () => 1)).toEqual({ x: 2, y: 0 });
+    expect(findGlobalTravelDestination(map, () => 1)).toEqual({ x: 1, y: 0 });
   });
 
-  it("returns null when the sector has no walkable tiles", () => {
-    expect(
-      findGlobalTravelDestination(
-        makeMap(2, 2, new Set(["0,0", "1,0", "0,1", "1,1"])),
-        () => 0,
-      ),
-    ).toBeNull();
+  it("returns null when the sector has no tiles", () => {
+    expect(findGlobalTravelDestination(makeMap(0, 0), () => 0)).toBeNull();
   });
 });
 

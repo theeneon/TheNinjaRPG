@@ -60,7 +60,7 @@ import {
 import { WORLD_PROTECTED_LAND_SECTORS } from "@/libs/sector-map/landmarks";
 import { normalizeTiledSectorMap } from "@/libs/sector-map/tiled";
 import type { SectorMapZone } from "@/libs/sector-map/types";
-import type { GlobalMapData } from "@/libs/threejs/types";
+import type { GlobalMapData } from "@/libs/sector-map/world-types";
 
 const globalMap = globalMapData as unknown as GlobalMapData;
 
@@ -262,8 +262,8 @@ const generateCells = (options: GeneratorOptions) => {
         }
         landRow.push(landTerrain);
       } else {
-        // Walkable lakes in low ground (rare in deserts), impassable rocks in
-        // high ground. Ninja traverse standard water with chakra at land speed.
+        // Lakes in low ground (rare in deserts), dense terrain in high ground.
+        // Ninja traverse every sector terrain shade, including water.
         const lakeLevel = voteTerrain === "dessert" ? -0.72 : -0.52;
         if (elevation < lakeLevel) {
           cell = { terrain: "ocean", zone: "water", blocked: false, walkCost: 1 };
@@ -359,31 +359,6 @@ const generateCells = (options: GeneratorOptions) => {
         setWalkable(x, tile.y);
       }
     });
-
-  // Flood fill from spawn; block walkable pockets that cannot be reached so
-  // the stored map never reports tiles the server would reject anyway.
-  const reachable = new Set<string>([`${spawn.x},${spawn.y}`]);
-  const queue = [{ x: spawn.x, y: spawn.y }];
-  while (queue.length > 0) {
-    const current = queue.pop();
-    if (!current) break;
-    for (const neighbor of getNeighborCoordinates(current)) {
-      const key = `${neighbor.x},${neighbor.y}`;
-      const cell = cells[neighbor.y]?.[neighbor.x];
-      if (!cell || cell.blocked || cell.walkCost <= 0 || reachable.has(key)) continue;
-      reachable.add(key);
-      queue.push(neighbor);
-    }
-  }
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const cell = cells[y]![x]!;
-      if (!cell.blocked && !reachable.has(`${x},${y}`)) {
-        cell.blocked = true;
-        cell.walkCost = 0;
-      }
-    }
-  }
 
   // Sandy shorelines: walkable grass tiles bordering water become sand,
   // keeping their original battle biome and without sprite decorations so
@@ -697,7 +672,7 @@ const main = () => {
     const blockedCount = result.map.tiles.filter((tile) => tile.blocked).length;
     console.log(
       `Sector ${sector}: wrote ${filePath} (${result.map.width}x${result.map.height}, ` +
-        `${blockedCount} blocked tiles, ${result.map.anchors.length} anchors)` +
+        `${blockedCount} dense tiles, ${result.map.anchors.length} anchors)` +
         (result.warnings.length > 0 ? ` warnings: ${result.warnings.join("; ")}` : ""),
     );
   }

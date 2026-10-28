@@ -15,7 +15,6 @@ import {
   ring,
   spiral,
 } from "honeycomb-grid";
-import type * as THREE from "three";
 import type { CombatBiome } from "@/drizzle/constants";
 import type { TerrainSpec } from "@/libs/sector-map/terrains";
 import type { NormalizedSectorTile, SectorMapZone } from "@/libs/sector-map/types";
@@ -42,24 +41,6 @@ export class TerrainHex extends Hex {
   /** The authored map tile backing this hex (if any), stashed alongside `spec`
    *  so the geometry pass skips a second per-tile authoredTiles lookup */
   authored?: NormalizedSectorTile;
-}
-
-/**
- * Hexagonal face mesh for Three.js
- */
-export interface HexagonalFaceMesh
-  extends THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> {
-  currentHex: number;
-  userData: {
-    id: number;
-    hex: number;
-    tile: TerrainHex;
-    highlight: boolean;
-    selected: boolean;
-    canClick: boolean;
-    originalColor?: THREE.Color;
-    isBattleTile?: boolean;
-  };
 }
 
 /**

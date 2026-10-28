@@ -39,8 +39,8 @@ import {
   isReachableCoordinate,
   isWalkableCoordinate,
 } from "@/libs/sector-map/validation";
+import type { GlobalMapData } from "@/libs/sector-map/world-types";
 import { isUserCurrentlyStealthed } from "@/libs/stealth";
-import type { GlobalMapData } from "@/libs/threejs/types";
 import { getTimedRegenerationGain, type TimedBuff } from "@/libs/timedBuffs";
 import { regenerationBuffs } from "@/libs/titles";
 import {

@@ -55,8 +55,6 @@
     "**/*.tsx",
     "**/*.cjs",
     "**/*.mjs",
-    "src/libs/drawThreeJson.js",
-    "src/libs/travel/SpriteMixer.js",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

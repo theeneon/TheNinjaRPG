@@ -127,7 +127,6 @@ export default function ManualAI() {
               showEdit="ai"
               showStatistic="ai"
               showCopy="ai"
-              show3d
             />
           </div>
         ))}

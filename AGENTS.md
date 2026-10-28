@@ -15,7 +15,7 @@ Repository-wide agent instructions; `CLAUDE.md` imports this file. Paths below a
 
 ## Repository consistency
 
-- Keep code, comments and repository documentation timeless: describe current behavior, contracts and durable technical rationale. Do not commit task-specific planning or implementation documents, temporary or benchmark scripts, development-conversation narratives, progress reports, review iterations, temporary QA evidence or release-preparation diaries. Keep PR descriptions focused on the current change and relevant validation; put task-specific history in external task artifacts. Update existing documentation only when lasting usage or operational guidance changes.
+- Keep code, comments, repository documentation and PR descriptions timeless: describe the resulting behavior, contracts and durable technical rationale, without development chronology, comparisons with previous implementations, review anecdotes or discarded approaches. PR descriptions may summarize validation and measured results concisely. Keep implementation plans, task checklists, progress/review logs, benchmark scripts, measurement collectors, report generators and temporary QA/scenario tooling outside the repository unless explicitly requested as a maintained feature. Retain appropriate product regression tests and required generated files; update repository documentation only for lasting usage or operational guidance.
 - Before implementing, inspect comparable features and reuse their architecture, components, helpers, naming, validation, error handling and tests. Follow established repository patterns across frontend, backend, integrations and tooling; do not introduce a parallel approach merely because it is convenient or familiar.
 - Keep test suites in `app/tests/`, organized by the corresponding source feature; use the shared setup in `app/tests/setup/`.
 - Bun module mocks persist across test files; verify affected suites together, since isolated passes can miss suite-order failures.
@@ -55,7 +55,7 @@ Create/edit shared skills only in `.agents/skills/<name>/SKILL.md`. `make ensure
 
 ## Code map
 
-Next.js 15 App Router / React 19 / strict TypeScript; Tailwind, Shadcn/Radix; Drizzle/MySQL; tRPC; Clerk; Jotai; Three.js / React Three Fiber.
+Next.js 15 App Router / React 19 / strict TypeScript; Tailwind, Shadcn/Radix; Drizzle/MySQL; tRPC; Clerk; Jotai; PixiJS.
 
 | Path | Responsibility |
 | --- | --- |

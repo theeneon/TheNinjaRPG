@@ -4,7 +4,7 @@ import type {
   NormalizedSectorMap,
   NormalizedSectorTile,
 } from "@/libs/sector-map/types";
-import { buildWindowNav, type WindowNavEntry } from "@/libs/threejs/sector";
+import { buildWindowNav, type WindowNavEntry } from "@/libs/sector-map/navigation";
 
 const makeMap = (
   width: number,
@@ -127,12 +127,11 @@ describe("buildWindowNav", () => {
     expect(nav.pathFinder.getShortestPath(start, goal)).toBeDefined();
   });
 
-  it("routes around blocked tiles composed from a neighbor's map", () => {
-    // Wall down the east neighbor's entry column except one gap at row 2
+  it("crosses shaded terrain on a neighbor's map at the standard walking cost", () => {
     const nav = buildWindowNav(
       [
         { dx: 0, dy: 0, map: makeMap(5, 5) },
-        { dx: 1, dy: 0, map: makeMap(5, 5, (x, y) => x === 0 && y !== 2) },
+        { dx: 1, dy: 0, map: makeMap(5, 5, () => true) },
       ],
       HEXSIZE,
     );
@@ -143,10 +142,12 @@ describe("buildWindowNav", () => {
     const path = nav.pathFinder.getShortestPath(start, goal);
     expect(path).toBeDefined();
     if (!path) return;
-    // Every east-neighbor tile the path uses on the entry column must be the gap
     for (const tile of path) {
       const local = nav.fromUnified(tile);
-      if (local.dx === 1 && local.col === 0) expect(local.row).toBe(2);
+      if (local.dx === 1) {
+        expect(tile.blocked).toBe(false);
+        expect(tile.cost).toBe(2);
+      }
     }
   });
 

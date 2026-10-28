@@ -1,4 +1,3 @@
-import { Color } from "three";
 import { describe, expect, it } from "bun:test";
 import globe from "@/data/hexasphere.json";
 import {
@@ -8,8 +7,8 @@ import {
   MAP_WORLD_ROWS,
 } from "@/drizzle/constants";
 import { sectorAtGeographic } from "@/libs/sector-map/world-grid";
-import { buildGlobeSurface } from "@/libs/threejs/globe";
-import type { GlobalMapData, GlobalPoint } from "@/libs/threejs/types";
+import { buildGlobeSurfaceData } from "@/libs/rendering/scenes/globeSurface";
+import type { GlobalMapData, GlobalPoint } from "@/libs/sector-map/world-types";
 
 const hexasphere = globe as unknown as GlobalMapData;
 
@@ -84,10 +83,10 @@ describe("sectorAtGeographic", () => {
   });
 });
 
-describe("buildGlobeSurface", () => {
-  const surface = buildGlobeSurface(hexasphere);
-  const positions = surface.geometry.getAttribute("position");
-  const colors = surface.geometry.getAttribute("color");
+describe("buildGlobeSurfaceData", () => {
+  const surface = buildGlobeSurfaceData(hexasphere);
+  const positions = surface.positions;
+  const colors = surface.colors;
 
   it("covers every sector with a contiguous, non-overlapping vertex range", () => {
     let expectedStart = 0;
@@ -98,18 +97,18 @@ describe("buildGlobeSurface", () => {
       expect(count).toBeGreaterThan(0);
       expectedStart += count as number;
     }
-    expect(expectedStart).toBe(positions.count);
-    expect(colors.count).toBe(positions.count);
+    expect(expectedStart).toBe(positions.length / 3);
+    expect(colors.length / 3).toBe(positions.length / 3);
   });
 
   it("places every vertex on the globe surface", () => {
     const radius = hexasphere.radius / 3;
     let worst = 0;
-    for (let i = 0; i < positions.count; i++) {
+    for (let i = 0; i < positions.length / 3; i++) {
       const distance = Math.hypot(
-        positions.getX(i),
-        positions.getY(i),
-        positions.getZ(i),
+        positions[i * 3] ?? 0,
+        positions[i * 3 + 1] ?? 0,
+        positions[i * 3 + 2] ?? 0,
       );
       worst = Math.max(worst, Math.abs(distance - radius));
     }
@@ -117,20 +116,20 @@ describe("buildGlobeSurface", () => {
   });
 
   it("indexes only vertices belonging to the sector that emitted them", () => {
-    const index = surface.geometry.getIndex();
+    const index = surface.indices;
     expect(index).not.toBeNull();
-    const owner = new Int32Array(positions.count).fill(-1);
+    const owner = new Int32Array(positions.length / 3).fill(-1);
     for (let sector = 0; sector < MAP_TOTAL_SECTORS; sector++) {
       const start = surface.vertexRanges[sector * 2] as number;
       const count = surface.vertexRanges[sector * 2 + 1] as number;
       owner.fill(sector, start, start + count);
     }
-    const triangles = (index?.count ?? 0) / 3;
+    const triangles = index.length / 3;
     let straddling = 0;
     for (let triangle = 0; triangle < triangles; triangle++) {
-      const a = owner[index?.getX(triangle * 3) ?? 0];
-      const b = owner[index?.getX(triangle * 3 + 1) ?? 0];
-      const c = owner[index?.getX(triangle * 3 + 2) ?? 0];
+      const a = owner[index[triangle * 3] ?? 0];
+      const b = owner[index[triangle * 3 + 1] ?? 0];
+      const c = owner[index[triangle * 3 + 2] ?? 0];
       if (a !== b || b !== c) straddling++;
     }
     expect(straddling).toBe(0);
@@ -138,12 +137,12 @@ describe("buildGlobeSurface", () => {
 
   it("applies an ownership tint to exactly the tinted sector", () => {
     const tinted = 500;
-    const plain = buildGlobeSurface(hexasphere);
-    const shaded = buildGlobeSurface(hexasphere, (sector) =>
-      sector === tinted ? new Color(0.5, 0.25, 0.125) : null,
+    const plain = buildGlobeSurfaceData(hexasphere);
+    const shaded = buildGlobeSurfaceData(hexasphere, (sector) =>
+      sector === tinted ? { r: 0.5, g: 0.25, b: 0.125 } : null,
     );
-    const plainColors = plain.geometry.getAttribute("color").array as Float32Array;
-    const shadedColors = shaded.geometry.getAttribute("color").array as Float32Array;
+    const plainColors = plain.colors;
+    const shadedColors = shaded.colors;
     const start = (shaded.vertexRanges[tinted * 2] as number) * 3;
     const count = (shaded.vertexRanges[tinted * 2 + 1] as number) * 3;
 

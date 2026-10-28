@@ -11,7 +11,7 @@ import {
   getBattleGrid,
 } from "@/libs/combat/util";
 import { getPossibleActionTiles } from "@/libs/hexgrid";
-import { validateActionTarget } from "@/libs/threejs/combat";
+import { validateActionTarget } from "@/libs/combat/targetValidation";
 import {
   DamageTag,
   HealTag,

@@ -104,7 +104,6 @@ const AI_EDITABLE_KEYS = [
   "username",
   "npcTitle",
   "avatar",
-  "avatar3d",
   "avatarFacing",
   "gender",
   "level",

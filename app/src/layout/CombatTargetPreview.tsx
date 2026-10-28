@@ -5,7 +5,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import Modal from "@/layout/Modal";
 import { getTargetTiles } from "@/libs/combat/targeting";
 import type { CombatAction } from "@/libs/combat/types";
-import type { BattlefieldPreview } from "@/libs/threejs/battlefieldPreview";
+import type { BattlefieldPreview } from "@/libs/rendering/scenes/battlefieldPreview";
 
 /**
  * Optional targeting help, mounted only on request so editing never pays for a WebGL scene.
@@ -94,14 +94,16 @@ const TargetingBattlefield = ({
 
   useEffect(() => {
     let isDisposed = false;
+    const controller = new AbortController();
     let field: BattlefieldPreview | null = null;
     setLoadedPreview(null);
     setIsUnsupported(false);
     // The heavy combat renderer is loaded only while this optional help dialog is open.
-    void import("@/libs/threejs/battlefieldPreview")
-      .then(({ createBattlefieldPreview }) => {
+    void import("@/libs/rendering/scenes/battlefieldPreview")
+      .then(async ({ createBattlefieldPreview }) => {
         if (isDisposed || !mountRef.current) return;
-        field = createBattlefieldPreview({
+        field = await createBattlefieldPreview({
+          signal: controller.signal,
           scene: { effects: [], targetAvatar: null, assets: [] },
           assets: [],
           viewport: "desktop",
@@ -113,6 +115,10 @@ const TargetingBattlefield = ({
             target: { col: Math.min(7, width - 1), row: Math.min(4, height - 1) },
           },
         });
+        if (isDisposed || !mountRef.current) {
+          field?.dispose();
+          return;
+        }
         if (!field) {
           setIsUnsupported(true);
           return;
@@ -129,6 +135,7 @@ const TargetingBattlefield = ({
       });
     return () => {
       isDisposed = true;
+      controller.abort();
       field?.dispose();
     };
   }, [width, height]);

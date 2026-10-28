@@ -9,7 +9,7 @@ import AvatarImage from "@/layout/Avatar";
 import Image from "@/layout/Image";
 import { calcCurrent } from "@/layout/StatusBar";
 import { calcChakraToPools } from "@/libs/hospital";
-import type { SectorUser } from "@/libs/threejs/types";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import { showMutationToast } from "@/libs/toast";
 import type { UserWithRelations } from "@/routers/profile";
 import { useUserData } from "@/utils/UserContext";

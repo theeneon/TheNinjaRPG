@@ -2669,7 +2669,6 @@ export const userData = mysqlTable(
     approvedTos: boolean("approvedTos").default(false).notNull(),
     avatar: varchar("avatar", { length: 191 }),
     avatarLight: varchar("avatarLight", { length: 191 }),
-    avatar3d: varchar("avatar3d", { length: 191 }),
     avatarFacing: mysqlEnum("avatarFacing", consts.AvatarFacings)
       .default("left")
       .notNull(),

@@ -258,8 +258,6 @@ access-control-allow-origin: https://localhost
 with `capacitor://localhost` allowed, an arbitrary origin refused, and `OPTIONS` answering
 204.
 
-What is still unverified is everything that needs a signed build or a real account: push
-delivery, Live Activities, in-app purchase, and Sign in with Apple. Of the three device
-risks identified before any of this was written, the offline cold launch is now covered,
-but Clerk session persistence across cold launches and the three.js memory ceiling still
-need a signed build against a reachable origin.
+Validate push delivery, Live Activities, in-app purchase, Sign in with Apple,
+Clerk session persistence across cold launches, and WebView memory limits with
+a signed build, real accounts, and a reachable origin.

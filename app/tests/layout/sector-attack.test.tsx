@@ -1,14 +1,13 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
-import { Group, Raycaster, Sprite, Vector3 } from "three";
 import * as client from "@/app/_trpc/client";
 import type { VillageAlliance } from "@/drizzle/schema";
 import * as Image from "@/layout/Image";
 import * as modal from "@/layout/Modal";
 import { SorroundingUsers } from "@/layout/Sector";
 import type { TerrainHex } from "@/libs/hexgrid";
-import { intersectUsers } from "@/libs/threejs/sector";
-import type { SectorUser } from "@/libs/threejs/types";
+import { travelActionAvailability } from "@/libs/rendering/scenes/travelActors";
+import type { SectorUser } from "@/libs/sector-map/world-types";
 import type { UserWithRelations } from "@/routers/profile";
 import { ensureDom } from "../setup/dom.mjs";
 
@@ -99,32 +98,9 @@ describe("sector attack controls", () => {
             expect(attackUser).toHaveBeenCalledWith("target");
           }
         } else {
-          const group = new Group();
-          const userMesh = new Group();
-          userMesh.userData = {
-            type: "user",
-            userId: target.userId,
-            tile: { row: 5, col: 5 },
-          };
-          const sprites = Array.from({ length: 6 }, () => new Sprite());
-          userMesh.add(...sprites);
-          group.add(userMesh);
-          sprites[3]!.visible = false;
-          sprites[5]!.visible = false;
-          const raycaster = new Raycaster();
-          vi.spyOn(raycaster, "intersectObjects").mockReturnValue([
-            { object: sprites[0]!, distance: 1, point: new Vector3() },
-          ]);
-          intersectUsers({
-            group_users: group,
-            raycaster,
-            users: [target],
-            userData,
-            allyAttack: false,
-            currentTooltips: new Set(),
-          });
-          expect(sprites[3]!.visible).toBe(canAttack);
-          expect(sprites[5]!.visible).toBe(!isMasked);
+          const actions = travelActionAvailability(userData, target, false);
+          expect(actions.attack).toBe(canAttack);
+          expect(actions.info).toBe(!isMasked);
         }
       },
     );

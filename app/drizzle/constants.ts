@@ -34,14 +34,6 @@ export type ActivityStreakType = (typeof ActivityStreakTypes)[number];
 export const TRADEABLE_CURRENCY_TYPES = ["MONEY", "REPUTATION"] as const;
 export type TradeableCurrencyType = (typeof TRADEABLE_CURRENCY_TYPES)[number];
 
-// Threejs drawing layers
-export const STATUS_LAYER = -3;
-export const USER_LAYER = -4;
-export const ASSETS_LAYER = -5;
-export const EFFECTS_LAYER = -6;
-export const TILES_LAYER = -9;
-export const DIRT_LAYER = -10;
-
 // Occupation config
 export const OCCUPATION_CHANGE_COOLDOWN_DAYS = 3;
 
@@ -2591,7 +2583,7 @@ export const WORLD_DAY_SECONDS = 15 * 60;
 export const WORLD_NIGHT_SECONDS = 15 * 60;
 export const WORLD_CYCLE_TRANSITION_SECONDS = 45;
 export const WORLD_DAY_BRIGHTNESS = 1;
-export const WORLD_NIGHT_BRIGHTNESS = 0.38;
+export const WORLD_NIGHT_BRIGHTNESS = 0.8;
 
 // Farming occupation
 export const FARM_STARTING_PLOTS = 5;

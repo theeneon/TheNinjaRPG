@@ -37,7 +37,6 @@ const config = {
     useTypeScriptCli: true,
     globalNotFound: true,
     nextScriptWorkers: true,
-    optimizePackageImports: ["three"],
   },
   turbopack: {
     resolveExtensions: [".tsx", ".ts", ".jsx", ".js"],

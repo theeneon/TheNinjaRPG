@@ -1,10 +1,10 @@
 import { ensureDom } from "../setup/dom.mjs";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import React from "react";
-import { PerspectiveCamera } from "three";
 import { afterEach, describe, expect, it } from "bun:test";
 import { forwardVerticalWheelToDocumentScroll } from "@/components/layout/shared/layoutUtils";
-import { TrackballControls } from "@/libs/threejs/TrackBallControls";
+import { createGlobeControls } from "@/libs/rendering/scenes/globeControls";
+import type { GlobeCamera } from "@/libs/rendering/scenes/globeProjection";
 
 ensureDom();
 
@@ -36,19 +36,23 @@ const setup = () => {
 describe("layout wheel forwarding", () => {
   it.each([-100, 100])("preserves map zoom without page scroll for delta %s", (deltaY) => {
     const view = setup();
-    const camera = new PerspectiveCamera();
-    camera.position.set(0, 0, 100);
-    const canvas = view.getByTestId("map");
-    const controls = new TrackballControls(camera, canvas);
-    controls.staticMoving = true;
+    const camera: GlobeCamera = { longitude: 0, latitude: 0, distance: 100, width: 300, height: 150 };
+    const canvas = view.getByTestId("map") as HTMLCanvasElement;
+    const listeners = new window.AbortController();
+    const cleanups: (() => void)[] = [];
+    createGlobeControls({
+      canvas,
+      listen: (type, listener) => canvas.addEventListener(type, listener, { signal: listeners.signal }),
+      own: (callback) => { cleanups.push(callback); },
+    }, camera, { min: 50, max: 200, latitude: 1.2 }, () => {});
     try {
       fireEvent.wheel(canvas, { deltaY, bubbles: true, cancelable: true });
-      controls.update();
       expect(document.scrollingElement?.scrollTop).toBe(500);
-      if (deltaY > 0) expect(camera.position.length()).toBeGreaterThan(100);
-      else expect(camera.position.length()).toBeLessThan(100);
+      if (deltaY > 0) expect(camera.distance).toBeGreaterThan(100);
+      else expect(camera.distance).toBeLessThan(100);
     } finally {
-      controls.dispose();
+      listeners.abort();
+      for (const cleanup of cleanups) cleanup();
     }
   });
 

@@ -104,14 +104,6 @@ export const ourFileRouter = {
       ...withExtensionIds(files),
     }))
     .onUploadComplete(async ({ file }) => moderateUploadedImage(file)),
-  modelUploader: f({ "model/gltf-binary": { maxFileSize: "256KB" } })
-    .middleware(async ({ files }) => ({
-      ...(await avatarMiddleware()),
-      ...withExtensionIds(files),
-    }))
-    .onUploadComplete(({ file }) => {
-      return { fileUrl: servedUfsUrl(file) };
-    }),
   tavernUploader: f({ image: { maxFileSize: `${TAVERN_IMAGE_MAX_SIZE_MB}MB` } })
     .middleware(async ({ files }) => {
       const user = await fetchUploadUser();

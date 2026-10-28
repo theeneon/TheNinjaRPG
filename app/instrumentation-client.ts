@@ -65,7 +65,6 @@ Sentry.init({
     "Java bridge method invocation error",
     "Java object is gone", // Android WebView JavaScript-Java bridge error - occurs when password managers/autofill services scan for forms and the native component is garbage collected
     "Failed to execute 'removeChild' on 'Node': The node to be removed is not a child of this node.",
-    "Node.removeChild: The node to be removed is not a child of this node", // Firefox version of DOM manipulation race condition (line 28) - occurs during React reconciliation when Three.js cleanup races with React's DOM diffing. Handled gracefully with defense-in-depth checks in Map.tsx/Sector.tsx cleanup. UX: No user-visible impact - occurs during component unmount.
     "The object can not be found here.", // Safari's version of the above removeChild error (DOMException code 8) - DOM modified externally during React reconciliation
     "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.", // DOM modified externally (browser extensions, third-party scripts)
     "GME Provider is disconnected or locked", // timeout error
@@ -245,20 +244,11 @@ Sentry.init({
     if (isNavigationAbortError(event)) {
       return null; // Drop requests the browser aborted when the user navigated away
     }
-    if (isOutOfMemoryError(event)) {
-      return null; // Drop scoped out of memory errors from /travel 3D rendering
-    }
     if (isInvalidOriginError(event)) {
       return null; // Drop scoped invalid origin errors from third-party scripts
     }
     if (isRateLimitJsonParseError(event)) {
       return null; // Drop rate limit (429) JSON parsing errors - handled gracefully in UI
-    }
-    if (isWebGLShaderContextLossError(event)) {
-      return null; // Drop WebGL shader context loss errors - handled by error boundary
-    }
-    if (isMinifiedThreeJsError(event)) {
-      return null; // Drop minified Three.js errors - handled by error boundaries and context loss handlers
     }
     return event;
   },
@@ -1001,47 +991,6 @@ const isClerkSignOutError = (event: Sentry.ErrorEvent): boolean => {
   return isFromClerkSignOut && hasSignOut401;
 };
 
-/**
- * Check if an error is a scoped "out of memory" error that should be filtered.
- * These errors occur during 3D rendering on /travel when browsers (especially Firefox)
- * run out of memory due to heavy tab usage or limited device memory.
- *
- * UX: WebGL error boundary shows fallback UI. Users can refresh to free memory.
- *
- * Only filters when:
- * - Error message is exactly "out of memory" (case-insensitive)
- * - URL is /travel (the 3D rendering page)
- * - Stack frames point to Three.js or WebGL context
- */
-const isOutOfMemoryError = (event: Sentry.ErrorEvent): boolean => {
-  const message = event.exception?.values?.[0]?.value ?? "";
-  const url = event.request?.url ?? "";
-  const stackFrames = event.exception?.values?.[0]?.stacktrace?.frames ?? [];
-
-  // Must be the specific "out of memory" error message
-  if (!message.toLowerCase().includes("out of memory")) {
-    return false;
-  }
-
-  // Must be on /travel page (3D rendering context)
-  if (!url.includes("/travel")) {
-    return false;
-  }
-
-  // Verify it originates from Three.js or WebGL rendering context
-  const isFromThreeJs = stackFrames.some(
-    (frame) =>
-      frame.filename?.includes("three") ||
-      frame.filename?.includes("webgl") ||
-      frame.abs_path?.includes("three") ||
-      frame.abs_path?.includes("webgl"),
-  );
-
-  // Also check for empty stack trace (browser-level memory error)
-  const isBrowserLevelError = stackFrames.length === 0;
-
-  return isFromThreeJs || isBrowserLevelError;
-};
 
 /**
  * Check if an error is a scoped "invalid origin" error that should be filtered.
@@ -2484,172 +2433,7 @@ const isFirefoxInputStreamError = (event: Sentry.ErrorEvent): boolean => {
   return !hasApplicationCode;
 };
 
-/**
- * Check if an error is a WebGL shader creation error after context loss.
- * These occur on iOS Safari when WebGL context is lost due to memory pressure,
- * device sleep, or background tabs. The error happens when Three.js attempts
- * to create shaders with invalid WebGL objects after context loss.
- *
- * UX: WebGL error boundary shows fallback UI with option to refresh.
- * Users see "Browser WebGL Error" message and can reload to recover.
- * The error is caught by our validation guards and handled gracefully.
- *
- * Only filters when:
- * - Error message is "Argument 1 ('shader') to WebGL2RenderingContext.shaderSource must be an instance of WebGLShader"
- * - Error occurs on /travel page (3D rendering context)
- * - Stack trace shows Three.js shader compilation (no application code)
- * - Error is marked as handled (error boundary or validation guard caught it)
- */
-const isWebGLShaderContextLossError = (event: Sentry.ErrorEvent): boolean => {
-  const message = event.exception?.values?.[0]?.value ?? "";
-  const url = event.request?.url ?? "";
-  const stackFrames = event.exception?.values?.[0]?.stacktrace?.frames ?? [];
-  const isHandled = event.exception?.values?.[0]?.mechanism?.handled === true;
 
-  // Must match the specific shader error message
-  if (
-    !message.includes("WebGL2RenderingContext.shaderSource") ||
-    !message.includes("must be an instance of WebGLShader")
-  ) {
-    return false;
-  }
-
-  // Must be on /travel page (3D rendering context)
-  // Use pathname matching to avoid false positives like "/travel-guide"
-  let isOnTravelPage = false;
-  try {
-    const urlObj = new URL(url, "https://example.com");
-    isOnTravelPage =
-      urlObj.pathname === "/travel" || urlObj.pathname.startsWith("/travel/");
-  } catch {
-    // If URL parsing fails, cannot verify path - return false to avoid false positives
-    isOnTravelPage = false;
-  }
-
-  if (!isOnTravelPage) {
-    return false;
-  }
-
-  // Verify it originates from Three.js shader compilation (not application code)
-  const isFromThreeJs = stackFrames.some(
-    (frame) =>
-      frame.filename?.includes("three") ||
-      frame.filename?.includes("three.module.js") ||
-      frame.abs_path?.includes("three"),
-  );
-
-  // Also accept empty stack trace (browser-level WebGL error)
-  const isBrowserLevelError = stackFrames.length === 0;
-
-  // Only filter if from Three.js or browser-level AND error is handled
-  return (isFromThreeJs || isBrowserLevelError) && isHandled;
-};
-
-/**
- * Filters minified Three.js/WebGL errors that occur on 3D rendering pages.
- *
- * These are production build errors where Three.js internal errors have minified
- * variable names (e.g., "Nd", "Od", "Zd"). Common on iOS mobile browsers due to
- * WebGL context loss or memory pressure, but can also occur on desktop browsers
- * under certain conditions (tab backgrounding, GPU driver issues).
- *
- * UX: Combat and Travel pages have comprehensive WebGL error handling:
- * - WebGL error boundaries showing fallback UI with refresh option
- * - Context loss event handlers (webglcontextlost/webglcontextrestored)
- * - Defensive cleanup code with try-catch blocks around dispose()
- * - Texture loading fallbacks for invalid paths
- * - Shader compilation guards checking for valid context
- *
- * Users see either:
- * - "Browser WebGL Error" fallback UI with refresh option
- * - Application continues normally (error caught during isolated render frame)
- *
- * Only filters when:
- * - Error message matches minified identifier pattern (1-2 characters: "Nd", "Od", "Zd")
- * - Error occurs on /combat or /travel pages (3D rendering contexts)
- * - No stack trace (browser-level) OR stack trace contains Three.js references
- * - Prioritizes mobile browsers (iOS/Android) but allows desktop if pattern matches
- */
-const isMinifiedThreeJsError = (event: Sentry.ErrorEvent): boolean => {
-  const message = event.exception?.values?.[0]?.value ?? "";
-  const url = event.request?.url ?? "";
-  const stackFrames = event.exception?.values?.[0]?.stacktrace?.frames ?? [];
-  const browser = (event.contexts?.browser?.name as string | undefined) ?? "";
-  const os = (event.contexts?.os?.name as string | undefined) ?? "";
-
-  // Check if error message matches minified identifier pattern
-  // Pattern: "Error: Nd" or "Nd" format (1-2 character uppercase+optional lowercase)
-  // Matches: "Nd", "Od", "Zd", "N", "O", "Error: Nd", etc.
-  const isMinifiedIdentifier = /^(Error: )?[A-Z][a-z]?$/.test(message.trim());
-  if (!isMinifiedIdentifier) {
-    return false;
-  }
-
-  // Must be on combat or travel page (3D rendering contexts)
-  // Use pathname matching to avoid false positives like "/combat-log" or "/travel-guide"
-  let isOn3DPage = false;
-  try {
-    const urlObj = new URL(url, "https://example.com");
-    isOn3DPage =
-      urlObj.pathname === "/combat" ||
-      urlObj.pathname.startsWith("/combat/") ||
-      urlObj.pathname === "/travel" ||
-      urlObj.pathname.startsWith("/travel/");
-  } catch {
-    // If URL parsing fails, cannot verify path - return false to avoid false positives
-    isOn3DPage = false;
-  }
-
-  if (!isOn3DPage) {
-    return false;
-  }
-
-  // Check if from mobile browser (iOS/Android) where WebGL issues are most common
-  const isMobileBrowser =
-    os.includes("iOS") ||
-    os.includes("Android") ||
-    browser.includes("Mobile") ||
-    (browser.includes("Safari") && os.includes("iOS"));
-
-  // Check if error is browser-level (no stack trace) or from Three.js
-  const isBrowserLevelError = stackFrames.length === 0;
-  const isFromThreeJs = stackFrames.some(
-    (frame) =>
-      frame.filename?.includes("three") ||
-      frame.abs_path?.includes("three"),
-  );
-
-  // Check if error has WebGL-related breadcrumbs or context
-  const hasWebGLContext =
-    event.breadcrumbs?.some(
-      (crumb) =>
-        crumb.message?.toLowerCase().includes("webgl") ||
-        crumb.message?.toLowerCase().includes("context lost") ||
-        crumb.message?.toLowerCase().includes("webglrenderer") ||
-        crumb.message?.toLowerCase().includes("webgl renderer") ||
-        crumb.message?.toLowerCase().includes("three.js renderer"),
-    ) ?? false;
-
-  // Filter if:
-  // 1. Mobile browser + no stack trace (browser-level WebGL error)
-  // 2. Mobile browser + Three.js in stack + WebGL context
-  // 3. Desktop browser + no stack trace + WebGL context (requires WebGL evidence)
-  if (isMobileBrowser && isBrowserLevelError) {
-    return true;
-  }
-
-  if (isMobileBrowser && isFromThreeJs && hasWebGLContext) {
-    return true;
-  }
-
-  // Also filter desktop cases if no stack trace BUT only with WebGL context
-  // This prevents suppressing legitimate short errors like "No" or "Ok"
-  if (!isMobileBrowser && isBrowserLevelError && hasWebGLContext) {
-    return true;
-  }
-
-  return false;
-};
 
 const ensureBrowserErrorHandler = () => {
   if (typeof window === "undefined") return;

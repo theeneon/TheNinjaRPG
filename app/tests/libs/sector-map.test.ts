@@ -249,7 +249,7 @@ describe("sector map normalization", () => {
     expect(result.errors).toContain("Missing required anchor spawn.default");
   });
 
-  it("treats blocked authored tiles as path barriers", () => {
+  it("walks across shaded authored terrain", () => {
     const narrowMap = makeTestMap(3, 1, [
       makeTestTile(0, 0),
       makeTestTile(1, 0, { blocked: true, walkCost: 0 }),
@@ -257,7 +257,7 @@ describe("sector map normalization", () => {
     ]);
 
     expect(isReachableCoordinate(narrowMap, { x: 0, y: 0 }, { x: 2, y: 0 })).toBe(
-      false,
+      true,
     );
     expect(isReachableCoordinate(narrowMap, { x: 0, y: 0 }, { x: 0, y: 0 })).toBe(
       true,
@@ -1140,9 +1140,9 @@ describe("validateNormalizedSectorMap rejections", () => {
     tiles[0] = makeTestTile(0, 0, { walkCost: -1 });
     rejectsWith(makeTestMap(2, 2, tiles), "invalid walk cost");
   });
-  it("rejects a map with no walkable tiles", () => {
-    const tiles = fullTiles(2, 2).map((tile) => ({ ...tile, blocked: true }));
-    rejectsWith(makeTestMap(2, 2, tiles), "no walkable tiles");
+  it("accepts a map made entirely of shaded terrain", () => {
+    const tiles = fullTiles(2, 2).map((tile) => ({ ...tile, blocked: true, walkCost: 0 }));
+    expect(validateNormalizedSectorMap(makeTestMap(2, 2, tiles), registry).success).toBe(true);
   });
   it("rejects a missing spawn.default anchor", () => {
     rejectsWith({ ...validMap(), anchors: [{ key: "spawn.other", x: 0, y: 0 }] }, "spawn.default");

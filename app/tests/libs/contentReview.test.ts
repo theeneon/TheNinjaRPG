@@ -73,6 +73,14 @@ describe("paths", () => {
 });
 
 describe("audit rules", () => {
+  it("rejects retired model fields in saved AI proposals", () => {
+    expect(
+      applySetOperations("AI", { username: "Ninja" }, [
+        { path: "unsupportedField", value: "invalid" },
+      ]),
+    ).toEqual({ ok: false, reason: "AI has no editable field unsupportedField" });
+  });
+
   it("only lets the audit set editable fields of the entity", () => {
     const result = applySetOperations("BADGE", { name: "Old" }, [
       { path: "createdAt", value: "2020-01-01" },

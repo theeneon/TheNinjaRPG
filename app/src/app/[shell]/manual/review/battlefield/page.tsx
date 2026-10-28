@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { api } from "@/app/_trpc/client";
 import ContentBox from "@/layout/ContentBox";
-import { captureBattlefieldSheets } from "@/libs/threejs/battlefieldPreview";
+import { captureBattlefieldSheets } from "@/libs/rendering/scenes/battlefieldPreview";
 import { battlefieldSheetsSchema } from "@/validators/contentReview";
 
 /**

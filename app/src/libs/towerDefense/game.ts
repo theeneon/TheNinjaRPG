@@ -62,7 +62,7 @@ export const directionToSpriteDirection = (dir: string): SpriteDirection => {
 
 /**
  * Calculate the direction based on movement delta.
- * Uses grid coordinates where positive row = north (up in ThreeJS).
+ * Uses grid coordinates where positive row = north (upward in the rendered world).
  */
 export const calculateEnemyDirection = (
   fromCol: number,

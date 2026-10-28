@@ -44,7 +44,8 @@ on:
       - "app/src/app/api/content-review/**"
       - "app/src/app/*/manual/review/battlefield/**"
       - "app/src/libs/contentReview/**"
-      - "app/src/libs/threejs/battlefieldPreview.ts"
+      - "app/src/libs/rendering/**"
+      - "app/src/layout/BattlefieldPreview.tsx"
       - "app/src/validators/contentReview.ts"
 
 concurrency:

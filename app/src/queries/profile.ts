@@ -364,7 +364,6 @@ export const listPublicUserRows = (
     ),
     columns: {
       avatar: true,
-      avatar3d: true,
       avatarLight: true,
       experience: true,
       nRecruited: true,

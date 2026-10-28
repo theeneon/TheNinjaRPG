@@ -30,7 +30,9 @@ export interface NormalizedSectorTile {
   y: number;
   /** Open terrain-registry key (built-ins or creator-defined kinds) */
   terrain: string;
+  /** Positive path weight; zero uses the standard sector walking cost. */
   walkCost: number;
+  /** Dense terrain palette flag; sector travel remains traversable. */
   blocked: boolean;
   zone: SectorMapZone;
   battleBiome: CombatBiome;

@@ -48,7 +48,7 @@ export const bunnyImageUrl = (src: string, width: number) => {
 };
 
 /**
- * Three.js texture URL: host rewrite plus an optional Bunny width.
+ * Game texture URL: host rewrite plus an optional Bunny width.
  * Omit `optimizer=image`: forcing optimization of extensionless UploadThing keys
  * can cache renditions incompatible with travel-map portraits.
  */

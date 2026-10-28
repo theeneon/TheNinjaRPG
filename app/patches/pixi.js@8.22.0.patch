@@ -1,0 +1,26 @@
+diff --git a/lib/rendering/renderers/gl/texture/utils/applyStyleParams.js b/lib/rendering/renderers/gl/texture/utils/applyStyleParams.js
+index b7101b6734389111a303bed538166a129b1946ed..be5ab547a2a75cc20920892f49e34872f9f0a49d 100644
+--- a/lib/rendering/renderers/gl/texture/utils/applyStyleParams.js
++++ b/lib/rendering/renderers/gl/texture/utils/applyStyleParams.js
+@@ -31,7 +31,7 @@ function applyStyleParams(style, gl, mipmaps, anisotropicExt, glFunctionName, fi
+   if (style.compare) {
+     gl[glFunctionName](castParam, gl.TEXTURE_COMPARE_FUNC, pixiToGlMaps.compareModeToGlCompare[style.compare]);
+     gl[glFunctionName](castParam, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+-  } else if (!firstCreation) {
++  } else if (!firstCreation && gl.TEXTURE_COMPARE_MODE !== undefined) {
+     gl[glFunctionName](castParam, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+   }
+ }
+diff --git a/lib/rendering/renderers/gl/texture/utils/applyStyleParams.mjs b/lib/rendering/renderers/gl/texture/utils/applyStyleParams.mjs
+index 24c49b739799458a5f99c7ca623013dc19196f81..a0b238d4a289d897810ba65ecbd44ec7ff4e709e 100644
+--- a/lib/rendering/renderers/gl/texture/utils/applyStyleParams.mjs
++++ b/lib/rendering/renderers/gl/texture/utils/applyStyleParams.mjs
+@@ -29,7 +29,7 @@ function applyStyleParams(style, gl, mipmaps, anisotropicExt, glFunctionName, fi
+   if (style.compare) {
+     gl[glFunctionName](castParam, gl.TEXTURE_COMPARE_FUNC, compareModeToGlCompare[style.compare]);
+     gl[glFunctionName](castParam, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+-  } else if (!firstCreation) {
++  } else if (!firstCreation && gl.TEXTURE_COMPARE_MODE !== undefined) {
+     gl[glFunctionName](castParam, gl.TEXTURE_COMPARE_MODE, gl.NONE);
+   }
+ }
