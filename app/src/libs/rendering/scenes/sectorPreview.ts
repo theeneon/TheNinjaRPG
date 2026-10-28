@@ -42,9 +42,7 @@ export const createSectorPreview = async (options: {
     ...options,
     touchAction: options.canMove() ? "none" : "auto",
     height: (width) => width * ratio,
-    background: getBackgroundColor(
-      map.tiles.find((tile) => !tile.blocked)?.battleBiome ?? "ground",
-    ).color,
+    background: getBackgroundColor(map.tiles[0]?.battleBiome ?? "ground").color,
     backgroundAlpha: 0.5,
   });
   try {

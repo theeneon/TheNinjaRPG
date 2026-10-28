@@ -115,6 +115,13 @@ describe("shared hex terrain textures", () => {
 });
 
 describe("shared hex terrain data", () => {
+  it("preserves positive fractional terrain costs in both navigation grids", () => {
+    const map = mapOf(1, 1);
+    map.tiles[0]!.walkCost = 0.5;
+    expect(prepare(map).grid.getHex({ col: 0, row: 0 })?.cost).toBe(1.5);
+    expect(buildWindowNav([{ dx: 0, dy: 0, map }], 10)?.toUnified(0, 0, 0, 0)?.cost).toBe(1.5);
+  });
+
   it.each(["ground", "dessert", "snow", "ice", "ocean"] as const)("keeps shaded %s walkable in rendering, window navigation and server validation", (terrain) => {
     const map = mapOf(3, 1);
     map.tiles = map.tiles.map((tile) => ({ ...tile, terrain, battleBiome: terrain, blocked: tile.x === 1, walkCost: tile.x === 1 ? 0 : 1 }));

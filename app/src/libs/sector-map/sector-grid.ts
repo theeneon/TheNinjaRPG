@@ -95,7 +95,7 @@ export const prepareSectorGrid = (
       // them off the hex instead of re-doing the lookup + resolve for all 676 tiles
       tile.spec = spec;
       tile.authored = authoredTile;
-      tile.cost = Math.max(1, authoredTile?.walkCost ?? 1) + 1;
+      tile.cost = (authoredTile?.walkCost || 1) + 1;
       tile.blocked = false;
       tile.zone = authoredTile?.zone;
       // Combat arena for battles on this tile: the authored per-tile override

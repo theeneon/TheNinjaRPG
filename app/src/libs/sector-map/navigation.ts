@@ -89,7 +89,7 @@ export const buildWindowNav = (
         return tile;
       }
       tile.blocked = false;
-      tile.cost = Math.max(1, mapTile.walkCost) + 1;
+      tile.cost = (mapTile.walkCost || 1) + 1;
       return tile;
     });
   return {

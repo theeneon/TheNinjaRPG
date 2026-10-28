@@ -128,9 +128,7 @@ export const createTravelScene = async (options: {
     });
     const setBackground = (map: NormalizedSectorMap) => {
       game.setBackground(
-        getBackgroundColor(
-          map.tiles.find((tile) => !tile.blocked)?.battleBiome ?? "ground",
-        ).color,
+        getBackgroundColor(map.tiles[0]?.battleBiome ?? "ground").color,
       );
     };
     /**
