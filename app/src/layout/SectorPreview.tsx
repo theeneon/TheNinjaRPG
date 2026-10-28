@@ -21,6 +21,7 @@ const SectorPreview = (props: SectorPreviewProps) => {
   const mount = useRef<HTMLDivElement | null>(null);
   const current = useRef(props);
   current.current = props;
+  const canMove = !!props.onMoveStructure;
   const key = useMemo(
     () => ({}),
     [
@@ -32,6 +33,7 @@ const SectorPreview = (props: SectorPreviewProps) => {
       props.villageType,
       props.locations,
       props.mapAssets,
+      canMove,
     ],
   );
   const { scene, error, isReady } = useGameScene(

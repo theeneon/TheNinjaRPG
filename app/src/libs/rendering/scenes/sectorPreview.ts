@@ -36,6 +36,7 @@ export const createSectorPreview = async (options: {
   const game = await createGameRenderer({
     ...options,
     scene: "sectorPreview",
+    touchAction: options.canMove() ? "none" : "auto",
     height: (width) => width * ratio,
     background: getBackgroundColor(
       map.tiles.find((tile) => !tile.blocked)?.battleBiome ?? "ground",
