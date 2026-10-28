@@ -43,7 +43,6 @@ import { checkForBadWords, moderateUserText } from "@/utils/profanity";
 import { htmlToPlainText } from "@/utils/sanitize";
 import { addDays } from "@/utils/time";
 import {
-  forumBoardSchema,
   forumCapabilities,
   forumSectionSchema,
   forumStructureBoardSchema,
@@ -333,7 +332,17 @@ export const forumRouter = createTRPCRouter({
     }),
   createThread: protectedProcedure
     .use(ratelimitMiddleware)
-    .input(forumBoardSchema)
+    .input(
+      z.strictObject({
+        board_id: z.string(),
+        title: z.string().trim().min(4).max(88),
+        content: z.string().min(4).max(10000),
+        image: z.url().optional().nullable(),
+        senderId: z.string().optional().nullable(),
+        kind: z.enum(["DISCUSSION", "QUESTION", "ANNOUNCEMENT"]).optional(),
+        tags: z.array(z.string().trim().min(1).max(32)).max(5).optional(),
+      }),
+    )
     .output(baseServerResponse.extend({ threadId: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       const [context, user, sender, titleCheck, moderated] = await Promise.all([

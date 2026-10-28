@@ -10,6 +10,7 @@ import { forumRouter } from "@/routers/forum";
 import { listForumAudit } from "@/queries/forum";
 import type { DrizzleClient } from "@/server/db";
 import { insertUsers } from "../../../setup/factories";
+import { stubRateLimitTransport } from "../../../setup/rateLimit";
 import { callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../../setup/testDatabase";
 
 const playerId = "forum-player"; const adminId = "forum-admin"; const moderatorId = "forum-scoped-moderator";
@@ -31,12 +32,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     await db.insert(forumBoard).values([{ id: "general", name: "General discussion", summary: "", sectionId: "public" }, { id: "other", name: "Other board", summary: "", sectionId: "public" }, { id: "private-board", name: "Private discussions", summary: "", sectionId: "private" }, { id: "news", name: "News", summary: "", sectionId: "public", policy: { create: "STAFF" } }]);
     await db.insert(forumGrant).values({ id: "scoped", userId: moderatorId, scope: "BOARD", scopeId: "general", permissions: ["moderate", "approve"], denies: [] });
     vi.spyOn(moderation, "deferModeration").mockImplementation(() => {});
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-      if (typeof init?.body !== "string" || !init.body.includes("trpc-ratelimit")) throw new Error("Unexpected external request in forum tests");
-      const commands = JSON.parse(init.body) as unknown[];
-      const resultFor = (command: unknown[]) => ({ result: command[0] === "evalsha" || command[0] === "eval" ? [59, 60] : 1 });
-      return Response.json(Array.isArray(commands[0]) ? commands.map(c => resultFor(c as unknown[])) : resultFor(commands));
-    });
+    stubRateLimitTransport({ unexpectedRequestMessage: "Unexpected external request in forum tests" });
   });
   afterEach(() => vi.restoreAllMocks());
 

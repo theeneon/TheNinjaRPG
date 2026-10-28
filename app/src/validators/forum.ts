@@ -33,16 +33,6 @@ export const forumPolicySchema = z.object({
   deleteOwn: z.boolean().optional(),
 });
 export type ForumPolicy = z.infer<typeof forumPolicySchema>;
-export const forumBoardSchema = z.strictObject({
-  board_id: z.string(),
-  title: z.string().trim().min(4).max(88),
-  content: z.string().min(4).max(10000),
-  image: z.url().optional().nullable(),
-  senderId: z.string().optional().nullable(),
-  kind: z.enum(["DISCUSSION", "QUESTION", "ANNOUNCEMENT"]).optional(),
-  tags: z.array(z.string().trim().min(1).max(32)).max(5).optional(),
-});
-export type ForumBoardSchema = z.infer<typeof forumBoardSchema>;
 export const forumSectionSchema = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(2).max(100),

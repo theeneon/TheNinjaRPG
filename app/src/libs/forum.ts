@@ -4,7 +4,6 @@ import {
   countForumPosts,
   fetchThread,
   findForumActor,
-  findForumBoardForFetchBoard,
   findForumPost,
   findUserDataForFetchForumPageData,
   forumPostPosition,
@@ -164,7 +163,6 @@ export const getInfiniteThreads = async (props: {
   };
 };
 export type InfiniteThreads = ReturnType<typeof getInfiniteThreads>;
-export const fetchBoard = findForumBoardForFetchBoard;
 export const fetchForumPageData = async (
   client: DrizzleClient,
   boardName: string,

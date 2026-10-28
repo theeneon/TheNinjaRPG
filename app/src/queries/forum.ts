@@ -80,11 +80,6 @@ export const fetchThread = (db: Pick<DrizzleClient, "query">, id: string) =>
   db.query.forumThread.findFirst({ where: eq(forumThread.id, id) });
 export const findForumPost = (db: Client, id: string) =>
   db.query.forumPost.findFirst({ where: eq(forumPost.id, id) });
-export const findForumBoardForFetchBoard = (db: Client, id?: string, name?: string) =>
-  db.query.forumBoard.findFirst({
-    where: id ? eq(forumBoard.id, id) : eq(forumBoard.name, name ?? ""),
-    with: { section: true },
-  });
 export const listForumReads = (db: Client, userId: string) =>
   db.query.forumRead.findMany({ where: eq(forumRead.userId, userId) });
 export const listForumWatches = (db: Client, userId: string) =>
