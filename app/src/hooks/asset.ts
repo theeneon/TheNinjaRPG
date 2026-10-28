@@ -1,21 +1,27 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
 import { GameAssetTypes } from "@/drizzle/constants";
 import type { GameAsset } from "@/drizzle/schema";
 import type { FormEntry } from "@/layout/EditContent";
+import { assetTypeLabels } from "@/libs/assetLibrary";
 import { showFormErrorsToast, showMutationToast } from "@/libs/toast";
 import { calculateContentDiff } from "@/utils/diff";
 import type { ZodGameAssetInput, ZodGameAssetType } from "@/validators/asset";
 import { gameAssetValidator } from "@/validators/asset";
 
 /**
- * Hook used when creating frontend forms for editing assets
- * @param data
+ * Share media and metadata form state, retain failed edits, and refresh consumers on save.
+ * @param asset Persisted baseline for form defaults and change detection.
+ * @param refetch Reload the saved asset after a successful mutation.
  */
 export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknown>) => {
+  // Block same-tick submissions before React exposes the pending mutation.
   const submitInFlight = useRef(false);
+  // Retain failure feedback until resubmission; editing a draft must not erase a new error.
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const utils = api.useUtils();
 
   // Form handling
   const form = useForm<ZodGameAssetInput, unknown, ZodGameAssetType>({
@@ -32,9 +38,19 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
       onSuccess: async (data) => {
         showMutationToast(data);
         if (data.success) {
-          await refetch();
+          await Promise.all([
+            refetch(),
+            utils.gameAsset.getAll.invalidate(),
+            utils.gameAsset.getAllFolders.invalidate(),
+            utils.gameAsset.getAllNames.invalidate(),
+            utils.gameAsset.getNameTags.invalidate(),
+            utils.misc.getAllGameAssetNames.invalidate(),
+          ]);
+        } else {
+          setSaveError(data.message);
         }
       },
+      onError: (error) => setSaveError(error.message),
       onSettled: () => {
         submitInFlight.current = false;
       },
@@ -44,6 +60,7 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
   const handleAssetSubmit = form.handleSubmit(
     async (data: ZodGameAssetType) => {
       if (submitInFlight.current) return;
+      setSaveError(null);
       const newAsset = { ...asset, ...data };
       const diff = calculateContentDiff(asset, newAsset);
       if (diff.length > 0) {
@@ -51,91 +68,90 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
         try {
           await updateAsset({ id: asset.id, data: newAsset });
         } catch {
-          // Mutation errors are surfaced by the shared tRPC error handler. Keep the
-          // current form values in place so the editor can retry without retyping.
+          // onError provides inline feedback. Retain the current form values so
+          // the editor can retry without retyping.
         }
       }
     },
-    (errors) => showFormErrorsToast(errors),
+    (errors) => {
+      setSaveError(null);
+      showFormErrorsToast(errors);
+    },
   );
 
-  // Watch for changes to avatar
-  const imageUrl = useWatch({
+  // Subscribe to media/type changes without react-hook-form's compiler-incompatible watch.
+  const [imageUrl, soundUrl, type] = useWatch({
     control: form.control,
-    name: "image",
-  });
-  const soundUrl = useWatch({
-    control: form.control,
-    name: "url",
-  });
-  const type = useWatch({
-    control: form.control,
-    name: "type",
+    name: ["image", "url", "type"],
   });
 
   // Start with empty array
   const formData: FormEntry<keyof ZodGameAssetType>[] = [];
 
-  // For scene backgrounds
-  if (type === "SCENE_BACKGROUND") {
+  // Scene artwork keeps landscape backgrounds and portrait characters at 512px.
+  if (type === "SCENE_BACKGROUND" || type === "SCENE_CHARACTER") {
     formData.push({
       id: "image",
+      label: "Artwork",
       type: "avatar",
       href: imageUrl,
-      size: "landscape",
-      maxDim: 512,
-    });
-  } else if (type === "SCENE_CHARACTER") {
-    formData.push({
-      id: "image",
-      type: "avatar",
-      href: imageUrl,
-      size: "portrait",
+      size: type === "SCENE_BACKGROUND" ? "landscape" : "portrait",
       maxDim: 512,
     });
   } else if (type !== "SFX") {
-    formData.push({ id: "image", type: "avatar", href: imageUrl, size: "square" });
+    formData.push({
+      id: "image",
+      label: "Artwork",
+      type: "avatar",
+      href: imageUrl,
+      size: "square",
+    });
   }
 
   // Object for form values
   formData.push(
-    { id: "name", label: "Asset Name", type: "text" },
-    { id: "licenseDetails", type: "text", label: "License Details" },
-    { id: "type", type: "str_array", values: GameAssetTypes },
-    { id: "folder", type: "text", label: "Folder Name" },
-    { id: "hidden", type: "boolean" },
+    { id: "name", label: "Asset name", type: "text" },
+    {
+      id: "licenseDetails",
+      type: "textarea",
+      rows: 3,
+      label: "License details",
+      fullWidth: true,
+    },
+    {
+      id: "type",
+      label: "Asset type",
+      type: "db_values",
+      values: GameAssetTypes.map((type) => ({ id: type, name: assetTypeLabels[type] })),
+    },
+    { id: "folder", type: "text", label: "Folder" },
+    { id: "hidden", type: "boolean", label: "Hidden in game" },
   );
 
-  if (type === "MUSIC") {
+  if (type === "MUSIC" || type === "SFX") {
     formData.push({
       id: "url",
       type: "audio",
       href: soundUrl,
-      label: "Music URL",
-      doubleWidth: true,
-    });
-  }
-
-  if (type === "SFX") {
-    formData.push({
-      id: "url",
-      type: "audio",
-      href: soundUrl,
-      label: "Music URL",
+      label: type === "MUSIC" ? "Music" : "Sound effect",
       doubleWidth: true,
     });
   }
 
   // For animations
   if (type === "ANIMATION") {
-    formData.push({ id: "frames", type: "number", label: "Number of Frames" });
-    formData.push({ id: "speed", type: "number", label: "Speed of Animation" });
+    formData.push({ id: "frames", type: "number", label: "Number of frames" });
+    formData.push({ id: "speed", type: "number", label: "Frame duration (ms)" });
   }
 
   // For static
   if (type === "STATIC") {
-    formData.push({ id: "onInitialBattleField", type: "boolean" });
+    formData.push({
+      id: "onInitialBattleField",
+      type: "boolean",
+      label: "Use on initial battlefield",
+    });
   }
 
-  return { asset, form, formData, handleAssetSubmit, isUpdating };
+  return { asset, form, formData, handleAssetSubmit, isUpdating, saveError };
 };

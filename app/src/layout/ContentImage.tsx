@@ -17,6 +17,7 @@ interface ContentImageProps {
   alt: string;
   rarity?: ItemRarity;
   frames?: number;
+  /** Duration of each sprite-sheet frame in milliseconds. */
   speed?: number;
   className: string;
   roundFull?: boolean;
@@ -31,8 +32,13 @@ interface ContentImageProps {
    */
   eager?: boolean;
   onClick?: () => void;
+  /** Draw the first frame without starting playback. */
+  paused?: boolean;
+  /** Report sprite-sheet load failure so callers can render recovery feedback. */
+  onError?: () => void;
 }
 
+/** Render static artwork or a vertical sprite sheet, respecting explicit playback state. */
 const ContentImage: React.FC<ContentImageProps> = (props) => {
   // The image to show
   const imgRef = useRef<HTMLCanvasElement>(null);
@@ -41,41 +47,47 @@ const ContentImage: React.FC<ContentImageProps> = (props) => {
 
   useEffect(() => {
     if (props.image && props.speed && props.frames) {
-      let currentFrame = 0;
-      let frameCount = 0;
       let timerId = 0;
+      let startedAt: number | undefined;
       const spritesheet = new Image();
-      const ctx = imgRef?.current?.getContext("2d");
-      spritesheet.src = props.image;
-      spritesheet.onload = () => {
-        init();
+      const ctx = imgRef.current?.getContext("2d");
+      const frames = props.frames;
+      const speed = props.speed;
+      const drawFrame = (frame: number) => {
+        if (!ctx) return;
+        const height = spritesheet.height / frames;
+        ctx.clearRect(0, 0, pixels, pixels);
+        ctx.drawImage(
+          spritesheet,
+          0,
+          frame * height,
+          spritesheet.width,
+          height,
+          0,
+          0,
+          pixels,
+          pixels,
+        );
       };
-      function init() {
+      const step = (timestamp: number) => {
+        if (startedAt === undefined) startedAt = timestamp;
+        // Elapsed time preserves frame duration across different display refresh rates.
+        drawFrame(Math.floor((timestamp - startedAt) / speed) % frames);
         timerId = window.requestAnimationFrame(step);
-      }
-      function step() {
-        if (ctx && imgRef?.current && props.frames && props.speed) {
-          frameCount++;
-          if (frameCount < 10) {
-            timerId = window.requestAnimationFrame(step);
-            return;
-          }
-          frameCount = 0;
-          const h = spritesheet.height / props.frames;
-          const w = spritesheet.width;
-          ctx.clearRect(0, 0, pixels, pixels);
-          ctx.drawImage(spritesheet, 0, currentFrame * h, w, h, 0, 0, pixels, pixels);
-          currentFrame++;
-          if (currentFrame >= props.frames) currentFrame = 0;
-          timerId = window.requestAnimationFrame(step);
-        }
-      }
+      };
+      spritesheet.onload = () => {
+        drawFrame(0);
+        if (!props.paused) timerId = window.requestAnimationFrame(step);
+      };
+      spritesheet.onerror = () => props.onError?.();
+      spritesheet.src = props.image;
       return () => {
         window.cancelAnimationFrame(timerId);
         spritesheet.onload = null;
+        spritesheet.onerror = null;
       };
     }
-  }, [props.image, props.speed, props.frames]);
+  }, [props.image, props.speed, props.frames, props.paused, props.onError]);
 
   // Image is either an animation or static image
   let img: null | React.ReactNode = null;
