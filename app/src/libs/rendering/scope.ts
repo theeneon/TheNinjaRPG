@@ -1,7 +1,11 @@
 import { createSceneAssets } from "@/libs/rendering/assets";
 import type { GameRenderer } from "@/libs/rendering/runtime";
 
-/** A removable actor or sector releases its leases without waiting for the scene to unmount. */
+/**
+ * A removable actor/sector owns its abort signal, leases and cleanup within a parent
+ * scene. Stage, renderer and scheduling remain shared; disposing the scope releases
+ * only its resources, and parent disposal also disposes the scope.
+ */
 export const createRenderScope = (parent: GameRenderer): GameRenderer => {
   const controller = new AbortController();
   const assets = createSceneAssets();

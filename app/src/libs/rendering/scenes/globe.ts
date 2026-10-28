@@ -31,6 +31,11 @@ import {
 import type { GlobalMapData, GlobalPoint } from "@/libs/sector-map/world-types";
 import { getReadableVillageHexColor } from "@/utils/color";
 
+/**
+ * Owns the projected globe; the surface is ready on return while marker images
+ * load independently. updateState changes overlays/focus, retaining the initial map.
+ * zoom multiplies camera distance (>1 zooms out), following the gesture controller.
+ */
 export const createGlobeScene = async (options: {
   mount: HTMLElement;
   signal: AbortSignal;

@@ -162,6 +162,7 @@ void main() {
   };
 };
 
+/** Scene-owned line pairs as flat xyz triples in scaled globe units, using the shared camera uniforms. */
 export const createGlobeLines = (
   game: GameRenderer,
   camera: UniformGroup,

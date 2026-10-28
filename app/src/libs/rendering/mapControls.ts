@@ -1,6 +1,10 @@
 import type { GameRenderer } from "@/libs/rendering/runtime";
 
-/** Wheel and pinch zoom share tap ownership; a drag cannot become a movement request. */
+/**
+ * Scene-owned gestures report taps/pointers in renderer pixels (Y downward), with
+ * client coordinates retained for DOM overlays. Zoom receives a multiplicative factor;
+ * omitting it leaves wheel scrolling available. Drags/pinches suppress taps.
+ */
 export const createMapControls = (
   game: GameRenderer,
   options: {

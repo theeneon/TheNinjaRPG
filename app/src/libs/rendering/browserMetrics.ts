@@ -9,6 +9,7 @@ const sceneCanvases = new Map<
   { canvas: HTMLCanvasElement; renderer: "three" | "pixi" }
 >();
 
+/** Registers the current canvas for a scene; cleanup cannot unregister its later replacement. */
 export const registerRenderCanvas = (
   scene: string,
   canvas: HTMLCanvasElement,
@@ -40,7 +41,10 @@ const canvasDimensions = (canvas: HTMLCanvasElement) => ({
   cssHeight: canvas.getBoundingClientRect().height,
 });
 
-/** Opt-in capture is available in production without enabling dev FPS panels or logs. */
+/**
+ * Installs the browser capture API only with ?renderMetrics. One timed capture runs
+ * at a time; warmup is excluded and visibility/size/context changes invalidate results.
+ */
 export const installRenderCapture = () => {
   if (
     typeof window === "undefined" ||
@@ -111,6 +115,7 @@ export const installRenderCapture = () => {
   };
 };
 
+/** Paired with endRenderMeasurement around submission; no-op outside this scene's capture window. */
 export const beginRenderMeasurement = (scene: string) => {
   if (!capture || capture.scene !== scene) return;
   const now = performance.now();
@@ -126,6 +131,7 @@ export const endRenderMeasurement = (scene: string) => {
   capture.frameOpen = false;
 };
 
+/** During an open frame, returns a closure recording CPU stage milliseconds; otherwise undefined. */
 export const markRenderStage = (name: string) => {
   const current = capture;
   if (!current?.frameOpen) {

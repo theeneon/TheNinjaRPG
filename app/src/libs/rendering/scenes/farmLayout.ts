@@ -1,9 +1,11 @@
 import { FARM_PLOT_COLUMNS } from "@/drizzle/constants";
 
+/** Farm-local units with Y downward; the scene scales this centered layout to renderer pixels. */
 export const FARM_PLOT_SIZE = 1.8;
 export const FARM_PLOT_GAP = 0.25;
 export const FARM_VIEW_HEIGHT = 14;
 
+/** Center of a zero-based slot, with the complete row layout centered around the origin. */
 export const farmPlotPosition = (slot: number, total: number) => {
   const spacing = FARM_PLOT_SIZE + FARM_PLOT_GAP;
   return {

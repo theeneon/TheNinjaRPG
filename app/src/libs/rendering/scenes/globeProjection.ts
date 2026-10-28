@@ -1,7 +1,12 @@
 import { sectorAtGeographic } from "@/libs/sector-map/world-grid";
 import type { GlobalPoint } from "@/libs/sector-map/world-types";
 
+/** Half the vertical field of view, in radians, shared with the globe shaders. */
 export const GLOBE_HALF_FOV = (25 * Math.PI) / 180;
+/**
+ * Angles are radians in a Y-up world centered on the globe. Points, radius and
+ * distance use the same already-scaled render units; width/height are renderer pixels.
+ */
 export type GlobeCamera = {
   longitude: number;
   latitude: number;
@@ -10,6 +15,7 @@ export type GlobeCamera = {
   height: number;
 };
 
+/** Orthonormal basis with forward pointing from the globe center toward the camera. */
 export const globeCameraBasis = (camera: GlobeCamera) => {
   const c = Math.cos(camera.latitude),
     s = Math.sin(camera.latitude);
@@ -22,6 +28,7 @@ export const globeCameraBasis = (camera: GlobeCamera) => {
   };
 };
 
+/** Projects to renderer pixels with Y downward; depth is positive in front of the camera. */
 export const globeProject = (point: GlobalPoint, camera: GlobeCamera) => {
   const basis = globeCameraBasis(camera);
   const depth = camera.distance - dot(point, basis.forward);
@@ -34,6 +41,7 @@ export const globeProject = (point: GlobalPoint, camera: GlobeCamera) => {
   };
 };
 
+/** Builds a normalized world ray from the camera through a renderer pixel (Y downward). */
 export const globeRay = (x: number, y: number, camera: GlobeCamera) => {
   const basis = globeCameraBasis(camera);
   const rx = ((x - camera.width / 2) * 2 * Math.tan(GLOBE_HALF_FOV)) / camera.height;
@@ -53,6 +61,10 @@ export const globeRay = (x: number, y: number, camera: GlobeCamera) => {
   };
 };
 
+/**
+ * Near nonnegative hit on the origin-centered sphere, or null. Requires a unit
+ * direction and an origin outside the sphere; it does not select an inside exit hit.
+ */
 export const globeRayHit = (ray: ReturnType<typeof globeRay>, radius: number) => {
   const b = dot(ray.origin, ray.direction);
   const discriminant = b * b - dot(ray.origin, ray.origin) + radius * radius;
@@ -69,6 +81,7 @@ export const globeRayHit = (ray: ReturnType<typeof globeRay>, radius: number) =>
   };
 };
 
+/** Picks a navigable sector from an exterior camera; sky and polar caps return null. */
 export const globeSectorAt = (
   x: number,
   y: number,
@@ -84,7 +97,7 @@ export const globeSectorAt = (
   return sector < 0 ? null : sector;
 };
 
-/** Preserves the old globe's projected size while using its narrower lens. */
+/** Converts established 75-degree framing limits to the narrower lens in the same render units. */
 export const globeDistanceLimits = (radius: number) => {
   const compensate = (distance: number) => {
     const projectedRadius =

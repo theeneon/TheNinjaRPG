@@ -45,7 +45,10 @@ export const createClipTextures = async (
   return { clip, views, dispose };
 };
 
-/** Sprites own playback while texture views can be shared by a character population. */
+/**
+ * Owns a Y-up square sprite and its frame views. size is world units; rendition
+ * selects source pixels. renderAt samples elapsed milliseconds and hides finished clips.
+ */
 export const createSpriteClip = async (
   game: GameRenderer,
   clip: AnimationClip,

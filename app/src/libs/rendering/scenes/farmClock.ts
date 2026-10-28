@@ -7,7 +7,7 @@ import { getWorldCycleBrightness, getWorldCycleState } from "@/libs/dayNight";
 import { getNextWateringAt, getPlotGrowthStage } from "@/libs/farming";
 import type { FarmPlotState } from "@/validators/farming";
 
-/** Constant day/night phases do not need frames; only their short fades animate. */
+/** Server-clock phase; nextAt is an epoch millisecond deadline, or null when disabled. */
 export const farmLightingClock = (now: Date, enabled: boolean) => {
   if (!enabled) return { alpha: 0, isTransitioning: false, nextAt: null };
   const cycle = getWorldCycleState(now);
@@ -23,7 +23,7 @@ export const farmLightingClock = (now: Date, enabled: boolean) => {
   };
 };
 
-/** Wake at a visible deadline rather than polling or redrawing growing crops. */
+/** Next visual deadline in server epoch milliseconds, or null; avoids polling unchanged crops. */
 export const nextFarmVisualAt = (
   plots: readonly Pick<
     FarmPlotState,

@@ -9,7 +9,11 @@ import {
   worldSpriteBounds,
 } from "@/libs/rendering/visibility";
 
-/** Map coordinates grow upward; the camera flips Y and these sprites keep artwork upright. */
+/**
+ * Owns upright artwork in a Y-up world. Resolves after all art attempts, counting
+ * skipped images in missing; cancellation rejects. Viewport bounds/padding are
+ * container-local world units, and animate's zoom is renderer pixels per world unit.
+ */
 export const createWorldSprites = async (
   game: GameRenderer,
   descriptions: WorldSpriteDescription[],

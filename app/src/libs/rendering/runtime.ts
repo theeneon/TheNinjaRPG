@@ -19,11 +19,16 @@ const frames = createFrameLoop(
   (id) => cancelAnimationFrame(id),
 );
 
-/** Owns the renderer, frame subscription, input listeners and texture leases together. */
+/**
+ * Owns the renderer, frame subscription, input listeners and texture leases together.
+ * Abort or dispose releases them once. Initialization rejects; frame failures dispose
+ * the scene and call onError. Hidden/offscreen canvases suspend their frame subscription.
+ */
 export const createGameRenderer = async (options: {
   mount: HTMLElement;
   scene: RenderScene;
   signal: AbortSignal;
+  /** Renderer/CSS pixel dimensions at resolution 1; observed mount width is used by default. */
   height: (width: number) => number;
   width?: number;
   background?: number;
@@ -210,12 +215,14 @@ export const createGameRenderer = async (options: {
       renderer.background.alpha = backgroundAlpha;
       invalidate();
     },
+    /** False renders only after invalidation; true keeps visible scenes subscribed. */
     setAnimating: (value: boolean) => {
       if (continuous === value) return;
       continuous = value;
       invalidate();
     },
     dispose,
+    /** Registers resource cleanup; registering after disposal runs it immediately. */
     own: (cleanup: () => void) => {
       if (disposed) cleanup();
       else cleanups.add(cleanup);
@@ -227,6 +234,7 @@ export const createGameRenderer = async (options: {
     setUpdate: (callback: typeof update) => {
       update = callback;
     },
+    /** Invokes the callback immediately, then on subsequent renderer resizes. */
     setResize: (callback: typeof resize) => {
       resize = callback;
       resize(renderer.width, renderer.height);
@@ -235,4 +243,8 @@ export const createGameRenderer = async (options: {
 };
 
 export type GameRenderer = Awaited<ReturnType<typeof createGameRenderer>>;
+/**
+ * now is frame-clock milliseconds (RAF live, scene time in captures). Live delta
+ * is seconds, capped at 0.1 and reset on resume.
+ */
 export type GameFrame = { now: number; delta: number; reducedMotion: boolean };

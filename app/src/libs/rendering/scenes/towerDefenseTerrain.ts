@@ -99,6 +99,7 @@ export const towerDefenseEnemyPosition = (
   };
 };
 
+/** Interpolates clientSpawnTime with local epoch milliseconds; otherwise uses authoritative progress. */
 export const towerDefenseProjectileProgress = (
   projectile: TowerDefenseProjectile & { clientSpawnTime?: number },
   now: number,

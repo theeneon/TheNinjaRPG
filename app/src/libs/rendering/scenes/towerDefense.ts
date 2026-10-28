@@ -26,7 +26,11 @@ import type {
   RuntimeState,
 } from "@/validators/towerDefense";
 
-/** The renderer reads authoritative entity refs; gameplay and reward handling stay in their hook. */
+/**
+ * Owns a canvas, awaiting initial terrain before reading authoritative entity refs.
+ * Grid/range changes reconcile from snapshots; refresh wakes a paused scene.
+ * Gameplay and rewards remain in the caller's hook, with onFrame running before each snapshot read.
+ */
 export const createTowerDefenseScene = async (options: {
   mount: HTMLElement;
   signal: AbortSignal;
@@ -34,6 +38,7 @@ export const createTowerDefenseScene = async (options: {
   seed: string;
   initialGridSize: number;
   initialPlayerPosition: HexPosition;
+  /** Elapsed seconds, capped/reset by GameFrame; the caller decides how simulation advances. */
   onFrame: (delta: number) => void;
   getSnapshot: () => {
     active: boolean;

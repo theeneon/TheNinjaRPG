@@ -16,10 +16,16 @@ import {
 } from "@/libs/rendering/scenes/farmLayout";
 import type { FarmEffect, FarmPlotState, FarmVisualState } from "@/validators/farming";
 
+/**
+ * Owns a demand-rendered farm, waking for visual deadlines/effects. Initialization
+ * awaits background/soil; crop art loads independently. updateState replaces visual
+ * state, while refresh re-reads clock/lighting preferences; neither mutates gameplay.
+ */
 export const createFarmScene = async (options: {
   mount: HTMLElement;
   signal: AbortSignal;
   initialState: FarmVisualState;
+  /** Local minus server time in milliseconds, subtracted from Date.now(). */
   getTimeDiff: () => number;
   showDayNight: () => boolean;
   onPlotClick: (slot: number, plot: FarmPlotState | undefined) => void;

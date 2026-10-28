@@ -1,3 +1,4 @@
+/** Projects local coordinates through Pixi's matrices; scene world transforms supply the Y flip. */
 export const project2DShader = `
 uniform mat3 uProjectionMatrix;
 uniform mat3 uWorldTransformMatrix;
@@ -8,6 +9,7 @@ vec4 project2D(vec2 point) {
 }
 `;
 
+/** Explicit sRGB/linear conversion shared by terrain and globe shaders. */
 export const displayColorShader = `
 vec3 displayColor(vec3 linear) {
   return mix(12.92 * linear, 1.055 * pow(max(linear, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), linear));

@@ -22,6 +22,10 @@ const comparisonKey = (run: RenderMeasurementResult) => {
   ]);
 };
 
+/**
+ * Validates captures and groups matching workloads/environments. Reports medians
+ * across runs and comparability issues; exploratory/invalid groups remain visible.
+ */
 export const compareRenderingBenchmarks = (
   beforeInput: unknown[],
   afterInput: unknown[],

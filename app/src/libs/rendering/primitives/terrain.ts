@@ -16,6 +16,11 @@ import {
 } from "@/libs/rendering/shaders";
 import type { HexTerrainData } from "@/libs/rendering/terrainData";
 
+/**
+ * Owns meshes/shaders for immutable CPU terrain data. Resolves after texture attempts;
+ * missing optional images retain tinted faces, while cancellation rejects.
+ * setTints replaces the overlay from original colors without mutating data.
+ */
 export const createHexTerrain = async (
   game: GameRenderer,
   data: HexTerrainData,
@@ -185,4 +190,5 @@ const createNoiseTexture = () => {
   });
 };
 
+/** Linear-color blend toward color; callers supply strength in [0, 1]. */
 export type TerrainTint = { color: string; strength: number };

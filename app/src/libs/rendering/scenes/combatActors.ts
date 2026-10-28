@@ -321,6 +321,7 @@ export const createCombatActors = (
   };
 };
 
+/** Viewer-aware fighter artwork in tile-local Y-up units, including fainted and summon overlays. */
 export const combatActorParts = (
   user: ReturnedUserState,
   tile: TerrainHex,

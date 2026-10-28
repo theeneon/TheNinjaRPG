@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import type { VillageStructure } from "@/drizzle/schema";
 
+/** Synthetic map structure with a fresh identity; longitude/latitude are local tile col/row. */
 export const createGenericStructure = (info: {
   name: string;
   route: string;

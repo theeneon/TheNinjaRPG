@@ -146,6 +146,7 @@ export const buildGlobeSurfaceData = (
   return { positions, colors, indices, vertexRanges };
 };
 
+/** Bilinear cap RGB in [0, 1] from a point's direction; missing data or points below cap latitude return null. */
 export const samplePolarCapColor = (
   hexasphere: GlobalMapData,
   point: Point3,

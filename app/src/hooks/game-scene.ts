@@ -1,6 +1,10 @@
 import { type RefObject, useEffect, useRef, useState } from "react";
 
-/** Cancels asynchronous scene initialization before releasing its canvas and resources. */
+/**
+ * Cancels initialization and disposes late results on reset/unmount. isReady means
+ * the factory resolved; each factory defines its asset readiness. Changing create
+ * alone does not recreate the scene: use resetKey for construction inputs and refs for live data.
+ */
 export const useGameScene = <T extends { dispose: () => void }>(
   mount: RefObject<HTMLElement | null>,
   create: (

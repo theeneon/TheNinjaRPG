@@ -59,7 +59,10 @@ const textures = createLeaseCache<Texture>({
 });
 const loaded = new Map<string, Texture>();
 
-/** The retained grayscale masks use green coverage, rather than the mask image's alpha. */
+/**
+ * Leases a shared 128px composite using the mask's green coverage. width selects
+ * the source rendition; release the lease instead of destroying the returned texture.
+ */
 export const acquireMaskedTexture = (image: string, mask: string, width = 50) => {
   const key = JSON.stringify({ image, mask, width });
   const lease = textures.acquire(key);

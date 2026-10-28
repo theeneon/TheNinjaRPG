@@ -5,7 +5,7 @@ import type {
   SpriteDirection,
 } from "@/validators/towerDefense";
 
-/** A deterministic clip describes images and timing independently of any canvas or ticker. */
+/** Samples elapsed milliseconds; reduced motion holds frame zero without changing one-shot expiry. */
 export const sampleAnimationClip = (
   clip: AnimationClip,
   elapsedMs: number,
@@ -21,6 +21,7 @@ export const sampleAnimationClip = (
   };
 };
 
+/** Game effects are vertical sprite sheets; asset.speed is milliseconds per frame. */
 export const assetAnimationClip = (
   asset: Pick<GameAsset, "image" | "frames" | "speed">,
   loop = false,
@@ -61,6 +62,7 @@ export const characterAnimationClip = (
   };
 };
 
+/** One sheet uses columns/rows in row-major order; multiple images supply one frame each. */
 export type AnimationClip = {
   images: string[];
   columns: number;

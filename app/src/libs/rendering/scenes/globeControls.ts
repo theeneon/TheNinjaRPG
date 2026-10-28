@@ -2,6 +2,7 @@ import { safeLocalStorageGetItem, safeLocalStorageSetItem } from "@/hooks/locals
 import type { GameRenderer } from "@/libs/rendering/runtime";
 import type { GlobeCamera } from "@/libs/rendering/scenes/globeProjection";
 
+/** Persisted distance fraction in [0, 1], with zero selecting the closest limit. */
 export const storedGlobeZoom = () => {
   try {
     const value: unknown = JSON.parse(safeLocalStorageGetItem("globalMapZoom") ?? "0");
@@ -13,7 +14,11 @@ export const storedGlobeZoom = () => {
   }
 };
 
-/** Orbit and tap share gesture ownership so drags and pinches never start travel. */
+/**
+ * Mutates the supplied camera; distance limits use render units and latitude is a
+ * radian limit. Taps/pointers use renderer pixels (Y downward); zoom multiplies
+ * distance. Listeners and deferred zoom persistence belong to game.
+ */
 export const createGlobeControls = (
   game: Pick<GameRenderer, "canvas" | "listen" | "own">,
   camera: GlobeCamera,

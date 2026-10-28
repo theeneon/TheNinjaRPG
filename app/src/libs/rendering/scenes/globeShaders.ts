@@ -1,3 +1,7 @@
+/**
+ * Keep this center-to-camera basis, positive view depth and vertical-FOV projection
+ * aligned with globeProjection.ts: CPU picking and billboard occlusion use its inverse.
+ */
 export const globeCameraShader = `
 uniform vec3 uRight;
 uniform vec3 uUp;
@@ -18,7 +22,10 @@ vec4 globeProject(vec3 point) {
 }
 `;
 
-/** Per-fragment visibility clips billboards correctly while crossing the sphere's limb. */
+/**
+ * Per-fragment occlusion uses the same exterior-camera near sphere hit as globeRayHit.
+ * Its input is cameraPoint output, with positive depth toward the globe.
+ */
 export const globeOcclusionShader = `
 uniform float uRadius;
 uniform float uDistance;

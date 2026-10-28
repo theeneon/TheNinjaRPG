@@ -19,6 +19,11 @@ import {
 } from "@/libs/sector-map/village-walls";
 import type { MapLocation } from "@/validators/mapLocation";
 
+/**
+ * Owns a fixed sector preview, awaiting terrain/scenery attempts and reporting
+ * unavailable scenery via missingAssets. Recreate when data or move availability
+ * changes: touch policy is fixed at construction. onMove delegates persistence to the caller.
+ */
 export const createSectorPreview = async (options: {
   mount: HTMLElement;
   signal: AbortSignal;

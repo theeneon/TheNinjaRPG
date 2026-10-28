@@ -15,6 +15,11 @@ export const summarizeSamples = (samples: readonly number[]) => {
   };
 };
 
+/**
+ * Pair begin/end timestamps from one monotonic millisecond clock. Stages measure CPU
+ * durations; counters are nonnegative values. snapshot copies samples and accepts
+ * zero submitted frames only when allowIdle is explicit; it does not measure GPU time.
+ */
 export const createFrameMeasurements = () => {
   const intervals: number[] = [];
   const work: number[] = [];

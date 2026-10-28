@@ -24,7 +24,10 @@ import {
 import type { GlobalPoint } from "@/libs/sector-map/world-types";
 import { contrastingTextColor } from "@/utils/color";
 
-/** One small atlas batch per 64 markers, including per-pixel spherical occlusion. */
+/**
+ * Scene-owned atlas batches with spherical occlusion. set replaces marker content;
+ * images load asynchronously. pick consumes renderer pixels using the same camera.
+ */
 export const createGlobeMarkers = (
   game: GameRenderer,
   uniforms: UniformGroup,
@@ -308,6 +311,7 @@ const drawAvatar = (
   context.restore();
 };
 
+/** Billboard center in scaled globe units; labels and artwork face the shared camera. */
 export type GlobeMarker = {
   kind: "label" | "avatar" | "pin";
   sector: number;

@@ -27,7 +27,11 @@ import { createRenderScope } from "@/libs/rendering/scope";
 import { hexTerrainAt } from "@/libs/rendering/terrainData";
 import type { RenderScene } from "@/validators/renderingBenchmark";
 
-/** Renders the active battle through shared terrain, fighter, effect and targeting primitives. */
+/**
+ * Owns a battle canvas and awaits its initial terrain, actors and known effects.
+ * Reads live snapshots; refresh invalidates a paused scene after external changes.
+ * Construction inputs (battle geometry, seed, viewport) require a new scene.
+ */
 export const createCombatScene = async (options: {
   mount: HTMLElement;
   signal: AbortSignal;
@@ -46,6 +50,7 @@ export const createCombatScene = async (options: {
   focus?: { x: number; y: number };
   showInitialAppearance?: boolean;
   staticActors?: boolean;
+  /** Preview clock: consumes delta milliseconds and returns absolute scene milliseconds. */
   advance?: (deltaMs: number) => number;
 }) => {
   const initial = options.getSnapshot(),
@@ -361,6 +366,7 @@ export const createCombatScene = async (options: {
       dispose: game.dispose,
       grid: data.grid,
       canvas: game.canvas,
+      /** Samples scene milliseconds after pending actor/effect art settles; does not advance gameplay. */
       renderAt: async (timeMs: number) => {
         if (game.isDisposed()) return;
         clock = Math.max(0, timeMs);
@@ -383,6 +389,7 @@ export const createCombatScene = async (options: {
 export type CombatHover = {
   tileKey: string;
   userId?: string;
+  /** Client pixels for positioning DOM tooltips. */
   position: { x: number; y: number };
 };
 export type CombatSceneSnapshot = {
@@ -401,6 +408,7 @@ export type CombatSceneSnapshot = {
   volume: number;
   showGridNumbers: boolean;
   inspect: boolean;
+  /** Change for in-place preview edits that preserve battle identity/version. */
   revision?: number;
   targetTiles?: TerrainHex[];
 };

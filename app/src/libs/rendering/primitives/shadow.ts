@@ -1,6 +1,6 @@
 import { Texture } from "pixi.js";
 
-/** A shared soft ellipse keeps character shadows inside the sprite batch. */
+/** Creates a soft ellipse to share within a scene; its owner must destroy the texture/source. */
 export const createSoftShadowTexture = () => {
   const canvas = document.createElement("canvas");
   canvas.width = 128;

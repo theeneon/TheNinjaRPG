@@ -2,6 +2,7 @@ import type { Grid } from "honeycomb-grid";
 import type { TerrainHex } from "@/libs/hexgrid";
 import { buildHexTerrainData } from "@/libs/rendering/terrainData";
 
+/** Requires resolved tile specs; records tile.asset and consumes the sector PRNG for water phases. */
 export const buildSectorTerrainData = (
   grid: Grid<TerrainHex>,
   prng: () => number,

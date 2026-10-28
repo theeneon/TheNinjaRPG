@@ -36,7 +36,10 @@ import { isBunnyCdnUrl, textureImageUrl, transformImageUrl } from "@/utils/image
 import { VisualTag } from "@/validators/combat";
 import type { BattlefieldSheetsInput } from "@/validators/contentReview";
 
-/** The authoring field uses the live game's Pixi renderer and a reproducible phase clock. */
+/**
+ * Owns a detached authoring canvas using combat rendering and a reproducible clock.
+ * Await whenLoaded before captures; cancellation during initialization returns null.
+ */
 export const createBattlefieldPreview = async (
   options: BattlefieldPreviewOptions,
 ): Promise<BattlefieldPreview | null> => {
@@ -341,6 +344,7 @@ export { EFFECT_ANIMATION_SIZE } from "@/libs/rendering/animation";
 export const previewHexWidth = (viewport: BattlefieldViewport) =>
   BATTLEFIELD_VIEWPORTS[viewport] / stacked(GAME_COLUMNS);
 
+/** Captures fixed desktop/phone phases into PNG sheets and disposes each temporary preview. */
 export const captureBattlefieldSheets = async (
   input: BattlefieldSheetsInput,
   loadAssets: (ids: string[]) => Promise<GameAsset[]>,
@@ -708,6 +712,7 @@ export type BattlefieldPreview = {
    * the caster, the tile and the target. Expects the default zoom.
    */
   captureFrames: () => Promise<SheetFrame[]>;
+  /** Samples milliseconds from cycle start; seeking backward restarts the effect lifecycle. */
   renderAt: (timeMs: number) => Promise<void>;
   /** Stop animating, release the WebGL context and remove the canvas from the page. */
   dispose: () => void;

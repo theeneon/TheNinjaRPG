@@ -216,6 +216,10 @@ const WALL_CORNERS = [
   [0, 1],
 ] as const;
 
+/**
+ * Placement/dimensions use Y-up world units; size is height and groundY orders depth.
+ * Anchors are image fractions; rotation/wind phase are radians. rendition is a CDN pixel width.
+ */
 export type WorldSpriteDescription = {
   id: string;
   kind: string;

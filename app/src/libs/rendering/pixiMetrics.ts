@@ -1,7 +1,10 @@
 import type { TextureSource, WebGLRenderer } from "pixi.js";
 import { recordRenderCounter } from "@/libs/rendering/browserMetrics";
 
-/** Opt-in GPU submissions complement the original renderer's renderer.info counters. */
+/**
+ * With ?renderMetrics, wraps GL submissions for draw/triangle counts (not GPU time).
+ * Reset/record per frame; dispose restores the renderer's original GL methods.
+ */
 export const createPixiMetrics = (renderer: WebGLRenderer) => {
   if (!new URLSearchParams(location.search).has("renderMetrics")) return null;
   const gl = renderer.gl;

@@ -1,4 +1,8 @@
-/** Bounded idle resources, reference counted across scenes and safe during async unload. */
+/**
+ * Reference-counted async resources. Release each acquisition when its owner ends,
+ * even while loading; release is idempotent. Idle byte/count budgets exclude active
+ * leases, and reacquisition waits for an in-flight unload of the same key.
+ */
 export const createLeaseCache = <T>(options: {
   load: (key: string) => Promise<T>;
   unload: (key: string) => Promise<void>;

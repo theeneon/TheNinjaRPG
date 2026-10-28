@@ -27,12 +27,17 @@ import type { TerrainSpec } from "@/libs/sector-map/terrains";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import type { MapLocation } from "@/validators/mapLocation";
 
+/**
+ * Owns retained sector scopes. Initialization awaits only the current sector;
+ * call updateWindow after window/library changes to reconcile the remaining sectors.
+ */
 export const createTravelScene = async (options: {
   mount: HTMLElement;
   signal: AbortSignal;
   lightLayout: boolean;
   getSnapshot: () => TravelSnapshot;
   onError: (error: unknown) => void;
+  /** Runs after each new sector installation, including before this factory returns. */
   onReady: () => void;
   onTap: (hit: TravelPick) => void;
   onHover: (structureId: string | null, locationId: string | null) => void;
@@ -129,6 +134,10 @@ export const createTravelScene = async (options: {
         ).color,
       );
     };
+    /**
+     * Latest request wins: cancel pending builds, retaining completed sectors until
+     * departure, successful replacement or disposal. Initialization requests the current sector only.
+     */
     const updateWindow = async (initial = false) => {
       for (const scope of pending) scope.dispose();
       pending.clear();
@@ -416,6 +425,7 @@ export type TravelWindowEntry = {
   globalTileType: number;
 };
 export type TravelSnapshot = Omit<TravelActorsSnapshot, "grid"> & {
+  /** Increment for user/presence changes; users-array identity alone does not reconcile actors. */
   actorRevision: number;
   window: TravelWindowEntry[];
   nav: WindowNav | null;
@@ -425,6 +435,7 @@ export type TravelSnapshot = Omit<TravelActorsSnapshot, "grid"> & {
   brightness: number;
   decorations: Map<string, DecorationAsset>;
   terrains: Map<string, TerrainSpec>;
+  /** Change when terrain, decoration or map-asset content changes to invalidate static artwork. */
   libraryVersion: string;
   locations: MapLocation[];
   mapAssets: Pick<MapAsset, "id" | "imageUrl" | "renderScale">[];

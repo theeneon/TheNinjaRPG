@@ -9,7 +9,10 @@ import {
 } from "@/libs/rendering/hexGeometry";
 import { parseHexColor } from "@/utils/color";
 
-/** CPU draw data contains no renderer objects and can be retained across canvas mounts. */
+/**
+ * Renderer-free buffers in the grid's Y-up world units, retaining per-tile face
+ * offsets for picking. lightLayout omits ground depth, textures and wave animation.
+ */
 export const buildHexTerrainData = (
   grid: Grid<TerrainHex>,
   look: (tile: TerrainHex) => TerrainLook,
@@ -116,7 +119,7 @@ export const buildHexTerrainData = (
   };
 };
 
-/** Exact polygon checks around one arithmetic grid candidate replace invisible hit meshes. */
+/** Picks an inclusive recessed face in grid-local Y-up units; misses return null. */
 export const hexTerrainAt = (
   grid: Grid<TerrainHex>,
   offsets: ReadonlyMap<string, number>,

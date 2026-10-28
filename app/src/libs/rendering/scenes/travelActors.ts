@@ -199,6 +199,7 @@ export const createTravelActors = (game: GameRenderer) => {
   };
 };
 
+/** Viewer-filtered user/NPC/battle groups; stable recipe keys preserve actor identity between syncs. */
 export const travelActorRecipes = (snapshot: TravelActorsSnapshot): ActorRecipe[] => {
   const recipes: ActorRecipe[] = [];
   const grouped = new Map<string, SectorUser[]>();
@@ -334,6 +335,7 @@ export const travelActionAvailability = (
   };
 };
 
+/** NPCs prefer full art; players prefer lightweight avatars, with a shared default fallback. */
 export const travelAvatar = (
   user: Pick<SectorUser, "avatar" | "avatarLight" | "isNpc">,
 ) =>
