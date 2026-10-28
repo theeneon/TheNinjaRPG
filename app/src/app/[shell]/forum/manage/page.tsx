@@ -883,11 +883,11 @@ function ForumStaff({
                 .filter((c) => scope === "GLOBAL" || !["manage", "purge"].includes(c))
                 .map((cap) => (
                   <tr key={cap} className="border-t">
-                    <td className="p-2">{cap}</td>
+                    <td className="p-2">{capabilityLabel(cap)}</td>
                     <td className="p-2">
                       <input
                         type="checkbox"
-                        aria-label={`Grant ${cap}`}
+                        aria-label={`Grant ${capabilityLabel(cap)}`}
                         checked={permissions.includes(cap)}
                         onChange={(e) =>
                           setPermissions((p) =>
@@ -899,7 +899,7 @@ function ForumStaff({
                     <td className="p-2">
                       <input
                         type="checkbox"
-                        aria-label={`Deny ${cap}`}
+                        aria-label={`Deny ${capabilityLabel(cap)}`}
                         checked={denies.includes(cap)}
                         onChange={(e) =>
                           setDenies((p) =>
@@ -930,8 +930,8 @@ function ForumStaff({
           </summary>
           <p className="text-muted-foreground my-2 text-xs">
             Board policy inherits from its section. Explicit scoped denies win; posting
-            restrictions and account state can further limit actions. Bootstrap
-            administrators retain recovery access.
+            restrictions and account state can further limit actions. Site
+            administrators keep recovery access.
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -948,7 +948,7 @@ function ForumStaff({
                     <td className="p-2">
                       {Object.entries(b.permissions)
                         .filter(([key, value]) => value === true && key !== "archived")
-                        .map(([key]) => key)
+                        .map(([key]) => capabilityLabel(key))
                         .join(", ") || "No access"}
                     </td>
                   </tr>
@@ -972,9 +972,11 @@ function ForumStaff({
                 : (g.scope === "BOARD" ? data.boards : data.sections).find(
                     (s) => s.id === g.scopeId,
                   )?.name}{" "}
-              · {g.permissions.join(", ")}
+              · {g.permissions.map(capabilityLabel).join(", ")}
             </p>
-            {!!g.denies.length && <p>Deny: {g.denies.join(", ")}</p>}
+            {!!g.denies.length && (
+              <p>Deny: {g.denies.map(capabilityLabel).join(", ")}</p>
+            )}
           </div>
           <Button
             variant="outline"
@@ -1438,4 +1440,24 @@ function PurgeTopic({
       </form>
     </details>
   );
+}
+
+function capabilityLabel(capability: string) {
+  const labels: Record<string, string> = {
+    view: "See boards",
+    read: "Read topics",
+    create: "Create topics",
+    reply: "Reply",
+    upload: "Embed media",
+    vote: "React & vote",
+    edit: "Edit own posts",
+    remove: "Remove own posts",
+    editOthers: "Edit others' posts",
+    removeOthers: "Remove others' posts",
+    moderate: "Moderate discussions",
+    approve: "Approve posts",
+    manage: "Manage forum",
+    purge: "Permanently purge removed content",
+  };
+  return labels[capability] ?? capability;
 }

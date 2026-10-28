@@ -139,7 +139,7 @@ export const ForumTopicList = ({
             </Link>
             {t.tags?.map((tag) => (
               <Link
-                href={`/forum?tag=${encodeURIComponent(tag)}`}
+                href={`/forum?view=latest&tag=${encodeURIComponent(tag)}`}
                 key={tag}
                 className="bg-muted rounded px-1.5"
               >

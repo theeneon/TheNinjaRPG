@@ -176,9 +176,11 @@ function ForumHome() {
                       </div>
                       <div className="text-muted-foreground shrink-0 text-right text-xs">
                         <span className="text-foreground block font-semibold">
-                          {board.nThreads} topics
+                          {board.nThreads} {board.nThreads === 1 ? "topic" : "topics"}
                         </span>
-                        <span>{board.nPosts} posts</span>
+                        <span>
+                          {board.nPosts} {board.nPosts === 1 ? "post" : "posts"}
+                        </span>
                       </div>
                       {board.permissions.read && (
                         <Link
