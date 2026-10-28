@@ -172,7 +172,6 @@ import type { GlobalMapData } from "@/libs/sector-map/world-types";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 import { rollStealthKeep } from "@/libs/stealth";
 import { getTerritoryCompetitor } from "@/libs/territoryWar";
-import type { GlobalMapData } from "@/libs/threejs/types";
 import {
   getTimedRegenerationGain,
   getTimedRegenerationPeriods,
