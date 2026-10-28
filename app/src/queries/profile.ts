@@ -193,12 +193,10 @@ export const fetchUser = async (client: DrizzleClient, userId: string) => {
  * Global game state that `fetchUpdatedUser` needs on every call, memoized for the
  * duration of one HTTP request by {@link scopedRead}.
  *
- * None of these predicates mention a user, so a tRPC batch used to re-read the same
- * rows once per procedure - and `fetchUpdatedUser` is called by nearly every
- * procedure the busy pages mount. Sharing them collapses that fan-out to one read
- * each without changing what any caller sees: `scopedRead` hands out clones, so the
- * per-user rewriting that happens downstream (hiding quest locations, attaching the
- * user's own subset of wars/raids/lobbies) still operates on private copies.
+ * User-independent predicates share one read per query across the tRPC batch.
+ * `scopedRead` gives each caller a clone, so per-user rewrites (hiding quest
+ * locations, attaching the user's own subset of wars/raids/lobbies) operate on
+ * private copies.
  *
  * The lobby and raid cutoffs are evaluated against the first caller's `now`. Later
  * callers in the same request therefore inherit a cutoff that is milliseconds old,
