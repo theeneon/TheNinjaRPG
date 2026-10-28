@@ -1,37 +1,27 @@
 import {
-  type AnyColumn,
-  and,
-  asc,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  ne,
-  or,
-  SQL,
-  sql,
-} from "drizzle-orm";
-import { nanoid } from "nanoid";
-import {
-  DISCORD_INDEFINITE_SANCTION_DAYS,
   DISCORD_UNLINK_COOLDOWN_DAYS,
   type DiscordUnlinkReason,
 } from "@/drizzle/constants";
+import type { DiscordLink, discordLink } from "@/drizzle/schema";
 import {
-  actionLog,
-  type DiscordLink,
-  discordLink,
-  discordLinkHistory,
-  userData,
-  userReport,
-} from "@/drizzle/schema";
+  deleteDiscordLinkForArchiveDiscordLink,
+  fetchDiscordAccountSanctions,
+  findDiscordLinkForUser,
+  findUserDataForLoadLinkCandidate,
+  insertDiscordLinkForInsertDiscordLink,
+  insertDiscordLinkHistoryForArchiveDiscordLink,
+  listDiscordLinkForFindClerkDiscordFlags,
+  listDiscordLinkForLoadLinkCandidate,
+  listDiscordLinkHistoryForLoadLinkCandidate,
+  selectUserReportForFetchIndefiniteSanction,
+  selectUserReportForLoadLinkCandidate,
+} from "@/queries/discord";
+import { fetchActiveSanctionTombstones } from "@/queries/reports";
 import type { DrizzleClient } from "@/server/db";
 import { isClerkDiscordProvider } from "@/server/utils/discord/clerk";
 import type { DiscordLinkCandidate } from "@/server/utils/discord/rules";
 import { isMysqlDuplicateKeyError } from "@/server/utils/mysqlErrors";
 import {
-  fetchActiveSanctionTombstones,
   hashSanctionIdentifier,
   type SanctionIdentity,
 } from "@/server/utils/sanctionTombstone";
@@ -48,85 +38,16 @@ export const clerkDiscordIdOf = (identity: SanctionIdentity | null) =>
   identity?.externalAccounts.find((account) => isClerkDiscordProvider(account.provider))
     ?.providerUserId ?? null;
 
-/**
- * Bans and silences that ban the linked Discord account: still running, and imposed for at
- * least DISCORD_INDEFINITE_SANCTION_DAYS. The length is measured from the decision
- * (`updatedAt`, written with status and `banEnd` by `updateSanctionReport`), so a long ban
- * keeps matching until it ends instead of dropping out once less than the window remains.
- * `userId` is a value, a joined column or a subquery of user ids.
- */
-export const indefiniteSanctionWhere = (userId: string | AnyColumn | SQL) =>
-  and(
-    userId instanceof SQL
-      ? inArray(userReport.reportedUserId, userId)
-      : eq(userReport.reportedUserId, userId),
-    inArray(userReport.status, ["BAN_ACTIVATED", "SILENCE_ACTIVATED"]),
-    gt(userReport.banEnd, sql`CURRENT_TIMESTAMP(3)`),
-    gte(
-      userReport.banEnd,
-      sql`${userReport.updatedAt} + INTERVAL ${sql.raw(String(DISCORD_INDEFINITE_SANCTION_DAYS))} DAY`,
-    ),
-  );
-
 /** The report behind an indefinite ban or silence, preferring bans. */
 export const fetchIndefiniteSanction = async (
   client: DrizzleClient,
   userId: string,
 ) => {
-  const reports = await client
-    .select({ id: userReport.id, status: userReport.status })
-    .from(userReport)
-    .where(indefiniteSanctionWhere(userId));
+  const reports = await selectUserReportForFetchIndefiniteSanction(client, userId);
   return (
     reports.find((report) => report.status === "BAN_ACTIVATED") ?? reports[0] ?? null
   );
 };
-
-/** User ids linked to a Discord account, as a subquery. */
-export const discordAccountUserIds = (discordId: string) =>
-  sql`(SELECT ${discordLink.userId} FROM ${discordLink} WHERE ${discordLink.discordId} = ${discordId})`;
-
-/**
- * Indefinite sanctions of any character linked to a Discord account: the account stays banned
- * while one of them runs.
- */
-export const fetchDiscordAccountSanctions = (
-  client: DrizzleClient,
-  discordId: string,
-) =>
-  client
-    .select({
-      id: userReport.id,
-      status: userReport.status,
-      userId: userReport.reportedUserId,
-    })
-    .from(userReport)
-    .where(indefiniteSanctionWhere(discordAccountUserIds(discordId)));
-
-/**
- * The links of a Discord account, primary first. Without exactly one `isPrimary` row (a race
- * between an unlink and a link can leave none for a moment), the lowest slot counts as
- * primary until the next sync writes it back.
- */
-export const fetchDiscordAccountLinks = (client: DrizzleClient, discordId: string) =>
-  client.query.discordLink.findMany({
-    where: eq(discordLink.discordId, discordId),
-    with: { user: { columns: { username: true, level: true, villageId: true } } },
-    orderBy: [desc(discordLink.isPrimary), asc(discordLink.slot)],
-  });
-
-/**
- * Make one link the primary of its Discord account and every other link of it secondary, in
- * a single statement.
- */
-export const setDiscordPrimary = (
-  client: DrizzleClient,
-  link: Pick<DiscordLink, "id" | "discordId">,
-) =>
-  client
-    .update(discordLink)
-    .set({ isPrimary: sql`(${discordLink.id} = ${link.id})` })
-    .where(eq(discordLink.discordId, link.discordId));
 
 /** Load everything the linking rules need in one round of parallel reads. */
 export const loadLinkCandidate = async (
@@ -145,54 +66,11 @@ export const loadLinkCandidate = async (
     tombstones,
     discordSanctions,
   ] = await Promise.all([
-    client.query.userData.findFirst({
-      columns: {
-        userId: true,
-        username: true,
-        level: true,
-        villageId: true,
-        isBanned: true,
-        avatarLight: true,
-      },
-      where: eq(userData.userId, input.userId),
-    }),
-    client.query.discordLink.findFirst({
-      where: eq(discordLink.userId, input.userId),
-    }),
-    client.query.discordLink.findMany({
-      columns: { userId: true, slot: true, isPrimary: true, syncedBanned: true },
-      where: eq(discordLink.discordId, input.discordId),
-      with: { user: { columns: { username: true } } },
-    }),
-    client.query.discordLinkHistory.findMany({
-      columns: {
-        userId: true,
-        discordId: true,
-        unlinkedAt: true,
-        cooldownWaived: true,
-      },
-      where: and(
-        or(
-          eq(discordLinkHistory.userId, input.userId),
-          eq(discordLinkHistory.discordId, input.discordId),
-        ),
-        gt(discordLinkHistory.unlinkedAt, cooldownStart),
-      ),
-    }),
-    client
-      .select({ id: userReport.id })
-      .from(userReport)
-      .where(
-        or(
-          and(
-            eq(userReport.reportedUserId, input.userId),
-            eq(userReport.status, "BAN_ACTIVATED"),
-            gt(userReport.banEnd, sql`CURRENT_TIMESTAMP(3)`),
-          ),
-          indefiniteSanctionWhere(input.userId),
-        ),
-      )
-      .limit(1),
+    findUserDataForLoadLinkCandidate(client, input),
+    findDiscordLinkForUser(client, input),
+    listDiscordLinkForLoadLinkCandidate(client, input),
+    listDiscordLinkHistoryForLoadLinkCandidate(client, input, cooldownStart),
+    selectUserReportForLoadLinkCandidate(client, input),
     fetchActiveSanctionTombstones(client),
     fetchDiscordAccountSanctions(client, input.discordId),
   ]);
@@ -230,7 +108,7 @@ export const insertDiscordLink = async (
   values: typeof discordLink.$inferInsert,
 ) => {
   try {
-    await client.insert(discordLink).values(values);
+    await insertDiscordLinkForInsertDiscordLink(client, values);
     return true;
   } catch (error) {
     if (isMysqlDuplicateKeyError(error)) return false;
@@ -253,20 +131,8 @@ export const archiveDiscordLink = async (
   reason: DiscordUnlinkReason,
   options: { staffUserId?: string; cooldownWaived?: boolean } = {},
 ) => {
-  await client
-    .insert(discordLinkHistory)
-    .values({
-      id: link.id,
-      userId: link.userId,
-      discordId: link.discordId,
-      discordUsername: link.discordUsername,
-      linkedAt: link.linkedAt,
-      reason,
-      unlinkedByUserId: options.staffUserId ?? null,
-      cooldownWaived: options.cooldownWaived ?? false,
-    })
-    .onDuplicateKeyUpdate({ set: { id: sql`${discordLinkHistory.id}` } });
-  const result = await client.delete(discordLink).where(eq(discordLink.id, link.id));
+  await insertDiscordLinkHistoryForArchiveDiscordLink(client, link, reason, options);
+  const result = await deleteDiscordLinkForArchiveDiscordLink(client, link);
   return result.rowsAffected > 0;
 };
 
@@ -283,20 +149,7 @@ export const findClerkDiscordFlags = async (
     flags.push(
       `Linked Discord ${input.discordId} differs from the Discord login ${input.clerkDiscordId} of this account`,
     );
-  const related = await client.query.discordLink.findMany({
-    columns: { userId: true, discordId: true, clerkDiscordId: true },
-    with: { user: { columns: { username: true } } },
-    where: and(
-      ne(discordLink.userId, input.userId),
-      ne(discordLink.discordId, input.discordId),
-      or(
-        eq(discordLink.clerkDiscordId, input.discordId),
-        input.clerkDiscordId
-          ? eq(discordLink.discordId, input.clerkDiscordId)
-          : undefined,
-      ),
-    ),
-  });
+  const related = await listDiscordLinkForFindClerkDiscordFlags(client, input);
   for (const link of related) {
     const name = link.user?.username ?? link.userId;
     if (link.clerkDiscordId === input.discordId)
@@ -310,39 +163,3 @@ export const findClerkDiscordFlags = async (
   }
   return flags;
 };
-
-/** ActionLog entry for link changes; staff read them on the Discord links page. */
-export const logDiscordAction = (
-  client: DrizzleClient,
-  entry: {
-    actorUserId: string;
-    targetUserId: string;
-    message: string;
-    changes: string[];
-    image?: string | null;
-  },
-) =>
-  client.insert(actionLog).values({
-    id: nanoid(),
-    userId: entry.actorUserId,
-    tableName: "discordLink",
-    relatedId: entry.targetUserId,
-    relatedMsg: entry.message.slice(0, 191),
-    relatedImage: entry.image ?? null,
-    changes: entry.changes,
-  });
-
-/** Discord link ActionLog entries about a character, newest first. */
-export const fetchDiscordActionLog = (client: DrizzleClient, userId: string) =>
-  client.query.actionLog.findMany({
-    columns: {
-      id: true,
-      createdAt: true,
-      relatedMsg: true,
-      changes: true,
-      userId: true,
-    },
-    where: and(eq(actionLog.tableName, "discordLink"), eq(actionLog.relatedId, userId)),
-    orderBy: desc(actionLog.createdAt),
-    limit: 50,
-  });

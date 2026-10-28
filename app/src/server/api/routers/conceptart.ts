@@ -1,5 +1,4 @@
 import type { inferRouterOutputs } from "@trpc/server";
-import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -7,7 +6,6 @@ import {
   COST_CONCEPT_VIDEO,
   SmileyEmotions,
 } from "@/drizzle/constants";
-import { conceptImage, userData, userLikes } from "@/drizzle/schema";
 import { classifyNsfwPrompt } from "@/libs/moderator";
 import { hasEnergyQueue } from "@/libs/queue";
 import {
@@ -16,7 +14,26 @@ import {
   startVideoGeneration,
   uploadCompletedVideo,
 } from "@/libs/replicate";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteConceptImageForDelete,
+  deleteUserLikesForToggleEmotion,
+  fetchImage,
+  findConceptImageForCheckVideoStatusRead,
+  insertConceptImageForCreate,
+  insertConceptImageForCreateVideo,
+  insertUserLikesForToggleEmotion,
+  listConceptImageForGetAll,
+  updateConceptImageForFinalizeVideoUpload,
+  updateConceptImageForFinalizeVideoUpload2,
+  updateConceptImageForFinalizeVideoUpload3,
+  updateConceptImageForFinalizeVideoUpload4,
+  updateConceptImageForToggleEmotion,
+  updateUserDataForCreate,
+  updateUserDataForCreateVideo,
+  updateUserDataForCreateVideo2,
+} from "@/queries/conceptart";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -34,7 +51,6 @@ import {
 } from "@/validators/art";
 import { idSchema } from "@/validators/misc";
 import { userDeltaResponseSchema } from "@/validators/userCache";
-import type { DrizzleClient } from "../../db";
 
 export const CONCEPT_PROMPT = `, trending on ArtStation, trending on CGSociety, Intricate, High Detail, Sharp focus, dramatic`;
 
@@ -49,36 +65,11 @@ export const conceptartRouter = createTRPCRouter({
       if (!result) return errorResponse("Image not found");
       // Mutate
       const hasLike = result?.likes.find((like) => like.type === input.type);
-      await ctx.drizzle
-        .update(conceptImage)
-        .set({
-          ...(input.type === "like"
-            ? { n_likes: result.n_likes + (hasLike ? -1 : 1) }
-            : {}),
-          ...(input.type === "love"
-            ? { n_loves: result.n_loves + (hasLike ? -1 : 1) }
-            : {}),
-          ...(input.type === "laugh"
-            ? { n_laugh: result.n_laugh + (hasLike ? -1 : 1) }
-            : {}),
-        })
-        .where(eq(conceptImage.id, input.imageId));
+      await updateConceptImageForToggleEmotion(ctx.drizzle, input, result, hasLike);
       if (hasLike) {
-        await ctx.drizzle
-          .delete(userLikes)
-          .where(
-            and(
-              eq(userLikes.userId, ctx.userId),
-              eq(userLikes.imageId, input.imageId),
-              eq(userLikes.type, input.type),
-            ),
-          );
+        await deleteUserLikesForToggleEmotion(ctx.drizzle, ctx, input);
       } else {
-        await ctx.drizzle.insert(userLikes).values({
-          userId: ctx.userId,
-          imageId: input.imageId,
-          type: input.type,
-        });
+        await insertUserLikesForToggleEmotion(ctx.drizzle, ctx, input);
       }
       return { success: true, message: "Emotion toggled" };
     }),
@@ -97,7 +88,7 @@ export const conceptartRouter = createTRPCRouter({
         return errorResponse("Not authorized");
       }
       // Mutate
-      await ctx.drizzle.delete(conceptImage).where(eq(conceptImage.id, input.id));
+      await deleteConceptImageForDelete(ctx.drizzle, input);
       return { success: true, message: "Image deleted" };
     }),
   create: protectedProcedure
@@ -137,28 +128,9 @@ export const conceptartRouter = createTRPCRouter({
       // The charge and image must commit together so a failed insert cannot spend points.
       const saved = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
-          const debit = await tx
-            .update(userData)
-            .set({
-              reputationPoints: sql`${userData.reputationPoints} - ${COST_CONCEPT_IMAGE}`,
-            })
-            .where(
-              and(
-                eq(userData.userId, ctx.userId),
-                gte(userData.reputationPoints, COST_CONCEPT_IMAGE),
-              ),
-            );
+          const debit = await updateUserDataForCreate(tx, ctx);
           if (debit.rowsAffected === 0) return false;
-          await tx.insert(conceptImage).values({
-            id: imageId,
-            userId: ctx.userId,
-            prompt: input.prompt,
-            seed: input.seed,
-            status: "success",
-            image: imageUrl,
-            mediaType: "image",
-            done: true,
-          });
+          await insertConceptImageForCreate(tx, imageId, ctx, input, imageUrl);
           return true;
         }),
       );
@@ -199,17 +171,7 @@ export const conceptartRouter = createTRPCRouter({
       }
       // Deduct reputation points immediately to prevent spam
       // Use WHERE clause to ensure user still has enough points (prevents race condition)
-      const deductResult = await ctx.drizzle
-        .update(userData)
-        .set({
-          reputationPoints: sql`${userData.reputationPoints} - ${COST_CONCEPT_VIDEO}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.reputationPoints, COST_CONCEPT_VIDEO),
-          ),
-        );
+      const deductResult = await updateUserDataForCreateVideo(ctx.drizzle, ctx);
       // Check if deduction actually happened (rowsAffected > 0)
       if (deductResult.rowsAffected === 0) {
         return errorResponse(
@@ -246,18 +208,14 @@ export const conceptartRouter = createTRPCRouter({
         }
         // Create record with processing status and thumbnail
         const videoId = nanoid();
-        await ctx.drizzle.insert(conceptImage).values({
-          id: videoId,
-          userId: ctx.userId,
-          prompt: input.prompt,
-          negative_prompt: input.negative_prompt,
-          seed: input.seed,
-          status: "processing",
-          image: thumbnailUrl, // Thumbnail for listing page
-          replicateId: prediction.id,
-          mediaType: "video",
-          done: false,
-        });
+        await insertConceptImageForCreateVideo(
+          ctx.drizzle,
+          videoId,
+          ctx,
+          input,
+          thumbnailUrl,
+          prediction,
+        );
         return {
           success: true,
           message: "Video generation started",
@@ -268,12 +226,7 @@ export const conceptartRouter = createTRPCRouter({
         };
       } catch (error) {
         // Restore reputation points on failure
-        await ctx.drizzle
-          .update(userData)
-          .set({
-            reputationPoints: sql`${userData.reputationPoints} + ${COST_CONCEPT_VIDEO}`,
-          })
-          .where(eq(userData.userId, ctx.userId));
+        await updateUserDataForCreateVideo2(ctx.drizzle, ctx);
         const message =
           error instanceof Error ? error.message : "Failed to create video";
         return errorResponse(message);
@@ -284,9 +237,7 @@ export const conceptartRouter = createTRPCRouter({
     .input(idSchema)
     .query(async ({ ctx, input }) => {
       // Query the concept image
-      const record = await ctx.drizzle.query.conceptImage.findFirst({
-        where: eq(conceptImage.id, input.id),
-      });
+      const record = await findConceptImageForCheckVideoStatusRead(ctx.drizzle, input);
       // Guard
       if (!record) return errorResponse("Video not found");
       if (record.userId !== ctx.userId) return errorResponse("Not authorized");
@@ -373,9 +324,7 @@ export const conceptartRouter = createTRPCRouter({
     .output(baseServerResponse.extend({ videoUrl: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       // Query
-      const record = await ctx.drizzle.query.conceptImage.findFirst({
-        where: eq(conceptImage.id, input.id),
-      });
+      const record = await findConceptImageForCheckVideoStatusRead(ctx.drizzle, input);
       // Guard
       if (!record) return errorResponse("Video not found");
       if (record.userId !== ctx.userId) return errorResponse("Not authorized");
@@ -400,10 +349,11 @@ export const conceptartRouter = createTRPCRouter({
       const prediction = await getVideoGenerationStatus(record.replicateId);
       // Handle failed/canceled
       if (prediction.status === "failed" || prediction.status === "canceled") {
-        await ctx.drizzle
-          .update(conceptImage)
-          .set({ status: prediction.status, done: true })
-          .where(eq(conceptImage.id, input.id));
+        await updateConceptImageForFinalizeVideoUpload(
+          ctx.drizzle,
+          { status: prediction.status },
+          input,
+        );
         const errorMessage =
           typeof prediction.error === "string"
             ? prediction.error
@@ -417,12 +367,10 @@ export const conceptartRouter = createTRPCRouter({
           : prediction.output;
         if (typeof outputUrl === "string") {
           // Mark as uploading FIRST to prevent duplicate uploads
-          const updateResult = await ctx.drizzle
-            .update(conceptImage)
-            .set({ status: "uploading" })
-            .where(
-              and(eq(conceptImage.id, input.id), eq(conceptImage.status, "processing")),
-            );
+          const updateResult = await updateConceptImageForFinalizeVideoUpload2(
+            ctx.drizzle,
+            input,
+          );
           // If no rows affected, another process is already handling this
           if (updateResult.rowsAffected === 0) {
             return { success: true, message: "Upload already in progress" };
@@ -430,10 +378,11 @@ export const conceptartRouter = createTRPCRouter({
           // Upload to UploadThing
           const uploadedVideoUrl = await uploadCompletedVideo(outputUrl);
           if (uploadedVideoUrl) {
-            await ctx.drizzle
-              .update(conceptImage)
-              .set({ video: uploadedVideoUrl, status: "success", done: true })
-              .where(eq(conceptImage.id, input.id));
+            await updateConceptImageForFinalizeVideoUpload3(
+              ctx.drizzle,
+              uploadedVideoUrl,
+              input,
+            );
             return {
               success: true,
               message: "Video uploaded",
@@ -441,10 +390,7 @@ export const conceptartRouter = createTRPCRouter({
             };
           }
           // Upload failed - reset status so it can be retried
-          await ctx.drizzle
-            .update(conceptImage)
-            .set({ status: "processing" })
-            .where(eq(conceptImage.id, input.id));
+          await updateConceptImageForFinalizeVideoUpload4(ctx.drizzle, input);
           return errorResponse("Failed to upload video");
         }
         return errorResponse("Failed to process video output");
@@ -466,47 +412,13 @@ export const conceptartRouter = createTRPCRouter({
       const skip = currentCursor * input.limit;
       const userSearch = ctx?.userId ?? "none";
       const secondsBack = getTimeFrameinSeconds(input.time_frame);
-      const results = await ctx.drizzle.query.conceptImage.findMany({
-        extras: {
-          sumReaction:
-            sql<number>`${conceptImage.n_likes} + ${conceptImage.n_loves} + ${conceptImage.n_laugh}`.as(
-              "total_reaction",
-            ),
-        },
-        where: and(
-          ...[
-            input.only_own
-              ? eq(conceptImage.userId, userSearch)
-              : isNotNull(conceptImage.userId),
-            secondsBack
-              ? sql`createdAt > DATE_SUB(NOW(), INTERVAL ${secondsBack} SECOND)`
-              : undefined,
-          ],
-        ),
-        offset: skip,
-        limit: input.limit,
-        with: {
-          user: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-              level: true,
-              rank: true,
-              isOutlaw: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-          likes: {
-            where: (userLikes) => eq(userLikes.userId, userSearch),
-          },
-        },
-        orderBy: (_image, { desc }) => [
-          ...(input.sort === "Most Liked" ? [desc(sql`total_reaction`)] : []),
-          ...(input.sort === "Most Recent" ? [desc(sql`createdAt`)] : []),
-        ],
-      });
+      const results = await listConceptImageForGetAll(
+        ctx.drizzle,
+        input,
+        userSearch,
+        secondsBack,
+        skip,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return {
         data: results,
@@ -518,34 +430,6 @@ export const conceptartRouter = createTRPCRouter({
     return image || null;
   }),
 });
-
-export const fetchImage = async (
-  client: DrizzleClient,
-  imageId: string,
-  userId: string,
-) => {
-  const result = await client.query.conceptImage.findFirst({
-    where: eq(conceptImage.id, imageId),
-    with: {
-      user: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          level: true,
-          rank: true,
-          isOutlaw: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-      likes: {
-        where: (userLikes) => eq(userLikes.userId, userId),
-      },
-    },
-  });
-  return result;
-};
 
 type RouterOutput = inferRouterOutputs<typeof conceptartRouter>;
 export type ImageWithRelations = RouterOutput["get"];

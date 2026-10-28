@@ -1,6 +1,13 @@
-import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
-import { parentalControl, userData } from "@/drizzle/schema";
 import { getServerPusher } from "@/libs/pusher";
+import {
+  findParentalControlForGet,
+  findParentalControlForSave,
+  insertParentalControlForSave,
+  listUserDataForGet,
+  listUserDataForSave,
+  updateParentalControlForSave,
+  updateParentalControlForSave2,
+} from "@/queries/parentalControls";
 import {
   createTRPCRouter,
   errorResponse,
@@ -14,29 +21,9 @@ import { parentalSettingsSchema } from "@/validators/parentalControls";
 export const parentalControlsRouter = createTRPCRouter({
   /** Returns the editable policy and PIN presence without exposing the stored hash. */
   get: protectedProcedure.query(async ({ ctx }) => {
-    const settings = await ctx.drizzle.query.parentalControl.findFirst({
-      where: eq(parentalControl.userId, ctx.userId),
-      columns: {
-        enabled: true,
-        tavernDisabled: true,
-        privateMessages: true,
-        approvedUserIds: true,
-        version: true,
-        pinHash: true,
-      },
-    });
+    const settings = await findParentalControlForGet(ctx.drizzle, ctx);
     const approvedPlayers = settings?.approvedUserIds.length
-      ? await ctx.drizzle.query.userData.findMany({
-          where: inArray(userData.userId, settings.approvedUserIds),
-          columns: {
-            userId: true,
-            username: true,
-            avatar: true,
-            federalStatus: true,
-            rank: true,
-            level: true,
-          },
-        })
+      ? await listUserDataForGet(ctx.drizzle, settings)
       : [];
     return {
       enabled: settings?.enabled ?? false,
@@ -53,15 +40,8 @@ export const parentalControlsRouter = createTRPCRouter({
     .input(parentalSettingsSchema)
     .mutation(async ({ ctx, input }) => {
       const [settings, players] = await Promise.all([
-        ctx.drizzle.query.parentalControl.findFirst({
-          where: eq(parentalControl.userId, ctx.userId),
-        }),
-        input.approvedUserIds.length
-          ? ctx.drizzle.query.userData.findMany({
-              where: inArray(userData.userId, input.approvedUserIds),
-              columns: { userId: true },
-            })
-          : [],
+        findParentalControlForSave(ctx.drizzle, ctx),
+        input.approvedUserIds.length ? listUserDataForSave(ctx.drizzle, input) : [],
       ]);
       if (
         players.length !== new Set(input.approvedUserIds).size ||
@@ -77,22 +57,12 @@ export const parentalControlsRouter = createTRPCRouter({
       if (settings?.pinHash) {
         // Claim an attempt before hashing, so concurrent requests cannot bypass the five-attempt window.
         const cutoff = new Date(Date.now() - 15 * 60 * 1000);
-        const claim = await ctx.drizzle
-          .update(parentalControl)
-          .set({
-            failedAttempts: sql`CASE WHEN ${parentalControl.attemptWindowStart} <= ${cutoff} THEN 1 ELSE ${parentalControl.failedAttempts} + 1 END`,
-            attemptWindowStart: sql`CASE WHEN ${parentalControl.attemptWindowStart} <= ${cutoff} THEN ${new Date()} ELSE ${parentalControl.attemptWindowStart} END`,
-          })
-          .where(
-            and(
-              eq(parentalControl.userId, ctx.userId),
-              eq(parentalControl.version, input.version),
-              or(
-                lt(parentalControl.failedAttempts, 5),
-                sql`${parentalControl.attemptWindowStart} <= ${cutoff}`,
-              ),
-            ),
-          );
+        const claim = await updateParentalControlForSave(
+          ctx.drizzle,
+          cutoff,
+          ctx,
+          input,
+        );
         if (!claim.rowsAffected)
           return errorResponse(
             "Too many PIN attempts or settings changed. Try again in 15 minutes or reload settings.",
@@ -116,19 +86,8 @@ export const parentalControlsRouter = createTRPCRouter({
       try {
         // The version guard and unique account key allow only one concurrent save or setup to win.
         result = settings
-          ? await ctx.drizzle
-              .update(parentalControl)
-              .set(values)
-              .where(
-                and(
-                  eq(parentalControl.userId, ctx.userId),
-                  eq(parentalControl.version, input.version),
-                ),
-              )
-          : await ctx.drizzle
-              .insert(parentalControl)
-              .ignore()
-              .values({ userId: ctx.userId, ...values });
+          ? await updateParentalControlForSave2(ctx.drizzle, values, ctx, input)
+          : await insertParentalControlForSave(ctx.drizzle, ctx, values);
       } catch {
         // Drizzle errors include SQL parameters, including the PIN hash. Do not expose
         // this derived credential to response serialization or error telemetry.

@@ -1,20 +1,5 @@
 import type { inferRouterOutputs } from "@trpc/server";
-import {
-  and,
-  desc,
-  eq,
-  exists,
-  getTableColumns,
-  gte,
-  inArray,
-  isNull,
-  like,
-  ne,
-  not,
-  notExists,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, gte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -36,43 +21,95 @@ import {
   FACTION_MIN_MEMBERS_FOR_STRONGHOLD,
   FACTION_REPUTATION_TREASURY_LIMIT,
   HIDEOUT_COST,
-  IMG_AVATAR_DEFAULT,
-  IMG_VILLAGE_FACTION,
-  KAGE_MAX_ELDERS,
   STRONGHOLD_REESTABLISH_COST,
-  VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
-import {
-  actionLog,
-  clan,
-  conversation,
-  historicalAvatar,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  rankedPvpQueue,
-  sector,
-  userData,
-  userRequest,
-  village,
-  villageStructure,
-  war,
-  warAlly,
-  warKill,
-} from "@/drizzle/schema";
+import { clan, userData, village } from "@/drizzle/schema";
 import { checkIfSectorIsAvailable } from "@/libs/clan";
 import { getServerPusher } from "@/libs/pusher";
 import { hasEnergyQueue } from "@/libs/queue";
 import { hasRequiredRank } from "@/libs/train";
-import { initiateBattle } from "@/routers/combat";
-import { fetchUser, updateNindo } from "@/routers/profile";
+import { findHistoricalAvatarByImage } from "@/queries/avatar";
 import {
-  fetchRequest,
-  fetchRequests,
-  insertRequest,
-  updateRequestState,
-} from "@/routers/sparring";
-import { fetchStructures, fetchVillage, fetchVillages } from "@/routers/village";
+  deleteBattleQueueMemberById,
+  deleteBattleQueueMembersForUser,
+  deleteClanForRemoveFromClan,
+  deleteMpvpBattleQueueForRemoveFromClanBattle,
+  deleteSectorForRemoveFromClan,
+  deleteUserRequestForRemoveFromClan,
+  deleteVillageForRemoveFromClan,
+  deleteVillageStructureForRemoveFromClan,
+  deleteWarAllyForRemoveFromClan,
+  deleteWarForRemoveFromClan,
+  deleteWarForRemoveFromClan2,
+  deleteWarKillForRemoveFromClan,
+  deleteWarKillForRemoveFromClan2,
+  executeResultForUpgradeHideoutToStronghold,
+  fetchActiveUserMpvpBattles,
+  fetchClan,
+  fetchClanBattle,
+  fetchClanBattles,
+  fetchClanByName,
+  fetchClans,
+  findMpvpBattleQueueForHasClanBattleJoin,
+  findUserDataForGetRequests,
+  findVillageForCreateClan,
+  insertActionLogForClanDonate,
+  insertActionLogForDeleteClanBattle,
+  insertActionLogForEditClanColor,
+  insertActionLogForRemoveFromClan,
+  insertClanForCreateClan,
+  insertConversationForPurchaseHideout,
+  insertMpvpBattleQueueForChallengeClan,
+  insertMpvpBattleUserForJoinClanBattle,
+  insertSectorForPurchaseHideout,
+  insertVillageForPurchaseHideout,
+  insertVillageStructureForPurchaseHideout,
+  listClanForDeleteClanBattle,
+  listClanForGetAllNames,
+  listClanForNominateElder,
+  listClanForSearchClans,
+  setClanVillageKage,
+  updateClanForClanDonate,
+  updateClanForClearLeadership,
+  updateClanForConvertPointsToRyo,
+  updateClanForDemoteMember,
+  updateClanForEditClan,
+  updateClanForInstantJoinAndLead,
+  updateClanForKickMember,
+  updateClanForNominateElder,
+  updateClanForPromoteMember,
+  updateClanForPurchaseBoost,
+  updateClanForPurchaseHideout,
+  updateClanForRemoveFromClan,
+  updateClanForToBank,
+  updateMpvpBattleQueueForInitiateClanBattle,
+  updateUserDataForAcceptRequest,
+  updateUserDataForChallengeClan,
+  updateUserDataForClanDonate,
+  updateUserDataForCreateClan,
+  updateUserDataForEditClanColor,
+  updateUserDataForInitiateClanBattle,
+  updateUserDataForInstantJoinAndLead,
+  updateUserDataForPurchaseHideout,
+  updateUserDataForRemoveFromClan,
+  updateUserDataForRemoveFromClan2,
+  updateUserDataForUndoClanBattleJoin,
+  updateVillageForEditClanColor,
+  updateVillageForRemoveFromClan,
+} from "@/queries/clan";
+import {
+  debitUserMoney,
+  fetchUser,
+  incrementUserMoney,
+  refundUserReputationPoints,
+} from "@/queries/profile";
+import { deleteQueueById } from "@/queries/raids";
+import { fetchRequests, insertRequest } from "@/queries/sparring";
+import { fetchStructures, fetchVillage, fetchVillages } from "@/queries/village";
+import { initiateBattle } from "@/routers/combat";
+import { updateNindo } from "@/routers/profile";
+import { fetchRequest, updateRequestState } from "@/routers/sparring";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -150,53 +187,15 @@ export const clanRouter = createTRPCRouter({
 
       // Mutate step 1 - pay up
       const hideoutId = nanoid();
-      const result = await ctx.drizzle
-        .update(clan)
-        .set({
-          villageId: hideoutId,
-          bank: sql`${clan.bank} - ${HIDEOUT_COST}`,
-          hasHideout: true,
-        })
-        .where(and(eq(clan.id, input.clanId), gte(clan.bank, HIDEOUT_COST)));
+      const result = await updateClanForPurchaseHideout(ctx.drizzle, hideoutId, input);
       if (result.rowsAffected === 0) return errorResponse("Failed to purchase hideout");
       // Mutate step 2 - set hideout
       await Promise.all([
-        ctx.drizzle.insert(villageStructure).values(
-          newStructures.map((s) => ({
-            ...s,
-            id: nanoid(),
-            level: 1,
-            villageId: hideoutId,
-            allyAccess: 1,
-          })),
-        ),
-        ctx.drizzle
-          .update(userData)
-          .set({ villageId: hideoutId })
-          .where(eq(userData.clanId, input.clanId)),
-        ctx.drizzle.insert(conversation).values({
-          id: nanoid(),
-          title: fetchedClan.name,
-          createdById: fetchedClan.leaderId,
-        }),
-        ctx.drizzle.insert(sector).values({
-          sector: input.sector,
-          villageId: hideoutId,
-          shrineLevel: 1,
-          capturedAt: new Date(),
-        }),
-        ctx.drizzle.insert(village).values({
-          id: hideoutId,
-          name: `${fetchedClan.name}`,
-          mapName: `${fetchedClan.name}`,
-          sector: input.sector,
-          description: `${fetchedClan.name} Hideout`,
-          kageId: fetchedClan.leaderId,
-          type: "HIDEOUT",
-          joinable: false,
-          allianceSystem: true,
-          villageGraphic: IMG_VILLAGE_FACTION,
-        }),
+        insertVillageStructureForPurchaseHideout(ctx.drizzle, newStructures, hideoutId),
+        updateUserDataForPurchaseHideout(ctx.drizzle, hideoutId, input),
+        insertConversationForPurchaseHideout(ctx.drizzle, fetchedClan),
+        insertSectorForPurchaseHideout(ctx.drizzle, input, hideoutId),
+        insertVillageForPurchaseHideout(ctx.drizzle, hideoutId, fetchedClan, input),
       ]);
       return { success: true, message: "Hideout purchased successfully" };
     }),
@@ -248,15 +247,7 @@ export const clanRouter = createTRPCRouter({
       // A joined write restores the guarded settlement and charges its owning faction
       // together; a duplicate request or changed balance cannot leave a partial payment.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-          UPDATE ${village}
-          INNER JOIN ${clan} ON ${clan.villageId} = ${village.id}
-          SET ${village.type} = 'STRONGHOLD',
-              ${village.belowMemberMinimumSince} = NULL,
-              ${village.lastMaintenancePaidAt} = ${new Date()},
-              ${clan.bank} = ${clan.bank} - ${STRONGHOLD_REESTABLISH_COST}
-          WHERE ${guards}
-        `),
+        executeResultForUpgradeHideoutToStronghold(ctx.drizzle, guards),
       );
       return result.rowsAffected > 0
         ? { success: true, message: "Stronghold restored successfully" }
@@ -307,47 +298,19 @@ export const clanRouter = createTRPCRouter({
         };
       }
       // Mutate step 1 - update user
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          reputationPoints: sql`${userData.reputationPoints} - ${repsCost}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.reputationPoints, repsCost),
-          ),
-        );
+      const result = await updateUserDataForClanDonate(ctx.drizzle, repsCost, ctx);
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to deduct points from user");
       }
       // Mutate step 2 - update the clan
-      const result2 = await ctx.drizzle
-        .update(clan)
-        .set({
-          repTreasury: sql`${clan.repTreasury} + ${repsCost}`,
-        })
-        .where(eq(clan.id, fetchedClan.id));
+      const result2 = await updateClanForClanDonate(ctx.drizzle, repsCost, fetchedClan);
       if (result2.rowsAffected === 0) {
-        await ctx.drizzle
-          .update(userData)
-          .set({
-            reputationPoints: sql`${userData.reputationPoints} + ${repsCost}`,
-          })
-          .where(eq(userData.userId, ctx.userId));
+        await refundUserReputationPoints(ctx.drizzle, repsCost, ctx.userId);
         return errorResponse("Failed to update the treasury");
       } else {
         // Create donation message
         const message = `${user.username} donated ${repsCost} reputation points to faction`;
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "clan",
-          changes: [message],
-          relatedId: fetchedClan.id,
-          relatedMsg: message,
-          relatedImage: fetchedClan.image,
-        });
+        await insertActionLogForClanDonate(ctx.drizzle, ctx, message, fetchedClan);
         return {
           success: true,
           message,
@@ -396,9 +359,7 @@ export const clanRouter = createTRPCRouter({
   getAllNames: protectedProcedure
     .meta({ mcp: { description: "Get all clan/faction names" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.clan.findMany({
-        columns: { id: true, name: true, image: true },
-      });
+      return await listClanForGetAllNames(ctx.drizzle);
     }),
   getRequests: protectedProcedure
     .meta({ mcp: { description: "Get pending clan join requests" } })
@@ -406,11 +367,7 @@ export const clanRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       // Fetch
       const [user, requests] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { userId: true, clanId: true },
-          with: { clan: true },
-        }),
+        findUserDataForGetRequests(ctx.drizzle, ctx),
         fetchRequests(ctx.drizzle, ["CLAN"], 3600 * 12, [
           ctx.userId,
           input.clanLeaderId,
@@ -444,16 +401,7 @@ export const clanRouter = createTRPCRouter({
     .meta({ mcp: { description: "Search clans/factions by name" } })
     .input(z.object({ name: z.string().trim() }))
     .query(async ({ ctx, input }) => {
-      return ctx.drizzle.query.clan.findMany({
-        columns: {
-          id: true,
-          name: true,
-          image: true,
-        },
-        where: like(clan.name, `%${input.name}%`),
-        orderBy: [sql`LENGTH(${clan.name}) asc`],
-        limit: 5,
-      });
+      return listClanForSearchClans(ctx.drizzle, input);
     }),
   createRequest: protectedProcedure
     .meta({ mcp: { description: "Request to join clan/faction" } })
@@ -599,13 +547,7 @@ export const clanRouter = createTRPCRouter({
       // Mutate
       await Promise.all([
         updateRequestState(ctx.drizzle, input.id, "ACCEPTED", "CLAN"),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            clanId: fetchedClan.id,
-            ...(fetchedClan.hasHideout ? { villageId: fetchedClan.villageId } : {}),
-          })
-          .where(eq(userData.userId, requester.userId)),
+        updateUserDataForAcceptRequest(ctx.drizzle, fetchedClan, requester),
       ]);
       if (fetchedClan.hasHideout)
         await syncStrongholdMembership(ctx.drizzle, fetchedClan.villageId);
@@ -637,9 +579,7 @@ export const clanRouter = createTRPCRouter({
         fetchVillage(ctx.drizzle, input.villageId),
         fetchClans(ctx.drizzle, input.villageId),
         fetchClanByName(ctx.drizzle, input.name),
-        ctx.drizzle.query.village.findFirst({
-          where: eq(village.name, input.name),
-        }),
+        findVillageForCreateClan(ctx.drizzle, input),
         checkForBadWords(input.name),
       ]);
       // Derived
@@ -677,24 +617,10 @@ export const clanRouter = createTRPCRouter({
       if (!moderationResult.success) return moderationResult;
       // Reduce money
       const clanId = nanoid();
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          clanId: clanId,
-          money: sql`${userData.money} - ${CLAN_CREATE_RYO_COST}`,
-        })
-        .where(eq(userData.userId, user.userId));
+      const result = await updateUserDataForCreateClan(ctx.drizzle, clanId, user);
       if (result.rowsAffected === 0) return errorResponse("Failed to reduce money");
       // Mutate
-      await ctx.drizzle.insert(clan).values({
-        id: clanId,
-        image: IMG_AVATAR_DEFAULT,
-        villageId: villageData.id,
-        name: input.name,
-        founderId: user.userId,
-        leaderId: user.userId,
-        leaderOrderId: nanoid(),
-      });
+      await insertClanForCreateClan(ctx.drizzle, clanId, villageData, input, user);
       // Create
       return { success: true, message: `${groupLabel} created` };
     }),
@@ -709,9 +635,7 @@ export const clanRouter = createTRPCRouter({
           fetchUser(ctx.drizzle, ctx.userId),
           fetchClan(ctx.drizzle, input.clanId),
           fetchClanByName(ctx.drizzle, input.name),
-          ctx.drizzle.query.historicalAvatar.findFirst({
-            where: eq(historicalAvatar.avatar, input.image),
-          }),
+          findHistoricalAvatarByImage(ctx.drizzle, input),
           checkForBadWords(input.name),
         ]);
       const groupLabel = user?.isOutlaw ? "faction" : "clan";
@@ -744,10 +668,12 @@ export const clanRouter = createTRPCRouter({
         return { success: true, message: `${groupLabel} unchanged` };
       }
       // Mutate (CAS on current name to avoid clobbering a concurrent rename)
-      const result = await ctx.drizzle
-        .update(clan)
-        .set({ name: input.name, image: image.avatar })
-        .where(and(eq(clan.id, fetchedClan.id), eq(clan.name, fetchedClan.name)));
+      const result = await updateClanForEditClan(
+        ctx.drizzle,
+        input,
+        { avatar: image.avatar },
+        fetchedClan,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse(`${groupLabel} was modified, please try again`);
       }
@@ -784,17 +710,7 @@ export const clanRouter = createTRPCRouter({
       }
 
       // Mutate - deduct reputation points from the user
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          reputationPoints: sql`${userData.reputationPoints} - ${CLAN_COLOR_CHANGE_REP_COST}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, user.userId),
-            gte(userData.reputationPoints, CLAN_COLOR_CHANGE_REP_COST),
-          ),
-        );
+      const result = await updateUserDataForEditClanColor(ctx.drizzle, user);
 
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to deduct reputation points");
@@ -802,19 +718,15 @@ export const clanRouter = createTRPCRouter({
 
       // Create a log entry for the color change
       const [, colorResult] = await Promise.all([
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "clan",
-          changes: [`Changed ${groupLabel.toLowerCase()} color to ${input.color}`],
-          relatedId: fetchedClan.id,
-          relatedMsg: `${user.username} changed the ${groupLabel.toLowerCase()} color`,
-          relatedImage: fetchedClan.image,
-        }),
-        ctx.drizzle
-          .update(village)
-          .set({ hexColor: input.color })
-          .where(eq(village.id, fetchedClan.villageId)),
+        insertActionLogForEditClanColor(
+          ctx.drizzle,
+          ctx,
+          groupLabel,
+          input,
+          fetchedClan,
+          user,
+        ),
+        updateVillageForEditClanColor(ctx.drizzle, input, fetchedClan),
       ]);
 
       // Create
@@ -920,14 +832,9 @@ export const clanRouter = createTRPCRouter({
       }
       // Mutate
       await Promise.all([
-        ctx.drizzle.update(clan).set(updateData).where(eq(clan.id, fetchedClan.id)),
+        updateClanForPromoteMember(ctx.drizzle, updateData, fetchedClan),
         ...(isMemberColeader && hadHideout
-          ? [
-              ctx.drizzle
-                .update(village)
-                .set({ kageId: input.memberId })
-                .where(eq(village.id, fetchedClan.villageId)),
-            ]
+          ? [setClanVillageKage(ctx.drizzle, input.memberId, fetchedClan.villageId)]
           : []),
       ]);
       // Create
@@ -968,15 +875,13 @@ export const clanRouter = createTRPCRouter({
         (k) => clanData[k] === member.userId,
       );
       // Mutate
-      await ctx.drizzle
-        .update(clan)
-        .set({
-          coLeader1: clanData.coLeader1 === member.userId ? null : clanData.coLeader1,
-          coLeader2: clanData.coLeader2 === member.userId ? null : clanData.coLeader2,
-          coLeader3: clanData.coLeader3 === member.userId ? null : clanData.coLeader3,
-          ...(isMemberAssassin && assasinField ? { [assasinField]: null } : {}),
-        })
-        .where(eq(clan.id, clanData.id));
+      await updateClanForDemoteMember(
+        ctx.drizzle,
+        clanData,
+        member,
+        isMemberAssassin,
+        assasinField,
+      );
       // Create
       return { success: true, message: "Member demoted" };
     }),
@@ -1011,12 +916,7 @@ export const clanRouter = createTRPCRouter({
         return errorResponse(`Only ${groupLabel} leader can kick`);
       // If the leader is being kicked, promote the kicker to leader
       if (isMemberLeader && canEdit) {
-        await ctx.drizzle
-          .update(clan)
-          .set({
-            leaderId: user.userId, // Promote the kicker to leader
-          })
-          .where(eq(clan.id, fetchedClan.id));
+        await updateClanForKickMember(ctx.drizzle, user, fetchedClan);
       }
       // Mutate
       await removeFromClan(ctx.drizzle, fetchedClan, member, [
@@ -1142,24 +1042,12 @@ export const clanRouter = createTRPCRouter({
       const ryo = input.points * CLAN_POINT_RYO_RATE;
       // Recheck both balance and leadership in the write so stale reads cannot spend
       // points twice or authorize a leader whose appointment has been revoked.
-      const converted = await ctx.drizzle
-        .update(clan)
-        .set({
-          points: sql`${clan.points} - ${input.points}`,
-          bank: sql`${clan.bank} + ${ryo}`,
-        })
-        .where(
-          and(
-            eq(clan.id, input.clanId),
-            gte(clan.points, input.points),
-            or(
-              eq(clan.leaderId, ctx.userId),
-              eq(clan.coLeader1, ctx.userId),
-              eq(clan.coLeader2, ctx.userId),
-              eq(clan.coLeader3, ctx.userId),
-            ),
-          ),
-        );
+      const converted = await updateClanForConvertPointsToRyo(
+        ctx.drizzle,
+        input,
+        ryo,
+        ctx,
+      );
       if (converted.rowsAffected !== 1)
         return errorResponse("Not enough clan points or leadership changed");
       return {
@@ -1189,22 +1077,13 @@ export const clanRouter = createTRPCRouter({
           userPatch: { clan: { id: fetchedClan.id } },
         };
       }
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ money: sql`${userData.money} - ${input.amount}` })
-        .where(and(eq(userData.userId, ctx.userId), gte(userData.money, input.amount)));
+      const result = await debitUserMoney(ctx.drizzle, input.amount, ctx);
       if (result.rowsAffected === 0) {
         return { success: false, message: "Not enough money in pocket" };
       }
-      const creditResult = await ctx.drizzle
-        .update(clan)
-        .set({ bank: sql`${clan.bank} + ${input.amount}` })
-        .where(eq(clan.id, input.clanId));
+      const creditResult = await updateClanForToBank(ctx.drizzle, input);
       if (creditResult.rowsAffected === 0) {
-        await ctx.drizzle
-          .update(userData)
-          .set({ money: sql`${userData.money} + ${input.amount}` })
-          .where(eq(userData.userId, ctx.userId));
+        await incrementUserMoney(ctx.drizzle, input.amount, ctx.userId);
         return errorResponse("Clan bank no longer exists; your deposit was refunded");
       }
       return {
@@ -1254,19 +1133,13 @@ export const clanRouter = createTRPCRouter({
         return errorResponse(`Max ${config.label.toLowerCase()} reached`);
       }
       // Mutate - deduct from clan bank (Ryo) and increment boost
-      const result = await ctx.drizzle
-        .update(clan)
-        .set({
-          [input.boostType]: sql`${clan[input.boostType]} + ${CLAN_BOOST_PERCENT_PER_LEVEL}`,
-          bank: sql`${clan.bank} - ${cost}`,
-        })
-        .where(
-          and(
-            eq(clan.id, clanData.id),
-            gte(clan.bank, cost),
-            eq(clan[input.boostType], currentBoost),
-          ),
-        );
+      const result = await updateClanForPurchaseBoost(
+        ctx.drizzle,
+        input,
+        cost,
+        clanData,
+        currentBoost,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse(
           `The ${groupLabel} balance or boost changed; refresh and try again`,
@@ -1329,12 +1202,7 @@ export const clanRouter = createTRPCRouter({
         clanData.elderCutoffYear === currentYear;
       if (!hasCutoffSnapshot) {
         // Fallback: calculate live eligibility if cutoff snapshot is missing
-        const liveRankings = await ctx.drizzle.query.clan.findMany({
-          where: eq(clan.villageId, clanData.villageId),
-          orderBy: [desc(clan.activityPoints), desc(clan.points)],
-          limit: KAGE_MAX_ELDERS,
-          columns: { id: true },
-        });
+        const liveRankings = await listClanForNominateElder(ctx.drizzle, clanData);
         const isInTop3 = liveRankings.some((c) => c.id === clanData.id);
         if (!isInTop3) {
           return errorResponse(
@@ -1343,10 +1211,7 @@ export const clanRouter = createTRPCRouter({
         }
       }
       // Mutate
-      await ctx.drizzle
-        .update(clan)
-        .set({ elderNomineeId: input.nomineeId })
-        .where(eq(clan.id, clanData.id));
+      await updateClanForNominateElder(ctx.drizzle, input, clanData);
       return { success: true, message: `${nominee.username} nominated as elder` };
     }),
   getClanBattles: protectedProcedure
@@ -1386,32 +1251,7 @@ export const clanRouter = createTRPCRouter({
       const clanBattleId = nanoid();
       const entryId = nanoid();
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle
-          .update(userData)
-          .set({ status: "QUEUED" })
-          .where(
-            and(
-              eq(userData.userId, user.userId),
-              eq(userData.status, "AWAKE"),
-              notExists(
-                ctx.drizzle
-                  .select({ id: mpvpBattleUser.id })
-                  .from(mpvpBattleUser)
-                  .where(eq(mpvpBattleUser.userId, user.userId)),
-              ),
-              notExists(
-                ctx.drizzle
-                  .select({ id: rankedPvpQueue.id })
-                  .from(rankedPvpQueue)
-                  .where(
-                    and(
-                      eq(rankedPvpQueue.userId, user.userId),
-                      eq(rankedPvpQueue.hasClaimed, true),
-                    ),
-                  ),
-              ),
-            ),
-          ),
+        updateUserDataForChallengeClan(ctx.drizzle, user),
       );
       if (result.rowsAffected === 0)
         return errorResponse(
@@ -1419,20 +1259,20 @@ export const clanRouter = createTRPCRouter({
         );
       // Settle both writes before compensation so a late insert cannot recreate the lobby.
       const inserted = await Promise.allSettled([
-        ctx.drizzle.insert(mpvpBattleQueue).values({
-          id: clanBattleId,
-          createdAt: new Date(),
-          battleType: "CLAN_BATTLE",
-          attackerEntityId: challenger.id,
-          defenderEntityId: defender.id,
-        }),
-        ctx.drizzle.insert(mpvpBattleUser).values({
-          id: entryId,
-          userId: user.userId,
-          clanBattleId: clanBattleId,
-          side: "ATTACKER",
-          slot: 0, // First attacker gets slot 0
-        }),
+        insertMpvpBattleQueueForChallengeClan(
+          ctx.drizzle,
+          clanBattleId,
+          challenger,
+          defender,
+        ),
+        insertMpvpBattleUserForJoinClanBattle(
+          ctx.drizzle,
+          entryId,
+          user,
+          { clanBattleId },
+          "ATTACKER",
+          0,
+        ),
       ]);
       const failedInsert = inserted.find((result) => result.status === "rejected");
       // Cleanup can release the status claim before the parallel membership insert.
@@ -1512,32 +1352,7 @@ export const clanRouter = createTRPCRouter({
 
       // Wait for retained clan memberships and claimed ranked owners to finish cleanup.
       const result = await retryOnDeadlock(() =>
-        ctx.drizzle
-          .update(userData)
-          .set({ status: "QUEUED" })
-          .where(
-            and(
-              eq(userData.userId, user.userId),
-              eq(userData.status, "AWAKE"),
-              notExists(
-                ctx.drizzle
-                  .select({ id: mpvpBattleUser.id })
-                  .from(mpvpBattleUser)
-                  .where(eq(mpvpBattleUser.userId, user.userId)),
-              ),
-              notExists(
-                ctx.drizzle
-                  .select({ id: rankedPvpQueue.id })
-                  .from(rankedPvpQueue)
-                  .where(
-                    and(
-                      eq(rankedPvpQueue.userId, user.userId),
-                      eq(rankedPvpQueue.hasClaimed, true),
-                    ),
-                  ),
-              ),
-            ),
-          ),
+        updateUserDataForChallengeClan(ctx.drizzle, user),
       );
       if (result.rowsAffected === 0)
         return errorResponse(
@@ -1548,13 +1363,14 @@ export const clanRouter = createTRPCRouter({
       // This reversible membership write may race a start/delete. Revalidate afterward
       // and remove only our own entry, without locking a missing row or another combat.
       try {
-        await ctx.drizzle.insert(mpvpBattleUser).values({
-          id: entryId,
-          userId: user.userId,
-          clanBattleId: input.clanBattleId,
+        await insertMpvpBattleUserForJoinClanBattle(
+          ctx.drizzle,
+          entryId,
+          user,
+          input,
           side,
-          slot: availableSlot,
-        });
+          availableSlot,
+        );
         if (
           !(await hasClanBattleJoin(
             ctx.drizzle,
@@ -1655,14 +1471,7 @@ export const clanRouter = createTRPCRouter({
       const [user, clanBattleData, ledClans] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchClanBattle(ctx.drizzle, input.clanBattleId),
-        ctx.drizzle.query.clan.findMany({
-          where: or(
-            eq(clan.leaderId, ctx.userId),
-            eq(clan.coLeader1, ctx.userId),
-            eq(clan.coLeader2, ctx.userId),
-            eq(clan.coLeader3, ctx.userId),
-          ),
-        }),
+        listClanForDeleteClanBattle(ctx.drizzle, ctx),
       ]);
       if (!clanBattleData || clanBattleData.battleType !== "CLAN_BATTLE")
         return errorResponse("Clan battle not found");
@@ -1681,15 +1490,7 @@ export const clanRouter = createTRPCRouter({
       clanBattleData.queue.forEach((participant) => {
         void pusher.trigger(participant.userId, "event", { type: "battleEnded" });
       });
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "clan",
-        relatedId: clanBattleData.attackerEntityId,
-        changes: [
-          `Deleted clan battle ${clanBattleData.id} (combat ${clanBattleData.battleId ?? "pending"})`,
-        ],
-      });
+      await insertActionLogForDeleteClanBattle(ctx.drizzle, ctx, clanBattleData);
       return {
         success: true,
         message: "Clan battle deleted and participants released",
@@ -1736,17 +1537,11 @@ export const clanRouter = createTRPCRouter({
       // Reserve the combat ID before expensive preloading so simultaneous starts cannot
       // create multiple battles and deletion can identify a startup already in flight.
       const battleId = nanoid();
-      const reserved = await ctx.drizzle
-        .update(mpvpBattleQueue)
-        .set({ battleId })
-        .where(
-          and(
-            eq(mpvpBattleQueue.id, input.clanBattleId),
-            eq(mpvpBattleQueue.battleType, "CLAN_BATTLE"),
-            isNull(mpvpBattleQueue.battleId),
-            isNull(mpvpBattleQueue.winnerId),
-          ),
-        );
+      const reserved = await updateMpvpBattleQueueForInitiateClanBattle(
+        ctx.drizzle,
+        battleId,
+        input,
+      );
       if (reserved.rowsAffected !== 1)
         return errorResponse("Battle already started or deleted");
       try {
@@ -1772,47 +1567,7 @@ export const clanRouter = createTRPCRouter({
           return errorResponse("Clan battle was deleted during startup");
         }
         await retryOnDeadlock(() =>
-          ctx.drizzle
-            .update(userData)
-            .set({ status: "AWAKE" })
-            .where(
-              and(
-                inArray(userData.userId, allIds),
-                eq(userData.status, "QUEUED"),
-                isNull(userData.battleId),
-                // Recheck membership and the reserved lobby at the write: deletion can
-                // release surplus players into another queue after startup's final read.
-                exists(
-                  ctx.drizzle
-                    .select({ id: mpvpBattleUser.id })
-                    .from(mpvpBattleUser)
-                    .innerJoin(
-                      mpvpBattleQueue,
-                      eq(mpvpBattleUser.clanBattleId, mpvpBattleQueue.id),
-                    )
-                    .where(
-                      and(
-                        eq(mpvpBattleUser.userId, userData.userId),
-                        eq(mpvpBattleQueue.id, input.clanBattleId),
-                        eq(mpvpBattleQueue.battleId, battleId),
-                      ),
-                    ),
-                ),
-                not(
-                  exists(
-                    ctx.drizzle
-                      .select({ id: rankedPvpQueue.id })
-                      .from(rankedPvpQueue)
-                      .where(
-                        and(
-                          eq(rankedPvpQueue.userId, userData.userId),
-                          eq(rankedPvpQueue.hasClaimed, true),
-                        ),
-                      ),
-                  ),
-                ),
-              ),
-            ),
+          updateUserDataForInitiateClanBattle(ctx.drizzle, allIds, input, battleId),
         );
         return { success: true, message: `${groupLabel} battle initiated`, battleId };
       } catch (error) {
@@ -1842,26 +1597,10 @@ export const clanRouter = createTRPCRouter({
       }
       // Update
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({ clanId: fetchedClan.id, villageId: fetchedClan.village?.id })
-          .where(eq(userData.userId, user.userId)),
-        ctx.drizzle
-          .update(clan)
-          .set({
-            leaderId: user.userId,
-            coLeader1: null,
-            coLeader2: null,
-            coLeader3: null,
-          })
-          .where(eq(clan.id, fetchedClan.id)),
+        updateUserDataForInstantJoinAndLead(ctx.drizzle, fetchedClan, user),
+        updateClanForInstantJoinAndLead(ctx.drizzle, user, fetchedClan),
         ...(["HIDEOUT", "STRONGHOLD"].includes(fetchedClan.village?.type ?? "")
-          ? [
-              ctx.drizzle
-                .update(village)
-                .set({ kageId: user.userId })
-                .where(eq(village.id, fetchedClan.villageId)),
-            ]
+          ? [setClanVillageKage(ctx.drizzle, user.userId, fetchedClan.villageId)]
           : []),
       ]);
 
@@ -1896,24 +1635,7 @@ export const clanRouter = createTRPCRouter({
         return errorResponse(user.isOutlaw ? "!= syndicate" : "!= village");
 
       // Mutate - Clear all co-leader and assassin slots
-      await ctx.drizzle
-        .update(clan)
-        .set({
-          coLeader1: null,
-          coLeader2: null,
-          coLeader3: null,
-          assassin1: null,
-          assassin2: null,
-          assassin3: null,
-          assassin4: null,
-          assassin5: null,
-          assassin6: null,
-          assassin7: null,
-          assassin8: null,
-          assassin9: null,
-          assassin10: null,
-        })
-        .where(eq(clan.id, fetchedClan.id));
+      await updateClanForClearLeadership(ctx.drizzle, fetchedClan);
 
       return {
         success: true,
@@ -1933,37 +1655,12 @@ const hasClanBattleJoin = async (
   userId: string,
   entryId: string,
 ) => {
-  const lobby = await client.query.mpvpBattleQueue.findFirst({
-    columns: { id: true },
-    where: and(
-      eq(mpvpBattleQueue.id, clanBattleId),
-      isNull(mpvpBattleQueue.battleId),
-      isNull(mpvpBattleQueue.winnerId),
-      exists(
-        client
-          .select({ id: mpvpBattleUser.id })
-          .from(mpvpBattleUser)
-          .innerJoin(userData, eq(userData.userId, mpvpBattleUser.userId))
-          .where(
-            and(
-              eq(mpvpBattleUser.clanBattleId, clanBattleId),
-              eq(mpvpBattleUser.id, entryId),
-              eq(userData.userId, userId),
-              eq(userData.status, "QUEUED"),
-              isNull(userData.battleId),
-            ),
-          ),
-      ),
-      notExists(
-        client
-          .select({ id: rankedPvpQueue.id })
-          .from(rankedPvpQueue)
-          .where(
-            and(eq(rankedPvpQueue.userId, userId), eq(rankedPvpQueue.hasClaimed, true)),
-          ),
-      ),
-    ),
-  });
+  const lobby = await findMpvpBattleQueueForHasClanBattleJoin(
+    client,
+    clanBattleId,
+    entryId,
+    userId,
+  );
   return !!lobby;
 };
 
@@ -1977,49 +1674,8 @@ const undoClanBattleJoin = async (
   userId: string,
   entryId: string,
 ) => {
-  await client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.id, entryId));
-  await retryOnDeadlock(() =>
-    client
-      .update(userData)
-      .set({ status: "AWAKE" })
-      .where(
-        and(
-          eq(userData.userId, userId),
-          eq(userData.status, "QUEUED"),
-          isNull(userData.battleId),
-          not(
-            exists(
-              client
-                .select({ id: rankedPvpQueue.id })
-                .from(rankedPvpQueue)
-                .where(
-                  and(
-                    eq(rankedPvpQueue.userId, userData.userId),
-                    eq(rankedPvpQueue.hasClaimed, true),
-                  ),
-                ),
-            ),
-          ),
-          not(
-            exists(
-              client
-                .select({ one: sql`1` })
-                .from(mpvpBattleUser)
-                .innerJoin(
-                  mpvpBattleQueue,
-                  eq(mpvpBattleUser.clanBattleId, mpvpBattleQueue.id),
-                )
-                .where(
-                  and(
-                    eq(mpvpBattleUser.userId, userId),
-                    isNull(mpvpBattleQueue.winnerId),
-                  ),
-                ),
-            ),
-          ),
-        ),
-      ),
-  );
+  await deleteBattleQueueMemberById(client, entryId);
+  await retryOnDeadlock(() => updateUserDataForUndoClanBattleJoin(client, userId));
 };
 
 /**
@@ -2050,90 +1706,38 @@ export const removeFromClan = async (
   const coLeadersToRemove = isLeader ? [userId, otherUser?.userId ?? null] : [userId];
   // Mutate
   await Promise.all([
-    client
-      .update(userData)
-      .set({
-        clanId: null,
-        status: sql`CASE WHEN status = "QUEUED" THEN "AWAKE" ELSE status END`,
-        villageId: sql`CASE WHEN isOutlaw = 1 THEN ${VILLAGE_SYNDICATE_ID} ELSE villageId END`,
-      })
-      .where(eq(userData.userId, userId)),
-    client
-      .delete(userRequest)
-      .where(
-        and(
-          eq(userRequest.type, "CLAN"),
-          or(eq(userRequest.senderId, userId), eq(userRequest.receiverId, userId)),
-        ),
-      ),
-    client.delete(mpvpBattleUser).where(eq(mpvpBattleUser.userId, userId)),
-    client.insert(actionLog).values({
-      id: nanoid(),
-      userId: userId,
-      tableName: "clan",
-      changes: reasons,
-      relatedId: clanData.id,
-      relatedMsg: `${user.username} removed from ${user.isOutlaw ? "faction" : "clan"}: ${clanData.name}`,
-      relatedImage: clanData.image,
-    }),
+    updateUserDataForRemoveFromClan(client, userId),
+    deleteUserRequestForRemoveFromClan(client, userId),
+    deleteBattleQueueMembersForUser(client, userId),
+    insertActionLogForRemoveFromClan(client, userId, reasons, clanData, user),
     ...(!otherUser && ["HIDEOUT", "STRONGHOLD"].includes(clanData.village?.type)
       ? [
-          client.delete(village).where(eq(village.id, clanData.villageId)),
-          client
-            .delete(villageStructure)
-            .where(eq(villageStructure.villageId, clanData.villageId)),
-          client.delete(war).where(eq(war.attackerVillageId, clanData.villageId)),
-          client.delete(war).where(eq(war.defenderVillageId, clanData.villageId)),
-          client.delete(warAlly).where(eq(warAlly.villageId, clanData.villageId)),
-          client.delete(warKill).where(eq(warKill.killerVillageId, clanData.villageId)),
-          client.delete(warKill).where(eq(warKill.victimVillageId, clanData.villageId)),
-          client.delete(sector).where(eq(sector.villageId, clanData.villageId)),
+          deleteVillageForRemoveFromClan(client, clanData),
+          deleteVillageStructureForRemoveFromClan(client, clanData),
+          deleteWarForRemoveFromClan(client, clanData),
+          deleteWarForRemoveFromClan2(client, clanData),
+          deleteWarAllyForRemoveFromClan(client, clanData),
+          deleteWarKillForRemoveFromClan(client, clanData),
+          deleteWarKillForRemoveFromClan2(client, clanData),
+          deleteSectorForRemoveFromClan(client, clanData),
         ]
       : []),
     ...(!otherUser
       ? [
-          client.delete(clan).where(eq(clan.id, clanData.id)),
-          client
-            .update(userData)
-            .set({
-              clanId: null,
-              status: sql`CASE WHEN status = "QUEUED" THEN "AWAKE" ELSE status END`,
-              villageId: sql`CASE WHEN isOutlaw = 1 THEN ${VILLAGE_SYNDICATE_ID} ELSE villageId END`,
-            })
-            // Exclude the leaver, whose row the primary-key update above already
-            // covers; two overlapping updates on UserData deadlock InnoDB.
-            .where(and(eq(userData.clanId, clanData.id), ne(userData.userId, userId))),
-          client.delete(mpvpBattleQueue).where(eq(mpvpBattleQueue.id, clanData.id)),
+          deleteClanForRemoveFromClan(client, clanData),
+          updateUserDataForRemoveFromClan2(client, clanData, userId),
+          deleteQueueById(client, clanData.id),
         ]
       : [
-          client
-            .update(clan)
-            .set({
-              leaderId: isLeader && otherUser ? otherUser.userId : clanData.leaderId,
-              coLeader1: coLeadersToRemove.includes(clanData.coLeader1)
-                ? null
-                : clanData.coLeader1,
-              coLeader2: coLeadersToRemove.includes(clanData.coLeader2)
-                ? null
-                : clanData.coLeader2,
-              coLeader3: coLeadersToRemove.includes(clanData.coLeader3)
-                ? null
-                : clanData.coLeader3,
-              elderNomineeId:
-                clanData.elderNomineeId === userId ? null : clanData.elderNomineeId,
-            })
-            .where(eq(clan.id, clanData.id)),
-          client
-            .update(village)
-            .set({
-              kageId: isLeader && otherUser ? otherUser.userId : clanData.leaderId,
-            })
-            .where(
-              and(
-                eq(village.id, user.villageId ?? VILLAGE_SYNDICATE_ID),
-                or(eq(village.type, "HIDEOUT"), eq(village.type, "STRONGHOLD")),
-              ),
-            ),
+          updateClanForRemoveFromClan(
+            client,
+            isLeader,
+            otherUser,
+            clanData,
+            coLeadersToRemove,
+            userId,
+          ),
+          updateVillageForRemoveFromClan(client, isLeader, otherUser, clanData, user),
         ]),
   ]);
   if (otherUser) await syncStrongholdMembership(client, clanData.villageId);
@@ -2157,25 +1761,7 @@ export const removeFromClanBattle = async (
     ...(currentQueue.length === 1
       ? [
           retryOnDeadlock(() =>
-            client.delete(mpvpBattleQueue).where(
-              and(
-                eq(mpvpBattleQueue.id, clanBattleId),
-                eq(mpvpBattleQueue.battleType, "CLAN_BATTLE"),
-                isNull(mpvpBattleQueue.battleId),
-                isNull(mpvpBattleQueue.winnerId),
-                notExists(
-                  client
-                    .select({ id: mpvpBattleUser.id })
-                    .from(mpvpBattleUser)
-                    .where(
-                      and(
-                        eq(mpvpBattleUser.clanBattleId, clanBattleId),
-                        ne(mpvpBattleUser.id, entry.id),
-                      ),
-                    ),
-                ),
-              ),
-            ),
+            deleteMpvpBattleQueueForRemoveFromClanBattle(client, clanBattleId, entry),
           ),
         ]
       : []),
@@ -2183,229 +1769,4 @@ export const removeFromClanBattle = async (
   ]);
 };
 
-/**
- * Fetches a clan battle by its ID.
- * @param client - The Drizzle client.
- * @param clanBattleId - The ID of the clan battle to fetch.
- * @returns - A promise that resolves to the fetched clan battle, or null if not found.
- */
-export const fetchClanBattle = async (client: DrizzleClient, clanBattleId: string) => {
-  return await client.query.mpvpBattleQueue.findFirst({
-    where: eq(mpvpBattleQueue.id, clanBattleId),
-    with: {
-      queue: {
-        columns: { id: true, userId: true, createdAt: true, side: true, slot: true },
-        with: { user: { columns: { clanId: true, avatar: true, username: true } } },
-      },
-    },
-  });
-};
-
-/**
- * Fetches clan battles for a given clan ID.
- * @param client - The DrizzleClient instance used for querying.
- * @param clanId - The ID of the clan to fetch battles for.
- * @returns A promise that resolves to an array of clan battles.
- */
-export const fetchClanBattles = async (client: DrizzleClient, clanId: string) => {
-  // Fetch battles where this clan is either attacker or defender
-  const battles = await client.query.mpvpBattleQueue.findMany({
-    where: and(
-      eq(mpvpBattleQueue.battleType, "CLAN_BATTLE"),
-      or(
-        eq(mpvpBattleQueue.attackerEntityId, clanId),
-        eq(mpvpBattleQueue.defenderEntityId, clanId),
-      ),
-    ),
-    with: {
-      queue: {
-        columns: { userId: true, side: true },
-        with: {
-          user: {
-            columns: {
-              clanId: true,
-              avatar: true,
-              username: true,
-              level: true,
-              rank: true,
-              isOutlaw: true,
-            },
-          },
-        },
-      },
-    },
-    orderBy: (mpvpBattleQueue, { desc }) => [desc(mpvpBattleQueue.createdAt)],
-  });
-
-  // Fetch clan details for attacker and defender entities
-  const clanIds = [
-    ...new Set(battles.flatMap((b) => [b.attackerEntityId, b.defenderEntityId])),
-  ];
-  const clans =
-    clanIds.length > 0
-      ? await client.query.clan.findMany({
-          where: inArray(clan.id, clanIds),
-          columns: { id: true, name: true, image: true },
-        })
-      : [];
-  const clanMap = new Map(clans.map((c) => [c.id, c]));
-
-  // Return battles with clan info attached
-  return battles.map((b) => ({
-    ...b,
-    attackerClan: clanMap.get(b.attackerEntityId),
-    defenderClan: clanMap.get(b.defenderEntityId),
-  }));
-};
-
-/**
- * Fetches the clan battle queue for a specific user.
- * @param client - The Drizzle client instance.
- * @param userId - The ID of the user.
- * @returns - A promise that resolves to an array of clan battle queue items.
- */
-export const fetchActiveUserMpvpBattles = async (
-  client: DrizzleClient,
-  userId: string,
-) => {
-  return await client
-    .select(getTableColumns(mpvpBattleUser))
-    .from(mpvpBattleUser)
-    .innerJoin(
-      mpvpBattleQueue,
-      and(
-        eq(mpvpBattleUser.clanBattleId, mpvpBattleQueue.id),
-        isNull(mpvpBattleQueue.winnerId),
-      ),
-    )
-    .where(eq(mpvpBattleUser.userId, userId));
-};
-
-/**
- * Fetches clans based on the provided village ID.
- * @param client - The DrizzleClient instance used for querying.
- * @param villageId - The ID of the village to fetch clans for.
- * @returns A promise that resolves to an array of clans.
- */
-export const fetchClans = async (
-  client: DrizzleClient,
-  villageId: string,
-  isOutlaw?: boolean,
-) => {
-  return await client.query.clan.findMany({
-    with: {
-      leader: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-      },
-      founder: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-      },
-      members: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-      },
-      village: true,
-    },
-    where: isOutlaw
-      ? or(eq(clan.villageId, villageId), eq(clan.hasHideout, true))
-      : eq(clan.villageId, villageId),
-  });
-};
-
-/**
- * Fetches a clan from the database based on the clan ID.
- *
- * @param  client - The Drizzle client used to query the database.
- * @param  clanId - The ID of the clan to fetch.
- * @returns - A promise that resolves to the fetched clan, or null if not found.
- */
-export const fetchClan = async (client: DrizzleClient, clanId: string) => {
-  return await client.query.clan.findFirst({
-    with: {
-      leader: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-      },
-      founder: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-      },
-      village: {
-        columns: {
-          id: true,
-          name: true,
-          wasDowngraded: true,
-          belowMemberMinimumSince: true,
-          lastMaintenancePaidAt: true,
-          type: true,
-          sector: true,
-          kageId: true,
-        },
-      },
-      members: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-          pvpExperience: true,
-          isOutlaw: true,
-          anbuId: true,
-        },
-      },
-      leaderOrder: true,
-      elderNominee: {
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-      },
-    },
-    where: eq(clan.id, clanId),
-  });
-};
-
 export type ClanRouter = inferRouterOutputs<typeof clanRouter>;
-
-/**
- * Fetches a clan by its name.
- * @param client - The Drizzle client instance.
- * @param name - The name of the clan to fetch.
- * @returns - A promise that resolves to the fetched clan, or null if not found.
- */
-export const fetchClanByName = async (client: DrizzleClient, name: string) => {
-  return await client.query.clan.findFirst({
-    where: eq(clan.name, name),
-  });
-};

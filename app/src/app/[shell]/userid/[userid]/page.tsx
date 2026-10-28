@@ -1,35 +1,17 @@
-import { eq } from "drizzle-orm";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { userData } from "@/drizzle/schema";
 import PublicUserComponent from "@/layout/PublicUser";
 import { showUserRank } from "@/libs/profile";
 import { isProfileIndexable } from "@/libs/profileIndexing";
 import { absoluteUrl, buildMetadata, noindexMetadata } from "@/libs/seo";
+import { findPublicProfileById } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
-import { displayTitleSql } from "@/server/utils/titleDisplay";
 
 // Cached so generateMetadata and the page render share a single lookup rather than
 // each issuing their own query for the same profile.
 const fetchProfile = cache(async (userid: string) => {
-  return await drizzleDB.query.userData.findFirst({
-    extras: (table) => ({ displayTitle: displayTitleSql(table).as("displayTitle") }),
-    columns: {
-      username: true,
-      level: true,
-      rank: true,
-      isOutlaw: true,
-      avatar: true,
-
-      updatedAt: true,
-      isAi: true,
-      isBanned: true,
-      deletionAt: true,
-    },
-    with: { village: { columns: { name: true } } },
-    where: eq(userData.userId, userid),
-  });
+  return await findPublicProfileById(drizzleDB, userid);
 });
 
 /**

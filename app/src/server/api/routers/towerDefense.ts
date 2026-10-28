@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { InferSelectModel } from "drizzle-orm";
-import { and, asc, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { UTApi, UTFile } from "uploadthing/server";
 import { z } from "zod";
@@ -16,11 +16,7 @@ import {
 import {
   type TowerDefenseCharacterDb,
   towerDefenseCharacter,
-  towerDefenseClaimReceipt,
-  towerDefenseRun,
-  towerDefenseUpgrade,
-  userData,
-  userTowerDefenseUpgrade,
+  type towerDefenseUpgrade,
 } from "@/drizzle/schema";
 import {
   applyUpgradesToAbility,
@@ -35,6 +31,33 @@ import {
   generateRunSeed,
 } from "@/libs/towerDefense/game";
 import { servedUfsUrl } from "@/libs/uploadthing";
+import { findUserRoleById } from "@/queries/profile";
+import {
+  deleteTowerDefenseCharacterForDeleteCharacter,
+  findTowerDefenseCharacterForGetCharacter,
+  findTowerDefenseUpgradeById,
+  findUserDataForGetUserUpgrades,
+  findUserTowerDefenseUpgradeForPurchasePermanentUpgrade,
+  insertTowerDefenseCharacterForCreateCharacter,
+  insertTowerDefenseClaimReceiptForClaimCompletedRun,
+  insertTowerDefenseRunForClaimCompletedRun,
+  insertUserTowerDefenseUpgradeForPurchasePermanentUpgrade,
+  listTowerDefenseCharacterForGetAllCharacterNames,
+  listTowerDefenseCharacterForGetAssetConfigs,
+  listTowerDefenseCharacterForGetCharacters,
+  listTowerDefenseCharacterForInitiateSecureSession,
+  listTowerDefenseCharacterForInitiateSecureSession2,
+  listTowerDefenseRunForGetLeaderboard,
+  listTowerDefenseRunForGetRunHistory,
+  listTowerDefenseUpgradeForGetUpgrades,
+  listTowerDefenseUpgradeForInitiateSecureSession,
+  listUserTowerDefenseUpgradeForGetUserUpgrades,
+  updateTowerDefenseCharacterAssets,
+  updateTowerDefenseCharacterForUpdateCharacter,
+  updateTowerDefenseUpgradeForUpdateUpgrade,
+  updateUserDataForClaimCompletedRun,
+  updateUserDataForPurchasePermanentUpgrade,
+} from "@/queries/towerDefense";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -93,9 +116,7 @@ export const towerDefenseRouter = createTRPCRouter({
   getUpgrades: publicProcedure
     .meta({ mcp: { description: "Get all tower defense upgrades" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.towerDefenseUpgrade.findMany({
-        orderBy: [desc(towerDefenseUpgrade.upgradeType)],
-      });
+      return await listTowerDefenseUpgradeForGetUpgrades(ctx.drizzle);
     }),
 
   /**
@@ -104,7 +125,7 @@ export const towerDefenseRouter = createTRPCRouter({
   getAssetConfigs: publicProcedure
     .meta({ mcp: { description: "Get tower defense asset configs" } })
     .query(async ({ ctx }) => {
-      const characters = await ctx.drizzle.query.towerDefenseCharacter.findMany();
+      const characters = await listTowerDefenseCharacterForGetAssetConfigs(ctx.drizzle);
       return {
         enemyAssetConfigs: getCharacterAssetConfigs(
           characters.filter((c) => !c.isPlayer),
@@ -123,14 +144,8 @@ export const towerDefenseRouter = createTRPCRouter({
     .use(ratelimitMiddleware)
     .query(async ({ ctx }) => {
       const [upgrades, user] = await Promise.all([
-        ctx.drizzle.query.userTowerDefenseUpgrade.findMany({
-          where: eq(userTowerDefenseUpgrade.userId, ctx.userId),
-          with: { upgrade: true },
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          columns: { towerDefensePoints: true },
-          where: eq(userData.userId, ctx.userId),
-        }),
+        listUserTowerDefenseUpgradeForGetUserUpgrades(ctx.drizzle, ctx),
+        findUserDataForGetUserUpgrades(ctx.drizzle, ctx),
       ]);
 
       return {
@@ -163,18 +178,10 @@ export const towerDefenseRouter = createTRPCRouter({
     .mutation(async ({ ctx }) => {
       const [userUpgrades, upgradeDefinitions, enemyDefinitionsDb, playerCharactersDb] =
         await Promise.all([
-          ctx.drizzle.query.userTowerDefenseUpgrade.findMany({
-            where: eq(userTowerDefenseUpgrade.userId, ctx.userId),
-            with: { upgrade: true },
-          }),
-          ctx.drizzle.query.towerDefenseUpgrade.findMany(),
-          ctx.drizzle.query.towerDefenseCharacter.findMany({
-            where: eq(towerDefenseCharacter.isPlayer, false),
-            orderBy: [asc(towerDefenseCharacter.firstAppearWave)],
-          }),
-          ctx.drizzle.query.towerDefenseCharacter.findMany({
-            where: eq(towerDefenseCharacter.isPlayer, true),
-          }),
+          listUserTowerDefenseUpgradeForGetUserUpgrades(ctx.drizzle, ctx),
+          listTowerDefenseUpgradeForInitiateSecureSession(ctx.drizzle),
+          listTowerDefenseCharacterForInitiateSecureSession(ctx.drizzle),
+          listTowerDefenseCharacterForInitiateSecureSession2(ctx.drizzle),
         ]);
 
       const baseShuriken = getShurikenAbility();
@@ -210,14 +217,9 @@ export const towerDefenseRouter = createTRPCRouter({
     .mutation(async ({ ctx }) => {
       const [upgradeDefinitions, enemyDefinitionsDb, playerCharactersDb] =
         await Promise.all([
-          ctx.drizzle.query.towerDefenseUpgrade.findMany(),
-          ctx.drizzle.query.towerDefenseCharacter.findMany({
-            where: eq(towerDefenseCharacter.isPlayer, false),
-            orderBy: [asc(towerDefenseCharacter.firstAppearWave)],
-          }),
-          ctx.drizzle.query.towerDefenseCharacter.findMany({
-            where: eq(towerDefenseCharacter.isPlayer, true),
-          }),
+          listTowerDefenseUpgradeForInitiateSecureSession(ctx.drizzle),
+          listTowerDefenseCharacterForInitiateSecureSession(ctx.drizzle),
+          listTowerDefenseCharacterForInitiateSecureSession2(ctx.drizzle),
         ]);
 
       const ability = getShurikenAbility();
@@ -251,14 +253,7 @@ export const towerDefenseRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const runs = await ctx.drizzle.query.towerDefenseRun.findMany({
-        where: and(
-          eq(towerDefenseRun.userId, ctx.userId),
-          input.cursor ? lt(towerDefenseRun.id, input.cursor) : undefined,
-        ),
-        orderBy: [desc(towerDefenseRun.startedAt)],
-        limit: input.limit + 1,
-      });
+      const runs = await listTowerDefenseRunForGetRunHistory(ctx.drizzle, ctx, input);
 
       const hasMore = runs.length > input.limit;
       const items = hasMore ? runs.slice(0, -1) : runs;
@@ -274,16 +269,7 @@ export const towerDefenseRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get tower defense leaderboard" } })
     .input(z.object({ limit: z.number().min(1).max(100).prefault(20) }))
     .query(async ({ ctx, input }) => {
-      const runs = await ctx.drizzle.query.towerDefenseRun.findMany({
-        where: eq(towerDefenseRun.status, "COMPLETED"),
-        orderBy: [desc(towerDefenseRun.score)],
-        limit: input.limit,
-        with: {
-          user: {
-            columns: { username: true, avatar: true, rank: true },
-          },
-        },
-      });
+      const runs = await listTowerDefenseRunForGetLeaderboard(ctx.drizzle, input);
 
       return runs;
     }),
@@ -307,19 +293,9 @@ export const towerDefenseRouter = createTRPCRouter({
     )
     .mutation(async ({ ctx, input }) => {
       const [user, upgradeDef, existingUpgrade] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          columns: { towerDefensePoints: true },
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.towerDefenseUpgrade.findFirst({
-          where: eq(towerDefenseUpgrade.id, input.upgradeId),
-        }),
-        ctx.drizzle.query.userTowerDefenseUpgrade.findFirst({
-          where: and(
-            eq(userTowerDefenseUpgrade.userId, ctx.userId),
-            eq(userTowerDefenseUpgrade.upgradeId, input.upgradeId),
-          ),
-        }),
+        findUserDataForGetUserUpgrades(ctx.drizzle, ctx),
+        findTowerDefenseUpgradeById(ctx.drizzle, input.upgradeId),
+        findUserTowerDefenseUpgradeForPurchasePermanentUpgrade(ctx.drizzle, ctx, input),
       ]);
 
       if (!user) {
@@ -343,31 +319,23 @@ export const towerDefenseRouter = createTRPCRouter({
       );
 
       // Guarded update to deduct points
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          towerDefensePoints: sql`${userData.towerDefensePoints} - ${cost}`,
-        })
-        .where(
-          and(eq(userData.userId, ctx.userId), gte(userData.towerDefensePoints, cost)),
-        );
+      const result = await updateUserDataForPurchasePermanentUpgrade(
+        ctx.drizzle,
+        cost,
+        ctx,
+      );
 
       if (result.rowsAffected === 0) {
         return errorResponse("Insufficient points.");
       }
 
       // Upsert the upgrade
-      await ctx.drizzle
-        .insert(userTowerDefenseUpgrade)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          upgradeId: input.upgradeId,
-          level: currentLevel + 1,
-        })
-        .onDuplicateKeyUpdate({
-          set: { level: currentLevel + 1 },
-        });
+      await insertUserTowerDefenseUpgradeForPurchasePermanentUpgrade(
+        ctx.drizzle,
+        ctx,
+        input,
+        currentLevel,
+      );
 
       return {
         success: true,
@@ -494,15 +462,15 @@ export const towerDefenseRouter = createTRPCRouter({
 
       // The receipt is the claim: only the insert that wins the unique key pays out
       try {
-        await ctx.drizzle.insert(towerDefenseClaimReceipt).values({
-          id: nanoid(),
+        await insertTowerDefenseClaimReceiptForClaimCompletedRun(
+          ctx.drizzle,
           claimKey,
-          userId: ctx.userId,
-          spacetimeSessionId: input.spacetimeSessionId,
-          wave: finalWave,
-          score: finalScore,
+          ctx,
+          input,
+          finalWave,
+          finalScore,
           pointsEarned,
-        });
+        );
       } catch (error) {
         if (isMysqlDuplicateKeyError(error)) {
           return errorResponse("This run has already been claimed.");
@@ -512,31 +480,17 @@ export const towerDefenseRouter = createTRPCRouter({
 
       const [updateResult] = await Promise.all([
         pointsEarned > 0
-          ? ctx.drizzle
-              .update(userData)
-              .set({
-                towerDefensePoints: sql`${userData.towerDefensePoints} + ${pointsEarned}`,
-              })
-              .where(eq(userData.userId, ctx.userId))
+          ? updateUserDataForClaimCompletedRun(ctx.drizzle, pointsEarned, ctx)
           : Promise.resolve({ rowsAffected: 1 }),
         // Leaderboard entry; cleared by the monthly reset, unlike the receipt
-        ctx.drizzle.insert(towerDefenseRun).values({
-          id: nanoid(),
-          seed: claimKey,
-          userId: ctx.userId,
-          wave: finalWave,
-          score: finalScore,
-          gridSize: run.initial_grid_size,
-          status: "COMPLETED",
-          state: {
-            playerHealth: 0,
-            playerPosition: { col: 0, row: 0 },
-            inRunCurrency: 0,
-            activeUpgrades: {},
-            gridSize: run.initial_grid_size,
-          },
-          endedAt: new Date(),
-        }),
+        insertTowerDefenseRunForClaimCompletedRun(
+          ctx.drizzle,
+          claimKey,
+          ctx,
+          finalWave,
+          finalScore,
+          run,
+        ),
       ]);
 
       if (updateResult.rowsAffected === 0) {
@@ -576,10 +530,7 @@ export const towerDefenseRouter = createTRPCRouter({
         input?.isPlayer !== undefined
           ? eq(towerDefenseCharacter.isPlayer, input.isPlayer)
           : undefined;
-      return await ctx.drizzle.query.towerDefenseCharacter.findMany({
-        where: whereClause,
-        orderBy: [asc(towerDefenseCharacter.firstAppearWave)],
-      });
+      return await listTowerDefenseCharacterForGetCharacters(ctx.drizzle, whereClause);
     }),
 
   /**
@@ -589,9 +540,7 @@ export const towerDefenseRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a tower defense character" } })
     .input(idSchema)
     .query(async ({ ctx, input }) => {
-      return await ctx.drizzle.query.towerDefenseCharacter.findFirst({
-        where: eq(towerDefenseCharacter.id, input.id),
-      });
+      return await findTowerDefenseCharacterForGetCharacter(ctx.drizzle, input);
     }),
 
   /**
@@ -611,11 +560,10 @@ export const towerDefenseRouter = createTRPCRouter({
         input?.isPlayer !== undefined
           ? eq(towerDefenseCharacter.isPlayer, input.isPlayer)
           : undefined;
-      return await ctx.drizzle.query.towerDefenseCharacter.findMany({
-        columns: { id: true, name: true, isPlayer: true },
-        where: whereClause,
-        orderBy: [asc(towerDefenseCharacter.name)],
-      });
+      return await listTowerDefenseCharacterForGetAllCharacterNames(
+        ctx.drizzle,
+        whereClause,
+      );
     }),
 
   /**
@@ -626,10 +574,7 @@ export const towerDefenseRouter = createTRPCRouter({
     .input(z.object({ isPlayer: z.boolean().prefault(false) }))
     .output(baseServerResponse.extend({ id: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      });
+      const user = await findUserRoleById(ctx.drizzle, ctx.userId);
 
       if (!user || !canChangeContent(user.role)) {
         return errorResponse("Not allowed to create characters");
@@ -637,11 +582,12 @@ export const towerDefenseRouter = createTRPCRouter({
 
       const id = nanoid();
       const typeLabel = input.isPlayer ? "Player" : "Enemy";
-      await ctx.drizzle.insert(towerDefenseCharacter).values({
+      await insertTowerDefenseCharacterForCreateCharacter(
+        ctx.drizzle,
         id,
-        name: `New ${typeLabel} - ${id.slice(0, 6)}`,
-        isPlayer: input.isPlayer,
-      });
+        typeLabel,
+        input,
+      );
 
       return { success: true, message: `${typeLabel} created`, id };
     }),
@@ -659,30 +605,22 @@ export const towerDefenseRouter = createTRPCRouter({
     )
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      });
+      const user = await findUserRoleById(ctx.drizzle, ctx.userId);
 
       if (!user || !canChangeContent(user.role)) {
         return errorResponse("Not allowed to update characters");
       }
 
-      const existing = await ctx.drizzle.query.towerDefenseCharacter.findFirst({
-        where: eq(towerDefenseCharacter.id, input.id),
-      });
+      const existing = await findTowerDefenseCharacterForGetCharacter(
+        ctx.drizzle,
+        input,
+      );
 
       if (!existing) {
         return errorResponse("Character not found");
       }
 
-      await ctx.drizzle
-        .update(towerDefenseCharacter)
-        .set({
-          ...input.data,
-          updatedAt: new Date(),
-        })
-        .where(eq(towerDefenseCharacter.id, input.id));
+      await updateTowerDefenseCharacterForUpdateCharacter(ctx.drizzle, input);
 
       return { success: true, message: "Character updated" };
     }),
@@ -695,18 +633,13 @@ export const towerDefenseRouter = createTRPCRouter({
     .input(idSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      });
+      const user = await findUserRoleById(ctx.drizzle, ctx.userId);
 
       if (!user || !canChangeContent(user.role)) {
         return errorResponse("Not allowed to delete characters");
       }
 
-      await ctx.drizzle
-        .delete(towerDefenseCharacter)
-        .where(eq(towerDefenseCharacter.id, input.id));
+      await deleteTowerDefenseCharacterForDeleteCharacter(ctx.drizzle, input);
 
       return { success: true, message: "Character deleted" };
     }),
@@ -729,10 +662,7 @@ export const towerDefenseRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      });
+      const user = await findUserRoleById(ctx.drizzle, ctx.userId);
 
       if (!user || !canChangeContent(user.role)) {
         return errorResponse("Not allowed to process character assets");
@@ -886,13 +816,11 @@ export const towerDefenseRouter = createTRPCRouter({
         };
 
         // Save to database
-        await ctx.drizzle
-          .update(towerDefenseCharacter)
-          .set({
-            assetConfig,
-            updatedAt: new Date(),
-          })
-          .where(eq(towerDefenseCharacter.id, input.characterId));
+        await updateTowerDefenseCharacterAssets(
+          ctx.drizzle,
+          assetConfig,
+          input.characterId,
+        );
 
         return {
           success: true,
@@ -921,22 +849,17 @@ export const towerDefenseRouter = createTRPCRouter({
     )
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      });
+      const user = await findUserRoleById(ctx.drizzle, ctx.userId);
 
       if (!user || !canChangeContent(user.role)) {
         return errorResponse("Not allowed to update asset config");
       }
 
-      await ctx.drizzle
-        .update(towerDefenseCharacter)
-        .set({
-          assetConfig: input.assetConfig,
-          updatedAt: new Date(),
-        })
-        .where(eq(towerDefenseCharacter.id, input.characterId));
+      await updateTowerDefenseCharacterAssets(
+        ctx.drizzle,
+        input.assetConfig,
+        input.characterId,
+      );
 
       return { success: true, message: "Asset config updated" };
     }),
@@ -952,9 +875,7 @@ export const towerDefenseRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a tower defense upgrade by ID" } })
     .input(idSchema)
     .query(async ({ ctx, input }) => {
-      return await ctx.drizzle.query.towerDefenseUpgrade.findFirst({
-        where: eq(towerDefenseUpgrade.id, input.id),
-      });
+      return await findTowerDefenseUpgradeById(ctx.drizzle, input.id);
     }),
 
   /**
@@ -971,30 +892,19 @@ export const towerDefenseRouter = createTRPCRouter({
     )
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        columns: { role: true },
-      });
+      const user = await findUserRoleById(ctx.drizzle, ctx.userId);
 
       if (!user || !canChangeContent(user.role)) {
         return errorResponse("Not allowed to update upgrades");
       }
 
-      const existing = await ctx.drizzle.query.towerDefenseUpgrade.findFirst({
-        where: eq(towerDefenseUpgrade.id, input.id),
-      });
+      const existing = await findTowerDefenseUpgradeById(ctx.drizzle, input.id);
 
       if (!existing) {
         return errorResponse("Upgrade not found");
       }
 
-      await ctx.drizzle
-        .update(towerDefenseUpgrade)
-        .set({
-          ...input.data,
-          updatedAt: new Date(),
-        })
-        .where(eq(towerDefenseUpgrade.id, input.id));
+      await updateTowerDefenseUpgradeForUpdateUpgrade(ctx.drizzle, input);
 
       return { success: true, message: "Upgrade updated" };
     }),

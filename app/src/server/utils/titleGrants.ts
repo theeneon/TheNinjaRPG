@@ -1,5 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { title, userData, userTitle } from "@/drizzle/schema";
+import { insertUserTitleForGrant, updateUserDataForGrant } from "@/queries/title";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
@@ -19,34 +18,10 @@ export const grantTitles = async (
 ) => {
   if (!ids.length) return;
   const grant = async (database: DrizzleClient) => {
-    const owner = await database
-      .update(userData)
-      .set({
-        updatedAt: sql`GREATEST(CURRENT_TIMESTAMP(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-      })
-      .where(eq(userData.userId, userId));
+    const owner = await updateUserDataForGrant(database, userId);
     if (owner.rowsAffected === 0) return;
     // The PK preserves the first acquisition clock and effect snapshot on retries/concurrent grants.
-    await database
-      .insert(userTitle)
-      .select(
-        database
-          .select({
-            userId: sql<string>`${userId}`.as("userId"),
-            titleId: title.id,
-            effects: title.effects,
-            createdAt: sql<Date>`CURRENT_TIMESTAMP(3)`.as("createdAt"),
-          })
-          .from(title)
-          .where(
-            and(
-              inArray(title.id, ids),
-              eq(title.archived, false),
-              isNull(title.legacyOwnerId),
-            ),
-          ),
-      )
-      .onDuplicateKeyUpdate({ set: { userId: sql`${userTitle.userId}` } });
+    await insertUserTitleForGrant(database, userId, ids);
   };
   if (inTransaction) await grant(client);
   else

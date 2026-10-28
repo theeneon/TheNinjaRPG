@@ -1,17 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lt,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -23,14 +10,7 @@ import {
   FARM_WATER_EXPERIENCE,
   MAP_WAKE_ISLAND_SECTOR,
 } from "@/drizzle/constants";
-import {
-  farmExtraction,
-  farmPlot,
-  type Item,
-  item,
-  userData,
-  userItem,
-} from "@/drizzle/schema";
+import { type Item, userData } from "@/drizzle/schema";
 import { getActivityBonuses } from "@/libs/activityBonuses";
 import { getTotalItemQuantity } from "@/libs/crafting";
 import { getWorldCycleState } from "@/libs/dayNight";
@@ -64,14 +44,53 @@ import {
 } from "@/libs/quest";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
-import { fetchMasterySources, fetchUserSkills } from "@/routers/skillTree";
+import {
+  deleteFarmExtractionForExtractSeeds,
+  deleteFarmExtractionForPayOutExtractions,
+  fetchFarmingQuestState,
+  fetchFarmPlots,
+  fetchFarmPlotsWithItems,
+  fetchFarmPlotWithItems,
+  fetchFarmSeedAndYield,
+  fetchFarmShopItems,
+  fetchUserExtractions,
+  findFarmExtractionForExtractSeeds,
+  findFarmPlotForPlantSeed,
+  findUserItemForAwardItemToUser,
+  insertFarmExtractionForExtractSeeds,
+  insertFarmPlotForBuyShopItem,
+  insertFarmPlotForEnsureFarmPlots,
+  listFarmPlotForPlantAllEmpty,
+  listFarmPlotForWaterAll,
+  listItemForBuildFarmState,
+  rollbackBulkPlant,
+  updateFarmExtractionForPayOutExtractions,
+  updateFarmExtractionForPayOutExtractions2,
+  updateFarmExtractionForPayOutExtractions3,
+  updateFarmPlotForApplyFertilizer,
+  updateFarmPlotForApplyFertilizer2,
+  updateFarmPlotForBuildFarmState,
+  updateFarmPlotForFertilizeAll,
+  updateFarmPlotForHarvestAll,
+  updateFarmPlotForHarvestPlot,
+  updateFarmPlotForPlantAllEmpty,
+  updateFarmPlotForPlantSeed,
+  updateFarmPlotForPlantSeed2,
+  updateFarmPlotForRollbackBulkFertilizer,
+  updateFarmPlotForWaterAll,
+  updateFarmPlotForWaterPlot,
+  updateUserDataForAwardFarmingProgress,
+  updateUserDataForBuyShopItem,
+  updateUserDataForBuyShopItem2,
+  updateUserDataForBuyShopItem3,
+  updateUserDataForSellCrop,
+  updateUserItemForAwardItemToUser,
+} from "@/queries/farming";
+import { fetchItem, insertUserItems, listItemsByIds } from "@/queries/item";
+import { fetchMasterySources, fetchUserSkills } from "@/queries/skillTree";
 import { fetchUserItems } from "@/server/api/routers/item";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import {
-  completedQuestHistoryRelation,
-  userQuestHistoryRelation,
-} from "@/server/utils/achievementObjectives";
 import {
   claimUserSnapshot,
   refundUserItemQuantityAtomically,
@@ -113,9 +132,7 @@ export const farmingRouter = createTRPCRouter({
       ] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUserItems(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.farmPlot.findFirst({
-          where: and(eq(farmPlot.id, input.plotId), eq(farmPlot.userId, ctx.userId)),
-        }),
+        findFarmPlotForPlantSeed(ctx.drizzle, input, ctx),
         fetchFarmSeedAndYield(ctx.drizzle, input.seedItemId),
         fetchFarmingQuestState(ctx.drizzle, ctx.userId),
         fetchMasterySources(ctx.drizzle, ctx.userId),
@@ -176,23 +193,14 @@ export const farmingRouter = createTRPCRouter({
       const finishAt = new Date(now.getTime() + growTimeSeconds * 1000);
       const baseXpGain = getFarmPlantExperience(seedItem);
 
-      const plantResult = await ctx.drizzle
-        .update(farmPlot)
-        .set({
-          seedItemId: input.seedItemId,
-          plantedAt: now,
-          finishAt,
-          lastWateredAt: null,
-          fertilizerApplied: false,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(farmPlot.id, plot.id),
-            eq(farmPlot.userId, ctx.userId),
-            isNull(farmPlot.seedItemId),
-          ),
-        );
+      const plantResult = await updateFarmPlotForPlantSeed(
+        ctx.drizzle,
+        input,
+        now,
+        finishAt,
+        plot,
+        ctx,
+      );
       if (plantResult.rowsAffected !== 1) {
         return errorResponse("Could not plant — please try again");
       }
@@ -205,23 +213,7 @@ export const farmingRouter = createTRPCRouter({
         nextQuantity: seedStack.quantity - 1,
       });
       if (!consumed) {
-        await ctx.drizzle
-          .update(farmPlot)
-          .set({
-            seedItemId: null,
-            plantedAt: null,
-            finishAt: null,
-            lastWateredAt: null,
-            fertilizerApplied: false,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(farmPlot.id, plot.id),
-              eq(farmPlot.userId, ctx.userId),
-              eq(farmPlot.seedItemId, input.seedItemId),
-            ),
-          );
+        await updateFarmPlotForPlantSeed2(ctx.drizzle, plot, ctx, input);
         return errorResponse("Could not consume seed — please try again");
       }
 
@@ -284,23 +276,18 @@ export const farmingRouter = createTRPCRouter({
 
       const now = new Date();
       const newFinishAt = applyWaterReduction(plot.finishAt, now);
-      const waterResult = await ctx.drizzle
-        .update(farmPlot)
-        .set({ finishAt: newFinishAt, lastWateredAt: now, updatedAt: now })
-        .where(
-          and(
-            eq(farmPlot.id, plot.id),
-            eq(farmPlot.userId, ctx.userId),
-            // Pin the crop and the timer this reduction was derived from. Without them a
-            // request that read an older finishAt can overwrite a newer one, and a plot
-            // harvested in between (which resets lastWateredAt to null) still matches.
-            eq(farmPlot.seedItemId, plot.seedItemId),
-            eq(farmPlot.finishAt, plot.finishAt),
-            plot.lastWateredAt
-              ? eq(farmPlot.lastWateredAt, plot.lastWateredAt)
-              : isNull(farmPlot.lastWateredAt),
-          ),
-        );
+      const waterResult = await updateFarmPlotForWaterPlot(
+        ctx.drizzle,
+        newFinishAt,
+        now,
+        {
+          id: plot.id,
+          seedItemId: plot.seedItemId,
+          finishAt: plot.finishAt,
+          lastWateredAt: plot.lastWateredAt,
+        },
+        ctx,
+      );
       if (waterResult.rowsAffected !== 1) {
         return errorResponse("Could not water — please try again");
       }
@@ -384,18 +371,13 @@ export const farmingRouter = createTRPCRouter({
       );
       const baseXpGain = getFertilizerExperience(fertilizerStack.item);
 
-      const fertilizeResult = await ctx.drizzle
-        .update(farmPlot)
-        .set({ finishAt: newFinishAt, fertilizerApplied: true, updatedAt: now })
-        .where(
-          and(
-            eq(farmPlot.id, plot.id),
-            eq(farmPlot.userId, ctx.userId),
-            eq(farmPlot.seedItemId, plot.seedItemId),
-            eq(farmPlot.finishAt, plot.finishAt),
-            eq(farmPlot.fertilizerApplied, false),
-          ),
-        );
+      const fertilizeResult = await updateFarmPlotForApplyFertilizer(
+        ctx.drizzle,
+        newFinishAt,
+        now,
+        { id: plot.id, seedItemId: plot.seedItemId, finishAt: plot.finishAt },
+        ctx,
+      );
       if (fertilizeResult.rowsAffected !== 1) {
         return errorResponse("Could not apply fertilizer — please try again");
       }
@@ -408,21 +390,11 @@ export const farmingRouter = createTRPCRouter({
         nextQuantity: fertilizerStack.quantity - 1,
       });
       if (!consumed) {
-        await ctx.drizzle
-          .update(farmPlot)
-          .set({
-            finishAt: plot.finishAt,
-            fertilizerApplied: false,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(farmPlot.id, plot.id),
-              eq(farmPlot.userId, ctx.userId),
-              eq(farmPlot.seedItemId, plot.seedItemId),
-              eq(farmPlot.fertilizerApplied, true),
-            ),
-          );
+        await updateFarmPlotForApplyFertilizer2(
+          ctx.drizzle,
+          { finishAt: plot.finishAt, id: plot.id, seedItemId: plot.seedItemId },
+          ctx,
+        );
         return errorResponse("Could not consume fertilizer — please try again");
       }
 
@@ -484,23 +456,12 @@ export const farmingRouter = createTRPCRouter({
       const baseXpGain = getFarmHarvestExperience(plot.yieldItem);
       const now = new Date();
 
-      const harvestResult = await ctx.drizzle
-        .update(farmPlot)
-        .set({
-          seedItemId: null,
-          plantedAt: null,
-          finishAt: null,
-          lastWateredAt: null,
-          fertilizerApplied: false,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(farmPlot.id, plot.id),
-            eq(farmPlot.userId, ctx.userId),
-            sql`${farmPlot.finishAt} <= ${now}`,
-          ),
-        );
+      const harvestResult = await updateFarmPlotForHarvestPlot(
+        ctx.drizzle,
+        now,
+        plot,
+        ctx,
+      );
       if (harvestResult.rowsAffected !== 1) {
         return errorResponse("Could not harvest — please try again");
       }
@@ -574,10 +535,8 @@ export const farmingRouter = createTRPCRouter({
         await Promise.all([
           fetchUser(ctx.drizzle, ctx.userId),
           fetchUserItems(ctx.drizzle, ctx.userId),
-          ctx.drizzle.query.item.findFirst({ where: eq(item.id, input.seedItemId) }),
-          ctx.drizzle.query.farmPlot.findMany({
-            where: eq(farmPlot.userId, ctx.userId),
-          }),
+          fetchItem(ctx.drizzle, input.seedItemId),
+          listFarmPlotForPlantAllEmpty(ctx.drizzle, ctx),
           fetchFarmingQuestState(ctx.drizzle, ctx.userId),
           fetchMasterySources(ctx.drizzle, ctx.userId),
         ]);
@@ -633,23 +592,14 @@ export const farmingRouter = createTRPCRouter({
       );
       const finishAt = new Date(now.getTime() + growTimeSeconds * 1000);
       const emptyPlotIds = emptyPlots.map((plot) => plot.id);
-      const plantResult = await ctx.drizzle
-        .update(farmPlot)
-        .set({
-          seedItemId: seedItem.id,
-          plantedAt: now,
-          finishAt,
-          lastWateredAt: null,
-          fertilizerApplied: false,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(farmPlot.userId, ctx.userId),
-            inArray(farmPlot.id, emptyPlotIds),
-            isNull(farmPlot.seedItemId),
-          ),
-        );
+      const plantResult = await updateFarmPlotForPlantAllEmpty(
+        ctx.drizzle,
+        seedItem,
+        now,
+        finishAt,
+        ctx,
+        emptyPlotIds,
+      );
       if (plantResult.rowsAffected !== emptyPlots.length) {
         await rollbackBulkPlant(
           ctx.drizzle,
@@ -705,10 +655,7 @@ export const farmingRouter = createTRPCRouter({
     .mutation(async ({ ctx }) => {
       const [user, plots, questState] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.farmPlot.findMany({
-          where: eq(farmPlot.userId, ctx.userId),
-          with: { seedItem: true },
-        }),
+        listFarmPlotForWaterAll(ctx.drizzle, ctx),
         fetchFarmingQuestState(ctx.drizzle, ctx.userId),
       ]);
       const guard = guardFarmingMutation(user);
@@ -730,19 +677,13 @@ export const farmingRouter = createTRPCRouter({
         waterable.map(async (plot) => {
           if (!plot.finishAt) return false;
           const newFinishAt = applyWaterReduction(plot.finishAt, now);
-          const result = await ctx.drizzle
-            .update(farmPlot)
-            .set({ finishAt: newFinishAt, lastWateredAt: now, updatedAt: now })
-            .where(
-              and(
-                eq(farmPlot.id, plot.id),
-                eq(farmPlot.userId, ctx.userId),
-                eq(farmPlot.finishAt, plot.finishAt),
-                plot.lastWateredAt
-                  ? eq(farmPlot.lastWateredAt, plot.lastWateredAt)
-                  : isNull(farmPlot.lastWateredAt),
-              ),
-            );
+          const result = await updateFarmPlotForWaterAll(
+            ctx.drizzle,
+            newFinishAt,
+            now,
+            { id: plot.id, finishAt: plot.finishAt, lastWateredAt: plot.lastWateredAt },
+            ctx,
+          );
           return result.rowsAffected === 1;
         }),
       );
@@ -777,9 +718,7 @@ export const farmingRouter = createTRPCRouter({
       const [user, userItems, plots, questState, userSkills] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUserItems(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.farmPlot.findMany({
-          where: eq(farmPlot.userId, ctx.userId),
-        }),
+        listFarmPlotForPlantAllEmpty(ctx.drizzle, ctx),
         fetchFarmingQuestState(ctx.drizzle, ctx.userId),
         fetchUserSkills(ctx.drizzle, ctx.userId),
       ]);
@@ -834,17 +773,13 @@ export const farmingRouter = createTRPCRouter({
             fertilizerStack.item.farmTimeReductionSeconds,
             now,
           );
-          const result = await ctx.drizzle
-            .update(farmPlot)
-            .set({ finishAt: newFinishAt, fertilizerApplied: true, updatedAt: now })
-            .where(
-              and(
-                eq(farmPlot.id, plot.id),
-                eq(farmPlot.userId, ctx.userId),
-                eq(farmPlot.finishAt, plot.finishAt),
-                eq(farmPlot.fertilizerApplied, false),
-              ),
-            );
+          const result = await updateFarmPlotForFertilizeAll(
+            ctx.drizzle,
+            newFinishAt,
+            now,
+            { id: plot.id, finishAt: plot.finishAt },
+            ctx,
+          );
           return result.rowsAffected === 1;
         }),
       );
@@ -926,23 +861,12 @@ export const farmingRouter = createTRPCRouter({
       if (inventoryGuard) return inventoryGuard;
 
       const readyPlotIds = readyPlots.map((plot) => plot.id);
-      const harvestResult = await ctx.drizzle
-        .update(farmPlot)
-        .set({
-          seedItemId: null,
-          plantedAt: null,
-          finishAt: null,
-          lastWateredAt: null,
-          fertilizerApplied: false,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(farmPlot.userId, ctx.userId),
-            inArray(farmPlot.id, readyPlotIds),
-            sql`${farmPlot.finishAt} <= ${now}`,
-          ),
-        );
+      const harvestResult = await updateFarmPlotForHarvestAll(
+        ctx.drizzle,
+        now,
+        ctx,
+        readyPlotIds,
+      );
       if (harvestResult.rowsAffected !== readyPlots.length) {
         return errorResponse("Could not harvest all — please try again");
       }
@@ -1047,10 +971,11 @@ export const farmingRouter = createTRPCRouter({
       });
       if (!consumed) return errorResponse("Could not sell crop — please try again");
 
-      const currencyResult = await ctx.drizzle
-        .update(userData)
-        .set({ farmCurrency: sql`${userData.farmCurrency} + ${totalValue}` })
-        .where(eq(userData.userId, ctx.userId));
+      const currencyResult = await updateUserDataForSellCrop(
+        ctx.drizzle,
+        totalValue,
+        ctx,
+      );
 
       if (currencyResult.rowsAffected !== 1) {
         return errorResponse("Could not grant farm currency");
@@ -1106,33 +1031,18 @@ export const farmingRouter = createTRPCRouter({
           return errorResponse("Maximum farm size reached");
         }
 
-        const currencyResult = await ctx.drizzle
-          .update(userData)
-          .set({
-            farmCurrency: sql`${userData.farmCurrency} - ${shopEntry.cost}`,
-            farmPlotsPurchased: sql`${userData.farmPlotsPurchased} + 1`,
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              gte(userData.farmCurrency, shopEntry.cost),
-              eq(userData.farmPlotsPurchased, user.farmPlotsPurchased),
-              lt(userData.farmPlotsPurchased, maxPurchased),
-              sql`${FARM_STARTING_PLOTS} + ${userData.farmPlotsPurchased} + 1 <= ${FARM_MAX_PLOTS}`,
-            ),
-          );
+        const currencyResult = await updateUserDataForBuyShopItem(
+          ctx.drizzle,
+          shopEntry,
+          ctx,
+          user,
+          maxPurchased,
+        );
         if (currencyResult.rowsAffected !== 1) {
           return errorResponse("Could not purchase plot — please try again");
         }
 
-        await ctx.drizzle
-          .insert(farmPlot)
-          .values({
-            id: nanoid(),
-            userId: ctx.userId,
-            slotIndex: newTotal - 1,
-          })
-          .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+        await insertFarmPlotForBuyShopItem(ctx.drizzle, ctx, newTotal);
 
         return {
           success: true,
@@ -1149,20 +1059,13 @@ export const farmingRouter = createTRPCRouter({
           return errorResponse("Extractor limit reached for your level");
         }
 
-        const currencyResult = await ctx.drizzle
-          .update(userData)
-          .set({
-            farmCurrency: sql`${userData.farmCurrency} - ${shopEntry.cost}`,
-            farmExtractorsOwned: sql`${userData.farmExtractorsOwned} + 1`,
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              gte(userData.farmCurrency, shopEntry.cost),
-              eq(userData.farmExtractorsOwned, user.farmExtractorsOwned),
-              lt(userData.farmExtractorsOwned, maxExtractors),
-            ),
-          );
+        const currencyResult = await updateUserDataForBuyShopItem2(
+          ctx.drizzle,
+          shopEntry,
+          ctx,
+          user,
+          maxExtractors,
+        );
         if (currencyResult.rowsAffected !== 1) {
           return errorResponse("Could not purchase extractor — please try again");
         }
@@ -1186,12 +1089,11 @@ export const farmingRouter = createTRPCRouter({
       );
       if (inventoryGuard) return inventoryGuard;
 
-      const currencyResult = await ctx.drizzle
-        .update(userData)
-        .set({ farmCurrency: sql`${userData.farmCurrency} - ${totalCost}` })
-        .where(
-          and(eq(userData.userId, ctx.userId), gte(userData.farmCurrency, totalCost)),
-        );
+      const currencyResult = await updateUserDataForBuyShopItem3(
+        ctx.drizzle,
+        totalCost,
+        ctx,
+      );
       if (currencyResult.rowsAffected !== 1) {
         return errorResponse("Not enough farm coins");
       }
@@ -1279,9 +1181,10 @@ export const farmingRouter = createTRPCRouter({
       }
 
       const seedsToGrant = cropStack.item.farmExtractSeedCount * input.quantity;
-      const seedItem = await ctx.drizzle.query.item.findFirst({
-        where: eq(item.id, cropStack.item.farmExtractSeedItemId),
-      });
+      const seedItem = await fetchItem(
+        ctx.drizzle,
+        cropStack.item.farmExtractSeedItemId,
+      );
       if (!seedItem) return errorResponse("Seed item not found");
 
       // The other extractors' seeds land in this same inventory. Sizing this job against
@@ -1311,27 +1214,23 @@ export const farmingRouter = createTRPCRouter({
       const extractionId = nanoid();
       const extractionSeconds = getSeedExtractionDurationSeconds(input.quantity);
       const finishAt = new Date(now.getTime() + extractionSeconds * 1000);
-      await ctx.drizzle
-        .insert(farmExtraction)
-        .values({
-          id: extractionId,
-          userId: ctx.userId,
-          extractorSlot: input.extractorSlot,
-          cropItemId: cropStack.itemId,
-          seedItemId: seedItem.id,
-          cropQuantity: input.quantity,
-          seedQuantity: seedsToGrant,
-          startedAt: now,
-          finishAt,
-        })
-        .onDuplicateKeyUpdate({ set: { id: sql`id` } });
-      const extractionCreated = await ctx.drizzle.query.farmExtraction.findFirst({
-        where: and(
-          eq(farmExtraction.id, extractionId),
-          eq(farmExtraction.userId, ctx.userId),
-          eq(farmExtraction.extractorSlot, input.extractorSlot),
-        ),
-      });
+      await insertFarmExtractionForExtractSeeds(
+        ctx.drizzle,
+        extractionId,
+        ctx,
+        input,
+        cropStack,
+        seedItem,
+        seedsToGrant,
+        now,
+        finishAt,
+      );
+      const extractionCreated = await findFarmExtractionForExtractSeeds(
+        ctx.drizzle,
+        extractionId,
+        ctx,
+        input,
+      );
       if (!extractionCreated) {
         return errorResponse(
           `Seed extractor ${input.extractorSlot + 1} is already processing crops`,
@@ -1346,14 +1245,7 @@ export const farmingRouter = createTRPCRouter({
         nextQuantity: cropStack.quantity - input.quantity,
       });
       if (!consumed) {
-        await ctx.drizzle
-          .delete(farmExtraction)
-          .where(
-            and(
-              eq(farmExtraction.id, extractionId),
-              eq(farmExtraction.userId, ctx.userId),
-            ),
-          );
+        await deleteFarmExtractionForExtractSeeds(ctx.drizzle, extractionId, ctx);
         return errorResponse("Could not consume crop — please try again");
       }
 
@@ -1374,44 +1266,6 @@ const guardFarmingMutation = (user: Awaited<ReturnType<typeof fetchUser>>) => {
     return errorResponse("Cannot farm on Wake Island");
   }
   return null;
-};
-
-const fetchFarmSeedAndYield = async (client: DrizzleClient, seedItemId: string) => {
-  const seedItem = await client.query.item.findFirst({
-    where: eq(item.id, seedItemId),
-    with: { farmYieldItem: true },
-  });
-  return { seedItem, yieldItem: seedItem?.farmYieldItem ?? null };
-};
-
-const fetchFarmPlotWithItems = async (
-  client: DrizzleClient,
-  userId: string,
-  plotId: string,
-) => {
-  const plot = await client.query.farmPlot.findFirst({
-    where: and(eq(farmPlot.id, plotId), eq(farmPlot.userId, userId)),
-    with: { seedItem: { with: { farmYieldItem: true } } },
-  });
-  return plot
-    ? {
-        ...plot,
-        seedItem: plot.seedItem ?? null,
-        yieldItem: plot.seedItem?.farmYieldItem ?? null,
-      }
-    : null;
-};
-
-const fetchFarmPlotsWithItems = async (client: DrizzleClient, userId: string) => {
-  const plots = await client.query.farmPlot.findMany({
-    where: eq(farmPlot.userId, userId),
-    with: { seedItem: { with: { farmYieldItem: true } } },
-  });
-  return plots.map((plot) => ({
-    ...plot,
-    seedItem: plot.seedItem ?? null,
-    yieldItem: plot.seedItem?.farmYieldItem ?? null,
-  }));
 };
 
 const getAvailableFarmItemStacks = (
@@ -1474,33 +1328,6 @@ const consumeFarmItemQuantity = async (
   return false;
 };
 
-const rollbackBulkPlant = async (
-  client: DrizzleClient,
-  userId: string,
-  plotIds: string[],
-  seedItemId: string,
-  plantedAt: Date,
-) => {
-  await client
-    .update(farmPlot)
-    .set({
-      seedItemId: null,
-      plantedAt: null,
-      finishAt: null,
-      lastWateredAt: null,
-      fertilizerApplied: false,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(farmPlot.userId, userId),
-        inArray(farmPlot.id, plotIds),
-        eq(farmPlot.seedItemId, seedItemId),
-        eq(farmPlot.plantedAt, plantedAt),
-      ),
-    );
-};
-
 const rollbackBulkFertilizer = async (
   client: DrizzleClient,
   userId: string,
@@ -1510,21 +1337,12 @@ const rollbackBulkFertilizer = async (
   await Promise.all(
     plots.map((plot) =>
       plot.finishAt
-        ? client
-            .update(farmPlot)
-            .set({
-              finishAt: plot.finishAt,
-              fertilizerApplied: false,
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(farmPlot.id, plot.id),
-                eq(farmPlot.userId, userId),
-                eq(farmPlot.fertilizerApplied, true),
-                eq(farmPlot.updatedAt, updatedAt),
-              ),
-            )
+        ? updateFarmPlotForRollbackBulkFertilizer(
+            client,
+            { finishAt: plot.finishAt, id: plot.id },
+            userId,
+            updatedAt,
+          )
         : Promise.resolve(),
     ),
   );
@@ -1537,7 +1355,7 @@ const resolveShopEntry = async (
 ) => {
   if (type === "SEED" || type === "FERTILIZER") {
     if (!itemId) return null;
-    const shopItem = await client.query.item.findFirst({ where: eq(item.id, itemId) });
+    const shopItem = await fetchItem(client, itemId);
     if (!shopItem) return null;
     if (type === "SEED" && !shopItem.isFarmSeed) return null;
     if (type === "FERTILIZER" && !shopItem.isFarmFertilizer) return null;
@@ -1565,28 +1383,6 @@ const resolveShopEntry = async (
 
   const entry = FARM_SHOP_ENTRIES.find((e) => e.type === type);
   return entry ?? null;
-};
-
-const fetchFarmShopItems = async (client: DrizzleClient) => {
-  return await Promise.all([
-    client.query.item.findMany({
-      where: and(
-        eq(item.isFarmSeed, true),
-        eq(item.inShop, false),
-        eq(item.hidden, false),
-        gt(item.farmSellValue, 0),
-      ),
-      orderBy: [asc(item.farmMinLevel), asc(item.name)],
-    }),
-    client.query.item.findMany({
-      where: and(
-        eq(item.isFarmFertilizer, true),
-        eq(item.hidden, false),
-        gt(item.farmSellValue, 0),
-      ),
-      orderBy: asc(item.name),
-    }),
-  ]);
 };
 
 const buildShopEntries = (
@@ -1723,11 +1519,7 @@ export const buildFarmState = async (
     getFarmCollectionState(client, userId),
     // The small configured yield catalog is independent of inventory and plot reads.
     // Include hidden/non-seed references too: owned seeds and planted crops still need them.
-    client.query.item.findMany({
-      where: isNotNull(item.farmYieldItemId),
-      columns: { id: true },
-      with: { farmYieldItem: true },
-    }),
+    listItemForBuildFarmState(client),
     // Settlement can grant seeds; the response must include those newly delivered stacks.
     extractionsPromise.then(() => fetchUserItems(client, userId)),
     fetchMasterySources(client, userId),
@@ -1756,9 +1548,7 @@ export const buildFarmState = async (
     ),
   ];
   if (missingYieldIds.length > 0) {
-    const missingYieldItems = await client.query.item.findMany({
-      where: inArray(item.id, missingYieldIds),
-    });
+    const missingYieldItems = await listItemsByIds(client, missingYieldIds);
     for (const yieldItem of missingYieldItems) {
       yieldItemsById.set(yieldItem.id, yieldItem);
     }
@@ -1782,23 +1572,13 @@ export const buildFarmState = async (
     (
       await Promise.all(
         orphanedPlotRefs.map(async ({ plotId, seedItemId }) => {
-          const result = await client
-            .update(farmPlot)
-            .set({
-              seedItemId: null,
-              plantedAt: null,
-              finishAt: null,
-              lastWateredAt: null,
-              fertilizerApplied: false,
-              updatedAt: now,
-            })
-            .where(
-              and(
-                eq(farmPlot.id, plotId),
-                eq(farmPlot.userId, userId),
-                eq(farmPlot.seedItemId, seedItemId),
-              ),
-            );
+          const result = await updateFarmPlotForBuildFarmState(
+            client,
+            now,
+            plotId,
+            userId,
+            seedItemId,
+          );
           return result.rowsAffected === 1 ? plotId : null;
         }),
       )
@@ -1983,13 +1763,6 @@ const settleFarmExtractions = async (
     }));
 };
 
-const fetchUserExtractions = async (client: DrizzleClient, userId: string) =>
-  await client.query.farmExtraction.findMany({
-    where: eq(farmExtraction.userId, userId),
-    orderBy: (extraction, { asc }) => [asc(extraction.extractorSlot)],
-    with: { cropItem: true, seedItem: true },
-  });
-
 /** How long a settlement claim is honoured before another request may take it over. */
 const FARM_EXTRACTION_CLAIM_TIMEOUT_SECONDS = 60;
 
@@ -2034,21 +1807,13 @@ const payOutExtractions = async (
   const claimed = (
     await Promise.all(
       payable.map(async (extraction) => {
-        const claim = await client
-          .update(farmExtraction)
-          .set({ claimedAt: now, updatedAt: now })
-          .where(
-            and(
-              eq(farmExtraction.id, extraction.id),
-              eq(farmExtraction.userId, userId),
-              lte(farmExtraction.finishAt, now),
-              isNull(farmExtraction.settledAt),
-              or(
-                isNull(farmExtraction.claimedAt),
-                lt(farmExtraction.claimedAt, staleClaim),
-              ),
-            ),
-          );
+        const claim = await updateFarmExtractionForPayOutExtractions(
+          client,
+          now,
+          extraction,
+          userId,
+          staleClaim,
+        );
         return Number(claim.rowsAffected ?? 0) === 1 ? extraction : null;
       }),
     )
@@ -2128,20 +1893,10 @@ const payOutExtractions = async (
   // payout: if it lands and the delete then fails, the leftover row is settled and gets
   // cleaned up rather than paid a second time.
   if (grantedIds.length > 0) {
-    await client
-      .update(farmExtraction)
-      .set({ settledAt: now })
-      .where(
-        and(eq(farmExtraction.userId, userId), inArray(farmExtraction.id, grantedIds)),
-      );
+    await updateFarmExtractionForPayOutExtractions2(client, now, userId, grantedIds);
   }
   if (releasedIds.length > 0) {
-    await client
-      .update(farmExtraction)
-      .set({ claimedAt: null })
-      .where(
-        and(eq(farmExtraction.userId, userId), inArray(farmExtraction.id, releasedIds)),
-      );
+    await updateFarmExtractionForPayOutExtractions3(client, userId, releasedIds);
   }
 
   const doneIds = [...alreadySettledIds, ...emptyIds, ...grantedIds];
@@ -2149,22 +1904,10 @@ const payOutExtractions = async (
     // Cleanup only. A failure here leaves rows that the next settlement removes, so it must
     // not fail the read that triggered it.
     try {
-      await client
-        .delete(farmExtraction)
-        .where(
-          and(eq(farmExtraction.userId, userId), inArray(farmExtraction.id, doneIds)),
-        );
+      await deleteFarmExtractionForPayOutExtractions(client, userId, doneIds);
     } catch {}
   }
   return new Set(doneIds);
-};
-
-const fetchFarmPlots = async (client: DrizzleClient, userId: string) => {
-  return await client.query.farmPlot.findMany({
-    where: eq(farmPlot.userId, userId),
-    orderBy: (plot, { asc }) => [asc(plot.slotIndex)],
-    with: { seedItem: true },
-  });
 };
 
 export const ensureFarmPlots = async (
@@ -2186,16 +1929,9 @@ export const ensureFarmPlots = async (
     }
   }
   if (inserts.length > 0) {
-    await client
-      .insert(farmPlot)
-      .values(inserts)
-      .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+    await insertFarmPlotForEnsureFarmPlots(client, inserts);
 
-    return await client.query.farmPlot.findMany({
-      where: eq(farmPlot.userId, userId),
-      orderBy: (plot, { asc }) => [asc(plot.slotIndex)],
-      with: { seedItem: true },
-    });
+    return await fetchFarmPlots(client, userId);
   }
 
   return existing;
@@ -2341,27 +2077,18 @@ const awardItemToUser = async (
       const space = Math.max(0, stackSize - quantityOnRecord);
       if (space <= 0) break;
       const toAdd = Math.min(remaining, space);
-      const fillResult = await client
-        .update(userItem)
-        .set({
-          quantity: sql`${userItem.quantity} + ${toAdd}`,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(userItem.id, existing.id),
-            eq(userItem.quantity, quantityOnRecord),
-            sql`${userItem.quantity} + ${toAdd} <= ${stackSize}`,
-          ),
-        );
+      const fillResult = await updateUserItemForAwardItemToUser(
+        client,
+        toAdd,
+        existing,
+        quantityOnRecord,
+        stackSize,
+      );
       if (fillResult.rowsAffected === 1) {
         remaining -= toAdd;
         break;
       }
-      const fresh = await client.query.userItem.findFirst({
-        where: eq(userItem.id, existing.id),
-        columns: { quantity: true },
-      });
+      const fresh = await findUserItemForAwardItemToUser(client, existing);
       quantityOnRecord = fresh?.quantity;
     }
   }
@@ -2379,7 +2106,7 @@ const awardItemToUser = async (
     remaining -= qty;
   }
   if (inserts.length > 0) {
-    await client.insert(userItem).values(inserts);
+    await insertUserItems(client, inserts);
   }
   return true;
 };
@@ -2389,21 +2116,6 @@ type FarmingQuestTask =
   | "plants_watered"
   | "plants_fertilized"
   | "plants_harvested";
-
-/**
- * Thin quest-state fetch for farming objective emits. This keeps the tracker
- * snapshot internally consistent without pulling the full user relation graph.
- */
-const fetchFarmingQuestState = async (client: DrizzleClient, userId: string) => {
-  return await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    columns: { userId: true, questData: true, updatedAt: true },
-    with: {
-      userQuests: userQuestHistoryRelation,
-      completedQuests: completedQuestHistoryRelation,
-    },
-  });
-};
 
 /** Only the claim's own unchanged quest snapshot may inherit its new CAS timestamp. */
 const farmingQuestStateAfterClaim = (
@@ -2523,10 +2235,7 @@ const awardFarmingProgress = async (
 
   // Nothing but XP to persist: the SQL increment is already conflict-free.
   if (!first.advancesObjective) {
-    const result = await client
-      .update(userData)
-      .set({ farmingExperience: sql`${userData.farmingExperience} + ${xpGain}` })
-      .where(eq(userData.userId, user.userId));
+    const result = await updateUserDataForAwardFarmingProgress(client, xpGain, user);
     return Number(result.rowsAffected ?? 0) >= 1 ? xpGain : null;
   }
 
@@ -2543,10 +2252,11 @@ const awardFarmingProgress = async (
       if (!update.advancesObjective) {
         // Another action already satisfied every objective this one would have advanced;
         // only the XP is still outstanding.
-        const result = await client
-          .update(userData)
-          .set({ farmingExperience: sql`${userData.farmingExperience} + ${xpGain}` })
-          .where(eq(userData.userId, user.userId));
+        const result = await updateUserDataForAwardFarmingProgress(
+          client,
+          xpGain,
+          user,
+        );
         return Number(result.rowsAffected ?? 0) >= 1 ? xpGain : null;
       }
     }

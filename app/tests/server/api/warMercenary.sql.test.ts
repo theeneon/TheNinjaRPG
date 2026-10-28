@@ -1,3 +1,4 @@
+import { fetchBattleEssentials } from "@/queries/combat";
 import { settleObjectiveWarCombat } from "@/libs/combat/objectiveWar";
 import type { CompleteBattle, CombatQueryUser, CombatResult } from "@/libs/combat/types";
 import { SimpleObjective } from "@/validators/objectives";
@@ -10,7 +11,7 @@ import { updateWars } from "@/libs/combat/database";
 import { calcBattleResult, getBattleTeamWars } from "@/libs/combat/util";
 import { getWarSide } from "@/libs/objectiveWar";
 import { Pusher } from "@/libs/pusher";
-import { combatRouter, fetchBattleEssentials, processUsersForBattle } from "@/server/api/routers/combat";
+import { combatRouter, processUsersForBattle } from "@/server/api/routers/combat";
 import { shrineRouter } from "@/server/api/routers/shrine";
 import { travelRouter } from "@/server/api/routers/travel";
 import { fetchUpdatedUser, type UserWithRelations } from "@/server/api/routers/profile";

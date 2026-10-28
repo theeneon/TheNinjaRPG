@@ -1,7 +1,14 @@
-import { and, desc, eq, gt } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import { z } from "zod";
-import { damageSimulation } from "@/drizzle/schema";
+import {
+  deleteDamageSimulationForCreateDamageSimulation,
+  deleteDamageSimulationForDeleteDamageSimulation,
+  findDamageSimulationById,
+  insertDamageSimulationForCreateDamageSimulation,
+  listDamageSimulationForCreateDamageSimulation,
+  listDamageSimulationForGetDamageSimulations,
+  updateDamageSimulationForUpdateDamageSimulation,
+  updateDamageSimulationForUpdateDamageSimulation2,
+} from "@/queries/simulator";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -9,18 +16,15 @@ import {
   publicProcedure,
   serverError,
 } from "@/server/api/trpc";
+import type { DrizzleClient } from "@/server/db";
 import { damageSimulationStateSchema } from "@/validators/combat";
 import { idSchema } from "@/validators/misc";
-import type { DrizzleClient } from "../../db";
 
 export const simulatorRouter = createTRPCRouter({
   getDamageSimulations: protectedProcedure
     .meta({ mcp: { description: "Get user's damage simulations" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.damageSimulation.findMany({
-        where: eq(damageSimulation.userId, ctx.userId),
-        orderBy: [desc(damageSimulation.createdAt)],
-      });
+      return await listDamageSimulationForGetDamageSimulations(ctx.drizzle, ctx);
     }),
   getDamageSimulation: publicProcedure
     .meta({ mcp: { description: "Get a specific damage simulation" } })
@@ -35,28 +39,16 @@ export const simulatorRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const maxEntries = 20;
       const [current] = await Promise.all([
-        ctx.drizzle.query.damageSimulation.findMany({
-          columns: { id: true, createdAt: true },
-          where: eq(damageSimulation.userId, ctx.userId),
-          orderBy: [desc(damageSimulation.createdAt)],
-          limit: maxEntries + 1,
-        }),
-        ctx.drizzle.insert(damageSimulation).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          state: input,
-        }),
+        listDamageSimulationForCreateDamageSimulation(ctx.drizzle, ctx, maxEntries),
+        insertDamageSimulationForCreateDamageSimulation(ctx.drizzle, ctx, input),
       ]);
       const lastEntry = current.at(-1);
       if (current.length >= maxEntries && lastEntry) {
-        await ctx.drizzle
-          .delete(damageSimulation)
-          .where(
-            and(
-              eq(damageSimulation.userId, ctx.userId),
-              gt(damageSimulation.createdAt, lastEntry.createdAt),
-            ),
-          );
+        await deleteDamageSimulationForCreateDamageSimulation(
+          ctx.drizzle,
+          ctx,
+          lastEntry,
+        );
       }
       return { success: true, message: "Damage simulation saved" };
     }),
@@ -68,20 +60,13 @@ export const simulatorRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       if (input.id) {
-        await ctx.drizzle
-          .update(damageSimulation)
-          .set({ active: input.active ? 1 : 0 })
-          .where(
-            and(
-              eq(damageSimulation.id, input.id),
-              eq(damageSimulation.userId, ctx.userId),
-            ),
-          );
+        await updateDamageSimulationForUpdateDamageSimulation(
+          ctx.drizzle,
+          { active: input.active, id: input.id },
+          ctx,
+        );
       } else {
-        await ctx.drizzle
-          .update(damageSimulation)
-          .set({ active: input.active ? 1 : 0 })
-          .where(eq(damageSimulation.userId, ctx.userId));
+        await updateDamageSimulationForUpdateDamageSimulation2(ctx.drizzle, input, ctx);
       }
       return { success: true, message: "Damage simulation updated" };
     }),
@@ -91,9 +76,10 @@ export const simulatorRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       const entry = await fetchEntry(ctx.drizzle, input.id, ctx.userId);
-      const result = await ctx.drizzle
-        .delete(damageSimulation)
-        .where(eq(damageSimulation.id, entry.id));
+      const result = await deleteDamageSimulationForDeleteDamageSimulation(
+        ctx.drizzle,
+        entry,
+      );
       if (result.rowsAffected === 0) {
         throw serverError("NOT_FOUND", "Entry not found");
       }
@@ -101,15 +87,12 @@ export const simulatorRouter = createTRPCRouter({
     }),
 });
 
-export const fetchEntry = async (
-  client: DrizzleClient,
-  id: string,
-  userId?: string,
-) => {
-  const entry = await client.query.damageSimulation.findFirst({
-    where: eq(damageSimulation.id, id),
-    orderBy: [desc(damageSimulation.createdAt)],
-  });
+/**
+ * Load a simulation or throw NOT_FOUND. A truthy owner ID also requires ownership;
+ * omitting it preserves public reads, while mismatches throw UNAUTHORIZED.
+ */
+const fetchEntry = async (client: DrizzleClient, id: string, userId?: string) => {
+  const entry = await findDamageSimulationById(client, id);
   if (!entry) {
     throw serverError("NOT_FOUND", "Entry not found");
   }

@@ -1,7 +1,6 @@
-import { eq, sql } from "drizzle-orm";
 import { PVP_EXPERIENCE_AVERAGE_SETTING } from "@/drizzle/constants";
 import type { GameSetting } from "@/drizzle/schema";
-import { userData } from "@/drizzle/schema";
+import { selectUserDataForLoadAverage } from "@/queries/pvprank";
 import type { DrizzleClient } from "@/server/db";
 import { scopedRead } from "@/server/requestScope";
 
@@ -30,12 +29,7 @@ let pendingAverage: Promise<CachedAverage> | null = null;
  * key lookup per human row (roughly ten times slower).
  */
 const loadAverage = async (client: Pick<DrizzleClient, "select">) => {
-  const [row] = await client
-    .select({
-      average: sql<number>`COALESCE(AVG(${userData.pvpExperience}), 0)`.mapWith(Number),
-    })
-    .from(userData, { forceIndex: "UserData_pvpExperienceAverage_idx" })
-    .where(eq(userData.isAi, false));
+  const [row] = await selectUserDataForLoadAverage(client);
   cachedAverage = { value: row?.average ?? 0, fetchedAt: Date.now() };
   return cachedAverage;
 };

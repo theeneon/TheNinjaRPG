@@ -1,10 +1,10 @@
 import { auth } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
-import { userData } from "@/drizzle/schema";
 import {
   epidemicSfxDownloadUrl,
   isEpidemicConfigured,
 } from "@/libs/contentReview/epidemic";
+import { findUserRoleById } from "@/queries/profile";
+
 import { drizzleDB } from "@/server/db";
 import { fetchWithTimeout } from "@/utils/http";
 import { canChangeContent } from "@/utils/permissions";
@@ -24,10 +24,7 @@ export async function GET(request: Request) {
     epidemicId: new URL(request.url).searchParams.get("id"),
   });
   if (!parsed.success) return new Response("Missing sound id", { status: 400 });
-  const user = await drizzleDB.query.userData.findFirst({
-    columns: { role: true },
-    where: eq(userData.userId, userId),
-  });
+  const user = await findUserRoleById(drizzleDB, userId);
   if (!user || !canChangeContent(user.role)) {
     return new Response("Only content staff can preview sounds", { status: 403 });
   }

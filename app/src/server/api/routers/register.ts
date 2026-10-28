@@ -1,37 +1,40 @@
-import { and, eq, getTableColumns, or, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import { z } from "zod";
+import { IMG_DEFAULT_PROFILE_PICTURE } from "@/drizzle/constants";
+import type { userData } from "@/drizzle/schema";
+import { fetchBloodline } from "@/queries/bloodline";
+import { findUserEmailReminder } from "@/queries/emailReminder";
+import { deleteUserAttributes, findUserById } from "@/queries/profile";
+import { findStoreUserIdAlias } from "@/queries/purchases";
 import {
-  IMG_DEFAULT_PROFILE_PICTURE,
-  TUTORIAL_STARTER_QUEST_ID,
-} from "@/drizzle/constants";
-import {
-  bloodline,
-  bloodlineRolls,
-  emailReminder,
-  historicalIp,
-  paypalSubscription,
-  questHistory,
-  recruitReferral,
-  referralSource,
-  storePurchase,
-  storeUserIdAlias,
-  stripePayment,
-  userAttribute,
-  userData,
-  userItem,
-  userReport,
-  village,
-  visitorLog,
-} from "@/drizzle/schema";
+  deleteStoreUserIdAliasForCreateCharacter,
+  executeCreatedUserForCreateCharacter,
+  findHistoricalIpForCreateCharacter,
+  findHistoricalIpForSetReferralSource,
+  findPaypalSubscriptionForCreateCharacter,
+  findReferralSourceForSetReferralSource,
+  findStorePurchaseForCreateCharacter,
+  findStripePaymentForCreateCharacter,
+  findUserDataForCreateCharacter2,
+  findUserDataForCreateCharacter3,
+  findVillageForCreateCharacter,
+  findVisitorLogForSetReferralSource,
+  insertBloodlineRollsForCreateCharacter,
+  insertQuestHistoryForCreateCharacter,
+  insertRecruitReferralForCreateCharacter,
+  insertReferralSourceForSetReferralSource,
+  insertStarterHomeItems,
+  insertUserAttributeForCreateCharacter,
+  insertUserHistoricalIp,
+  listUserReportForCreateCharacter,
+  updateUserDataForCreateCharacter,
+} from "@/queries/register";
+import { fetchActiveSanctionTombstones } from "@/queries/reports";
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import { createStarterHomeItems } from "@/server/utils/homeFurniture";
-import { hashIp } from "@/server/utils/ipHash";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import {
   isDeletedStoreUserId,
@@ -41,7 +44,6 @@ import { checkRecruitSignupEligibility } from "@/server/utils/recruitment";
 import {
   carryoverReportId,
   discardUnpublishedSanctions,
-  fetchActiveSanctionTombstones,
   fetchSanctionIdentity,
   matchSanctionTombstones,
   reapplySanctions,
@@ -59,9 +61,7 @@ export const registerRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // If already set, no-op
-      const existing = await ctx.drizzle.query.referralSource.findFirst({
-        where: eq(referralSource.userId, ctx.userId),
-      });
+      const existing = await findReferralSourceForSetReferralSource(ctx.drizzle, ctx);
       if (existing) {
         return { success: true, message: "Referral source already set" };
       }
@@ -72,9 +72,7 @@ export const registerRouter = createTRPCRouter({
       if (!source) {
         const ip = ctx.userIp ?? "unknown";
         if (ip !== "unknown") {
-          const visit = await ctx.drizzle.query.visitorLog.findFirst({
-            where: eq(visitorLog.ipHash, hashIp(ip)),
-          });
+          const visit = await findVisitorLogForSetReferralSource(ctx.drizzle, ip);
           source = (visit?.utmSource ?? "").trim();
         }
       }
@@ -86,21 +84,17 @@ export const registerRouter = createTRPCRouter({
       // Ensure we map IP -> user for later analytics joins
       const ip = ctx.userIp ?? "unknown";
       if (ip !== "unknown") {
-        const currentIp = await ctx.drizzle.query.historicalIp.findFirst({
-          where: and(eq(historicalIp.ip, ip), eq(historicalIp.userId, ctx.userId)),
-        });
+        const currentIp = await findHistoricalIpForSetReferralSource(
+          ctx.drizzle,
+          ip,
+          ctx,
+        );
         if (!currentIp) {
-          await ctx.drizzle
-            .insert(historicalIp)
-            .values({ userId: ctx.userId, ip, ipHash: hashIp(ip) });
+          await insertUserHistoricalIp(ctx.drizzle, ctx.userId, ip);
         }
       }
 
-      await ctx.drizzle.insert(referralSource).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        source,
-      });
+      await insertReferralSourceForSetReferralSource(ctx.drizzle, ctx, source);
       return { success: true, message: "Referral source set" };
     }),
   // Create Character
@@ -126,44 +120,17 @@ export const registerRouter = createTRPCRouter({
         tombstones,
         carryoverReports,
       ] = await Promise.all([
-        ctx.drizzle.query.village.findFirst({
-          where: eq(village.name, "Horizon"),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.username, input.username),
-        }),
-        ctx.drizzle.query.emailReminder.findFirst({
-          where: eq(emailReminder.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.bloodline.findFirst({
-          where: eq(bloodline.id, input.bloodlineId),
-        }),
-        ctx.drizzle.query.historicalIp.findFirst({
-          where: and(
-            eq(historicalIp.ip, ctx.userIp ?? ""),
-            eq(historicalIp.userId, ctx.userId),
-          ),
-        }),
+        findVillageForCreateCharacter(ctx.drizzle),
+        findUserById(ctx.drizzle, ctx.userId),
+        findUserDataForCreateCharacter2(ctx.drizzle, input),
+        findUserEmailReminder(ctx.drizzle, ctx),
+        fetchBloodline(ctx.drizzle, input.bloodlineId),
+        findHistoricalIpForCreateCharacter(ctx.drizzle, ctx),
         checkForBadWords(input.username),
-        ctx.drizzle.query.storeUserIdAlias.findFirst({
-          columns: { newUserId: true },
-          where: eq(storeUserIdAlias.oldUserId, ctx.userId),
-        }),
-        ctx.drizzle.query.storePurchase.findFirst({
-          columns: { id: true },
-          where: eq(storePurchase.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.paypalSubscription.findFirst({
-          columns: { id: true },
-          where: eq(paypalSubscription.affectedUserId, ctx.userId),
-        }),
-        ctx.drizzle.query.stripePayment.findFirst({
-          columns: { id: true },
-          where: eq(stripePayment.affectedUserId, ctx.userId),
-        }),
+        findStoreUserIdAlias(ctx.drizzle, ctx.userId),
+        findStorePurchaseForCreateCharacter(ctx.drizzle, ctx),
+        findPaypalSubscriptionForCreateCharacter(ctx.drizzle, ctx),
+        findStripePaymentForCreateCharacter(ctx.drizzle, ctx),
         input.recruiter_userid
           ? checkRecruitSignupEligibility({
               client: ctx.drizzle,
@@ -173,13 +140,7 @@ export const registerRouter = createTRPCRouter({
             })
           : Promise.resolve(null),
         fetchActiveSanctionTombstones(ctx.drizzle),
-        ctx.drizzle.query.userReport.findMany({
-          columns: { id: true },
-          where: and(
-            eq(userReport.reportedUserId, ctx.userId),
-            eq(userReport.system, "sanction_carryover"),
-          ),
-        }),
+        listUserReportForCreateCharacter(ctx.drizzle, ctx),
       ]);
       // Whatever the ledger holds for this identity is settled once a character row exists,
       // on every path that reaches one. A tombstone seen here means receipts can still be
@@ -285,22 +246,11 @@ export const registerRouter = createTRPCRouter({
         isSilenced: sanctions.some((match) => match.sanction === "SILENCE"),
         ...(reminder ? { earnedExperience: 10000 } : {}),
       } satisfies typeof userData.$inferInsert;
-      const columns = getTableColumns(userData);
-      const keys = Object.keys(values) as (keyof typeof values)[];
+
       // INSERT SELECT publishes flags only with durable cases and unchanged sources.
       // Drizzle's builder requires every table column for SELECT, including defaults.
       const createdUser = await retryOnDeadlock(() =>
-        ctx.drizzle.execute(sql`
-        INSERT INTO ${userData} (${sql.join(
-          keys.map((key) => sql.identifier(columns[key].name)),
-          sql`, `,
-        )})
-        SELECT ${sql.join(
-          keys.map((key) => sql.param(values[key] ?? null, columns[key])),
-          sql`, `,
-        )}
-        WHERE ${sanctionGuard} AND NOT EXISTS (SELECT 1 FROM ${userData} WHERE ${eq(userData.username, input.username)})
-      `),
+        executeCreatedUserForCreateCharacter(ctx.drizzle, values, sanctionGuard, input),
       ).catch(async (error: unknown) => {
         if (isMysqlDuplicateKeyError(error)) return { rowsAffected: 0 };
         await discardUnpublishedSanctions(
@@ -311,13 +261,11 @@ export const registerRouter = createTRPCRouter({
         throw error;
       });
       if (createdUser.rowsAffected === 0) {
-        const currentUser = await ctx.drizzle.query.userData.findFirst({
-          columns: { userId: true },
-          where: or(
-            eq(userData.userId, ctx.userId),
-            eq(userData.username, input.username),
-          ),
-        });
+        const currentUser = await findUserDataForCreateCharacter3(
+          ctx.drizzle,
+          ctx,
+          input,
+        );
         if (!currentUser || currentUser.userId !== ctx.userId) {
           await discardUnpublishedSanctions(
             ctx.drizzle,
@@ -332,14 +280,7 @@ export const registerRouter = createTRPCRouter({
         }
       }
       if (storeAlias) {
-        await ctx.drizzle
-          .delete(storeUserIdAlias)
-          .where(
-            and(
-              eq(storeUserIdAlias.oldUserId, ctx.userId),
-              eq(storeUserIdAlias.newUserId, storeAlias.newUserId),
-            ),
-          );
+        await deleteStoreUserIdAliasForCreateCharacter(ctx.drizzle, ctx, storeAlias);
       }
       // The row exists either way now, so settle before answering a duplicate.
       if (hasLedger)
@@ -350,81 +291,34 @@ export const registerRouter = createTRPCRouter({
       if (createdUser.rowsAffected === 0) {
         return errorResponse("Character already created for this account");
       }
-      await ctx.drizzle
-        .delete(userAttribute)
-        .where(eq(userAttribute.userId, ctx.userId));
+      await deleteUserAttributes(ctx.drizzle, ctx.userId);
       await Promise.all([
-        ctx.drizzle.insert(userItem).values(createStarterHomeItems(ctx.userId)),
-        ctx.drizzle
-          .insert(questHistory)
-          .values({
-            id: nanoid(),
-            userId: ctx.userId,
-            questId: TUTORIAL_STARTER_QUEST_ID,
-            questType: "starter",
-            startedAt: new Date(),
-            endAt: null,
-            completed: 0,
-            previousCompletes: 0,
-            previousAttempts: 1,
-          })
-          .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
-        ctx.drizzle
-          .insert(userAttribute)
-          .values(
-            unique_attributes.map((attribute) => ({
-              id: nanoid(),
-              attribute: attribute,
-              userId: ctx.userId,
-            })),
-          )
-          .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
-        ctx.drizzle.insert(bloodlineRolls).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          type: "REGISTRATION",
-          bloodlineId: selectedBloodline.id,
-          goal: selectedBloodline.rank,
-          used: 1,
-          pityRolls: 0,
+        insertStarterHomeItems(ctx.drizzle, ctx.userId),
+        insertQuestHistoryForCreateCharacter(ctx.drizzle, ctx),
+        insertUserAttributeForCreateCharacter(ctx.drizzle, unique_attributes, ctx),
+        insertBloodlineRollsForCreateCharacter(ctx.drizzle, ctx, {
+          id: selectedBloodline.id,
+          rank: selectedBloodline.rank,
         }),
         ...(ctx.userIp && !currentIp
-          ? [
-              ctx.drizzle.insert(historicalIp).values({
-                userId: ctx.userId,
-                ip: ctx.userIp,
-                ipHash: hashIp(ctx.userIp),
-              }),
-            ]
+          ? [insertUserHistoricalIp(ctx.drizzle, ctx.userId, ctx.userIp)]
           : []),
         ...(input.recruiter_userid
           ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ nRecruited: sql`${userData.nRecruited} + 1` })
-                .where(eq(userData.userId, input.recruiter_userid)),
+              updateUserDataForCreateCharacter(ctx.drizzle, {
+                recruiter_userid: input.recruiter_userid,
+              }),
             ]
           : []),
         // Every recruit counts as a recruit; eligibility only gates rank milestone rewards.
         ...(input.recruiter_userid && recruitEligibility
           ? [
-              ctx.drizzle
-                .insert(recruitReferral)
-                .values({
-                  recruitUserId: ctx.userId,
-                  recruiterId: input.recruiter_userid,
-                  isEligible: recruitEligibility.isEligible,
-                  eligibilityReason: recruitEligibility.reason,
-                  eligibilityCheckedAt: new Date(),
-                })
-                .onDuplicateKeyUpdate({
-                  set: {
-                    recruiterId: input.recruiter_userid,
-                    isEligible: recruitEligibility.isEligible,
-                    eligibilityReason: recruitEligibility.reason,
-                    eligibilityCheckedAt: new Date(),
-                  },
-                }),
+              insertRecruitReferralForCreateCharacter(
+                ctx.drizzle,
+                ctx,
+                { recruiter_userid: input.recruiter_userid },
+                recruitEligibility,
+              ),
             ]
           : []),
       ]);

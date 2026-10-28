@@ -1,17 +1,21 @@
-import { and, eq, exists, gt, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, exists, isNull, sql } from "drizzle-orm";
 import type { UserRole } from "@/drizzle/constants";
 import {
-  quest,
   questHistory,
   type UserItem,
   type UserQuest,
   userItem,
 } from "@/drizzle/schema";
 import { getQuestEntryRequirements } from "@/libs/questRun";
+import {
+  selectQuestForQuestAttemptWhere,
+  selectQuestHistoryForQuestAttemptIsActive,
+  updateQuestHistoryForCommitQuestEntryBattle,
+  updateQuestHistoryForPayQuestEntryAtStart,
+} from "@/queries/quests";
 import type { DrizzleClient } from "@/server/db";
 import { updateUserItemQuantityAtomically } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { canPlayHiddenQuests } from "@/utils/permissions";
 import type { QuestContentType } from "@/validators/objectives";
 
 /** Match the same open attempt and its playable content inside a guarded write. */
@@ -24,20 +28,7 @@ const questAttemptWhere = (client: DrizzleClient, attempt: UserQuest, role: User
     attempt.startedAt ? eq(questHistory.startedAt, attempt.startedAt) : sql`FALSE`,
     isNull(questHistory.endAt),
     eq(questHistory.completed, 0),
-    exists(
-      client
-        .select({ one: sql`1` })
-        .from(quest)
-        .where(
-          and(
-            eq(quest.id, attempt.questId),
-            attempt.questVersion
-              ? eq(quest.updatedAt, attempt.questVersion)
-              : undefined,
-            canPlayHiddenQuests(role) ? undefined : eq(quest.hidden, false),
-          ),
-        ),
-    ),
+    exists(selectQuestForQuestAttemptWhere(client, attempt, role)),
   );
 
 /** Embed attempt/version/visibility validation in the battle participant claim without a fetch. */
@@ -47,26 +38,11 @@ export const questAttemptIsActive = (
   role: UserRole,
 ) =>
   exists(
-    client
-      .select({ one: sql`1` })
-      .from(questHistory)
-      .where(questAttemptWhere(client, attempt, role)),
-  );
-
-/** Inventory that can pay a quest entry: carried, not listed, and not still being crafted. */
-export const fetchQuestEntryInventory = (client: DrizzleClient, userId: string) =>
-  client.query.userItem.findMany({
-    where: and(
-      eq(userItem.userId, userId),
-      gt(userItem.quantity, 0),
-      eq(userItem.storedAtHome, false),
-      eq(userItem.isInAuction, false),
-      or(
-        isNull(userItem.craftingFinishedAt),
-        lt(userItem.craftingFinishedAt, new Date()),
-      ),
+    selectQuestHistoryForQuestAttemptIsActive(
+      client,
+      questAttemptWhere(client, attempt, role),
     ),
-  });
+  );
 
 /**
  * Debit planned entry charges and write the receipt for a freshly started attempt.
@@ -85,18 +61,11 @@ export const payQuestEntryAtStart = async ({
   questId: string;
   charges: NonNullable<ReturnType<typeof getQuestEntryCharges>>;
 }) => {
-  const receipt = await client
-    .update(questHistory)
-    .set({ entryPaid: true })
-    .where(
-      and(
-        eq(questHistory.userId, userId),
-        eq(questHistory.questId, questId),
-        eq(questHistory.entryPaid, false),
-        isNull(questHistory.endAt),
-        eq(questHistory.completed, 0),
-      ),
-    );
+  const receipt = await updateQuestHistoryForPayQuestEntryAtStart(
+    client,
+    userId,
+    questId,
+  );
   if (receipt.rowsAffected !== 1) return false;
   for (const charge of charges) {
     const debited = await updateUserItemQuantityAtomically({
@@ -199,16 +168,11 @@ export const commitQuestEntryBattle = async <T>({
       client.transaction(async (tx) => {
         const database = tx as unknown as DrizzleClient;
         if (!attempt.entryPaid) {
-          const receipt = await tx
-            .update(questHistory)
-            .set({ entryPaid: true })
-            .where(
-              and(
-                eq(questHistory.id, attempt.id),
-                eq(questHistory.entryPaid, false),
-                questAttemptWhere(database, attempt, role),
-              ),
-            );
+          const receipt = await updateQuestHistoryForCommitQuestEntryBattle(
+            tx,
+            attempt,
+            questAttemptWhere(database, attempt, role),
+          );
           if (receipt.rowsAffected !== 1) throw rejected;
           for (const charge of charges) {
             const debited = await updateUserItemQuantityAtomically({

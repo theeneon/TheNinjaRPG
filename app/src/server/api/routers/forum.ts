@@ -1,16 +1,8 @@
-import { asc, eq, ne, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { FORUM_MIN_LEVEL, forumLevelMessage } from "@/drizzle/constants";
-import {
-  forumBoard,
-  forumPost,
-  forumThread,
-  userData,
-  userDevice,
-} from "@/drizzle/schema";
 import { resolveSenderId } from "@/libs/comments";
-import { fetchBoard, getInfiniteThreads, readNews } from "@/libs/forum";
+import { fetchBoard, getInfiniteThreads } from "@/libs/forum";
 import { deferModeration } from "@/libs/moderation/defer";
 import {
   callDiscordNews,
@@ -19,7 +11,23 @@ import {
   callRedditNews,
   callTwitterNews,
 } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteForumPostForDeleteThread,
+  deleteForumThreadForDeleteThread,
+  fetchThread,
+  insertForumPostForCreateThread,
+  insertForumThreadForCreateThread,
+  listForumBoardForGetAll,
+  readNews,
+  selectDistinctUserDeviceForNotifyNewsSubscribers,
+  updateForumBoardForCreateThread,
+  updateForumBoardForDeleteThread,
+  updateForumThreadForLockThread,
+  updateForumThreadForPinThread,
+  updateUserDataForCreateThread,
+} from "@/queries/forum";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -38,9 +46,7 @@ export const forumRouter = createTRPCRouter({
   getAll: publicProcedure
     .meta({ mcp: { description: "Get all forum boards" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.forumBoard.findMany({
-        orderBy: asc(forumBoard.createdAt),
-      });
+      return await listForumBoardForGetAll(ctx.drizzle);
     }),
   // The user read the news
   readNews: protectedProcedure
@@ -106,42 +112,24 @@ export const forumRouter = createTRPCRouter({
       const sanitized = moderated.sanitized;
       const postId = nanoid();
       const [, , boardUpdateResult] = await Promise.all([
-        ctx.drizzle.insert(forumThread).values({
-          id: threadId,
-          title: input.title,
-          image: input.image,
-          boardId: input.board_id,
-          userId: effectiveUserId,
-        }),
-        ctx.drizzle
-          .insert(forumPost)
-          .values({
-            id: postId,
+        insertForumThreadForCreateThread(ctx.drizzle, threadId, input, effectiveUserId),
+        insertForumPostForCreateThread(
+          ctx.drizzle,
+          postId,
+          sanitized,
+          threadId,
+          effectiveUserId,
+          ctx,
+        ).then(() =>
+          deferModeration(ctx.drizzle, {
             content: sanitized,
-            threadId: threadId,
-            userId: effectiveUserId,
-            authorId: ctx.userId,
-          })
-          .then(() =>
-            deferModeration(ctx.drizzle, {
-              content: sanitized,
-              userId: ctx.userId,
-              relationType: "forumPost",
-              relationId: postId,
-            }),
-          ),
-        ctx.drizzle
-          .update(forumBoard)
-          .set({ nThreads: sql`nThreads + 1`, updatedAt: new Date() })
-          .where(eq(forumBoard.id, input.board_id)),
-        ...(isNews
-          ? [
-              ctx.drizzle
-                .update(userData)
-                .set({ unreadNews: sql`LEAST(unreadNews + 1, 1000)` })
-                .where(ne(userData.userId, ctx.userId)),
-            ]
-          : []),
+            userId: ctx.userId,
+            relationType: "forumPost",
+            relationId: postId,
+          }),
+        ),
+        updateForumBoardForCreateThread(ctx.drizzle, input),
+        ...(isNews ? [updateUserDataForCreateThread(ctx.drizzle, ctx)] : []),
       ]);
 
       // Note: In edge case where board is deleted during mutation, thread/post still exist
@@ -178,10 +166,7 @@ export const forumRouter = createTRPCRouter({
       if (result.error) return result.error;
       const { thread } = result;
       // Mutate
-      await ctx.drizzle
-        .update(forumThread)
-        .set({ isPinned: input.status })
-        .where(eq(forumThread.id, thread.id));
+      await updateForumThreadForPinThread(ctx.drizzle, input, thread);
       return {
         success: true,
         message: input.status ? "Thread pinned" : "Thread unpinned",
@@ -205,10 +190,7 @@ export const forumRouter = createTRPCRouter({
       if (result.error) return result.error;
       const { thread } = result;
       // Mutate
-      await ctx.drizzle
-        .update(forumThread)
-        .set({ isLocked: input.status })
-        .where(eq(forumThread.id, thread.id));
+      await updateForumThreadForLockThread(ctx.drizzle, input, thread);
       return {
         success: true,
         message: input.status ? "Thread locked" : "Thread unlocked",
@@ -232,18 +214,13 @@ export const forumRouter = createTRPCRouter({
       if (result.error) return result.error;
       const { thread } = result;
       // Mutate
-      const deleteResult = await ctx.drizzle
-        .delete(forumThread)
-        .where(eq(forumThread.id, thread.id));
+      const deleteResult = await deleteForumThreadForDeleteThread(ctx.drizzle, thread);
       if (deleteResult.rowsAffected === 0) {
         return { success: false, message: "Thread already deleted" };
       }
       await Promise.all([
-        ctx.drizzle
-          .update(forumBoard)
-          .set({ nThreads: sql`GREATEST(nThreads - 1, 0)` })
-          .where(eq(forumBoard.id, thread.boardId)),
-        ctx.drizzle.delete(forumPost).where(eq(forumPost.threadId, thread.id)),
+        updateForumBoardForDeleteThread(ctx.drizzle, thread),
+        deleteForumPostForDeleteThread(ctx.drizzle, thread),
       ]);
       return { success: true, message: "Thread deleted" };
     }),
@@ -255,9 +232,7 @@ export const forumRouter = createTRPCRouter({
  */
 const notifyNewsSubscribers = async (client: DrizzleClient, content: string) => {
   if (!isPushEnabled()) return;
-  const devices = await client
-    .selectDistinct({ userId: userDevice.userId })
-    .from(userDevice);
+  const devices = await selectDistinctUserDeviceForNotifyNewsSubscribers(client);
   const userIds = devices.map((device) => device.userId);
   if (userIds.length === 0) return;
   await sendPushToUsers(client, userIds, announcement(content));
@@ -287,16 +262,6 @@ function publishNewsToSocialMedia(
 
   return promises;
 }
-
-/**
- * Internal convenience function to fetch a forum thread by ID.
- * Used by this router and the comments router for thread management operations.
- */
-export const fetchThread = async (client: DrizzleClient, threadId: string) => {
-  return await client.query.forumThread.findFirst({
-    where: eq(forumThread.id, threadId),
-  });
-};
 
 /**
  * Fetch user and thread, and authorize thread moderation.

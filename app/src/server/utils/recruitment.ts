@@ -1,5 +1,3 @@
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import {
   RECRUIT_RANK_MILESTONES,
   type RecruitEligibilityReason,
@@ -8,14 +6,20 @@ import {
   type UserRank,
 } from "@/drizzle/constants";
 import type { RecruitReferral as RecruitReferralRow } from "@/drizzle/schema";
+import { findUserIdentityById } from "@/queries/profile";
 import {
-  actionLog,
-  historicalIp,
-  recruitmentRewards,
-  recruitRankMilestone,
-  recruitReferral,
-  userData,
-} from "@/drizzle/schema";
+  findRecruitReferralForAwardRecruitRankMilestones,
+  findUserDataForAwardRecruitRankMilestones2,
+  insertActionLogForAwardRecruitRankMilestones,
+  insertRecruitmentRewardsForAwardRecruitRankMilestones,
+  insertRecruitRankMilestoneForAwardRecruitRankMilestones,
+  selectHistoricalIpForCheckRecruitSignupEligibility,
+  selectRecruitRankMilestoneForAwardRecruitRankMilestones,
+  selectRecruitRankMilestoneForFetchRecruitMilestoneSummary,
+  selectRecruitReferralForFetchRecruitMilestoneSummary,
+  selectUserDataForCheckRecruitSignupEligibility,
+  updateUserDataForAwardRecruitRankMilestones,
+} from "@/queries/recruitment";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { logError } from "@/server/utils/sentry";
@@ -70,16 +74,8 @@ export const checkRecruitSignupEligibility = async (props: {
     return { isEligible: false, reason: "SELF_REFERRAL" };
   if (!isKnownIp(signupIp)) return { isEligible: true, reason: "IP_UNKNOWN" };
   const [historical, lastIp] = await Promise.all([
-    client
-      .select({ userId: historicalIp.userId })
-      .from(historicalIp)
-      .where(and(eq(historicalIp.ip, signupIp), ne(historicalIp.userId, recruitUserId)))
-      .limit(1),
-    client
-      .select({ userId: userData.userId })
-      .from(userData)
-      .where(and(eq(userData.lastIp, signupIp), ne(userData.userId, recruitUserId)))
-      .limit(1),
+    selectHistoricalIpForCheckRecruitSignupEligibility(client, signupIp, recruitUserId),
+    selectUserDataForCheckRecruitSignupEligibility(client, signupIp, recruitUserId),
   ]);
   if (historical.length > 0 || lastIp.length > 0) {
     return { isEligible: false, reason: "SHARED_IP" };
@@ -118,29 +114,14 @@ export const awardRecruitRankMilestones = async (props: {
 
   // Query
   const [referral, recorded, recruiter, recruit] = await Promise.all([
-    client.query.recruitReferral.findFirst({
-      where: eq(recruitReferral.recruitUserId, recruitUserId),
-    }),
-    client
-      .select({ rank: recruitRankMilestone.rank })
-      .from(recruitRankMilestone)
-      .where(
-        and(
-          eq(recruitRankMilestone.recruitUserId, recruitUserId),
-          inArray(
-            recruitRankMilestone.rank,
-            reached.map((m) => m.rank),
-          ),
-        ),
-      ),
-    client.query.userData.findFirst({
-      where: eq(userData.userId, recruiterId),
-      columns: { userId: true },
-    }),
-    client.query.userData.findFirst({
-      where: eq(userData.userId, recruitUserId),
-      columns: { username: true, avatarLight: true },
-    }),
+    findRecruitReferralForAwardRecruitRankMilestones(client, recruitUserId),
+    selectRecruitRankMilestoneForAwardRecruitRankMilestones(
+      client,
+      recruitUserId,
+      reached,
+    ),
+    findUserIdentityById(client, recruiterId),
+    findUserDataForAwardRecruitRankMilestones2(client, recruitUserId),
   ]);
   const recordedRanks = new Set(recorded.map((r) => r.rank));
   const pending = reached.filter((m) => !recordedRanks.has(m.rank));
@@ -162,49 +143,38 @@ export const awardRecruitRankMilestones = async (props: {
     client.transaction(async (tx) => {
       const applied: RecruitMilestoneOutcome[] = [];
       for (const outcome of outcomes) {
-        const claim = await tx.insert(recruitRankMilestone).ignore().values({
+        const claim = await insertRecruitRankMilestoneForAwardRecruitRankMilestones(
+          tx,
           recruitUserId,
           recruiterId,
-          rank: outcome.rank,
-          status: outcome.status,
-          reputationAwarded: outcome.reputation,
-        });
+          outcome,
+        );
         // Another request recorded this milestone first.
         if (claim.rowsAffected === 0) continue;
         applied.push(outcome);
         if (outcome.status !== "PAID") continue;
-        const paid = await tx
-          .update(userData)
-          .set({
-            reputationPoints: sql`${userData.reputationPoints} + ${outcome.reputation}`,
-            reputationPointsTotal: sql`${userData.reputationPointsTotal} + ${outcome.reputation}`,
-            unreadRecruitRewards: sql`LEAST(${userData.unreadRecruitRewards} + 1, 1000)`,
-          })
-          .where(eq(userData.userId, recruiterId));
+        const paid = await updateUserDataForAwardRecruitRankMilestones(
+          tx,
+          outcome,
+          recruiterId,
+        );
         // The recruiter vanished after the read: roll back so nothing claims a payment.
         if (paid.rowsAffected === 0) {
           throw new Error("Recruiter disappeared while paying a rank milestone");
         }
-        await tx.insert(recruitmentRewards).values({
-          id: nanoid(),
-          userId: recruiterId,
-          recruitedUserId: recruitUserId,
-          amount: outcome.reputation,
-          type: "RANK_MILESTONE",
-        });
-        await tx.insert(actionLog).values({
-          id: nanoid(),
-          userId: recruitUserId,
-          tableName: "user",
-          changes: [
-            `Recruit reached ${outcome.rank}`,
-            `Recruiter ${recruiterId} awarded ${outcome.reputation} reputation points`,
-          ],
-          relatedId: recruiterId,
-          relatedMsg: `Recruit rank milestone: ${recruit?.username ?? recruitUserId} reached ${outcome.rank}`,
-          relatedImage: recruit?.avatarLight,
-          relatedValue: outcome.reputation,
-        });
+        await insertRecruitmentRewardsForAwardRecruitRankMilestones(
+          tx,
+          recruiterId,
+          recruitUserId,
+          outcome,
+        );
+        await insertActionLogForAwardRecruitRankMilestones(
+          tx,
+          recruitUserId,
+          outcome,
+          recruiterId,
+          recruit,
+        );
       }
       return applied;
     }),
@@ -260,23 +230,8 @@ export const fetchRecruitMilestoneSummary = async (
   recruiterId: string,
 ) => {
   const [referrals, milestones] = await Promise.all([
-    client
-      .select({
-        recruitUserId: recruitReferral.recruitUserId,
-        isEligible: recruitReferral.isEligible,
-        eligibilityReason: recruitReferral.eligibilityReason,
-      })
-      .from(recruitReferral)
-      .where(eq(recruitReferral.recruiterId, recruiterId)),
-    client
-      .select({
-        recruitUserId: recruitRankMilestone.recruitUserId,
-        rank: recruitRankMilestone.rank,
-        status: recruitRankMilestone.status,
-        reputationAwarded: recruitRankMilestone.reputationAwarded,
-      })
-      .from(recruitRankMilestone)
-      .where(eq(recruitRankMilestone.recruiterId, recruiterId)),
+    selectRecruitReferralForFetchRecruitMilestoneSummary(client, recruiterId),
+    selectRecruitRankMilestoneForFetchRecruitMilestoneSummary(client, recruiterId),
   ]);
   const referralByRecruit = new Map(referrals.map((r) => [r.recruitUserId, r]));
   const milestonesByRecruit = new Map<string, typeof milestones>();

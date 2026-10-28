@@ -1,6 +1,5 @@
 import { clerkClient } from "@clerk/nextjs/server";
-import { eq, inArray, or } from "drizzle-orm";
-import { emailReminder } from "@/drizzle/schema";
+import { deleteEmailReminderForRemoveAccountIdentity } from "@/queries/accountDeletion";
 import { drizzleDB } from "@/server/db";
 import {
   isClerkNotFound,
@@ -45,14 +44,7 @@ export const removeAccountIdentity = async (
     .map((email) => email.emailAddress);
   // Legacy reminder rows can have an email but no userId. Remove them while the
   // verified email addresses are still available, before destroying the identity.
-  await drizzleDB
-    .delete(emailReminder)
-    .where(
-      or(
-        eq(emailReminder.userId, userId),
-        ...(emails.length ? [inArray(emailReminder.email, emails)] : []),
-      ),
-    );
+  await deleteEmailReminderForRemoveAccountIdentity(drizzleDB, userId, emails);
   try {
     await clerk.users.deleteUser(userId);
   } catch (error) {

@@ -1,8 +1,6 @@
-import { and, eq } from "drizzle-orm";
 import { ImageResponse } from "next/og";
 import sharp from "sharp";
-import { conceptImage } from "@/drizzle/schema";
-import { indexableConceptArt } from "@/libs/conceptart";
+import { findIndexableConceptImage } from "@/queries/conceptart";
 import { drizzleDB } from "@/server/db";
 
 // Route segment config
@@ -34,9 +32,7 @@ export default async function Image({
   const { imageid } = await params;
 
   // Get the image
-  const image = await drizzleDB.query.conceptImage.findFirst({
-    where: and(eq(conceptImage.id, imageid || ""), indexableConceptArt),
-  });
+  const image = await findIndexableConceptImage(drizzleDB, imageid);
   // Non-indexable artwork falls back to the logo card rather than exposing incomplete
   // or withdrawn media through a social preview.
   const source = image?.image;

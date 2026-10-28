@@ -1,25 +1,34 @@
-import { and, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
   WAR_CAMP_DURATION_HOURS,
   WAR_CAMP_INTERVAL_HOURS,
-  WAR_CAMP_SCORE_PER_WIN,
   WAR_ESPIONAGE_TARGET,
-  WAR_POINT_CONVERSION_DAYS,
-  WAR_RESERVE_LOCKOUT_DAYS,
 } from "@/drizzle/constants";
 import {
-  gameSetting,
   sector,
   userData,
   type War,
   type WarCamp,
   war,
-  warActionReceipt,
-  warCamp,
-  warContribution,
-  warKill,
+  type warKill,
 } from "@/drizzle/schema";
 import { isObjectiveWarActive } from "@/libs/objectiveWar";
+import {
+  executeClaimedForApplyObjectiveWarAction,
+  executeRowsForApplyObjectiveWarAction,
+  executeRowsForApplyObjectiveWarAction2,
+  executeRowsForResolveDueWarCamps,
+  executeRowsForSyncWarCamps,
+  insertWarActionReceiptForApplyObjectiveWarAction,
+  insertWarContributionForApplyObjectiveWarAction,
+  insertWarKillForApplyObjectiveWarAction,
+  listGameSettingForFetchWarRules,
+  listSectorForSyncWarCamps,
+  listWarCampAiUserIds,
+  listWarCampForSettleObjectiveWarSchedule,
+  listWarCampForSyncWarCamps,
+  updateWarForApplyObjectiveWarDecay,
+} from "@/queries/war";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { getRandomElement } from "@/utils/array";
@@ -27,12 +36,7 @@ import { defaultWarRules, type WarRules, warRulesSchema } from "@/validators/war
 
 /** Overlay saved staff settings on defaults; declarations persist the validated snapshot. */
 export const fetchWarRules = async (client: DrizzleClient): Promise<WarRules> => {
-  const rows = await client.query.gameSetting.findMany({
-    where: inArray(
-      gameSetting.name,
-      Object.keys(defaultWarRules).map((key) => `OBJECTIVE_WAR_${key}`),
-    ),
-  });
+  const rows = await listGameSettingForFetchWarRules(client);
   const rules = { ...defaultWarRules };
   for (const row of rows) {
     const key = row.name.replace("OBJECTIVE_WAR_", "");
@@ -41,12 +45,6 @@ export const fetchWarRules = async (client: DrizzleClient): Promise<WarRules> =>
   }
   return warRulesSchema.parse(rules);
 };
-
-/** Reevaluate the deadline after row-lock waits rather than using the battle snapshot. */
-export const objectiveWarCombatGuard = () => sql`(${war.rules} IS NULL OR (
-  ${war.combatStartedAt} <= SYSDATE(3) AND
-  SYSDATE(3) < DATE_ADD(${war.combatStartedAt}, INTERVAL CAST(JSON_EXTRACT(${war.rules}, '$.durationDays') AS UNSIGNED) DAY)
-  AND ${war.attackerWarHealth} > 0 AND ${war.defenderWarHealth} > 0))`;
 
 /** Add paused combat time once; callers clear the pause in the same guarded user update. */
 export const resumeBracketImmunitySql = () => sql`CASE
@@ -109,68 +107,51 @@ export const applyObjectiveWarAction = async (
   return retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       if (action.claim && !(await action.claim(tx))) return false;
-      const receipt = await tx
-        .insert(warActionReceipt)
-        .ignore()
-        .values({ id: action.id, warId: activeWar.id });
+      const receipt = await insertWarActionReceiptForApplyObjectiveWarAction(
+        tx,
+        action,
+        activeWar,
+      );
       if (receipt.rowsAffected === 0) throw rejected;
-      await tx
-        .insert(warContribution)
-        .values({ warId: activeWar.id, userId: action.userId })
-        .onDuplicateKeyUpdate({ set: { userId: sql`${warContribution.userId}` } });
+      await insertWarContributionForApplyObjectiveWarAction(tx, activeWar, action);
       // Freeze actual clamped deltas while acquiring the war lock. No data is fetched.
       // Multi-table SET expressions cannot rely on assignment order across tables.
-      const claimed = await tx.execute(sql`
-      UPDATE ${war} INNER JOIN ${warActionReceipt} ON ${warActionReceipt.id} = ${action.id}
-      ${objective ? sql`LEFT JOIN ${sector} ON ${sector.sector} = ${objective.sector} AND ${sector.villageId} = ${objective.villageId}` : sql``}
-      ${action.camp ? sql`INNER JOIN ${warCamp} ON ${warCamp.id} = ${action.camp.id} AND ${warCamp.warId} = ${war.id}` : sql``}
-      SET ${war.id} = ${war.id}, ${warActionReceipt.applied} = TRUE,
-          ${warActionReceipt.damage} = ${damage}, ${warActionReceipt.recovery} = ${recovery},
-          ${warActionReceipt.captured} = ${willDestroy}
-          ${objective ? sql`, ${sector.sector} = ${sector.sector}, ${warActionReceipt.shrineDamage} = CASE WHEN ${canDamageShrine} THEN LEAST(${hp}, ${action.shrineDamage ?? 0}) ELSE 0 END` : sql``}
-      WHERE ${war.id} = ${activeWar.id} AND ${war.endedAt} IS NULL AND ${war.status} = 'ACTIVE'
-        AND SYSDATE(3) < DATE_ADD(${war.combatStartedAt}, INTERVAL ${rules.durationDays} DAY)
-        AND ${war.attackerWarHealth} > 0 AND ${war.defenderWarHealth} > 0
-        AND EXISTS (SELECT 1 FROM UserData actor WHERE actor.userId = ${action.userId} AND actor.isAi = FALSE AND actor.isBanned = FALSE AND
-          (actor.villageId = ${action.sideVillageId} OR EXISTS (SELECT 1 FROM WarAlly membership WHERE membership.warId = ${war.id} AND membership.villageId = actor.villageId AND membership.supportVillageId = ${action.sideVillageId} AND membership.acceptedAt IS NOT NULL AND membership.endedAt IS NULL)
-            OR ${action.hasMercenarySnapshot ?? false}
-            OR EXISTS (SELECT 1 FROM WarMercenary merc WHERE merc.warId = ${war.id} AND merc.userId = actor.userId AND merc.sideVillageId = ${action.sideVillageId} AND merc.acceptedAt IS NOT NULL AND merc.endedAt IS NULL)))
-        AND ${warActionReceipt.applied} = FALSE
-        AND ${objectiveWarCombatGuard()}
-        ${objective && action.damage === undefined ? sql`AND ${sector.sector} IS NOT NULL AND NOT (${destroyed}) AND ${hp} > 0 AND CAST(JSON_EXTRACT(${war.objectiveState}, ${spyPath}) AS UNSIGNED) >= ${WAR_ESPIONAGE_TARGET}` : sql``}
-        ${action.camp ? sql`AND ${warCamp.resolvedAt} IS NULL AND ${warCamp.startsAt} <= SYSDATE(3) AND ${warCamp.endsAt} > SYSDATE(3)` : sql``}
-    `);
+      const claimed = await executeClaimedForApplyObjectiveWarAction(
+        tx,
+        action,
+        objective,
+        damage,
+        recovery,
+        willDestroy,
+        canDamageShrine,
+        hp,
+        activeWar,
+        rules,
+
+        destroyed,
+        spyPath,
+      );
       if (!claimed.rowsAffected) throw rejected;
-      await tx.execute(sql`
-      UPDATE ${war} INNER JOIN ${warActionReceipt} ON ${warActionReceipt.id} = ${action.id}
-      INNER JOIN ${warContribution} ON ${warContribution.warId} = ${war.id} AND ${warContribution.userId} = ${action.userId}
-      ${objective ? sql`LEFT JOIN ${sector} ON ${sector.sector} = ${objective.sector} AND ${sector.villageId} = ${objective.villageId}` : sql``}
-      ${action.camp ? sql`INNER JOIN ${warCamp} ON ${warCamp.id} = ${action.camp.id} AND ${warCamp.warId} = ${war.id}` : sql``}
-      SET ${warContribution.damage} = ${warContribution.damage} + ${warActionReceipt.damage},
-          ${warContribution.recovery} = ${warContribution.recovery} + ${warActionReceipt.recovery},
-          ${enemyHp} = GREATEST(${enemyHp} - ${warActionReceipt.damage}, 0),
-          ${ownHp} = LEAST(${ownHp} + ${warActionReceipt.recovery}, ${ownMax})
-          ${
-            objective
-              ? sql`,
-            ${sector.boostLockedUntil} = CASE WHEN ${warActionReceipt.captured} AND ${objective.isReserve} THEN DATE_ADD(SYSDATE(3), INTERVAL ${WAR_RESERVE_LOCKOUT_DAYS} DAY) ELSE ${sector.boostLockedUntil} END,
-            ${war.objectiveState} = JSON_SET(${war.objectiveState}, ${`${path}.destroyed`}, IF(${warActionReceipt.captured}, CAST('true' AS JSON), JSON_EXTRACT(${war.objectiveState}, ${`${path}.destroyed`})), ${`${path}.hp`}, GREATEST(${hp} - ${warActionReceipt.shrineDamage}, 0))`
-              : sql``
-          }
-          ${action.espionage ? sql`, ${war.objectiveState} = JSON_SET(${war.objectiveState}, ${spyPath}, LEAST(${WAR_ESPIONAGE_TARGET}, CAST(JSON_EXTRACT(${war.objectiveState}, ${spyPath}) AS UNSIGNED) + ${action.espionage}))` : sql``}
-          ${action.camp ? sql`, ${isAttacker ? warCamp.attackerScore : warCamp.defenderScore} = ${isAttacker ? warCamp.attackerScore : warCamp.defenderScore} + ${WAR_CAMP_SCORE_PER_WIN}` : sql``}
-      WHERE ${war.id} = ${activeWar.id} AND ${warActionReceipt.applied} = TRUE
-    `);
+      await executeRowsForApplyObjectiveWarAction(
+        tx,
+        action,
+        objective,
+        enemyHp,
+        ownHp,
+        ownMax,
+        path,
+        hp,
+        spyPath,
+        isAttacker,
+        activeWar,
+      );
       // A destroyed ordinary objective is gone for good: its owner loses the sector and
       // shrine, and nobody inherits it, so the sector is free to be claimed again.
       if (objective && !objective.isReserve) {
-        await tx.execute(sql`
-        DELETE ${sector} FROM ${sector}
-        INNER JOIN ${warActionReceipt} ON ${warActionReceipt.id} = ${action.id} AND ${warActionReceipt.captured} = TRUE
-        WHERE ${sector.sector} = ${objective.sector} AND ${sector.villageId} = ${objective.villageId}
-      `);
+        await executeRowsForApplyObjectiveWarAction2(tx, action, objective);
       }
-      if (action.kills?.length) await tx.insert(warKill).values(action.kills);
+      if (action.kills?.length)
+        await insertWarKillForApplyObjectiveWarAction(tx, { kills: action.kills });
       // A concurrent espionage completion can already have saturated the counter.
       // The guarded receipt still proves this attempt completed successfully.
       return true;
@@ -209,24 +190,7 @@ export const applyObjectiveWarDecay = async (
       activeWar.lastTokenReductionAt.getTime() + (interval - 1) * 86400000,
     );
     await retryOnDeadlock(() =>
-      client
-        .update(war)
-        .set({
-          attackerWarHealth: sql`GREATEST(${war.attackerWarHealth} - ${decay}, 0)`,
-          defenderWarHealth: sql`GREATEST(${war.defenderWarHealth} - ${decay}, 0)`,
-          lastTokenReductionAt: new Date(
-            activeWar.lastTokenReductionAt.getTime() + interval * 86400000,
-          ),
-        })
-        .where(
-          and(
-            eq(war.id, activeWar.id),
-            isNull(war.endedAt),
-            eq(war.lastTokenReductionAt, previous),
-            gt(war.attackerWarHealth, 0),
-            gt(war.defenderWarHealth, 0),
-          ),
-        ),
+      updateWarForApplyObjectiveWarDecay(client, decay, activeWar, interval, previous),
     );
   }
 };
@@ -244,13 +208,7 @@ export const settleObjectiveWarSchedule = async (
   const cutoff = Math.min(now.getTime(), deadline);
   const camps =
     preloadedCamps ??
-    (await client.query.warCamp.findMany({
-      where: and(
-        eq(warCamp.warId, activeWar.id),
-        isNull(warCamp.resolvedAt),
-        lte(warCamp.endsAt, new Date(cutoff)),
-      ),
-    }));
+    (await listWarCampForSettleObjectiveWarSchedule(client, activeWar, cutoff));
   const events: { at: Date; camp?: WarCamp }[] = camps
     .filter((c) => c.endsAt.getTime() <= cutoff)
     .map((camp) => ({ at: camp.endsAt, camp }));
@@ -282,12 +240,9 @@ export const syncWarCamps = async (
   now = new Date(),
 ) => {
   const [camps, sectors, guardians] = await Promise.all([
-    client.query.warCamp.findMany({ where: isNull(warCamp.resolvedAt) }),
-    client.query.sector.findMany(),
-    client.query.userData.findMany({
-      columns: { userId: true },
-      where: and(eq(userData.isAi, true), eq(userData.isWarCamp, true)),
-    }),
+    listWarCampForSyncWarCamps(client),
+    listSectorForSyncWarCamps(client),
+    listWarCampAiUserIds(client),
   ]);
   await Promise.all(
     wars.map((w) =>
@@ -325,24 +280,18 @@ export const syncWarCamps = async (
         const selectedSector = getRandomElement(owned)!.sector;
         const guardianId = getRandomElement(guardians)!.userId;
         // Replay can have ended combat since preload; guard insertion against current health.
-        await client.execute(sql`
-          INSERT IGNORE INTO WarCamp (id, warId, sector, guardianId, startsAt, endsAt)
-          SELECT ${`${w.id}:${slot}`}, ${war.id}, ${selectedSector}, ${guardianId}, ${startsAt}, ${endsAt}
-          FROM ${war} WHERE ${war.id} = ${w.id} AND ${war.status} = 'ACTIVE' AND ${war.endedAt} IS NULL
-            AND ${objectiveWarCombatGuard()}
-        `);
+        await executeRowsForSyncWarCamps(
+          client,
+          w,
+          slot,
+          selectedSector,
+          guardianId,
+          startsAt,
+          endsAt,
+        );
       }),
   );
 };
-
-/** Close unconverted balances after the postwar window while retaining historical damage. */
-export const expireWarPoints = (client: DrizzleClient) =>
-  client.execute(sql`
-  UPDATE ${warContribution} INNER JOIN ${war} ON ${war.id} = ${warContribution.warId}
-  SET ${warContribution.expiredAt} = SYSDATE(3)
-  WHERE ${warContribution.expiredAt} IS NULL AND ${warContribution.convertedAt} IS NULL
-    AND ${war.endedAt} IS NOT NULL AND DATE_ADD(${war.endedAt}, INTERVAL ${WAR_POINT_CONVERSION_DAYS} DAY) <= SYSDATE(3)
-`);
 
 /** Atomically mark each camp resolved and damage its losing side; ties deal no damage. */
 const resolveDueWarCamps = async (
@@ -354,15 +303,7 @@ const resolveDueWarCamps = async (
     camps
       .filter((camp) => camp.endsAt <= now)
       .map((camp) =>
-        retryOnDeadlock(() =>
-          client.execute(sql`
-    UPDATE ${warCamp} INNER JOIN ${war} ON ${war.id} = ${warCamp.warId}
-    SET ${war.attackerWarHealth} = GREATEST(${war.attackerWarHealth} - CASE WHEN ${war.endedAt} IS NULL AND ${war.attackerWarHealth} > 0 AND ${war.defenderWarHealth} > 0 AND ${war.rules} IS NOT NULL AND ${warCamp.endsAt} <= DATE_ADD(${war.combatStartedAt}, INTERVAL CAST(JSON_EXTRACT(${war.rules}, '$.durationDays') AS UNSIGNED) DAY) AND ${warCamp.defenderScore} > ${warCamp.attackerScore} THEN CAST(JSON_EXTRACT(${war.rules}, '$.campDamage') AS UNSIGNED) ELSE 0 END, 0),
-        ${war.defenderWarHealth} = GREATEST(${war.defenderWarHealth} - CASE WHEN ${war.endedAt} IS NULL AND ${war.attackerWarHealth} > 0 AND ${war.defenderWarHealth} > 0 AND ${war.rules} IS NOT NULL AND ${warCamp.endsAt} <= DATE_ADD(${war.combatStartedAt}, INTERVAL CAST(JSON_EXTRACT(${war.rules}, '$.durationDays') AS UNSIGNED) DAY) AND ${warCamp.attackerScore} > ${warCamp.defenderScore} THEN CAST(JSON_EXTRACT(${war.rules}, '$.campDamage') AS UNSIGNED) ELSE 0 END, 0),
-        ${warCamp.resolvedAt} = SYSDATE(3)
-    WHERE ${warCamp.id} = ${camp.id} AND ${warCamp.resolvedAt} IS NULL AND ${warCamp.endsAt} <= SYSDATE(3)
-  `),
-        ),
+        retryOnDeadlock(() => executeRowsForResolveDueWarCamps(client, camp)),
       ),
   );
 };

@@ -1,51 +1,26 @@
 import * as Sentry from "@sentry/nextjs";
-import {
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  like,
-  lt,
-  lte,
-  ne,
-  notExists,
-  notInArray,
-  or,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { eq, gte, isNull, notExists, sql } from "drizzle-orm";
 import { customAlphabet, nanoid } from "nanoid";
 import { z } from "zod";
-import type { CombatStatName, MasteryName } from "@/drizzle/constants";
 import {
-  ACTION_LOG_RELATED_MSG_MAX_LENGTH,
   ACTIVE_VOTING_SITES,
-  ALLIANCEHALL_LAT,
-  ALLIANCEHALL_LONG,
   BasicElementName,
   COST_CHANGE_USERNAME,
+  type CombatStatName,
   CombatStatNames,
   getTavernColorChangeCost,
   getUserCaps,
-  IMG_AVATAR_DEFAULT,
   KAGE_DEFENSE_REMINDER_HOURS,
   KAGE_MIN_PRESTIGE,
-  KAGE_PRESTIGE_REQUIREMENT,
   MAX_ATTRIBUTES,
   MAX_SKILL_POINTS,
+  type MasteryName,
   MasteryNames,
   REGEN_SECONDS,
   SENSEI_MAX_STUDENT_LEVEL,
   SHRINE_BOOST_TYPES,
   SKILL_POINT_MAX_LEVEL,
   SKILL_POINT_MIN_LEVEL,
-  STRONGEST_USERS_COUNT,
   shrineLobbyFreshAfter,
   TERRITORY_WAR_BOOST_PERCENT,
   TUTORIAL_STEPS_COUNT,
@@ -53,66 +28,28 @@ import {
   UserRolesWithSkillTreeAccess,
   VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
-import type {
-  Bloodline,
-  BloodlineReskin,
-  Clan,
-  Item,
-  Quest,
-  SageMode,
-  UserData,
-  UserItem,
-  UserJutsu,
-  UserQuest,
-  UserQueue,
-  UserTitle,
-  UserVote,
-  Village,
-  VillageAlliance,
-  VillageStructure,
-} from "@/drizzle/schema";
+
 import {
-  abEvent,
-  actionLog,
-  battleHistory,
-  contentProposal,
-  farmPlot,
-  gameSetting,
-  historicalIp,
-  item,
-  jutsu,
-  jutsuReskin,
-  mpvpBattleQueue,
-  notification,
-  poll,
-  quest,
-  questHistory,
-  questParty,
-  raidParticipation,
-  recruitmentRewards,
-  sageMode,
-  staffApplication,
-  staffApplicationApproval,
-  supportTicket,
-  trainingLog,
-  userAttribute,
-  userBlackList,
+  type Bloodline,
+  type BloodlineReskin,
+  type Clan,
+  type Item,
+  type Quest,
+  type SageMode,
+  type UserData,
+  type UserItem,
+  type UserJutsu,
+  type UserQuest,
+  type UserQueue,
+  type UserTitle,
+  type UserVote,
   userData,
-  userItem,
-  userItemImbuement,
-  userJutsu,
-  userNindo,
-  userPet,
-  userPollVote,
-  userQueue,
-  userReport,
-  userSkill,
-  userVote,
-  village,
-  war,
+  type Village,
+  type VillageAlliance,
+  type VillageStructure,
 } from "@/drizzle/schema";
+
 import { getReskinnedBloodline } from "@/libs/bloodline";
-import { bloodrightSwapRefund } from "@/libs/bloodright";
 import {
   deletedReason,
   editedReason,
@@ -185,13 +122,131 @@ import {
   inferJutsuTrainingStartedAt,
   settleQueuedTraining,
 } from "@/libs/train";
-import { fetchSquad, removeFromSquad } from "@/routers/anbu";
-import { fetchClan, removeFromClan } from "@/routers/clan";
-import { fetchKageReplacement } from "@/routers/kage";
+import { fetchSquad } from "@/queries/anbu";
+import { incrementUserBank } from "@/queries/bank";
+import { fetchClan } from "@/queries/clan";
+import { listHuntingHabitats } from "@/queries/hunting";
+import { fetchKageReplacement } from "@/queries/kage";
+import {
+  countUsersActiveInLastDay,
+  deleteUserAttributeForDeleteAttribute,
+  deleteUserBlackListForToggleBlacklistEntry,
+  deleteUserItemForApplyUserContentChanges,
+  deleteUserJutsuForApplyUserContentChanges,
+  fetchAchievementCatalogue,
+  fetchActiveRaids,
+  fetchActiveShrineLobbies,
+  fetchAllActiveWars,
+  fetchAllGameSettings,
+  fetchAttributes,
+  fetchHasUnvotedPolls,
+  fetchUser,
+  findAbEventForUpdateTutorialStep,
+  findOwnedUserPet,
+  findSageModeForUpdateUser,
+  findUserBlackListForToggleBlacklistEntry,
+  findUserById,
+  findUserDataForFetchUpdatedUserOnce,
+  findUserDataForGetAi,
+  findUserDataForGetPublicUser,
+  findUserDataForGetPublicUser2,
+  findUserDataForGetSeichiSilverForStaff,
+  findUserDataForGetUsername,
+  findUserDataForQueryUpdatedUser,
+  findUserDataForUpdateAi,
+  findUserDataForUpdateUser,
+  findUserDataForUpdateUsername,
+  findUserDataForUseUnusedExperiencePoints,
+  findUserNindoByUserId,
+  findUserVoteForClaimVotes,
+  findVillageForFetchUpdatedUserOnce,
+  insertAbEventForUpdateTutorialStep,
+  insertActionLogForAdjustSeichiSilver,
+  insertActionLogForAdjustSeichiSilver2,
+  insertActionLogForAwardExperience,
+  insertActionLogForAwardExperienceToAll,
+  insertActionLogForResetPetImageGeneration,
+  insertActionLogForUpdateAi,
+  insertActionLogForUpdateTavernColor,
+  insertActionLogForUpdateUser,
+  insertActionLogForUpdateUser2,
+  insertActionLogForUpdateUsername,
+  insertGameSettingForGetUser,
+  insertHistoricalIpForPersistPassiveRegenToDb,
+  insertRecruitmentRewardsForLevelUp,
+  insertTrainingLogForPersistPassiveRegenToDb,
+  insertTrainingLogForPersistPassiveRegenToDb2,
+  insertUserAttributeForInsertAttribute,
+  insertUserBlackListForToggleBlacklistEntry,
+  insertUserDataForCloneAi,
+  insertUserDataForCreate,
+  insertUserItemForApplyUserContentChanges,
+  insertUserItemForCloneAi,
+  insertUserJutsuForApplyUserContentChanges,
+  insertUserJutsuForCloneAi,
+  insertUserNindoForCloneAi,
+  insertUserNindoForUpdateNindo,
+  insertUserVoteForFetchUpdatedUserOnce,
+  listItemForComputeUserContentChanges,
+  listJutsuForComputeUserContentChanges,
+  listNotificationForGetUser,
+  listQuestPartyForGetUser,
+  listRaidParticipationForGetDashboard,
+  listRecruitmentRewardsForGetRecruitmentRewards,
+  listUserBlackListForGetBlacklist,
+  listUserDataForGetAllAiNames,
+  listUserDataForGetStrongestUsers,
+  listUserDataForSearchUsers,
+  listUserItemsByUserId,
+  listUserJutsuByUserId,
+  listUserPetForGetPetImageGenerationForStaff,
+  selectContentProposalForGetUser,
+  selectFarmPlotForGetUser,
+  selectFarmPlotForGetUser2,
+  selectQuestForFetchQuestBootstrap,
+  selectQuestHistoryForWhere,
+  selectStaffApplicationForGetUser,
+  selectSupportTicketForGetUser,
+  selectUserDataForCountOnlineUsers,
+  selectUserDataForLevelUp,
+  selectUserItemForGetSidebarTimers,
+  selectUserItemImbuementForGetSidebarTimers,
+  selectUserJutsuForFetchJutsuTimers,
+  selectUserReportForGetUser,
+  updateQuestHistoryForFetchUpdatedUserOnce,
+  updateUserDataForAwardExperience,
+  updateUserDataForAwardExperienceToAll,
+  updateUserDataForClaimVotes,
+  updateUserDataForFetchUpdatedUserOnce,
+  updateUserDataForFetchUpdatedUserOnce2,
+  updateUserDataForGetPublicUser,
+  updateUserDataForGetUser,
+  updateUserDataForGetUser2,
+  updateUserDataForToggleDeletionTimer,
+  updateUserDataForUpdateAi,
+  updateUserDataForUpdateBattleDescription,
+  updateUserDataForUpdatePreferences,
+  updateUserDataForUpdateTavernColor,
+  updateUserDataForUpdateTutorialStep,
+  updateUserDataForUpdateUser,
+  updateUserDataForUpdateUsername,
+  updateUserItemForUpdateAi,
+  updateUserNindoForUpdateNindo,
+  updateUserPetForResetPetImageGeneration,
+  updateUserVoteForClaimVotes,
+  updateVillageForFetchUpdatedUserOnce,
+} from "@/queries/profile";
+import {
+  fetchBloodlineCollectionRolls,
+  fetchQuestDiscoverySummaryCandidates,
+} from "@/queries/quests";
+import { fetchEventNoticeState } from "@/queries/tournamentEvents";
+import { fetchJutsuQueueSummary } from "@/queries/train";
+import { fetchVillage, fetchVillages } from "@/queries/village";
+import { removeFromSquad } from "@/routers/anbu";
+import { removeFromClan } from "@/routers/clan";
 import { handleQuestConsequences, insertNextQuest } from "@/routers/quests";
-import { fetchVillage, fetchVillages } from "@/routers/village";
 import { deleteUser } from "@/server/api/routers/staff";
-import { fetchEventNoticeState } from "@/server/api/routers/tournamentEvents";
 import {
   baseServerResponse,
   cdnCachedProcedure,
@@ -203,11 +258,6 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { scopedRead } from "@/server/requestScope";
-import {
-  activityCompletionExtras,
-  completedQuestHistoryRelation,
-  userQuestHistoryRelation,
-} from "@/server/utils/achievementObjectives";
 import {
   adjustSeichiSilverAtomically,
   claimUserSnapshot,
@@ -222,18 +272,15 @@ import {
 } from "@/server/utils/masteryProgression";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
+import { fetchPublicUsers } from "@/server/utils/profile";
 import { buildDerivedUserRegenUpdate } from "@/server/utils/profileRegen";
-import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
 import {
   fetchBloodlineCollectionCatalogue,
-  fetchBloodlineCollectionRolls,
   hydrateQuestCollections,
 } from "@/server/utils/questCollections";
-import { fetchQuestDiscoverySummaryCandidates } from "@/server/utils/questDiscovery";
 import {
   applyQuestParty,
   type LoadedQuestParty,
-  questPartyRelations,
   synchronizeQuestParty,
 } from "@/server/utils/questParty";
 import {
@@ -246,15 +293,11 @@ import {
 } from "@/server/utils/regeneration";
 import { retainSanctionIps } from "@/server/utils/sanctionTombstone";
 import { fetchPublishedSectorMaps } from "@/server/utils/sectorMap";
-import { territoryWarBoostWindowsSql } from "@/server/utils/territoryWar";
-import { displayTitleSql } from "@/server/utils/titleDisplay";
 import {
-  fetchJutsuQueueSummary,
   hasDueTimedJob,
   settleDueTimedQueues,
   settleJutsuTrainingQueue,
 } from "@/server/utils/userQueue";
-import { activeWarAllyWhere } from "@/server/utils/warAlly";
 import { fetchMercenaryWarId } from "@/server/utils/warMercenary";
 import { getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
@@ -283,13 +326,7 @@ import {
 } from "@/utils/permissions";
 import { checkForBadWords } from "@/utils/profanity";
 import sanitize from "@/utils/sanitize";
-import {
-  getTimeOfLastReset,
-  isDifferentDay,
-  secondsFromDate,
-  secondsFromNow,
-  secondsPassed,
-} from "@/utils/time";
+import { isDifferentDay, secondsFromDate, secondsPassed } from "@/utils/time";
 import { countBoostingShrines, getShrineBoost } from "@/utils/village";
 import { insertAiSchema } from "@/validators/aiInput";
 import { mutateContentSchema } from "@/validators/comments";
@@ -299,7 +336,6 @@ import {
   isReservedCustomTitle,
   RESERVED_CUSTOM_TITLE_MESSAGE,
 } from "@/validators/reservedName";
-import type { GetPublicUsersSchema } from "@/validators/user";
 import {
   adjustSeichiSilverSchema,
   assignableMasteryNames,
@@ -336,23 +372,7 @@ export const profileRouter = createTRPCRouter({
             "battlepyramid",
           ],
         }),
-        ctx.drizzle.query.raidParticipation.findMany({
-          where: eq(raidParticipation.userId, ctx.userId),
-          columns: {
-            damageDealt: true,
-            rewardsClaimed: true,
-          },
-          with: {
-            quest: {
-              columns: { id: true, name: true },
-              with: {
-                raidDamageThresholds: {
-                  columns: { id: true, damageRequired: true },
-                },
-              },
-            },
-          },
-        }),
+        listRaidParticipationForGetDashboard(ctx.drizzle, ctx),
       ]);
 
       // Participation history can outlive a deleted raid; only existing raids
@@ -386,68 +406,18 @@ export const profileRouter = createTRPCRouter({
     }),
   getSidebarTimers: protectedProcedure.query(async ({ ctx }) => {
     const now = sql`NOW()`;
-    const imbuedItem = alias(item, "imbuedItem");
 
     // The running training and the levels waiting behind it, each in one query.
     const fetchJutsuTimers = () =>
       Promise.all([
-        ctx.drizzle
-          .select({
-            name: sql<string>`COALESCE(${jutsuReskin.name}, ${jutsu.name})`,
-            level: userJutsu.level,
-            jutsuRank: jutsu.jutsuRank,
-            requiredRank: jutsu.requiredRank,
-            trainingStartedAt: userJutsu.trainingStartedAt,
-            finishTraining: userJutsu.finishTraining,
-            senseiId: userData.senseiId,
-            rank: userData.rank,
-          })
-          .from(userJutsu)
-          .innerJoin(jutsu, eq(userJutsu.jutsuId, jutsu.id))
-          .innerJoin(userData, eq(userJutsu.userId, userData.userId))
-          .leftJoin(jutsuReskin, eq(userJutsu.reskinId, jutsuReskin.id))
-          .where(
-            and(eq(userJutsu.userId, ctx.userId), gt(userJutsu.finishTraining, now)),
-          )
-          .orderBy(asc(userJutsu.finishTraining))
-          .limit(1),
+        selectUserJutsuForFetchJutsuTimers(ctx.drizzle, ctx, now),
         fetchJutsuQueueSummary(ctx.drizzle, ctx.userId),
       ]);
     let [[jutsuTrainingRows, waitingJutsu], craftingRows, imbuementRows] =
       await Promise.all([
         fetchJutsuTimers(),
-        ctx.drizzle
-          .select({
-            itemName: item.name,
-            craftingStartedAt: userItem.createdAt,
-            craftingFinishedAt: userItem.craftingFinishedAt,
-          })
-          .from(userItem)
-          .innerJoin(item, eq(userItem.itemId, item.id))
-          .where(
-            and(eq(userItem.userId, ctx.userId), gt(userItem.craftingFinishedAt, now)),
-          )
-          .orderBy(asc(userItem.craftingFinishedAt))
-          .limit(1),
-        ctx.drizzle
-          .select({
-            imbuedName: imbuedItem.name,
-            targetName: item.name,
-            craftingStartedAt: userItemImbuement.createdAt,
-            craftingFinishedAt: userItemImbuement.craftingFinishedAt,
-          })
-          .from(userItemImbuement)
-          .innerJoin(userItem, eq(userItemImbuement.userItemId, userItem.id))
-          .innerJoin(item, eq(userItem.itemId, item.id))
-          .innerJoin(imbuedItem, eq(userItemImbuement.imbuementItemId, imbuedItem.id))
-          .where(
-            and(
-              eq(userItem.userId, ctx.userId),
-              gt(userItemImbuement.craftingFinishedAt, now),
-            ),
-          )
-          .orderBy(asc(userItemImbuement.craftingFinishedAt))
-          .limit(1),
+        selectUserItemForGetSidebarTimers(ctx.drizzle, ctx, now),
+        selectUserItemImbuementForGetSidebarTimers(ctx.drizzle, ctx, now),
       ]);
     // A queued jutsu level whose turn has come only becomes `UserJutsu` training once
     // settled. The timers are polled on their own, so settle here too: the dashboard and
@@ -518,10 +488,11 @@ export const profileRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
       // Mutate
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ showBattleDescription: input.showBattleDescription })
-        .where(eq(userData.userId, ctx.userId));
+      const result = await updateUserDataForUpdateBattleDescription(
+        ctx.drizzle,
+        input,
+        ctx,
+      );
       // Potential errors
       if (result.rowsAffected === 0) {
         return errorResponse("Could not update battle description setting");
@@ -541,10 +512,7 @@ export const profileRouter = createTRPCRouter({
     .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
       // Update the database
-      await ctx.drizzle
-        .update(userData)
-        .set({ tutorialStep: input.step })
-        .where(eq(userData.userId, ctx.userId));
+      await updateUserDataForUpdateTutorialStep(ctx.drizzle, input, ctx);
 
       // AB Test success. Loaded events are only ever logged with an IP, so without one
       // there is no visit to attribute the success to.
@@ -557,27 +525,19 @@ export const profileRouter = createTRPCRouter({
         });
         await Promise.all(
           experiments.map(async (experiment) => {
-            const abLoadedEvent = await ctx.drizzle.query.abEvent.findFirst({
-              where: and(
-                eq(abEvent.ipHash, ipHash),
-                eq(abEvent.experiment, experiment.experiment),
-                eq(abEvent.event, "loaded"),
-              ),
-            });
+            const abLoadedEvent = await findAbEventForUpdateTutorialStep(
+              ctx.drizzle,
+              ipHash,
+              experiment,
+            );
             if (!abLoadedEvent) return;
-            await ctx.drizzle
-              .insert(abEvent)
-              .values({
-                id: nanoid(),
-                userId: ctx.userId,
-                experiment: experiment.experiment,
-                variant: abLoadedEvent.variant,
-                event: "success",
-                source: abLoadedEvent.source,
-                ipHash,
-                userAgent: abLoadedEvent.userAgent,
-              })
-              .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+            await insertAbEventForUpdateTutorialStep(
+              ctx.drizzle,
+              ctx,
+              experiment,
+              abLoadedEvent,
+              ipHash,
+            );
           }),
         );
       }
@@ -595,10 +555,7 @@ export const profileRouter = createTRPCRouter({
     .input(updateUserPreferencesSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const result = await ctx.drizzle
-        .update(userData)
-        .set(input)
-        .where(eq(userData.userId, ctx.userId));
+      const result = await updateUserDataForUpdatePreferences(ctx.drizzle, input, ctx);
       return {
         success: result.rowsAffected > 0,
         message:
@@ -611,12 +568,7 @@ export const profileRouter = createTRPCRouter({
   getBlacklist: protectedProcedure
     .meta({ mcp: { description: "Get user's blocked players list" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.userBlackList.findMany({
-        where: eq(userBlackList.creatorUserId, ctx.userId),
-        with: {
-          target: { columns: { username: true, userId: true, avatar: true } },
-        },
-      });
+      return await listUserBlackListForGetBlacklist(ctx.drizzle, ctx);
     }),
   toggleBlacklistEntry: protectedProcedure
     .meta({
@@ -627,15 +579,8 @@ export const profileRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       // Query
       const [entry, target] = await Promise.all([
-        ctx.drizzle.query.userBlackList.findFirst({
-          where: and(
-            eq(userBlackList.creatorUserId, ctx.userId),
-            eq(userBlackList.targetUserId, input.userId),
-          ),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, input.userId),
-        }),
+        findUserBlackListForToggleBlacklistEntry(ctx.drizzle, ctx, input),
+        findUserById(ctx.drizzle, input.userId),
       ]);
       // Guard
       if (!target) return errorResponse("User not found");
@@ -644,17 +589,18 @@ export const profileRouter = createTRPCRouter({
       const targetName = target.username;
       // Mutate
       if (!entry) {
-        const result = await ctx.drizzle.insert(userBlackList).values({
-          creatorUserId: ctx.userId,
-          targetUserId: input.userId,
-        });
+        const result = await insertUserBlackListForToggleBlacklistEntry(
+          ctx.drizzle,
+          ctx,
+          input,
+        );
         if (result.rowsAffected === 0) {
           return { success: false, message: `Failed to add ${targetName}` };
         } else {
           return { success: true, message: `Added ${targetName} to blacklist` };
         }
       } else {
-        await ctx.drizzle.delete(userBlackList).where(eq(userBlackList.id, entry.id));
+        await deleteUserBlackListForToggleBlacklistEntry(ctx.drizzle, entry);
         return { success: true, message: `Removed ${targetName} from blacklist` };
       }
     }),
@@ -667,24 +613,7 @@ export const profileRouter = createTRPCRouter({
     })
     .input(z.object({ arenaOnly: z.boolean().optional() }).nullish())
     .query(async ({ ctx, input }) => {
-      return ctx.drizzle.query.userData.findMany({
-        where: and(
-          eq(userData.isAi, true),
-          ne(userData.rank, "ELDER"),
-          input?.arenaOnly ? eq(userData.inArena, true) : undefined,
-          input?.arenaOnly ? eq(userData.isSummon, false) : undefined,
-        ),
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          avatar: true,
-          isSummon: true,
-          inArena: true,
-          aiProfileId: true,
-        },
-        orderBy: asc(userData.level),
-      });
+      return listUserDataForGetAllAiNames(ctx.drizzle, input);
     }),
   // Update user with new level
   levelUp: protectedProcedure
@@ -696,23 +625,13 @@ export const profileRouter = createTRPCRouter({
     .output(userDeltaResponseSchema)
     .mutation(async ({ ctx }) => {
       // Query
-      const recruiterData = alias(userData, "recruiter");
+
       const [snapshot, recruiter] = await Promise.all([
         fetchUpdatedUser({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle
-          .select({
-            pvpExperience: recruiterData.pvpExperience,
-            weeklyPvpKills: recruiterData.weeklyPvpKills,
-            weeklyPvpKillsAt: recruiterData.weeklyPvpKillsAt,
-            isAi: recruiterData.isAi,
-          })
-          .from(userData)
-          .innerJoin(recruiterData, eq(userData.recruiterId, recruiterData.userId))
-          .where(eq(userData.userId, ctx.userId))
-          .then((rows) => rows[0]),
+        selectUserDataForLevelUp(ctx.drizzle, ctx).then((rows) => rows[0]),
       ]);
       const {
         user,
@@ -781,17 +700,13 @@ export const profileRouter = createTRPCRouter({
           ),
         );
         await Promise.all([
-          ctx.drizzle
-            .update(userData)
-            .set({ bank: sql`${userData.bank} + ${amount}` })
-            .where(eq(userData.userId, user.recruiterId)),
-          ctx.drizzle.insert(recruitmentRewards).values({
-            id: nanoid(),
-            userId: user.recruiterId,
-            recruitedUserId: ctx.userId,
-            amount: amount,
-            type: "MONEY",
-          }),
+          incrementUserBank(ctx.drizzle, amount, user.recruiterId),
+          insertRecruitmentRewardsForLevelUp(
+            ctx.drizzle,
+            { recruiterId: user.recruiterId },
+            ctx,
+            amount,
+          ),
         ]);
       }
       // Return response
@@ -851,37 +766,10 @@ export const profileRouter = createTRPCRouter({
           allowQuestPartySyncFallback: true,
           // forceRegen: true, // This should be disabled in prod to save on DB calls
         }),
-        ctx.drizzle
-          .select({ count: count() })
-          .from(farmPlot)
-          .where(
-            and(
-              eq(farmPlot.userId, ctx.userId),
-              isNotNull(farmPlot.seedItemId),
-              isNotNull(farmPlot.finishAt),
-              lte(farmPlot.finishAt, now),
-            ),
-          ),
-        ctx.drizzle
-          .select({ count: count() })
-          .from(farmPlot)
-          .where(
-            and(
-              eq(farmPlot.userId, ctx.userId),
-              isNotNull(farmPlot.seedItemId),
-              isNotNull(farmPlot.finishAt),
-              gt(farmPlot.finishAt, now),
-              or(
-                isNull(farmPlot.lastWateredAt),
-                lt(farmPlot.lastWateredAt, currentDayCycleStartedAt),
-              ),
-            ),
-          ),
+        selectFarmPlotForGetUser(ctx.drizzle, ctx, now),
+        selectFarmPlotForGetUser2(ctx.drizzle, ctx, now, currentDayCycleStartedAt),
         fetchPublishedAchievements(ctx.drizzle),
-        ctx.drizzle.query.questParty.findMany({
-          where: sql`JSON_CONTAINS(${questParty.invitedUserIds}, JSON_QUOTE(${ctx.userId}))`,
-          with: { quest: true },
-        }),
+        listQuestPartyForGetUser(ctx.drizzle, ctx),
         fetchEventNoticeState(ctx.drizzle, ctx.userId),
       ]);
       const { user, settings, toastMessages, hasUnvotedPolls } = updatedUser;
@@ -1259,12 +1147,7 @@ export const profileRouter = createTRPCRouter({
           });
         }
         if (!warRegenSetting) {
-          await ctx.drizzle.insert(gameSetting).values({
-            id: nanoid(),
-            name: warRegenName,
-            value: 0,
-            time: new Date(),
-          });
+          await insertGameSettingForGetUser(ctx.drizzle, warRegenName);
         }
 
         // War-time training boost
@@ -1280,12 +1163,7 @@ export const profileRouter = createTRPCRouter({
           });
         }
         if (!warTrainingSetting) {
-          await ctx.drizzle.insert(gameSetting).values({
-            id: nanoid(),
-            name: warTrainingName,
-            value: 0,
-            time: new Date(),
-          });
+          await insertGameSettingForGetUser(ctx.drizzle, warTrainingName);
         }
 
         if (getTerritoryWarBoost(user) > 0)
@@ -1320,49 +1198,15 @@ export const profileRouter = createTRPCRouter({
           const [reportCounts, ticketCounts, applicationCounts, reviewCounts] =
             await Promise.all([
               canModerateRoles.includes(user.role)
-                ? ctx.drizzle
-                    .select({ count: sql`count(*)`.mapWith(Number) })
-                    .from(userReport)
-                    .innerJoin(userData, eq(userData.userId, userReport.reportedUserId))
-                    .where(inArray(userReport.status, ["UNVIEWED", "BAN_ESCALATED"]))
+                ? selectUserReportForGetUser(ctx.drizzle)
                 : null,
               canModerateRoles.includes(user.role)
-                ? ctx.drizzle
-                    .select({ count: sql`count(*)`.mapWith(Number) })
-                    .from(supportTicket)
-                    .where(
-                      inArray(supportTicket.status, [
-                        "OPEN",
-                        "IN_PROGRESS",
-                        "WAITING_FOR_STAFF",
-                      ]),
-                    )
+                ? selectSupportTicketForGetUser(ctx.drizzle)
                 : null,
               approvalGroup
-                ? ctx.drizzle
-                    .select({ count: sql`count(*)`.mapWith(Number) })
-                    .from(staffApplication)
-                    .leftJoin(
-                      staffApplicationApproval,
-                      and(
-                        eq(staffApplication.id, staffApplicationApproval.applicationId),
-                        eq(staffApplicationApproval.group, approvalGroup),
-                        eq(staffApplicationApproval.approverUserId, user.userId),
-                      ),
-                    )
-                    .where(
-                      and(
-                        eq(staffApplication.state, "PENDING"),
-                        isNull(staffApplicationApproval.applicationId),
-                      ),
-                    )
+                ? selectStaffApplicationForGetUser(ctx.drizzle, approvalGroup, user)
                 : null,
-              canReviewContent
-                ? ctx.drizzle
-                    .select({ count: sql`count(*)`.mapWith(Number) })
-                    .from(contentProposal)
-                    .where(eq(contentProposal.status, "PENDING"))
-                : null,
+              canReviewContent ? selectContentProposalForGetUser(ctx.drizzle) : null,
             ]);
 
           const userReports = reportCounts?.[0]?.count ?? 0;
@@ -1486,23 +1330,12 @@ export const profileRouter = createTRPCRouter({
             name: `Your recruits earned you ${user.unreadRecruitRewards} rank milestone ${user.unreadRecruitRewards === 1 ? "reward" : "rewards"}`,
             color: "toast",
           });
-          await ctx.drizzle
-            .update(userData)
-            .set({
-              unreadRecruitRewards: sql`GREATEST(${userData.unreadRecruitRewards} - ${user.unreadRecruitRewards}, 0)`,
-            })
-            .where(eq(userData.userId, ctx.userId));
+          await updateUserDataForGetUser(ctx.drizzle, user, ctx);
         }
         if (user.unreadNotifications > 0) {
           const [unread] = await Promise.all([
-            ctx.drizzle.query.notification.findMany({
-              limit: user.unreadNotifications,
-              orderBy: desc(notification.createdAt),
-            }),
-            ctx.drizzle
-              .update(userData)
-              .set({ unreadNotifications: 0 })
-              .where(eq(userData.userId, ctx.userId)),
+            listNotificationForGetUser(ctx.drizzle, user),
+            updateUserDataForGetUser2(ctx.drizzle, ctx),
           ]);
           unread?.forEach((n) => {
             notifications?.push({
@@ -1527,10 +1360,7 @@ export const profileRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get AI character details by ID" } })
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: and(eq(userData.userId, input.userId), eq(userData.isAi, true)),
-        with: { jutsus: { with: { jutsu: true } }, items: { with: { item: true } } },
-      });
+      const user = await findUserDataForGetAi(ctx.drizzle, input);
       // Filter off entries that do not exist
       if (user) {
         user.jutsus = user.jutsus.filter((j) => j.jutsu);
@@ -1553,18 +1383,7 @@ export const profileRouter = createTRPCRouter({
         return errorResponse("You are banned and cannot perform this action");
       if (canChangeContent(user.role)) {
         const id = nanoid();
-        await ctx.drizzle.insert(userData).values({
-          userId: id,
-          username: `New AI - ${id}`,
-          gender: "Unknown",
-          avatar: IMG_AVATAR_DEFAULT,
-          avatarLight: IMG_AVATAR_DEFAULT,
-          villageId: null,
-          approvedTos: true,
-          sector: 0,
-          level: 100,
-          isAi: true,
-        });
+        await insertUserDataForCreate(ctx.drizzle, id);
         return { success: true, message: id };
       } else {
         return { success: false, message: `Not allowed to create AI` };
@@ -1583,16 +1402,10 @@ export const profileRouter = createTRPCRouter({
       // Fetch
       const [user, aiData, jutsuData, itemData, nindoData] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, input.id),
-        }),
-        ctx.drizzle.query.userJutsu.findMany({
-          where: eq(userJutsu.userId, input.id),
-        }),
-        ctx.drizzle.query.userItem.findMany({ where: eq(userItem.userId, input.id) }),
-        ctx.drizzle.query.userNindo.findFirst({
-          where: eq(userNindo.userId, input.id),
-        }),
+        findUserById(ctx.drizzle, input.id),
+        listUserJutsuByUserId(ctx.drizzle, input.id),
+        listUserItemsByUserId(ctx.drizzle, input.id),
+        findUserNindoByUserId(ctx.drizzle, input.id),
       ]);
       // Guard
       if (!aiData) return errorResponse("AI not found");
@@ -1606,32 +1419,14 @@ export const profileRouter = createTRPCRouter({
       aiData.updatedAt = new Date();
       // Run all inserts at once
       await Promise.all([
-        ctx.drizzle.insert(userData).values(aiData),
+        insertUserDataForCloneAi(ctx.drizzle, aiData),
         ...(jutsuData.length > 0
-          ? [
-              ctx.drizzle.insert(userJutsu).values(
-                jutsuData.map((jutsu) => ({
-                  id: nanoid(),
-                  userId: aiData.userId,
-                  jutsuId: jutsu.jutsuId,
-                  level: jutsu.level,
-                })),
-              ),
-            ]
+          ? [insertUserJutsuForCloneAi(ctx.drizzle, jutsuData, aiData)]
           : []),
         ...(itemData.length > 0
-          ? [
-              ctx.drizzle.insert(userItem).values(
-                itemData.map((item) => ({
-                  id: nanoid(),
-                  userId: aiData.userId,
-                  itemId: item.itemId,
-                  quantity: item.quantity,
-                })),
-              ),
-            ]
+          ? [insertUserItemForCloneAi(ctx.drizzle, itemData, aiData)]
           : []),
-        ...(nindoData ? [ctx.drizzle.insert(userNindo).values(nindoData)] : []),
+        ...(nindoData ? [insertUserNindoForCloneAi(ctx.drizzle, nindoData)] : []),
       ]);
 
       return { success: true, message: aiData.userId };
@@ -1651,7 +1446,7 @@ export const profileRouter = createTRPCRouter({
         return errorResponse("Not allowed to delete AI");
       const [ai, habitats] = await Promise.all([
         fetchUser(ctx.drizzle, input.id),
-        ctx.drizzle.query.huntingHabitat.findMany(),
+        listHuntingHabitats(ctx.drizzle),
       ]);
       if (habitats.some((h) => h.content.contracts.some((c) => c.aiId === input.id)))
         return errorResponse(
@@ -1682,15 +1477,11 @@ export const profileRouter = createTRPCRouter({
       // Queries
       const [user, target, village, sageExists, villages] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, input.id),
-          with: { jutsus: true, items: true },
-        }),
+        findUserDataForUpdateUser(ctx.drizzle, input),
         fetchVillage(ctx.drizzle, input.data?.villageId || VILLAGE_SYNDICATE_ID),
         input.data.sageModeId
-          ? ctx.drizzle.query.sageMode.findFirst({
-              where: eq(sageMode.id, input.data.sageModeId),
-              columns: { id: true },
+          ? findSageModeForUpdateUser(ctx.drizzle, {
+              data: { sageModeId: input.data.sageModeId },
             })
           : Promise.resolve(null),
         fetchVillages(ctx.drizzle),
@@ -1827,15 +1618,7 @@ export const profileRouter = createTRPCRouter({
         input.data.reason,
       );
       if (!aiCheck.allowUpdate) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [],
-          relatedId: target.userId,
-          relatedMsg: `Updated attempted. Reason rejected by AI: ${input.data.reason}`,
-          relatedImage: target.avatarLight,
-        });
+        await insertActionLogForUpdateUser(ctx.drizzle, ctx, target, input);
         return errorResponse(aiCheck.comment);
       }
 
@@ -1849,45 +1632,22 @@ export const profileRouter = createTRPCRouter({
           insertedJutsuIds: contentChanges.insertedJutsuIds,
           insertedItemIds: contentChanges.insertedItemIds,
         }),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            userId: target.userId,
-            ...(usernameChanged ? { username: input.data.username } : {}),
-            ...(bloodlineChanged
-              ? {
-                  ...bloodrightSwapRefund(input.data.bloodlineId),
-                  bloodlineId: input.data.bloodlineId,
-                }
-              : {}),
-            ...(villageChanged ? { villageId: input.data.villageId } : {}),
-            ...(rankChanged ? { rank: input.data.rank } : {}),
-            ...(bloodlineReskinChanged
-              ? { bloodlineReskinId: input.data.bloodlineReskinId ?? null }
-              : {}),
-            ...(sageModeChanged ? { sageModeId: input.data.sageModeId } : {}),
-            ...(staffAccountChanged ? { staffAccount: input.data.staffAccount } : {}),
-            ...(rankedLpChanged ? { rankedLp: input.data.rankedLp } : {}),
-            ...(roleChanged ? { role: input.data.role } : {}),
-            ...(villageChanged
-              ? {
-                  isOutlaw: village.type === "OUTLAW",
-                  sector: village.sector,
-                  longitude: ALLIANCEHALL_LONG,
-                  latitude: ALLIANCEHALL_LAT,
-                }
-              : {}),
-          })
-          .where(eq(userData.userId, target.userId)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: diff,
-          relatedId: target.userId,
-          relatedMsg: input.data.reason,
-          relatedImage: target.avatarLight,
-        }),
+        updateUserDataForUpdateUser(
+          ctx.drizzle,
+          target,
+          usernameChanged,
+          input,
+          bloodlineChanged,
+          villageChanged,
+          rankChanged,
+          bloodlineReskinChanged,
+          sageModeChanged,
+          staffAccountChanged,
+          rankedLpChanged,
+          roleChanged,
+          village,
+        ),
+        insertActionLogForUpdateUser2(ctx.drizzle, ctx, diff, target, input),
       ]);
       if (rankChanged && target.recruiterId) {
         await awardRecruitRankMilestonesSafely({
@@ -1917,19 +1677,10 @@ export const profileRouter = createTRPCRouter({
       const newUsername = input.data.username;
       const [user, ai, villages, usernameTaken] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, input.id),
-          with: { jutsus: true, items: true },
-        }),
+        findUserDataForUpdateUser(ctx.drizzle, input),
         fetchVillages(ctx.drizzle),
         newUsername
-          ? ctx.drizzle.query.userData.findFirst({
-              columns: { userId: true },
-              where: and(
-                eq(userData.username, newUsername),
-                ne(userData.userId, input.id),
-              ),
-            })
+          ? findUserDataForUpdateAi(ctx.drizzle, newUsername, input)
           : undefined,
       ]);
 
@@ -1988,21 +1739,10 @@ export const profileRouter = createTRPCRouter({
 
       // Update database
       await Promise.all([
-        ctx.drizzle.update(userData).set(newAi).where(eq(userData.userId, input.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "ai",
-          changes: diff,
-          relatedId: ai.userId,
-          relatedMsg: `Update: ${ai.username}`,
-          relatedImage: ai.avatar,
-        }),
+        updateUserDataForUpdateAi(ctx.drizzle, newAi, input),
+        insertActionLogForUpdateAi(ctx.drizzle, ctx, diff, ai),
         ...itemIdWithChance.map(({ id, chance }) =>
-          ctx.drizzle
-            .update(userItem)
-            .set({ dropChancePerc: chance })
-            .where(and(eq(userItem.userId, ai.userId), eq(userItem.itemId, id))),
+          updateUserItemForUpdateAi(ctx.drizzle, chance, ai, id),
         ),
       ]);
       await outdateProposalsFor(
@@ -2033,10 +1773,7 @@ export const profileRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const username = await ctx.drizzle.query.userData.findFirst({
-        columns: { username: true, userId: true },
-        where: eq(userData.username, input.username),
-      });
+      const username = await findUserDataForGetUsername(ctx.drizzle, input);
       return username || null;
     }),
   // Update username
@@ -2050,10 +1787,7 @@ export const profileRouter = createTRPCRouter({
       // Fetch
       const [user, target, moderationResult] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userData.findFirst({
-          columns: { username: true },
-          where: eq(userData.username, input.username),
-        }),
+        findUserDataForUpdateUsername(ctx.drizzle, input),
         checkForBadWords(input.username),
       ]);
       // Guard
@@ -2067,32 +1801,16 @@ export const profileRouter = createTRPCRouter({
       if (user.isBanned) return errorResponse("You are banned");
       if (target) return errorResponse("Username already taken");
       // Mutate
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          username: input.username,
-          reputationPoints: sql`reputationPoints - ${COST_CHANGE_USERNAME}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.username, user.username),
-            eq(userData.reputationPoints, user.reputationPoints),
-            gte(userData.reputationPoints, COST_CHANGE_USERNAME),
-          ),
-        );
+      const result = await updateUserDataForUpdateUsername(
+        ctx.drizzle,
+        input,
+        ctx,
+        user,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse("Your profile or reputation changed. Please try again");
       } else {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [`Username changed from ${user.username} to ${input.username}`],
-          relatedId: ctx.userId,
-          relatedMsg: `Update: ${user.username} -> ${input.username}`,
-          relatedImage: user.avatarLight,
-        });
+        await insertActionLogForUpdateUsername(ctx.drizzle, ctx, user, input);
         scheduleDiscordSync(ctx.drizzle, ctx.userId);
         return {
           success: true,
@@ -2135,27 +1853,13 @@ export const profileRouter = createTRPCRouter({
         input.target === "username"
           ? { tavernUsernameColor: input.color }
           : { tavernTitleColor: input.color };
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          ...colorUpdate,
-          reputationPoints: sql`${userData.reputationPoints} - ${cost}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.isBanned, false),
-            eq(
-              input.target === "username"
-                ? userData.tavernUsernameColor
-                : userData.tavernTitleColor,
-              input.currentColor,
-            ),
-            // FLOAT balances do not round-trip through exact SQL equality. The
-            // floor and SQL debit preserve concurrent earnings and prevent overspending.
-            gte(userData.reputationPoints, cost),
-          ),
-        );
+      const result = await updateUserDataForUpdateTavernColor(
+        ctx.drizzle,
+        colorUpdate,
+        cost,
+        ctx,
+        input,
+      );
 
       if (result.rowsAffected === 0) {
         return errorResponse(
@@ -2163,17 +1867,7 @@ export const profileRouter = createTRPCRouter({
         );
       }
 
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "user",
-        changes: [
-          `Tavern ${input.target} color changed from ${input.currentColor} to ${input.color} (-${cost} reputation)`,
-        ],
-        relatedId: ctx.userId,
-        relatedMsg: `${user.username} changed their tavern ${input.target} color`,
-        relatedImage: user.avatarLight,
-      });
+      await insertActionLogForUpdateTavernColor(ctx.drizzle, ctx, input, cost, user);
       return {
         success: true,
         userPatch: {
@@ -2190,18 +1884,7 @@ export const profileRouter = createTRPCRouter({
     .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
       // Query
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        with: {
-          bloodline: true,
-          items: {
-            where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
-            with: { item: true, imbuements: { with: { item: true } } },
-          },
-          titles: { with: { title: true } },
-          userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
-        },
-      });
+      const user = await findUserDataForUseUnusedExperiencePoints(ctx.drizzle, ctx);
       if (!user) return errorResponse("User not found");
       const assignmentBlock = experienceAssignmentBlockMessage(user);
       if (assignmentBlock) return errorResponse(assignmentBlock);
@@ -2333,9 +2016,7 @@ export const profileRouter = createTRPCRouter({
     })
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const nindo = await ctx.drizzle.query.userNindo.findFirst({
-        where: eq(userNindo.userId, input.userId),
-      });
+      const nindo = await findUserNindoByUserId(ctx.drizzle, input.userId);
       return nindo ? nindo.content : "";
     }),
   // Update nindo
@@ -2381,14 +2062,11 @@ export const profileRouter = createTRPCRouter({
         return errorResponse(`You already have the attribute "${name}"`);
       }
       // Mutate - use onDuplicateKeyUpdate to handle race conditions
-      const result = await ctx.drizzle
-        .insert(userAttribute)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          attribute: name,
-        })
-        .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+      const result = await insertUserAttributeForInsertAttribute(
+        ctx.drizzle,
+        ctx,
+        name,
+      );
       if (result.rowsAffected === 0) {
         return { success: false, message: "Failed to insert attribute" };
       } else {
@@ -2403,14 +2081,11 @@ export const profileRouter = createTRPCRouter({
     .input(z.object({ attribute: z.string() }))
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const result = await ctx.drizzle
-        .delete(userAttribute)
-        .where(
-          and(
-            eq(userAttribute.attribute, input.attribute),
-            eq(userAttribute.userId, ctx.userId),
-          ),
-        );
+      const result = await deleteUserAttributeForDeleteAttribute(
+        ctx.drizzle,
+        input,
+        ctx,
+      );
       if (result.rowsAffected === 0) {
         return { success: false, message: "Failed to delete attribute" };
       } else {
@@ -2428,40 +2103,7 @@ export const profileRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      return ctx.drizzle.query.userData.findMany({
-        extras: (table) => ({
-          displayTitle: displayTitleSql(table).as("displayTitle"),
-        }),
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          rank: true,
-          isOutlaw: true,
-          level: true,
-          role: true,
-          federalStatus: true,
-          isAi: true,
-
-          nRecruited: true,
-          tavernMessages: true,
-          tavernUsernameColor: true,
-          tavernTitleColor: true,
-        },
-        with: {
-          village: {
-            columns: { name: true, hexColor: true, kageId: true },
-          },
-        },
-        where: and(
-          like(userData.username, `%${input.username}%`),
-          eq(userData.approvedTos, true),
-          ...(input.showAi ? [] : [eq(userData.isAi, false)]),
-          ...(input.showYourself ? [] : [sql`${userData.userId} != ${ctx.userId}`]),
-        ),
-        orderBy: [sql`LENGTH(${userData.username}) asc`],
-        limit: 5,
-      });
+      return listUserDataForSearchUsers(ctx.drizzle, input, ctx);
     }),
   // Get public information on a user
   getPublicUser: publicProcedure
@@ -2470,113 +2112,8 @@ export const profileRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       // Query
       const [requester, user] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId ?? ""),
-          columns: { role: true },
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: and(eq(userData.userId, input.userId)),
-          extras: (table) => ({
-            displayTitle: displayTitleSql(table).as("displayTitle"),
-          }),
-          columns: {
-            aiProfileId: true,
-            avatar: true,
-            avatarLight: true,
-            bloodlineId: true,
-            sageModeId: true,
-            curChakra: true,
-            curHealth: true,
-            curStamina: true,
-
-            deletionAt: true,
-            earnedExperience: true,
-            experience: true,
-            federalStatus: true,
-            gender: true,
-            isAi: true,
-            isBanned: true,
-            isSilenced: true,
-            isOutlaw: true,
-            lastIp: true,
-            level: true,
-            maxChakra: true,
-            maxHealth: true,
-            maxStamina: true,
-            movedTooFastCount: true,
-            pveFights: true,
-            pvpWins: true,
-            pvpLosses: true,
-            showPvpRecord: true,
-            rank: true,
-            rankedLp: true,
-            reputationPoints: true,
-            role: true,
-            senseiId: true,
-            status: true,
-            userId: true,
-            username: true,
-            villageId: true,
-            tavernMessages: true,
-            staffAccount: true,
-            bloodlineReskinId: true,
-            bracketImmunityLiftedUntil: true,
-            warParticipantUntil: true,
-          },
-          with: {
-            village: true,
-            bloodline: true,
-            sageMode: true,
-            nindo: true,
-            clan: true,
-            jutsus: { with: { jutsu: { columns: { id: true, name: true } } } },
-            items: { with: { item: { columns: { id: true, name: true } } } },
-            badges: { with: { badge: true } },
-            activeReskin: true,
-            recruitedUsers: {
-              columns: {
-                userId: true,
-                username: true,
-                level: true,
-                rank: true,
-                isOutlaw: true,
-                avatar: true,
-              },
-            },
-            students: {
-              columns: {
-                userId: true,
-                username: true,
-                level: true,
-                rank: true,
-                isOutlaw: true,
-                avatar: true,
-              },
-            },
-            sensei: {
-              columns: {
-                userId: true,
-                username: true,
-              },
-            },
-            anbuSquad: {
-              columns: {
-                name: true,
-              },
-            },
-            battleHistory: {
-              columns: {
-                battleType: true,
-                createdAt: true,
-              },
-              where: and(
-                eq(battleHistory.attackedId, input.userId),
-                notInArray(battleHistory.battleType, ["SPARRING", "COMBAT"]),
-                gte(battleHistory.createdAt, getTimeOfLastReset()),
-              ),
-            },
-          },
-        }),
+        findUserDataForGetPublicUser(ctx.drizzle, ctx),
+        findUserDataForGetPublicUser2(ctx.drizzle, input),
       ]);
       // Guard
       if (!user) return null;
@@ -2615,10 +2152,7 @@ export const profileRouter = createTRPCRouter({
       // If no avatarLight version, create one
       if (!user.avatarLight && user.avatar) {
         const thumbnail = await createThumbnail(user.avatar);
-        await ctx.drizzle
-          .update(userData)
-          .set({ avatarLight: thumbnail })
-          .where(eq(userData.userId, user.userId));
+        await updateUserDataForGetPublicUser(ctx.drizzle, thumbnail, user);
       }
       // Hide PvP W/L unless the owner opted in, the viewer is the owner, or staff.
       // Null (not omit) so the public payload shape stays stable for clients.
@@ -2639,14 +2173,8 @@ export const profileRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       // Fetch
       const [current, daily, maxOnline] = await Promise.all([
-        ctx.drizzle
-          .select({ count: count() })
-          .from(userData)
-          .where(gte(userData.updatedAt, secondsFromNow(-1800))), // 30 minutes = 1800 seconds
-        ctx.drizzle
-          .select({ count: count() })
-          .from(userData)
-          .where(gte(userData.updatedAt, secondsFromNow(-3600 * 24))),
+        selectUserDataForCountOnlineUsers(ctx.drizzle), // 30 minutes = 1800 seconds
+        countUsersActiveInLastDay(ctx.drizzle),
         getGameSetting(ctx.drizzle, "onlineUsers"),
       ]);
       // Derived
@@ -2676,15 +2204,7 @@ export const profileRouter = createTRPCRouter({
       mcp: { description: "Get the users with the most ranked LP" },
     })
     .query(async ({ ctx }) => {
-      return ctx.drizzle.query.userData.findMany({
-        extras: (table) => ({
-          displayTitle: displayTitleSql(table).as("displayTitle"),
-        }),
-        columns: { userId: true, username: true, avatarLight: true, rankedLp: true },
-        where: eq(userData.isAi, false),
-        orderBy: [desc(userData.rankedLp), desc(userData.experience)],
-        limit: STRONGEST_USERS_COUNT,
-      });
+      return listUserDataForGetStrongestUsers(ctx.drizzle);
     }),
 
   // Get recruitment rewards for current user
@@ -2701,17 +2221,12 @@ export const profileRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const currentCursor = input.cursor ?? 0;
       const skip = currentCursor * input.limit;
-      const results = await ctx.drizzle.query.recruitmentRewards.findMany({
-        where: eq(recruitmentRewards.userId, ctx.userId),
-        with: {
-          recruitedUser: {
-            columns: { userId: true, username: true, avatar: true },
-          },
-        },
-        offset: skip,
-        limit: input.limit,
-        orderBy: desc(recruitmentRewards.createdAt),
-      });
+      const results = await listRecruitmentRewardsForGetRecruitmentRewards(
+        ctx.drizzle,
+        ctx,
+        skip,
+        input,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return { data: results, nextCursor };
     }),
@@ -2739,12 +2254,7 @@ export const profileRouter = createTRPCRouter({
         return errorResponse("You can't delete other users");
       }
       // Muate
-      await ctx.drizzle
-        .update(userData)
-        .set({
-          deletionAt: target.deletionAt ? null : new Date(Date.now() + 2 * 86400000),
-        })
-        .where(eq(userData.userId, input.userId));
+      await updateUserDataForToggleDeletionTimer(ctx.drizzle, target, input);
       return { success: true, message: "Deletion timer toggled" };
     }),
   // Delete user
@@ -2783,9 +2293,7 @@ export const profileRouter = createTRPCRouter({
     .output(baseServerResponse)
     .mutation(async ({ ctx }) => {
       // Get user's vote record
-      const userVoteRecord = await ctx.drizzle.query.userVote.findFirst({
-        where: eq(userVote.userId, ctx.userId),
-      });
+      const userVoteRecord = await findUserVoteForClaimVotes(ctx.drizzle, ctx);
       // Guard
       if (!userVoteRecord) {
         return errorResponse("No vote record found");
@@ -2806,28 +2314,9 @@ export const profileRouter = createTRPCRouter({
       // together with that claim
       const claimed = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
-          const claim = await tx
-            .update(userVote)
-            .set({
-              claimed: true,
-              totalClaims: sql`${userVote.totalClaims} + 1`,
-              secret: smallNanoid(),
-            })
-            .where(
-              and(
-                eq(userVote.userId, ctx.userId),
-                eq(userVote.claimed, false),
-                ...ACTIVE_VOTING_SITES.map((site) => eq(userVote[site], true)),
-              ),
-            );
+          const claim = await updateUserVoteForClaimVotes(tx, smallNanoid, ctx);
           if (claim.rowsAffected !== 1) return false;
-          const credit = await tx
-            .update(userData)
-            .set({
-              reputationPoints: sql`${userData.reputationPoints} + 1`,
-              reputationPointsTotal: sql`${userData.reputationPointsTotal} + 1`,
-            })
-            .where(eq(userData.userId, ctx.userId));
+          const credit = await updateUserDataForClaimVotes(tx, ctx);
           if (credit.rowsAffected !== 1)
             throw new Error("Vote reward recipient not found");
           return true;
@@ -2847,15 +2336,7 @@ export const profileRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [actor, pets] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userPet.findMany({
-          where: eq(userPet.userId, input.id),
-          columns: {
-            id: true,
-            name: true,
-            generationStatus: true,
-            generationAttempts: true,
-          },
-        }),
+        listUserPetForGetPetImageGenerationForStaff(ctx.drizzle, input),
       ]);
       if (actor.isBanned || !canResetPetImageGeneration(actor.role)) return [];
       return pets;
@@ -2867,9 +2348,7 @@ export const profileRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [actor, pet] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userPet.findFirst({
-          where: and(eq(userPet.id, input.petId), eq(userPet.userId, input.userId)),
-        }),
+        findOwnedUserPet(ctx.drizzle, input.petId, input.userId),
       ]);
       if (actor.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -2887,42 +2366,15 @@ export const profileRouter = createTRPCRouter({
       if (pet.generationAttempts === 0)
         return errorResponse("This companion has no image attempts to reset");
       // The revision guard prevents clearing a generation lease claimed after our read.
-      const result = await ctx.drizzle
-        .update(userPet)
-        .set({
-          generationAttempts: 0,
-          generationStartedAt: null,
-          generationToken: null,
-          // Expired redraws retain usable art; unfinished evolutions remain retryable.
-          generationStatus:
-            pet.generationStatus === "GENERATING"
-              ? pet.avatar && pet.artRank === pet.rank
-                ? "READY"
-                : "FAILED"
-              : pet.generationStatus,
-          revision: sql`${userPet.revision} + 1`,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(userPet.id, pet.id),
-            eq(userPet.userId, input.userId),
-            eq(userPet.revision, pet.revision),
-          ),
-        );
+      const result = await updateUserPetForResetPetImageGeneration(
+        ctx.drizzle,
+        pet,
+        now,
+        input,
+      );
       if (result.rowsAffected !== 1)
         return errorResponse("The companion changed. Refresh and try again.");
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "user",
-        relatedId: input.userId,
-        relatedMsg: input.reason.slice(0, ACTION_LOG_RELATED_MSG_MAX_LENGTH),
-        changes: [
-          `Reset companion image attempts for ${pet.name} (${pet.id}) from ${pet.generationAttempts} to 0`,
-        ],
-        relatedImage: pet.avatar,
-      });
+      await insertActionLogForResetPetImageGeneration(ctx.drizzle, ctx, input, pet);
       return {
         success: true,
         message: `${pet.name}'s image attempts have been reset.`,
@@ -2938,10 +2390,7 @@ export const profileRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [actor, target] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userData.findFirst({
-          columns: { seichiSilver: true },
-          where: eq(userData.userId, input.userId),
-        }),
+        findUserDataForGetSeichiSilverForStaff(ctx.drizzle, input),
       ]);
       if (!actor || actor.isBanned || !canEditSeichiSilver(actor.role)) return 0;
       return target?.seichiSilver ?? 0;
@@ -2975,18 +2424,7 @@ export const profileRouter = createTRPCRouter({
       const change = `Adjusted Seichi Silver by ${input.delta}`;
       const aiCheck = await validateUserUpdateReason(change, input.reason);
       if (!aiCheck.allowUpdate) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "user",
-          changes: [],
-          relatedId: target.userId,
-          relatedMsg: `Seichi Silver adjustment rejected by AI: ${input.reason}`.slice(
-            0,
-            ACTION_LOG_RELATED_MSG_MAX_LENGTH,
-          ),
-          relatedImage: target.avatarLight,
-        });
+        await insertActionLogForAdjustSeichiSilver(ctx.drizzle, ctx, target, input);
         return errorResponse(aiCheck.comment);
       }
       // Mutation (atomic CAS) + audit
@@ -2996,15 +2434,13 @@ export const profileRouter = createTRPCRouter({
         delta: input.delta,
       });
       if (!success) return errorResponse("Insufficient Seichi Silver");
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "user",
-        changes: [change],
-        relatedId: target.userId,
-        relatedMsg: input.reason.slice(0, ACTION_LOG_RELATED_MSG_MAX_LENGTH),
-        relatedImage: target.avatarLight,
-      });
+      await insertActionLogForAdjustSeichiSilver2(
+        ctx.drizzle,
+        ctx,
+        change,
+        target,
+        input,
+      );
       return { success: true, message: `Seichi Silver adjusted by ${input.delta}` };
     }),
   // Award experience to a user (staff only)
@@ -3035,28 +2471,14 @@ export const profileRouter = createTRPCRouter({
       }
 
       // Mutation
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          earnedExperience: sql`${userData.earnedExperience} + ${input.amount}`,
-          petExperience: petExperienceGainSql(input.amount),
-        })
-        .where(eq(userData.userId, input.targetUserId));
+      const result = await updateUserDataForAwardExperience(ctx.drizzle, input);
 
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to award experience");
       }
 
       // Log the action
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "user",
-        changes: [`Awarded ${input.amount} experience points`],
-        relatedId: target.userId,
-        relatedMsg: `Experience awarded to ${target.username}`,
-        relatedImage: target.avatarLight,
-      });
+      await insertActionLogForAwardExperience(ctx.drizzle, ctx, input, target);
 
       return {
         success: true,
@@ -3090,25 +2512,14 @@ export const profileRouter = createTRPCRouter({
       }
 
       // Mutation - update all users
-      const result = await ctx.drizzle.update(userData).set({
-        earnedExperience: sql`${userData.earnedExperience} + ${input.amount}`,
-        petExperience: petExperienceGainSql(input.amount),
-      });
+      const result = await updateUserDataForAwardExperienceToAll(ctx.drizzle, input);
 
       if (result.rowsAffected === 0) {
         return errorResponse("Failed to award experience to users");
       }
 
       // Log the action
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "user",
-        changes: [`Mass awarded ${input.amount} experience points to all users`],
-        relatedId: null,
-        relatedMsg: `Mass experience awarded`,
-        relatedImage: awarder.avatarLight,
-      });
+      await insertActionLogForAwardExperienceToAll(ctx.drizzle, ctx, input, awarder);
 
       return {
         success: true,
@@ -3129,20 +2540,11 @@ export const updateNindo = async (
   content: string,
   type: "userNindo" | "clanOrder" | "anbuOrder" | "kageOrder",
 ) => {
-  const nindo = await client.query.userNindo.findFirst({
-    where: eq(userNindo.userId, userId),
-  });
+  const nindo = await findUserNindoByUserId(client, userId);
   const sanitized = sanitize(content);
   await (nindo
-    ? client
-        .update(userNindo)
-        .set({ content: sanitized })
-        .where(eq(userNindo.userId, userId))
-    : client.insert(userNindo).values({
-        id: nanoid(),
-        userId: userId,
-        content: sanitized,
-      }));
+    ? updateUserNindoForUpdateNindo(client, sanitized, userId)
+    : insertUserNindoForUpdateNindo(client, userId, sanitized));
   deferModeration(client, {
     content: sanitized,
     userId: userId,
@@ -3150,29 +2552,6 @@ export const updateNindo = async (
     relationId: userId,
   });
   return { success: true, message: "Content updated" };
-};
-
-/**
- * Fetch a user by id
- * @param client - The database client
- * @param userId - The id of the user
- * @returns The user, never null or undefined
- * @throws A NOT_FOUND error if the user does not exist
- *
- * NOTE: This function is used across the codebase. Use fetchUpdatedUser
- * if more information is required on the user object, so that we keep this method "light"
- */
-export const fetchUser = async (client: DrizzleClient, userId: string) => {
-  const user = await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-  });
-  if (!user) {
-    throw serverError(
-      "NOT_FOUND",
-      `User not found: ${userId}. Please complete registration.`,
-    );
-  }
-  return user;
 };
 
 /**
@@ -3207,14 +2586,8 @@ export const computeUserContentChanges = async (props: {
   // Resolve names for the diff shown to users & the action log
   if (changed) {
     const [jutsuData, itemData] = await Promise.all([
-      client.query.jutsu.findMany({
-        where: inArray(jutsu.id, oldJutsuIds.concat(newJutsuIds).concat(["non-empty"])),
-        columns: { id: true, name: true },
-      }),
-      client.query.item.findMany({
-        where: inArray(item.id, oldItemIds.concat(newItemIds).concat(["non-empty"])),
-        columns: { id: true, name: true },
-      }),
+      listJutsuForComputeUserContentChanges(client, oldJutsuIds, newJutsuIds),
+      listItemForComputeUserContentChanges(client, oldItemIds, newItemIds),
     ]);
     jutsuChanges = calculateContentDiff(
       { jutsus: oldJutsuIds.map((id) => jutsuData.find((j) => j.id === id)?.name) },
@@ -3259,57 +2632,17 @@ export const applyUserContentChanges = async (props: {
   } = props;
   await Promise.all([
     ...(deletedJutsuIds.length > 0
-      ? [
-          client
-            .delete(userJutsu)
-            .where(
-              and(
-                eq(userJutsu.userId, userId),
-                inArray(userJutsu.jutsuId, deletedJutsuIds),
-              ),
-            ),
-        ]
+      ? [deleteUserJutsuForApplyUserContentChanges(client, userId, deletedJutsuIds)]
       : []),
     ...(deletedItemIds.length > 0
-      ? [
-          client
-            .delete(userItem)
-            .where(
-              and(
-                eq(userItem.userId, userId),
-                inArray(userItem.itemId, deletedItemIds),
-              ),
-            ),
-        ]
+      ? [deleteUserItemForApplyUserContentChanges(client, userId, deletedItemIds)]
       : []),
     // Use onDuplicateKeyUpdate to handle race conditions
     ...(insertedJutsuIds.length > 0
-      ? [
-          client
-            .insert(userJutsu)
-            .values(
-              insertedJutsuIds.map((jutsuId) => ({
-                id: nanoid(),
-                userId: userId,
-                jutsuId: jutsuId,
-                level: 1,
-                equipped: true,
-              })),
-            )
-            .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
-        ]
+      ? [insertUserJutsuForApplyUserContentChanges(client, insertedJutsuIds, userId)]
       : []),
     ...(insertedItemIds.length > 0
-      ? [
-          client.insert(userItem).values(
-            insertedItemIds.map((itemId) => ({
-              id: nanoid(),
-              userId: userId,
-              itemId: itemId,
-              equipped: "CHEST" as const,
-            })),
-          ),
-        ]
+      ? [insertUserItemForApplyUserContentChanges(client, insertedItemIds, userId)]
       : []),
   ]);
 };
@@ -3406,62 +2739,7 @@ const fetchUpdatedUserOnce = async (
   // when the cron tick actually runs.
   const shrineLobbyStaleBefore = shrineLobbyFreshAfter(now);
 
-  const queryUpdatedUser = () =>
-    client.query.userData.findFirst({
-      where: eq(userData.userId, userId),
-      extras: (table) => ({
-        territoryWarBoostWindows: territoryWarBoostWindowsSql(table).as(
-          "territoryWarBoostWindows",
-        ),
-        ...activityCompletionExtras(table.userId),
-        displayTitle: displayTitleSql(table).as("displayTitle"),
-      }),
-      with: {
-        bloodline: true,
-        questParty: { with: questPartyRelations },
-        sageMode: true,
-        activeReskin: true,
-        clan: true,
-        village: {
-          with: {
-            structures: true,
-            relationshipA: true,
-            relationshipB: true,
-            sectors: {
-              columns: { sector: true, boostLockedUntil: true, shrineLevel: true },
-            },
-          },
-        },
-        anbuSquad: {
-          columns: { name: true },
-        },
-        loadout: {
-          columns: { jutsuIds: true },
-        },
-        promotions: {
-          limit: 1,
-        },
-        items: {
-          where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
-          with: {
-            item: true,
-            imbuements: { with: { item: true } },
-          },
-        },
-        userQuests: {
-          ...userQuestHistoryRelation,
-          orderBy: sql`FIELD(${questHistory.questType}, 'daily', 'tier') ASC`,
-        },
-        completedQuests: completedQuestHistoryRelation,
-        votes: true,
-        titles: { with: { title: true } },
-        userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
-        cookingJobs: true,
-        raidBuffs: true,
-        // Every queue entry, in the same query: users without queues pay nothing extra.
-        queue: { orderBy: asc(userQueue.position) },
-      },
-    });
+  const queryUpdatedUser = () => findUserDataForQueryUpdatedUser(client, userId);
 
   // Ensure we can fetch the user
   const [
@@ -3564,12 +2842,7 @@ const fetchUpdatedUserOnce = async (
   // Add votes entry if it doesn't exist
   if (user && !user.votes) {
     const smallNanoid = customAlphabet("1234567890abcdefghijklmnopqrstuvwxyzABCDEF", 8);
-    await client.insert(userVote).values({
-      id: nanoid(),
-      userId: user.userId,
-      lastVoteAt: new Date(),
-      secret: smallNanoid(),
-    });
+    await insertUserVoteForFetchUpdatedUserOnce(client, user, smallNanoid);
   }
 
   let progressionQuestCandidates: NonNullable<typeof user>["userQuests"] = [];
@@ -3584,24 +2857,12 @@ const fetchUpdatedUserOnce = async (
       // Persist retirement so middleware and mutation CAS guards release deleted runs too.
       // A restored definition or a different live run must survive a stale profile read.
       await retryOnDeadlock(() =>
-        client
-          .update(questHistory)
-          .set({ endAt: now })
-          .where(
-            and(
-              inArray(questHistory.id, orphanedIsolatedIds),
-              eq(questHistory.userId, userId),
-              eq(questHistory.isolated, true),
-              eq(questHistory.completed, 0),
-              isNull(questHistory.endAt),
-              notExists(
-                client
-                  .select({ one: sql`1` })
-                  .from(quest)
-                  .where(eq(quest.id, questHistory.questId)),
-              ),
-            ),
-          ),
+        updateQuestHistoryForFetchUpdatedUserOnce(
+          client,
+          now,
+          orphanedIsolatedIds,
+          userId,
+        ),
       );
       requiresUserRefresh = true;
       requiresProgressionRefresh = true;
@@ -3635,20 +2896,7 @@ const fetchUpdatedUserOnce = async (
         where: [
           eq(userData.status, "BATTLE"),
           isNull(userData.battleId),
-          notExists(
-            client
-              .select({ one: sql`1` })
-              .from(questHistory)
-              .innerJoin(quest, eq(quest.id, questHistory.questId))
-              .where(
-                and(
-                  eq(questHistory.userId, userId),
-                  eq(questHistory.isolated, true),
-                  eq(questHistory.completed, 0),
-                  isNull(questHistory.endAt),
-                ),
-              ),
-          ),
+          notExists(selectQuestHistoryForWhere(client, userId)),
         ],
         set: {
           bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
@@ -3662,10 +2910,7 @@ const fetchUpdatedUserOnce = async (
       requiresProgressionRefresh = true;
       if (claim.success) {
         // The resumed timer depends on the committed pause duration.
-        const immunity = await client.query.userData.findFirst({
-          columns: { bracketImmunityLiftedUntil: true, bracketImmunityPausedAt: true },
-          where: eq(userData.userId, userId),
-        });
+        const immunity = await findUserDataForFetchUpdatedUserOnce(client, userId);
         Object.assign(user, {
           status: "AWAKE",
           updatedAt: claim.claimedAt,
@@ -3883,10 +3128,7 @@ const fetchUpdatedUserOnce = async (
         user.villagePrestige < KAGE_MIN_PRESTIGE;
       // Run queries in parallel for speed
       const [syndicate, clanData, squadData, elder] = await Promise.all([
-        client.query.village.findFirst({
-          where: eq(village.type, "OUTLAW"),
-          with: { structures: true },
-        }),
+        findVillageForFetchUpdatedUserOnce(client),
         user.clanId ? fetchClan(client, user.clanId) : null,
         user.anbuId ? fetchSquad(client, user.anbuId) : null,
         needNewKage && user.villageId
@@ -3905,17 +3147,12 @@ const fetchUpdatedUserOnce = async (
         const expectedVillage = previousVillageId
           ? eq(userData.villageId, previousVillageId)
           : isNull(userData.villageId);
-        const kickResult = await client
-          .update(userData)
-          .set(kickUpdate)
-          .where(
-            and(
-              eq(userData.userId, user.userId),
-              eq(userData.villagePrestige, user.villagePrestige),
-              eq(userData.isOutlaw, false),
-              expectedVillage,
-            ),
-          );
+        const kickResult = await updateUserDataForFetchUpdatedUserOnce(
+          client,
+          kickUpdate,
+          user,
+          expectedVillage,
+        );
         if (kickResult.rowsAffected !== 1) return null;
         Object.assign(user, kickUpdate);
         if (storedRegeneration !== undefined) {
@@ -3949,14 +3186,8 @@ const fetchUpdatedUserOnce = async (
             : []),
           ...(needNewKage && elder && previousVillageId
             ? [
-                client
-                  .update(village)
-                  .set({ kageId: elder.userId, leaderUpdatedAt: new Date() })
-                  .where(eq(village.id, previousVillageId)),
-                client
-                  .update(userData)
-                  .set({ villagePrestige: KAGE_PRESTIGE_REQUIREMENT })
-                  .where(eq(userData.userId, user.userId)),
+                updateVillageForFetchUpdatedUserOnce(client, elder, previousVillageId),
+                updateUserDataForFetchUpdatedUserOnce2(client, user),
                 pusher.trigger(user.userId, "event", {
                   type: "userMessage",
                   message: `Your prestige dropped below ${KAGE_MIN_PRESTIGE} and you are no longer kage`,
@@ -4296,17 +3527,9 @@ const persistPassiveRegenToDb = async ({
   // Persist history before appending: concurrent deletion either reads this IP or creates
   // a retained source in time for the append to preserve it before history is removed.
   if (userIp && user.lastIp !== userIp) {
-    await client
-      .insert(historicalIp)
-      .values({
-        userId,
-        ip: userIp,
-        ipHash: hashIp(userIp),
-      })
-      .onDuplicateKeyUpdate({
-        set: { usedAt: new Date(), ipHash: hashIp(userIp) },
-      })
-      .then(() => retainSanctionIps(client, userId, [userIp]));
+    await insertHistoricalIpForPersistPassiveRegenToDb(client, userId, userIp).then(
+      () => retainSanctionIps(client, userId, [userIp]),
+    );
   }
 
   const derivedUserUpdate = buildDerivedUserRegenUpdate({
@@ -4399,14 +3622,12 @@ const persistPassiveRegenToDb = async ({
     user.updatedAt = claim.claimedAt;
     if (queuedTraining?.completed.length) {
       try {
-        await client.insert(trainingLog).values(
-          queuedTraining.completed.map((entry) => ({
-            userId,
-            stat: entry.stat,
-            amount: entry.amount,
-            speed: user.trainingSpeed,
-            trainingFinishedAt: claim.claimedAt,
-          })),
+        await insertTrainingLogForPersistPassiveRegenToDb(
+          client,
+          queuedTraining,
+          userId,
+          user,
+          claim,
         );
       } catch (error) {
         Sentry.captureException(error, { tags: { source: "energyTrainingQueueLog" } });
@@ -4414,14 +3635,10 @@ const persistPassiveRegenToDb = async ({
     }
     if (queuedMastery?.completed.length) {
       try {
-        await client.insert(trainingLog).values(
-          queuedMastery.completed.map((entry) => ({
-            userId,
-            stat: entry.stat,
-            amount: entry.amount,
-            speed: entry.speed,
-            trainingFinishedAt: entry.finishedAt,
-          })),
+        await insertTrainingLogForPersistPassiveRegenToDb2(
+          client,
+          queuedMastery,
+          userId,
         );
       } catch (error) {
         Sentry.captureException(error, { tags: { source: "masteryTrainingQueueLog" } });
@@ -4430,29 +3647,6 @@ const persistPassiveRegenToDb = async ({
   }
   return claim.success;
 };
-
-/**
- * Global game state that `fetchUpdatedUser` needs on every call, memoized for the
- * duration of one HTTP request by {@link scopedRead}.
- *
- * None of these predicates mention a user, so a tRPC batch used to re-read the same
- * rows once per procedure - and `fetchUpdatedUser` is called by nearly every
- * procedure the busy pages mount. Sharing them collapses that fan-out to one read
- * each without changing what any caller sees: `scopedRead` hands out clones, so the
- * per-user rewriting that happens downstream (hiding quest locations, attaching the
- * user's own subset of wars/raids/lobbies) still operates on private copies.
- *
- * The lobby and raid cutoffs are evaluated against the first caller's `now`. Later
- * callers in the same request therefore inherit a cutoff that is milliseconds old,
- * which is well inside the minute-scale windows both filters describe.
- */
-export const fetchAchievementCatalogue = (client: DrizzleClient) =>
-  scopedRead("achievements", () =>
-    client
-      .select()
-      .from(quest)
-      .where(and(eq(quest.questType, "achievement"), eq(quest.hidden, false))),
-  );
 
 /**
  * The achievements whose definitions `quests.getAchievementCatalogue` publishes for the client to
@@ -4470,83 +3664,6 @@ export const fetchAchievementCatalogue = (client: DrizzleClient) =>
 export const fetchPublishedAchievements = async (client: DrizzleClient) =>
   (await fetchAchievementCatalogue(client)).filter(
     (achievement) => !questHasOverworldObjectives(achievement),
-  );
-
-export const fetchAllGameSettings = (client: DrizzleClient) =>
-  scopedRead("gameSettings", async () => {
-    const [settings, average] = await Promise.all([
-      client.select().from(gameSetting),
-      fetchPvpExperienceAverage(client),
-    ]);
-    return [...settings, average];
-  });
-
-const fetchHasUnvotedPolls = (client: DrizzleClient, userId: string, now: Date) =>
-  scopedRead(`unvotedPolls:${userId}`, () =>
-    client
-      .select({ id: poll.id })
-      .from(poll)
-      .leftJoin(
-        userPollVote,
-        and(eq(userPollVote.pollId, poll.id), eq(userPollVote.userId, userId)),
-      )
-      .where(
-        and(
-          eq(poll.isActive, true),
-          // Either endDate is null or endDate is in the future
-          or(isNull(poll.endDate), gt(poll.endDate, now)),
-          // User hasn't voted on this poll
-          isNull(userPollVote.id),
-        ),
-      )
-      .limit(1),
-  );
-
-/** All active wars, for enemy_village sector type resolution. */
-const fetchAllActiveWars = (client: DrizzleClient) =>
-  scopedRead("allActiveWars", () =>
-    client.query.war.findMany({
-      where: isNull(war.endedAt),
-      columns: {
-        id: true,
-        type: true,
-        status: true,
-        defenderShrineHp: true,
-        attackerVillageId: true,
-        defenderVillageId: true,
-        sector: true,
-      },
-      with: {
-        attackerVillage: { columns: { id: true, name: true, sector: true } },
-        defenderVillage: { columns: { id: true, name: true, sector: true } },
-        warAllies: { where: activeWarAllyWhere() },
-      },
-    }),
-  );
-
-/** Shrine battle lobbies whose battle has not started and that are not yet stale. */
-const fetchActiveShrineLobbies = (client: DrizzleClient, staleBefore: Date) =>
-  scopedRead("activeShrineLobbies", () =>
-    client.query.mpvpBattleQueue.findMany({
-      where: and(
-        eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-        isNull(mpvpBattleQueue.battleId),
-        gt(mpvpBattleQueue.createdAt, staleBefore),
-      ),
-    }),
-  );
-
-/** All raids whose boss is still standing and whose window has not closed. */
-const fetchActiveRaids = (client: DrizzleClient, now: Date) =>
-  scopedRead("activeRaids", () =>
-    client.query.quest.findMany({
-      where: and(
-        eq(quest.questType, "raid"),
-        eq(quest.hidden, false),
-        gte(quest.raidBossCurrentHealth, 1),
-        or(isNull(quest.raidEndsAt), gte(quest.raidEndsAt, now)),
-      ),
-    }),
   );
 
 /** A user's progress on one quest, without the static definition it belongs to. */
@@ -4570,20 +3687,7 @@ const BOOTSTRAP_QUEST_TYPES = ["tier", "exam"] as const;
  */
 export const fetchQuestBootstrap = (client: DrizzleClient, userId: string) =>
   scopedRead(`questBootstrap:${userId}`, () =>
-    client
-      .select({
-        id: quest.id,
-        questType: quest.questType,
-        requiredLevel: quest.requiredLevel,
-        maxLevel: quest.maxLevel,
-        completed: questHistory.completed,
-      })
-      .from(quest)
-      .leftJoin(
-        questHistory,
-        and(eq(questHistory.questId, quest.id), eq(questHistory.userId, userId)),
-      )
-      .where(inArray(quest.questType, [...BOOTSTRAP_QUEST_TYPES])),
+    selectQuestForFetchQuestBootstrap(client, userId, BOOTSTRAP_QUEST_TYPES),
   );
 
 /**
@@ -4638,189 +3742,7 @@ export const splitAchievementProgress = (
   });
   return progress;
 };
-
-export const fetchPublicUsers = async (info: {
-  client: DrizzleClient;
-  input: GetPublicUsersSchema;
-  userId?: string | null;
-  includeEffects?: boolean;
-}) => {
-  const { client, input, userId, includeEffects } = info;
-  const currentCursor = input.cursor ? input.cursor : 0;
-  const skip = currentCursor * input.limit;
-  const getOrder = () => {
-    switch (input.orderBy) {
-      case "Online":
-        return [desc(userData.updatedAt)];
-      case "Strongest":
-        return [desc(userData.level), desc(userData.experience)];
-      case "Crafting":
-        return [desc(userData.craftingExperience), desc(userData.experience)];
-      case "Farming":
-        return [desc(userData.farmingExperience), desc(userData.experience)];
-      case "Medical":
-        return [desc(userData.medicalExperience), desc(userData.experience)];
-      case "PvP":
-        // Rank by PvP XP, with character XP as the tie-breaker.
-        return [desc(userData.pvpExperience), desc(userData.experience)];
-      case "Ranked":
-        return [desc(userData.rankedLp), desc(userData.experience)];
-      case "Staff":
-        return [desc(userData.tavernMessages)];
-      case "Outlaws":
-        return [desc(userData.villagePrestige)];
-      case "Community":
-        return [desc(userData.tavernMessages)];
-      case "Dailies":
-        return [
-          desc(
-            sql`${userData.dailyArenaFights} + ${userData.dailyMissions} + ${userData.dailyErrands}`,
-          ),
-          desc(userData.experience),
-        ];
-      case "Recruiters":
-        // Most efficient: use denormalized counter maintained on userData
-        return [desc(userData.nRecruited), desc(userData.experience)];
-    }
-  };
-  const [users, user] = await Promise.all([
-    client.query.userData.findMany({
-      where: and(
-        eq(userData.isAi, input.isAi),
-        ...(input.username !== undefined
-          ? [like(userData.username, `%${input.username}%`)]
-          : []),
-        ...(input.bloodline !== undefined
-          ? [eq(userData.bloodlineId, input.bloodline)]
-          : []),
-        ...(input.ip ? [like(userData.lastIp, `%${input.ip}%`)] : []),
-        ...(input.village !== undefined ? [eq(userData.villageId, input.village)] : []),
-        ...(input.recruiterId ? [eq(userData.recruiterId, input.recruiterId)] : []),
-        ...(input.orderBy === "Staff" ? [notInArray(userData.role, ["USER"])] : []),
-        ...(input.orderBy === "Outlaws" ? [eq(userData.isOutlaw, true)] : []),
-        ...(input.isAi ? [eq(userData.isAi, true)] : []),
-        ...(input.inArena !== undefined ? [eq(userData.inArena, !!input.inArena)] : []),
-        ...(input.isEvent !== undefined ? [eq(userData.isEvent, !!input.isEvent)] : []),
-        ...(input.isWarCamp !== undefined
-          ? [eq(userData.isWarCamp, !!input.isWarCamp)]
-          : []),
-        ...(input.isSummon !== undefined
-          ? [eq(userData.isSummon, !!input.isSummon)]
-          : []),
-        ...(input.inShrines !== undefined
-          ? [eq(userData.inShrines, !!input.inShrines)]
-          : []),
-      ),
-      columns: {
-        avatar: true,
-        avatar3d: true,
-        avatarLight: true,
-        experience: true,
-        nRecruited: true,
-        inArena: true,
-        inShrines: true,
-        isAi: true,
-        isEvent: true,
-        isWarCamp: true,
-        isOutlaw: true,
-        isSummon: true,
-        lastIp: true,
-        level: true,
-        pvpExperience: true,
-        rankedLp: true,
-        rank: true,
-        reputationPointsTotal: true,
-        role: true,
-        updatedAt: true,
-        userId: true,
-        username: true,
-        villageId: true,
-        craftingExperience: true,
-        farmingExperience: true,
-        medicalExperience: true,
-        villagePrestige: true,
-        tavernMessages: true,
-        dailyArenaFights: true,
-        dailyMissions: true,
-        dailyErrands: true,
-        effects: true,
-      },
-      // If AI, also include relations information
-      with: {
-        village: { columns: { name: true } },
-        ...(input.isAi && includeEffects
-          ? {
-              jutsus: {
-                columns: { level: true },
-                with: {
-                  jutsu: {
-                    columns: {
-                      name: true,
-                      effects: true,
-                    },
-                  },
-                },
-              },
-              items: {
-                columns: {
-                  itemId: true,
-                },
-                with: {
-                  item: {
-                    columns: {
-                      effects: true,
-                    },
-                  },
-                },
-              },
-            }
-          : {}),
-      },
-      offset: skip,
-      limit: input.limit,
-      orderBy: getOrder(),
-    }),
-    // Only the caller's role is read, to decide whether IPs may be seen. This runs
-    // on most page loads (the online-players sidebar), so it selects that one column
-    // rather than the whole ~90-column row.
-    ...(userId
-      ? [
-          client.query.userData.findFirst({
-            where: eq(userData.userId, userId),
-            columns: { role: true },
-          }),
-        ]
-      : [null]),
-  ]);
-  // Guard
-  if (input.ip && (!user || !canSeeIps(user.role))) {
-    throw serverError("FORBIDDEN", "You are not allowed to search IPs");
-  }
-  // Hide stuff
-  users
-    .filter((u) => !u.lastIp)
-    .forEach((u) => {
-      u.lastIp = "Proxied";
-    });
-  if (!user || !canSeeIps(user.role)) {
-    users.forEach((u) => {
-      u.lastIp = "hidden";
-    });
-  }
-  // Return
-  const nextCursor = users.length < input.limit ? null : currentCursor + 1;
-  return {
-    data: users,
-    nextCursor: nextCursor,
-  };
-};
 export type FetchedPublicUsers = Awaited<ReturnType<typeof fetchPublicUsers>>;
-
-export const fetchAttributes = async (client: DrizzleClient, userId: string) => {
-  return await client.query.userAttribute.findMany({
-    where: eq(userAttribute.userId, userId),
-  });
-};
 
 /**
  * Scale an edited AI row to its level before it is saved. Changed combat stats are the

@@ -1,32 +1,17 @@
-import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import {
-  userData,
-  village,
-  villageElderVote,
-  villageElderVoteEntry,
-} from "@/drizzle/schema";
+  fetchElderVote,
+  insertVillageElderVoteEntryForCastElderVoteEntry,
+  listVillageElderVoteForFetchElderVotes,
+  selectUserDataForFetchElderVotes,
+  selectVillageForFetchElderVotes,
+} from "@/queries/elder";
 import type { DrizzleClient } from "@/server/db";
 
 /**
  * Fetch all pending elder votes for a village, with enriched target names
  */
 export const fetchElderVotes = async (client: DrizzleClient, villageId: string) => {
-  const votes = await client.query.villageElderVote.findMany({
-    where: and(
-      eq(villageElderVote.villageId, villageId),
-      eq(villageElderVote.status, "PENDING"),
-    ),
-    with: {
-      entries: {
-        with: {
-          user: { columns: { username: true, userId: true, avatar: true } },
-        },
-      },
-      initiatedBy: { columns: { username: true, userId: true, avatar: true } },
-    },
-    orderBy: [desc(villageElderVote.createdAt)],
-  });
+  const votes = await listVillageElderVoteForFetchElderVotes(client, villageId);
   // Batch-fetch target names to avoid N+1 queries
   const villageTargetIds = [
     ...new Set(
@@ -38,16 +23,10 @@ export const fetchElderVotes = async (client: DrizzleClient, villageId: string) 
   ];
   const [targetVillages, targetUsers] = await Promise.all([
     villageTargetIds.length > 0
-      ? client
-          .select({ id: village.id, name: village.name })
-          .from(village)
-          .where(inArray(village.id, villageTargetIds))
+      ? selectVillageForFetchElderVotes(client, villageTargetIds)
       : [],
     userTargetIds.length > 0
-      ? client
-          .select({ userId: userData.userId, username: userData.username })
-          .from(userData)
-          .where(inArray(userData.userId, userTargetIds))
+      ? selectUserDataForFetchElderVotes(client, userTargetIds)
       : [],
   ]);
   const villageById = Object.fromEntries(targetVillages.map((v) => [v.id, v.name]));
@@ -60,16 +39,6 @@ export const fetchElderVotes = async (client: DrizzleClient, villageId: string) 
       targetName = userById[vote.targetId] ?? vote.targetId;
     }
     return { ...vote, targetName };
-  });
-};
-
-/**
- * Fetch a single elder vote by ID
- */
-export const fetchElderVote = async (client: DrizzleClient, voteId: string) => {
-  return client.query.villageElderVote.findFirst({
-    where: eq(villageElderVote.id, voteId),
-    with: { entries: true },
   });
 };
 
@@ -113,10 +82,12 @@ export const castElderVoteEntry = async (
   outcome: "APPROVED" | "REJECTED" | "PENDING";
   freshEntries: NonNullable<Awaited<ReturnType<typeof fetchElderVote>>>["entries"];
 } | null> => {
-  const insertResult = await client
-    .insert(villageElderVoteEntry)
-    .values({ id: nanoid(), voteId, userId, vote })
-    .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+  const insertResult = await insertVillageElderVoteEntryForCastElderVoteEntry(
+    client,
+    voteId,
+    userId,
+    vote,
+  );
   if (!insertResult.rowsAffected) return null;
 
   const freshVote = await fetchElderVote(client, voteId);
@@ -125,17 +96,4 @@ export const castElderVoteEntry = async (
   const noCount = freshEntries.filter((e) => e.vote === "NO").length;
   const outcome = resolveElderVote(yesCount, noCount, elderCount);
   return { outcome, freshEntries };
-};
-
-/**
- * Fetch all pending elder votes whose deadline has passed
- */
-export const fetchExpiredElderVotes = async (client: DrizzleClient) => {
-  return client.query.villageElderVote.findMany({
-    where: and(
-      eq(villageElderVote.status, "PENDING"),
-      lt(villageElderVote.endsAt, new Date()),
-    ),
-    with: { entries: true },
-  });
 };

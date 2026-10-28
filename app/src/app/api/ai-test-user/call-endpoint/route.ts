@@ -7,9 +7,9 @@
  *  2. A shared bearer token in the `x-tnr-reviewer-token` header
  */
 import { TRPCError } from "@trpc/server";
-import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { userData } from "@/drizzle/schema";
+import { findUserIdentityById } from "@/queries/profile";
+
 import { appRouter } from "@/server/api/root";
 import { drizzleDB } from "@/server/db";
 import { authenticateAiTestUserRequest } from "@/server/utils/aiTestUser";
@@ -49,10 +49,7 @@ export async function POST(request: Request) {
   const { userId, endpointName, input } = parsed.data;
 
   // Verify the user exists in the database
-  const user = await drizzleDB.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    columns: { userId: true },
-  });
+  const user = await findUserIdentityById(drizzleDB, userId);
   if (!user) {
     return NextResponse.json(
       { success: false, message: `User "${userId}" not found in database` },

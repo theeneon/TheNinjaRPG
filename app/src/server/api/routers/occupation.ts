@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -7,13 +7,7 @@ import {
   OCCUPATION_CHANGE_COOLDOWN_DAYS,
   OCCUPATIONS,
 } from "@/drizzle/constants";
-import {
-  item,
-  userCookingJob,
-  userData,
-  userItem,
-  userItemImbuement,
-} from "@/drizzle/schema";
+import { userData, userItem } from "@/drizzle/schema";
 import { getActivityBonuses } from "@/libs/activityBonuses";
 import { getCookingLevel, getCookingSeconds } from "@/libs/cooking";
 import {
@@ -37,11 +31,30 @@ import { filterQuestTrackersForDbPersist, getNewTrackers } from "@/libs/quest";
 import { getNextQueueSchedule } from "@/libs/queue";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 import { getTerritoryWarBoost } from "@/libs/territoryWar";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
 import {
-  fetchItemWithCraftingRequirements,
-  fetchUserItems,
-} from "@/server/api/routers/item";
+  deleteUserItemWhere,
+  updateUserItemForUpdateUserItemQuantityAtomically,
+} from "@/queries/concurrency";
+import { fetchItemWithCraftingRequirements, insertUserItems } from "@/queries/item";
+import {
+  deleteUserItemImbuementForRemoveImbuement,
+  findUserItemImbuementForRemoveImbuement,
+  insertUserCookingJobForCraftItem,
+  insertUserItemForRemoveImbuement,
+  insertUserItemImbuementForImbueItem,
+  listItemForGetCookingRecipes,
+  listItemForGetCraftableItems,
+  updateUserCookingJobForFinishCraftingImmediately,
+  updateUserDataForCraftItem,
+  updateUserDataForImbueItem,
+  updateUserDataForSelectOccupation,
+  updateUserItemForFinishCraftingImmediately,
+  updateUserItemForImbueItem,
+  updateUserItemImbuementForFinishImbuingImmediately,
+} from "@/queries/occupation";
+import { fetchUser } from "@/queries/profile";
+import { fetchUpdatedUser } from "@/routers/profile";
+import { fetchUserItems } from "@/server/api/routers/item";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -50,7 +63,6 @@ import {
 } from "@/server/api/trpc";
 import {
   claimUserSnapshot,
-  getNextUserSnapshotAt,
   updateUserItemQuantityAtomically,
 } from "@/server/utils/concurrency";
 import {
@@ -79,32 +91,12 @@ export const occupationRouter = createTRPCRouter({
   getCraftableItems: protectedProcedure
     .meta({ mcp: { description: "Get all craftable items" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.item.findMany({
-        where: and(
-          eq(item.canBeCrafted, true),
-          eq(item.hidden, false),
-          ne(item.itemType, "MEAL"),
-        ),
-        with: {
-          craftingRequirements: {
-            with: {
-              requirementItem: true,
-            },
-          },
-        },
-      });
+      return await listItemForGetCraftableItems(ctx.drizzle);
     }),
 
   /** Visible meal recipes and ingredient requirements; Cooking needs no occupation. */
   getCookingRecipes: protectedProcedure.query(({ ctx }) =>
-    ctx.drizzle.query.item.findMany({
-      where: and(
-        eq(item.canBeCrafted, true),
-        eq(item.hidden, false),
-        eq(item.itemType, "MEAL"),
-      ),
-      with: { craftingRequirements: { with: { requirementItem: true } } },
-    }),
+    listItemForGetCookingRecipes(ctx.drizzle),
   ),
 
   selectOccupation: protectedProcedure
@@ -144,20 +136,13 @@ export const occupationRouter = createTRPCRouter({
           userPatch: { occupation: input.occupation, occupationSignupAt },
         };
       }
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ occupation: input.occupation, occupationSignupAt })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            user.occupation === null
-              ? isNull(userData.occupation)
-              : eq(userData.occupation, user.occupation),
-            user.occupationSignupAt === null
-              ? isNull(userData.occupationSignupAt)
-              : eq(userData.occupationSignupAt, user.occupationSignupAt),
-          ),
-        );
+      const result = await updateUserDataForSelectOccupation(
+        ctx.drizzle,
+        input,
+        occupationSignupAt,
+        ctx,
+        user,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse("Occupation changed while saving. Please try again");
       }
@@ -433,11 +418,12 @@ export const occupationRouter = createTRPCRouter({
             );
             const result =
               consumption.newQuantity > 0
-                ? await ctx.drizzle
-                    .update(userItem)
-                    .set({ quantity: consumption.newQuantity })
-                    .where(itemWhere)
-                : await ctx.drizzle.delete(userItem).where(itemWhere);
+                ? await updateUserItemForUpdateUserItemQuantityAtomically(
+                    ctx.drizzle,
+                    consumption.newQuantity,
+                    itemWhere,
+                  )
+                : await deleteUserItemWhere(ctx.drizzle, itemWhere);
             return result.rowsAffected === 1;
           }),
         );
@@ -480,24 +466,13 @@ export const occupationRouter = createTRPCRouter({
       const materialConflict = Symbol("materialConflict");
       try {
         const craftCommitted = await ctx.drizzle.transaction(async (tx) => {
-          const claimResult = await tx
-            .update(userData)
-            .set({
-              updatedAt: getNextUserSnapshotAt(user.updatedAt),
-              craftingExperience: sql`${userData.craftingExperience} + ${expGain}`,
-              questData: questDataForDb,
-            })
-            .where(
-              and(
-                eq(userData.userId, ctx.userId),
-                eq(userData.updatedAt, user.updatedAt),
-                eq(userData.status, "AWAKE"),
-                or(
-                  isNull(userData.sector),
-                  ne(userData.sector, MAP_WAKE_ISLAND_SECTOR),
-                ),
-              ),
-            );
+          const claimResult = await updateUserDataForCraftItem(
+            tx,
+            user,
+            expGain,
+            questDataForDb,
+            ctx,
+          );
           if (claimResult.rowsAffected !== 1) return false;
 
           for (const consumption of allConsumptions) {
@@ -510,22 +485,18 @@ export const occupationRouter = createTRPCRouter({
             );
             const materialResult =
               consumption.newQuantity > 0
-                ? await tx
-                    .update(userItem)
-                    .set({ quantity: consumption.newQuantity })
-                    .where(itemWhere)
-                : await tx.delete(userItem).where(itemWhere);
+                ? await updateUserItemForUpdateUserItemQuantityAtomically(
+                    tx,
+                    consumption.newQuantity,
+                    itemWhere,
+                  )
+                : await deleteUserItemWhere(tx, itemWhere);
             if (materialResult.rowsAffected !== 1) throw materialConflict;
           }
 
-          await tx.insert(userItem).values(craftingItemValues);
+          await insertUserItems(tx, craftingItemValues);
           if (isMeal)
-            await tx.insert(userCookingJob).values({
-              id: nanoid(),
-              userId: ctx.userId,
-              experience: cookingExpGain,
-              finishesAt: finishTime,
-            });
+            await insertUserCookingJobForCraftItem(tx, ctx, cookingExpGain, finishTime);
           return true;
         });
         if (!craftCommitted) {
@@ -736,17 +707,11 @@ export const occupationRouter = createTRPCRouter({
       // Write-time guard: only proceed if item is still not in auction (atomic). The quantity
       // guard also refuses rows held by a stack-merge claim or left as a merge tombstone, so an
       // imbuement is never attached to a row the merge protocol is about to fold away or delete.
-      const notInAuctionGuard = await ctx.drizzle
-        .update(userItem)
-        .set({ updatedAt: new Date() })
-        .where(
-          and(
-            eq(userItem.id, input.userItemId),
-            eq(userItem.userId, ctx.userId),
-            gt(userItem.quantity, 0),
-            eq(userItem.isInAuction, false),
-          ),
-        );
+      const notInAuctionGuard = await updateUserItemForImbueItem(
+        ctx.drizzle,
+        input,
+        ctx,
+      );
       if (notInAuctionGuard.rowsAffected === 0) {
         return errorResponse(
           "You cannot imbue an item that is listed for auction or direct sale",
@@ -765,12 +730,12 @@ export const occupationRouter = createTRPCRouter({
         return errorResponse("Crystal no longer available");
       }
 
-      const createImbuement = ctx.drizzle.insert(userItemImbuement).values({
-        id: nanoid(),
-        userItemId: input.userItemId,
-        imbuementItemId: crystalItem.id,
-        craftingFinishedAt: finishTime,
-      });
+      const createImbuement = insertUserItemImbuementForImbueItem(
+        ctx.drizzle,
+        input,
+        crystalItem,
+        finishTime,
+      );
 
       // Award small amount of crafting experience (half of crystal's crafting experience, or 0 if not set)
       // Apply clan crafting experience boost (only for real clans, not outlaw factions/strongholds)
@@ -789,19 +754,12 @@ export const occupationRouter = createTRPCRouter({
         { task: "crafting_experience_gained", increment: expGain },
       ]);
       const questDataForDb = filterQuestTrackersForDbPersist(trackers, user);
-      const expUpdate = ctx.drizzle
-        .update(userData)
-        .set({
-          craftingExperience: sql`${userData.craftingExperience} + ${expGain}`,
-          questData: questDataForDb,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.status, "AWAKE"),
-            or(isNull(userData.sector), ne(userData.sector, MAP_WAKE_ISLAND_SECTOR)),
-          ),
-        );
+      const expUpdate = updateUserDataForImbueItem(
+        ctx.drizzle,
+        expGain,
+        questDataForDb,
+        ctx,
+      );
 
       const [, expResult] = await Promise.all([createImbuement, expUpdate]);
       if (expResult?.rowsAffected !== 1) {
@@ -844,20 +802,11 @@ export const occupationRouter = createTRPCRouter({
         return errorResponse("This item has already finished crafting");
       }
       // Immediately finish the crafting by setting the finish time to now
-      await ctx.drizzle
-        .update(userItem)
-        .set({ craftingFinishedAt: new Date() })
-        .where(eq(userItem.id, input.userItemId));
+      await updateUserItemForFinishCraftingImmediately(ctx.drizzle, input);
       if (craftingItem.item.itemType === "MEAL") {
-        await ctx.drizzle
-          .update(userCookingJob)
-          .set({ finishesAt: new Date() })
-          .where(
-            and(
-              eq(userCookingJob.userId, ctx.userId),
-              eq(userCookingJob.finishesAt, craftingItem.craftingFinishedAt),
-            ),
-          );
+        await updateUserCookingJobForFinishCraftingImmediately(ctx.drizzle, ctx, {
+          craftingFinishedAt: craftingItem.craftingFinishedAt,
+        });
       }
       // The next queued craft starts now instead of in the finished craft's slot.
       await settleCraftingQueue(ctx.drizzle, ctx.userId);
@@ -899,10 +848,7 @@ export const occupationRouter = createTRPCRouter({
         return errorResponse("This item has already finished imbuing");
       }
       // Immediately finish the imbuing by setting the finish time to now
-      await ctx.drizzle
-        .update(userItemImbuement)
-        .set({ craftingFinishedAt: new Date() })
-        .where(eq(userItemImbuement.id, input.userItemImbuementId));
+      await updateUserItemImbuementForFinishImbuingImmediately(ctx.drizzle, input);
       return {
         success: true,
         message: `Immediately finished imbuing ${imbuingItem.item.name}`,
@@ -917,15 +863,7 @@ export const occupationRouter = createTRPCRouter({
       // Queries
       const [userItems, imbuement] = await Promise.all([
         fetchUserItems(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.userItemImbuement.findFirst({
-          where: eq(userItemImbuement.id, input.userItemImbuementId),
-          with: {
-            userItem: {
-              with: { item: true },
-            },
-            item: true,
-          },
-        }),
+        findUserItemImbuementForRemoveImbuement(ctx.drizzle, input),
       ]);
 
       // Guards
@@ -958,15 +896,12 @@ export const occupationRouter = createTRPCRouter({
       // When imbuing is disabled on the item, refund the crystal to inventory
       const returnsCrystal = !ownedUserItem.item.canBeImbued;
 
-      const deleteResult = await ctx.drizzle
-        .delete(userItemImbuement)
-        .where(
-          and(
-            eq(userItemImbuement.id, input.userItemImbuementId),
-            eq(userItemImbuement.userItemId, ownedUserItem.id),
-            sql`EXISTS (SELECT 1 FROM UserItem WHERE UserItem.id = ${ownedUserItem.id} AND UserItem.userId = ${ctx.userId} AND UserItem.isInAuction = 0 AND UserItem.equipped = 'NONE')`,
-          ),
-        );
+      const deleteResult = await deleteUserItemImbuementForRemoveImbuement(
+        ctx.drizzle,
+        input,
+        ownedUserItem,
+        ctx,
+      );
       if (deleteResult.rowsAffected === 0) {
         return errorResponse(
           "Item availability changed or imbuement already removed; please refresh",
@@ -974,16 +909,7 @@ export const occupationRouter = createTRPCRouter({
       }
 
       if (returnsCrystal) {
-        await ctx.drizzle.insert(userItem).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          itemId: imbuement.imbuementItemId,
-          quantity: 1,
-          equipped: "NONE",
-          storedAtHome: false,
-          isInAuction: false,
-          craftingFinishedAt: null,
-        });
+        await insertUserItemForRemoveImbuement(ctx.drizzle, ctx, imbuement);
       }
 
       return {

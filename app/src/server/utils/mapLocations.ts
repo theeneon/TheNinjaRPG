@@ -1,13 +1,18 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { dungeon, mapAsset, overworldAiPlacement, quest } from "@/drizzle/schema";
 import { publicQuestLocations } from "@/libs/mapLocations";
 import { getServerPusher } from "@/libs/pusher";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { findNearestReachableCoordinate } from "@/libs/sector-map/validation";
+import {
+  findDungeonForIsStructureAssetUsed,
+  findQuestForIsStructureAssetUsed,
+  listMapAssetForValidateQuestStructures,
+  listOverworldAiPlacementForValidateQuestStructures,
+  listQuestForFetchPublicQuestLocations,
+} from "@/queries/worldMap";
 import type { DrizzleClient } from "@/server/db";
 import { fetchPublishedSectorMaps } from "@/server/utils/sectorMap";
-import type { MapLocation } from "@/validators/mapLocation";
-import { MAP_LOCATION_REFRESH_MS } from "@/validators/mapLocation";
+import { MAP_LOCATION_REFRESH_MS, type MapLocation } from "@/validators/mapLocation";
+
 import type { AllObjectivesType } from "@/validators/objectives";
 
 type PublicQuest = Parameters<typeof publicQuestLocations>[0][number];
@@ -50,10 +55,7 @@ export const fetchPublicQuestLocations = async (
   const generation = publicLocationGeneration;
   // A slow read cannot claim freshness newer than its snapshot.
   const startedAt = Date.now();
-  const quests = await client.query.quest.findMany({
-    columns: { id: true, content: true, hidden: true, startsAt: true, endsAt: true },
-    where: and(eq(quest.publicLocations, true), eq(quest.hidden, false)),
-  });
+  const quests = await listQuestForFetchPublicQuestLocations(client);
   // A query started before an edit must not repopulate the invalidated cache.
   if (generation === publicLocationGeneration)
     publicLocationCache.set(client, { quests, at: startedAt, generation });
@@ -130,17 +132,12 @@ export const validateQuestStructures = async (
     .map((o) => o.overworldPlacementId)
     .filter((id): id is string => !!id);
   const [assets, maps, placements] = await Promise.all([
-    client.query.mapAsset.findMany({
-      columns: { id: true },
-      where: inArray(mapAsset.id, ids),
-    }),
+    listMapAssetForValidateQuestStructures(client, ids),
     locations.length
       ? fetchPublishedSectorMaps(client, [...new Set(locations.map((l) => l.sector))])
       : new Map<number, NormalizedSectorMap>(),
     placementIds.length
-      ? client.query.overworldAiPlacement.findMany({
-          where: inArray(overworldAiPlacement.id, placementIds),
-        })
+      ? listOverworldAiPlacementForValidateQuestStructures(client, placementIds)
       : [],
   ]);
   if (
@@ -155,14 +152,8 @@ export const validateQuestStructures = async (
 /** Preflight saved quest and dungeon references before deleting shared artwork. */
 export const isStructureAssetUsed = async (client: DrizzleClient, assetId: string) => {
   const [questReference, dungeonReference] = await Promise.all([
-    client.query.quest.findFirst({
-      columns: { id: true },
-      where: sql`JSON_CONTAINS(JSON_EXTRACT(${quest.content}, '$.objectives[*].structureAssetId'), JSON_QUOTE(${assetId})) = 1`,
-    }),
-    client.query.dungeon.findFirst({
-      columns: { id: true },
-      where: sql`JSON_UNQUOTE(JSON_EXTRACT(${dungeon.content}, '$.structureAssetId')) = ${assetId}`,
-    }),
+    findQuestForIsStructureAssetUsed(client, assetId),
+    findDungeonForIsStructureAssetUsed(client, assetId),
   ]);
   return !!questReference || !!dungeonReference;
 };

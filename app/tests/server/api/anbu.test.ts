@@ -1,3 +1,4 @@
+import { reassignPendingAnbuRequestsOnPromotion } from "@/queries/anbu";
 
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
@@ -47,7 +48,6 @@ import {
   isAnbuRequestForSquad,
   promoteAnbuLeader,
   rejectAnbuRequest,
-  reassignPendingAnbuRequestsOnPromotion,
   removeFromSquad,
 } from "@/routers/anbu";
 

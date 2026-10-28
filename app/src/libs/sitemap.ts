@@ -1,16 +1,14 @@
-import { and, desc, eq, gte, isNull } from "drizzle-orm";
-import {
-  bloodline,
-  forumBoard,
-  forumThread,
-  guideArticle,
-  item,
-  jutsu,
-  userData,
-} from "@/drizzle/schema";
-import { PROFILE_INDEX_MIN_LEVEL, profileIndexCutoff } from "@/libs/profileIndexing";
 import { absoluteUrl } from "@/libs/seo";
 import type { SitemapEntry, SitemapSection } from "@/libs/sitemapXml";
+import {
+  selectBloodlineForManualEntries,
+  selectForumBoardForForumEntries,
+  selectForumThreadForForumEntries,
+  selectGuideArticleForGuideEntries,
+  selectItemForManualEntries,
+  selectJutsuForManualEntries,
+  selectUserDataForProfileEntries,
+} from "@/queries/sitemap";
 import { drizzleDB } from "@/server/db";
 
 /**
@@ -74,18 +72,9 @@ const staticEntries = (): SitemapEntry[] =>
 const manualEntries = async (): Promise<SitemapEntry[]> => {
   const now = new Date();
   const [bloodlines, jutsus, items] = await Promise.all([
-    drizzleDB
-      .select({ id: bloodline.id, updatedAt: bloodline.updatedAt })
-      .from(bloodline)
-      .where(eq(bloodline.hidden, false)),
-    drizzleDB
-      .select({ id: jutsu.id, updatedAt: jutsu.updatedAt })
-      .from(jutsu)
-      .where(eq(jutsu.hidden, false)),
-    drizzleDB
-      .select({ id: item.id, updatedAt: item.updatedAt })
-      .from(item)
-      .where(eq(item.hidden, false)),
+    selectBloodlineForManualEntries(drizzleDB),
+    selectJutsuForManualEntries(drizzleDB),
+    selectItemForManualEntries(drizzleDB),
   ]);
   return [
     ...bloodlines.map((row) => ({
@@ -111,13 +100,7 @@ const manualEntries = async (): Promise<SitemapEntry[]> => {
 
 const guideEntries = async (): Promise<SitemapEntry[]> => {
   const now = new Date();
-  const articles = await drizzleDB
-    .select({
-      slug: guideArticle.slug,
-      updatedAt: guideArticle.updatedAt,
-    })
-    .from(guideArticle)
-    .where(eq(guideArticle.published, true));
+  const articles = await selectGuideArticleForGuideEntries(drizzleDB);
   return articles.map((row) => ({
     url: absoluteUrl(`/guide/${row.slug}`),
     lastModified: row.updatedAt ?? now,
@@ -129,18 +112,8 @@ const guideEntries = async (): Promise<SitemapEntry[]> => {
 const forumEntries = async (): Promise<SitemapEntry[]> => {
   const now = new Date();
   const [boards, threads] = await Promise.all([
-    drizzleDB
-      .select({ id: forumBoard.id, updatedAt: forumBoard.updatedAt })
-      .from(forumBoard),
-    drizzleDB
-      .select({
-        id: forumThread.id,
-        boardId: forumThread.boardId,
-        updatedAt: forumThread.updatedAt,
-      })
-      .from(forumThread)
-      .orderBy(desc(forumThread.updatedAt))
-      .limit(MAX_THREADS),
+    selectForumBoardForForumEntries(drizzleDB),
+    selectForumThreadForForumEntries(drizzleDB, MAX_THREADS),
   ]);
   return [
     ...boards.map((row) => ({
@@ -168,20 +141,7 @@ const forumEntries = async (): Promise<SitemapEntry[]> => {
  */
 const profileEntries = async (): Promise<SitemapEntry[]> => {
   const now = new Date();
-  const profiles = await drizzleDB
-    .select({ username: userData.username, updatedAt: userData.updatedAt })
-    .from(userData)
-    .where(
-      and(
-        gte(userData.level, PROFILE_INDEX_MIN_LEVEL),
-        gte(userData.updatedAt, profileIndexCutoff()),
-        eq(userData.isAi, false),
-        eq(userData.isBanned, false),
-        isNull(userData.deletionAt),
-      ),
-    )
-    .orderBy(desc(userData.level))
-    .limit(MAX_PROFILES);
+  const profiles = await selectUserDataForProfileEntries(drizzleDB, MAX_PROFILES);
   return profiles.map((row) => ({
     url: absoluteUrl(`/username/${encodeURIComponent(row.username)}`),
     lastModified: row.updatedAt ?? now,

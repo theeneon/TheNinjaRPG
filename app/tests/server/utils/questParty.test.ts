@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
 import type { DrizzleClient } from "@/server/db";
-import { synchronizeQuestParty, type LoadedQuestParty } from "@/server/utils/questParty";
+import { synchronizeQuestParty, type LoadedQuestParty, saveQuestPartyMember } from "@/server/utils/questParty";
 import { AllObjectives, ObjectiveTracker, QuestTracker } from "@/validators/objectives";
 
 it("keeps committed terminal progress when its party CAS must retry", async () => {
@@ -35,7 +35,7 @@ import { quest, questHistory, questParty, userData } from "@/drizzle/schema";
 import { projectPartyTracker } from "@/libs/questParty";
 import type { UserWithRelations } from "@/routers/profile";
 import { commitQuestObjectiveRewards } from "@/routers/quests";
-import { questPartyRelations } from "@/server/utils/questParty";
+import { questPartyRelations } from "@/queries/questParty";
 import { ObjectiveReward, PostProcessedRewardSchema } from "@/validators/rewards";
 import { insertQuestHistory, insertQuests, insertUsers } from "../../setup/factories";
 import { describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
@@ -78,7 +78,7 @@ describeWithDatabase("quest teams on real SQL", () => {
   });
 });
 
-import { saveQuestPartyMember } from "@/server/utils/questParty";
+
 
 it("retries departure after a concurrent personal update and saves shared progress with the detach", async () => {
   const tracker = QuestTracker.parse({ id: "quest", goals: [ObjectiveTracker.parse({ id: "goal", done: true, value: 10 })] });

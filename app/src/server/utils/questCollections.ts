@@ -1,7 +1,9 @@
-import { and, eq, isNotNull } from "drizzle-orm";
-import { bloodline, bloodlineRolls } from "@/drizzle/schema";
 import { buildBloodlineCollectionProgress } from "@/libs/bloodline";
 import { getUserQuests } from "@/libs/quest";
+import {
+  fetchBloodlineCollectionRolls,
+  queryBloodlineCollectionCatalogue,
+} from "@/queries/quests";
 import type { UserWithRelations } from "@/routers/profile";
 import type { DrizzleClient } from "@/server/db";
 import { scopedRead } from "@/server/requestScope";
@@ -64,21 +66,6 @@ export const fetchBloodlineCollectionCatalogue = (client: DrizzleClient) =>
   scopedRead("bloodlineCollectionCatalogue", () =>
     queryBloodlineCollectionCatalogue(client),
   );
-
-export const fetchBloodlineCollectionRolls = (client: DrizzleClient, userId: string) =>
-  client.query.bloodlineRolls.findMany({
-    columns: { bloodlineId: true },
-    where: and(
-      eq(bloodlineRolls.userId, userId),
-      isNotNull(bloodlineRolls.bloodlineId),
-    ),
-  });
-
-const queryBloodlineCollectionCatalogue = (client: DrizzleClient) =>
-  client.query.bloodline.findMany({
-    columns: { id: true, rank: true, hidden: true },
-    where: eq(bloodline.hidden, false),
-  });
 
 type BloodlineCollectionSnapshot = {
   catalogue: Awaited<ReturnType<typeof fetchBloodlineCollectionCatalogue>>;

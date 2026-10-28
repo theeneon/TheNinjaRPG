@@ -1,9 +1,12 @@
-import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { cookies } from "next/headers";
-import { emailReminder } from "@/drizzle/schema";
 import { env } from "@/env/server.mjs";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
+import {
+  executeRowsForGET,
+  insertEmailReminderForGET,
+  listEmailReminderForDailySync as listEmailReminderForGET,
+} from "@/queries/emailReminder";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -77,9 +80,7 @@ export async function GET(request: Request) {
 
   try {
     // Fetch all the emails currently in the database
-    const reminders = await drizzleDB.query.emailReminder.findMany({
-      columns: { userId: true },
-    });
+    const reminders = await listEmailReminderForGET(drizzleDB);
     const userIds = reminders.map(
       (reminder: (typeof reminders)[number]) => reminder.userId,
     );
@@ -156,21 +157,13 @@ export async function GET(request: Request) {
     // Every Clerk user may already be known, or none may have a primary email, in
     // which case there is nothing to insert - drizzle rejects an empty values() list.
     if (newReminders.length > 0) {
-      await drizzleDB.insert(emailReminder).values(newReminders);
+      await insertEmailReminderForGET(drizzleDB, newReminders);
     }
 
     // Update emailReminder's lastActivity with userData's updatedAt for matching userIds.
     // Only rows whose value changed are written. Idempotent, so a deadlock with the other
     // midnight crons writing UserData just reruns it.
-    await retryOnDeadlock(() =>
-      drizzleDB.execute(sql`
-        UPDATE EmailReminder er
-        INNER JOIN UserData ud ON er.userId = ud.userId
-        SET er.lastActivity = ud.updatedAt
-        WHERE er.userId IS NOT NULL
-          AND NOT (er.lastActivity <=> ud.updatedAt)
-      `),
-    );
+    await retryOnDeadlock(() => executeRowsForGET(drizzleDB));
 
     console.log(`Total Clerk users fetched: ${allClerkUsers.length}`);
 

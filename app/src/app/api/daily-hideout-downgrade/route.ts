@@ -1,9 +1,14 @@
-import { and, eq, gte, lt, sql } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { STRONGHOLD_MONTHLY_MAINTENANCE } from "@/drizzle/constants";
 import { clan, village } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
+import {
+  executeRowsForGET,
+  selectVillageForGET,
+  selectVillageForGET2,
+} from "@/queries/clan";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -23,16 +28,7 @@ export async function GET(request: Request) {
 
   try {
     // Fetch Strongholds whose monthly maintenance is due.
-    const strongholdsDueForMaintainance = await drizzleDB
-      .select()
-      .from(village)
-      .innerJoin(clan, eq(village.id, clan.villageId))
-      .where(
-        and(
-          eq(village.type, "STRONGHOLD"),
-          lt(village.lastMaintenancePaidAt, sql`NOW() - INTERVAL 30 DAY`),
-        ),
-      );
+    const strongholdsDueForMaintainance = await selectVillageForGET(drizzleDB);
 
     // Claim maintenance and charge or downgrade together, using the current locked balance.
     await Promise.all(
@@ -45,26 +41,10 @@ export async function GET(request: Request) {
         );
         // LIMIT prevents derived-table merging. The locking snapshot keeps the payment
         // decision independent of joined UPDATE assignment order and sees waiting debits.
-        const snapshot = drizzleDB
-          .select({ id: village.id, points: clan.points })
-          .from(village)
-          .innerJoin(clan, eq(clan.villageId, village.id))
-          .where(guards)
-          .limit(1)
-          .for("update")
-          .as("maintenance_snapshot");
+        const snapshot = selectVillageForGET2(drizzleDB, guards);
         const canPay = gte(snapshot.points, STRONGHOLD_MONTHLY_MAINTENANCE);
         return retryOnDeadlock(() =>
-          drizzleDB.execute(sql`
-            UPDATE ${village}
-            INNER JOIN ${clan} ON ${clan.villageId} = ${village.id}
-            INNER JOIN ${snapshot} ON ${snapshot.id} = ${village.id}
-            SET ${clan.points} = IF(${canPay}, ${snapshot.points} - ${STRONGHOLD_MONTHLY_MAINTENANCE}, ${snapshot.points}),
-                ${village.lastMaintenancePaidAt} = ${new Date()},
-                ${village.type} = IF(${canPay}, ${village.type}, 'HIDEOUT'),
-                ${village.wasDowngraded} = IF(${canPay}, ${village.wasDowngraded}, TRUE)
-            WHERE ${guards}
-          `),
+          executeRowsForGET(drizzleDB, snapshot, canPay, guards),
         );
       }),
     );

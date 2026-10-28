@@ -1,43 +1,26 @@
 import { randomInt } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import {
-  and,
-  count,
-  desc,
-  eq,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  like,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, isNotNull, isNull, like, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
-  ACTION_LOG_RELATED_MSG_MAX_LENGTH,
   BLOODLINE_COST,
   BLOODLINE_SWAP_COOLDOWN_HOURS,
-  BLOODLINE_SWAP_FREE_DAYS,
   COST_SWAP_BLOODLINE,
-  IMG_AVATAR_DEFAULT,
   LetterRanks,
   PITY_SYSTEM_ENABLED,
   REMOVAL_COST,
   ROLL_CHANCE,
 } from "@/drizzle/constants";
-import type { Bloodline, BloodlineRank, UserData } from "@/drizzle/schema";
 import {
-  actionLog,
+  type Bloodline,
+  type BloodlineRank,
   bloodline,
-  bloodlineReskin,
   bloodlineRolls,
-  jutsu,
+  type UserData,
   userData,
-  userJutsu,
 } from "@/drizzle/schema";
+
 import {
   filterRollableBloodlines,
   getFreeBloodlineSwaps,
@@ -51,7 +34,58 @@ import {
 } from "@/libs/contentReview/outdate";
 import { validateUserUpdateReason } from "@/libs/moderator";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
+import {
+  deleteBloodlineForDelete,
+  deleteBloodlineReskinForDeleteReskin,
+  fetchBloodline,
+  fetchBloodlineReskin,
+  fetchBloodlines,
+  fetchItemBloodlineRolls,
+  fetchMonthlyBloodlineSwaps,
+  fetchNaturalBloodlineRoll,
+  fetchUserHistoricBloodlines,
+  findActionLogForSwapBloodline,
+  findBloodlineForUpdate,
+  findBloodlineReskinForUpdateReskin,
+  findBloodlineRollsForRoll,
+  insertActionLogForCreateReskin,
+  insertActionLogForDelete,
+  insertActionLogForDeleteReskin,
+  insertActionLogForRemoveBloodlineFromPool,
+  insertActionLogForRemoveBloodlineFromPool2,
+  insertActionLogForSwapBloodline,
+  insertActionLogForUpdate,
+  insertActionLogForUpdateBloodline,
+  insertActionLogForUpdateReskin,
+  insertActionLogForUpdateReskin2,
+  insertBloodlineForCreate,
+  insertBloodlineReskinForCreateReskin,
+  insertBloodlineRollsForDoRoll,
+  insertBloodlineRollsForDoRoll2,
+  insertBloodlineRollsForPityRoll,
+  insertBloodlineRollsForPurchaseBloodline,
+  listBloodlineForGetAll,
+  listBloodlineForGetAllNames,
+  listBloodlineReskinForGetReskinsForBloodline,
+  listJutsuForDeleteReskin,
+  listJutsuForUpdateBloodline,
+  listUserDataForDelete,
+  selectBloodlineReskinForDeleteReskin,
+  selectBloodlineReskinForGetAllReskins,
+  selectBloodlineRollsForGetNaturalRollStatistics,
+  selectBloodlineRollsForGetNaturalRollStatistics2,
+  selectJutsuForDeleteReskin,
+  updateBloodlineForUpdate,
+  updateBloodlineReskinForUpdateReskin,
+  updateUserDataForDelete,
+  updateUserDataForDeleteReskin,
+  updateUserDataForDoRoll,
+  updateUserDataForUpdateBloodline,
+  updateUserJutsuForUpdateBloodline,
+} from "@/queries/bloodline";
+import { refundPityCredit } from "@/queries/concurrency";
+import { fetchUser } from "@/queries/profile";
+import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -63,7 +97,6 @@ import {
 import type { DrizzleClient } from "@/server/db";
 import {
   claimUserSnapshot,
-  refundPityCredit,
   removeBloodlineFromPoolAtomically,
   reservePityCredit,
 } from "@/server/utils/concurrency";
@@ -72,7 +105,6 @@ import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlE
 import { fetchQueuedJutsuIds } from "@/server/utils/userQueue";
 import { getRandomElement } from "@/utils/array";
 import { calculateContentDiff } from "@/utils/diff";
-import { getUnique } from "@/utils/grouping";
 import { getUserFederalStatus } from "@/utils/paypal";
 import {
   canChangeContent,
@@ -80,21 +112,21 @@ import {
   isStaffMember,
 } from "@/utils/permissions";
 import {
-  DAY_S,
   getDaysHoursMinutesSeconds,
   getTimeLeftStr,
   secondsFromDate,
   secondsPassed,
 } from "@/utils/time";
-import type { BloodlineFilteringSchema } from "@/validators/bloodline";
 import {
+  type BloodlineFilteringSchema,
   bloodlineFilteringSchema,
   bloodlineReskinCreateSchema,
   bloodlineReskinUpdateSchema,
   removeBloodlineFromPoolSchema,
 } from "@/validators/bloodline";
-import type { ZodAllTags } from "@/validators/combat";
-import { BloodlineValidator } from "@/validators/combat";
+
+import { BloodlineValidator, type ZodAllTags } from "@/validators/combat";
+
 import { idSchema } from "@/validators/misc";
 
 const ALREADY_HAS_BLOODLINE_ERROR = "Already have a bloodline, please remove it first";
@@ -103,10 +135,7 @@ export const bloodlineRouter = createTRPCRouter({
   getAllNames: publicProcedure
     .meta({ mcp: { description: "Get all bloodline names and images" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.bloodline.findMany({
-        columns: { id: true, name: true, image: true },
-        orderBy: (table, { asc }) => [asc(table.name)],
-      });
+      return await listBloodlineForGetAllNames(ctx.drizzle);
     }),
   getAll: publicProcedure
     .meta({
@@ -125,12 +154,12 @@ export const bloodlineRouter = createTRPCRouter({
       // Build where conditions using the abstracted filter function
       const baseFilters = bloodlineDatabaseFilter(input);
 
-      const results = await ctx.drizzle.query.bloodline.findMany({
-        with: { village: { columns: { name: true } } },
-        where: and(...baseFilters),
-        offset: skip,
-        limit: input.limit,
-      });
+      const results = await listBloodlineForGetAll(
+        ctx.drizzle,
+        baseFilters,
+        skip,
+        input,
+      );
       const nextCursor = results.length < input.limit ? null : currentCursor + 1;
       return {
         data: results,
@@ -155,16 +184,7 @@ export const bloodlineRouter = createTRPCRouter({
       return errorResponse("You are banned and cannot perform this action");
     if (canChangeContent(user.role)) {
       const id = nanoid();
-      await ctx.drizzle.insert(bloodline).values({
-        id: id,
-        name: `New Bloodline - ${id}`,
-        image: IMG_AVATAR_DEFAULT,
-        description: "New bloodline description",
-        effects: [],
-        rank: "D",
-        statClassification: "None",
-        hidden: true,
-      });
+      await insertBloodlineForCreate(ctx.drizzle, id);
       return { success: true, message: id };
     } else {
       return { success: false, message: `Not allowed to create bloodline` };
@@ -242,14 +262,7 @@ export const bloodlineRouter = createTRPCRouter({
           }),
           fetchBloodline(ctx.drizzle, input.bloodlineId),
           fetchUserHistoricBloodlines(ctx.drizzle, ctx.userId),
-          ctx.drizzle.query.actionLog.findFirst({
-            where: and(
-              eq(actionLog.userId, ctx.userId),
-              eq(actionLog.tableName, "user"),
-              eq(actionLog.relatedMsg, "Bloodline Changed"),
-            ),
-            orderBy: (table, { desc }) => [desc(table.createdAt)],
-          }),
+          findActionLogForSwapBloodline(ctx.drizzle, ctx),
           fetchMonthlyBloodlineSwaps(ctx.drizzle, ctx.userId),
         ]);
       const user = updatedUser.user;
@@ -304,18 +317,13 @@ export const bloodlineRouter = createTRPCRouter({
 
       // Log federal free swaps for monthly Silver/Gold tracking (staff benefit takes priority)
       if (hasFreeSwapAvailable && !isStaffFreeSwap) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodlineSwap",
-          changes: [
-            `Bloodline swap (free ${federalStatus} - ${BLOODLINE_SWAP_FREE_DAYS} days)`,
-          ],
-          relatedId: line.id,
-          relatedMsg: `Free swap for Silver/Gold supporter (${BLOODLINE_SWAP_FREE_DAYS} day cooldown)`,
-          relatedImage: user.avatarLight,
-          relatedValue: 0,
-        });
+        await insertActionLogForSwapBloodline(
+          ctx.drizzle,
+          ctx,
+          federalStatus,
+          line,
+          user,
+        );
       }
 
       return {
@@ -342,27 +350,15 @@ export const bloodlineRouter = createTRPCRouter({
       const id = nanoid();
       const resolvedImage = input.image ?? base.image;
       await Promise.all([
-        ctx.drizzle.insert(bloodlineReskin).values([
-          {
-            id: id,
-            bloodlineId: base.id,
-            name: input.name ?? base.name,
-            description: input.description ?? base.description,
-            image: resolvedImage,
-            createdBy: ctx.userId,
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          },
-        ]),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodline",
-          changes: [`Reskin created for ${base.name}: ${input.name}`],
-          relatedId: base.id,
-          relatedMsg: `Reskin created: ${input.name}`,
-          relatedImage: resolvedImage,
-        }),
+        insertBloodlineReskinForCreateReskin(
+          ctx.drizzle,
+          id,
+          base,
+          input,
+          resolvedImage,
+          ctx,
+        ),
+        insertActionLogForCreateReskin(ctx.drizzle, ctx, base, input, resolvedImage),
       ]);
       return { success: true, message: id };
     }),
@@ -375,18 +371,9 @@ export const bloodlineRouter = createTRPCRouter({
         fetchUser(ctx.drizzle, ctx.userId),
         fetchBloodlineReskin(ctx.drizzle, input.reskinId),
         input.data.name
-          ? ctx.drizzle.query.bloodlineReskin.findFirst({
-              columns: { name: true, id: true },
-              where: and(
-                eq(bloodlineReskin.name, input.data.name),
-                eq(
-                  bloodlineReskin.bloodlineId,
-                  ctx.drizzle
-                    .select({ bloodlineId: bloodlineReskin.bloodlineId })
-                    .from(bloodlineReskin)
-                    .where(eq(bloodlineReskin.id, input.reskinId)),
-                ),
-              ),
+          ? findBloodlineReskinForUpdateReskin(ctx.drizzle, {
+              data: { name: input.data.name },
+              reskinId: input.reskinId,
             })
           : null,
       ]);
@@ -410,37 +397,13 @@ export const bloodlineRouter = createTRPCRouter({
       // AI moderation of reason
       const aiCheck = await validateUserUpdateReason(diff.join(". "), reason);
       if (!aiCheck.allowUpdate) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodline",
-          changes: [],
-          relatedId: reskin.bloodlineId,
-          relatedMsg: `Reskin update rejected by AI: ${reason}`,
-          relatedImage: reskin.image,
-        });
+        await insertActionLogForUpdateReskin(ctx.drizzle, ctx, reskin, reason);
         return errorResponse(aiCheck.comment);
       }
       // Mutate
       await Promise.all([
-        ctx.drizzle
-          .update(bloodlineReskin)
-          .set({
-            name: newData.name,
-            description: newData.description,
-            image: newData.image ?? reskin.image,
-            updatedAt: new Date(),
-          })
-          .where(eq(bloodlineReskin.id, reskin.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodline",
-          changes: diff,
-          relatedId: reskin.bloodlineId,
-          relatedMsg: `Reskin updated: ${reskin.name}`,
-          relatedImage: newData.image ?? reskin.image,
-        }),
+        updateBloodlineReskinForUpdateReskin(ctx.drizzle, newData, reskin),
+        insertActionLogForUpdateReskin2(ctx.drizzle, ctx, diff, reskin, newData),
       ]);
 
       return { success: true, message: "Bloodline reskin updated" };
@@ -453,10 +416,7 @@ export const bloodlineRouter = createTRPCRouter({
       const [user, reskin, linkedJutsus] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchBloodlineReskin(ctx.drizzle, input.reskinId),
-        ctx.drizzle.query.jutsu.findMany({
-          columns: { id: true },
-          where: eq(jutsu.bloodlineReskinId, input.reskinId),
-        }),
+        listJutsuForDeleteReskin(ctx.drizzle, input),
       ]);
       // Guard
       if (user.isBanned)
@@ -470,19 +430,10 @@ export const bloodlineRouter = createTRPCRouter({
       // Mutate
       const deleted = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
-          await tx
-            .select({ id: bloodlineReskin.id })
-            .from(bloodlineReskin)
-            .where(eq(bloodlineReskin.id, input.reskinId))
-            .for("update");
-          const children = await tx
-            .select({ id: jutsu.id })
-            .from(jutsu)
-            .where(eq(jutsu.bloodlineReskinId, input.reskinId));
+          await selectBloodlineReskinForDeleteReskin(tx, input);
+          const children = await selectJutsuForDeleteReskin(tx, input);
           if (children.length) return false;
-          await tx
-            .delete(bloodlineReskin)
-            .where(eq(bloodlineReskin.id, input.reskinId));
+          await deleteBloodlineReskinForDeleteReskin(tx, input);
           return true;
         }),
       );
@@ -491,20 +442,9 @@ export const bloodlineRouter = createTRPCRouter({
           "Unlink or delete its jutsu reskins before deleting this bloodline reskin",
         );
       await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({ bloodlineReskinId: null })
-          .where(eq(userData.bloodlineReskinId, input.reskinId)),
+        updateUserDataForDeleteReskin(ctx.drizzle, input),
 
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodline",
-          changes: ["Reskin deleted"],
-          relatedId: reskin.bloodlineId,
-          relatedMsg: `Reskin deleted: ${reskin.name}`,
-          relatedImage: reskin.image,
-        }),
+        insertActionLogForDeleteReskin(ctx.drizzle, ctx, reskin),
       ]);
       return { success: true, message: "Bloodline reskin deleted" };
     }),
@@ -534,18 +474,12 @@ export const bloodlineRouter = createTRPCRouter({
       const change = `Removed bloodline ${poolBloodline.name} from pool`;
       const aiCheck = await validateUserUpdateReason(change, input.reason);
       if (!aiCheck.allowUpdate) {
-        await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodline",
-          changes: [],
-          relatedId: target.userId,
-          relatedMsg: `Bloodline pool removal rejected by AI: ${input.reason}`.slice(
-            0,
-            ACTION_LOG_RELATED_MSG_MAX_LENGTH,
-          ),
-          relatedImage: target.avatarLight,
-        });
+        await insertActionLogForRemoveBloodlineFromPool(
+          ctx.drizzle,
+          ctx,
+          target,
+          input,
+        );
         return errorResponse(aiCheck.comment);
       }
       // Mutation (atomic, NOT EXISTS equipped guard) + audit
@@ -559,15 +493,13 @@ export const bloodlineRouter = createTRPCRouter({
       if (!success) {
         return errorResponse("Bloodline became equipped; please retry");
       }
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "bloodline",
-        changes: [change],
-        relatedId: target.userId,
-        relatedMsg: input.reason.slice(0, ACTION_LOG_RELATED_MSG_MAX_LENGTH),
-        relatedImage: target.avatarLight,
-      });
+      await insertActionLogForRemoveBloodlineFromPool2(
+        ctx.drizzle,
+        ctx,
+        change,
+        target,
+        input,
+      );
       return {
         success: true,
         message: `Removed ${poolBloodline.name} from ${target.username}'s pool`,
@@ -584,10 +516,10 @@ export const bloodlineRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get all reskins for a bloodline" } })
     .input(z.object({ bloodlineId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const rows = await ctx.drizzle.query.bloodlineReskin.findMany({
-        where: eq(bloodlineReskin.bloodlineId, input.bloodlineId),
-        orderBy: (table, { desc }) => [desc(table.name)],
-      });
+      const rows = await listBloodlineReskinForGetReskinsForBloodline(
+        ctx.drizzle,
+        input,
+      );
       return rows;
     }),
   getAllReskins: publicProcedure
@@ -602,19 +534,12 @@ export const bloodlineRouter = createTRPCRouter({
       const currentCursor = input.cursor ?? 0;
       const skip = currentCursor * input.limit;
       const baseFilters = bloodlineDatabaseFilter(input);
-      const rows = await ctx.drizzle
-        .select({
-          reskin: bloodlineReskin,
-          base: bloodline,
-          userUsername: userData.username,
-        })
-        .from(bloodlineReskin)
-        .innerJoin(bloodline, eq(bloodlineReskin.bloodlineId, bloodline.id))
-        .innerJoin(userData, eq(bloodlineReskin.createdBy, userData.userId))
-        .where(and(...baseFilters))
-        .orderBy(desc(bloodlineReskin.updatedAt))
-        .offset(skip)
-        .limit(input.limit);
+      const rows = await selectBloodlineReskinForGetAllReskins(
+        ctx.drizzle,
+        baseFilters,
+        skip,
+        input,
+      );
       const results = rows.map((row) => ({
         ...row.reskin,
         userUsername: row.userUsername,
@@ -632,9 +557,7 @@ export const bloodlineRouter = createTRPCRouter({
       const [user, entry, usersWithBloodline] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchBloodline(ctx.drizzle, input.id),
-        ctx.drizzle.query.userData.findMany({
-          where: and(eq(userData.bloodlineId, input.id), eq(userData.isAi, false)),
-        }),
+        listUserDataForDelete(ctx.drizzle, input),
       ]);
       // Derived
       const usernames = usersWithBloodline.map((u) => u.username).join(", ");
@@ -652,26 +575,9 @@ export const bloodlineRouter = createTRPCRouter({
       // Mutate
       const bloodrightRefund = bloodrightSwapRefund(null);
       await Promise.all([
-        ctx.drizzle.delete(bloodline).where(eq(bloodline.id, input.id)),
-        ctx.drizzle
-          .update(userData)
-          .set({
-            // Combat retains preloaded tiers; preserve their saved refund until the battle ends.
-            seichiSilver: sql`IF(${userData.status} = 'BATTLE', ${userData.seichiSilver}, ${bloodrightRefund.seichiSilver})`,
-            bloodright: sql`IF(${userData.status} = 'BATTLE', ${userData.bloodright}, ${bloodrightRefund.bloodright})`,
-            bloodrightSpent: sql`IF(${userData.status} = 'BATTLE', ${userData.bloodrightSpent}, ${bloodrightRefund.bloodrightSpent})`,
-            bloodlineId: null,
-          })
-          .where(eq(userData.bloodlineId, input.id)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "bloodline",
-          changes: [`Deleted: ${entry.name}`],
-          relatedId: entry.id,
-          relatedMsg: `Delete: ${entry.name}`,
-          relatedImage: entry.image,
-        }),
+        deleteBloodlineForDelete(ctx.drizzle, input),
+        updateUserDataForDelete(ctx.drizzle, bloodrightRefund, input),
+        insertActionLogForDelete(ctx.drizzle, ctx, entry),
       ]);
       await outdateProposalsFor(
         ctx.drizzle,
@@ -689,10 +595,7 @@ export const bloodlineRouter = createTRPCRouter({
       const [user, entry, bloodlineWithName] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchBloodline(ctx.drizzle, input.id),
-        ctx.drizzle.query.bloodline.findFirst({
-          columns: { name: true, id: true },
-          where: eq(bloodline.name, input.data.name),
-        }),
+        findBloodlineForUpdate(ctx.drizzle, input),
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -721,20 +624,9 @@ export const bloodlineRouter = createTRPCRouter({
           ...newData,
         });
         // Update database
-        await ctx.drizzle
-          .update(bloodline)
-          .set(newData)
-          .where(eq(bloodline.id, input.id));
+        await updateBloodlineForUpdate(ctx.drizzle, newData, input);
         await Promise.all([
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "bloodline",
-            changes: diff,
-            relatedId: entry.id,
-            relatedMsg: `Update: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
           outdateProposalsFor(
             ctx.drizzle,
             "BLOODLINE",
@@ -767,15 +659,7 @@ export const bloodlineRouter = createTRPCRouter({
       mcp: { description: "Get bloodline roll statistics by rank" },
     })
     .query(async ({ ctx }) => {
-      const stats = await ctx.drizzle
-        .select({
-          rank: bloodline.rank,
-          count: count(bloodlineRolls.id),
-        })
-        .from(bloodlineRolls)
-        .leftJoin(bloodline, eq(bloodlineRolls.bloodlineId, bloodline.id))
-        .where(eq(bloodlineRolls.type, "NATURAL"))
-        .groupBy(bloodline.rank);
+      const stats = await selectBloodlineRollsForGetNaturalRollStatistics(ctx.drizzle);
 
       // Create a complete result with all ranks, even those with zero counts
       const result: Record<BloodlineRank, number> = {
@@ -795,14 +679,9 @@ export const bloodlineRouter = createTRPCRouter({
       });
 
       // Also count rolls with no bloodline (null bloodlineId)
-      const noBloodlineCount = await ctx.drizzle
-        .select({
-          count: count(bloodlineRolls.id),
-        })
-        .from(bloodlineRolls)
-        .where(
-          and(eq(bloodlineRolls.type, "NATURAL"), isNull(bloodlineRolls.bloodlineId)),
-        );
+      const noBloodlineCount = await selectBloodlineRollsForGetNaturalRollStatistics2(
+        ctx.drizzle,
+      );
 
       return {
         ...result,
@@ -819,13 +698,7 @@ export const bloodlineRouter = createTRPCRouter({
         fetchUser(ctx.drizzle, ctx.userId),
         fetchNaturalBloodlineRoll(ctx.drizzle, ctx.userId),
         fetchBloodlines(ctx.drizzle), // Fetch all bloodlines
-        ctx.drizzle.query.bloodlineRolls.findFirst({
-          where: and(
-            eq(bloodlineRolls.userId, ctx.userId),
-            eq(bloodlineRolls.type, "REGISTRATION"),
-          ),
-          columns: { bloodlineId: true },
-        }),
+        findBloodlineRollsForRoll(ctx.drizzle, ctx),
       ]);
       // Guard
       if (!user) return errorResponse("User not found");
@@ -893,32 +766,17 @@ export const bloodlineRouter = createTRPCRouter({
           });
           const randomBloodline = getRandomElement(bloodlinePool);
           if (randomBloodline) {
-            const bloodlineUpdateResult = await ctx.drizzle
-              .update(userData)
-              .set({
-                ...bloodrightSwapRefund(randomBloodline.id),
-                bloodlineId: randomBloodline.id,
-              })
-              .where(
-                and(
-                  eq(userData.userId, ctx.userId),
-                  starterBloodlineId
-                    ? eq(userData.bloodlineId, starterBloodlineId)
-                    : isNull(userData.bloodlineId),
-                ),
-              );
+            const bloodlineUpdateResult = await updateUserDataForDoRoll(
+              ctx.drizzle,
+              randomBloodline,
+              ctx,
+              starterBloodlineId,
+            );
             if (bloodlineUpdateResult.rowsAffected === 0) {
               return errorResponse("You have already rolled a bloodline");
             }
             try {
-              await ctx.drizzle.insert(bloodlineRolls).values({
-                id: nanoid(),
-                userId: ctx.userId,
-                used: 0,
-                pityRolls: 0,
-                type: "NATURAL",
-                bloodlineId: randomBloodline.id,
-              });
+              await insertBloodlineRollsForDoRoll(ctx.drizzle, ctx, randomBloodline);
             } catch (error) {
               if (isMysqlDuplicateKeyError(error)) {
                 return errorResponse("You have already rolled a bloodline");
@@ -933,13 +791,7 @@ export const bloodlineRouter = createTRPCRouter({
         }
         // If no bloodline was found, proceed with the normal "no bloodline" case
         try {
-          await ctx.drizzle.insert(bloodlineRolls).values({
-            id: nanoid(),
-            used: 0,
-            pityRolls: 0,
-            userId: ctx.userId,
-            type: "NATURAL",
-          });
+          await insertBloodlineRollsForDoRoll2(ctx.drizzle, ctx);
         } catch (error) {
           if (isMysqlDuplicateKeyError(error)) {
             return errorResponse("You have already rolled a bloodline");
@@ -1032,15 +884,7 @@ export const bloodlineRouter = createTRPCRouter({
         }
         throw error;
       }
-      await ctx.drizzle.insert(bloodlineRolls).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        type: "PITY",
-        bloodlineId: randomBloodline.id,
-        goal: input.rank,
-        used: 1,
-        pityRolls: 0,
-      });
+      await insertBloodlineRollsForPityRoll(ctx.drizzle, ctx, randomBloodline, input);
       return {
         success: true,
         message: `You have been granted a bloodline: ${randomBloodline.name}`,
@@ -1119,15 +963,7 @@ export const bloodlineRouter = createTRPCRouter({
         BLOODLINE_COST[line.rank],
         `Bloodline Purchased: ${line.name}`,
       );
-      await ctx.drizzle.insert(bloodlineRolls).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        type: "DIRECT",
-        bloodlineId: line.id,
-        goal: line.rank,
-        used: 1,
-        pityRolls: 0,
-      });
+      await insertBloodlineRollsForPurchaseBloodline(ctx.drizzle, ctx, line);
       return { success: true, message: "Bloodline purchased" };
     }),
 });
@@ -1158,12 +994,9 @@ export const updateBloodline = async (
   // Get current bloodline jutsus
   const [bloodlineJutsus, queued] = user.bloodlineId
     ? await Promise.all([
-        client.query.jutsu
-          .findMany({
-            columns: { id: true },
-            where: eq(jutsu.bloodlineId, user.bloodlineId),
-          })
-          .then((rows) => rows.map((j) => j.id)),
+        listJutsuForUpdateBloodline(client, { bloodlineId: user.bloodlineId }).then(
+          (rows) => rows.map((j) => j.id),
+        ),
         fetchQueuedJutsuIds(client, user.userId),
       ])
     : [[], new Set<string>()];
@@ -1179,27 +1012,12 @@ export const updateBloodline = async (
   // Update user first, with a CAS on both reputation (atomic decrement, floor guard) and the
   // caller's pre-state bloodlineId (prevents a raced/duplicate grant from re-spending reputation
   // or clobbering a bloodline someone else already changed).
-  const updateResult = await client
-    .update(userData)
-    .set({
-      ...bloodrightSwapRefund(bloodline?.id || null),
-      bloodlineId: bloodline?.id || null,
-      bloodlineReskinId: null,
-      reputationPoints: sql`${userData.reputationPoints} - ${repCost}`,
-      // Advance the whole-user version so a concurrent claimUserSnapshot CAS detects this write.
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(userData.userId, user.userId),
-        // Battle effects are fixed at initiation; prevent refunding an active path mid-fight.
-        ne(userData.status, "BATTLE"),
-        gte(userData.reputationPoints, repCost),
-        user.bloodlineId
-          ? eq(userData.bloodlineId, user.bloodlineId)
-          : isNull(userData.bloodlineId),
-      ),
-    );
+  const updateResult = await updateUserDataForUpdateBloodline(
+    client,
+    bloodline,
+    repCost,
+    user,
+  );
   if (!updateResult.rowsAffected) {
     throw new BloodlineGrantRejectedError("Unable to update bloodline");
   }
@@ -1207,142 +1025,11 @@ export const updateBloodline = async (
   await Promise.all([
     // Update bloodline jutsus currently being trained
     ...(bloodlineJutsus.length > 0
-      ? [
-          client
-            .update(userJutsu)
-            .set({
-              level: sql`CASE WHEN finishTraining > NOW() THEN level - 1 ELSE level END`,
-              finishTraining: null,
-              equipped: false,
-            })
-            .where(
-              and(
-                eq(userJutsu.userId, user.userId),
-                inArray(userJutsu.jutsuId, bloodlineJutsus),
-              ),
-            ),
-        ]
+      ? [updateUserJutsuForUpdateBloodline(client, user, bloodlineJutsus)]
       : []),
     // Create a log entry for this action
-    client.insert(actionLog).values({
-      id: nanoid(),
-      userId: user.userId,
-      tableName: "user",
-      changes: [logMsg],
-      relatedId: user.userId,
-      relatedMsg: "Bloodline Changed",
-      relatedImage: user.avatarLight || user.avatar || IMG_AVATAR_DEFAULT,
-    }),
+    insertActionLogForUpdateBloodline(client, user, logMsg),
   ]);
-};
-/**
- * COMMON QUERIES WHICH ARE REUSED
- */
-
-export const fetchBloodlineReskin = async (client: DrizzleClient, reskinId: string) => {
-  return await client.query.bloodlineReskin.findFirst({
-    where: eq(bloodlineReskin.id, reskinId),
-    with: { bloodline: true },
-  });
-};
-
-/**
- * Fetch natural bloodline roll of a user
- * @param client Drizzle client
- * @param userId User ID
- * @returns Natural bloodline roll
- */
-export const fetchNaturalBloodlineRoll = async (
-  client: DrizzleClient,
-  userId: string,
-) => {
-  return await client.query.bloodlineRolls.findFirst({
-    where: and(eq(bloodlineRolls.userId, userId), eq(bloodlineRolls.type, "NATURAL")),
-    with: { bloodline: true },
-  });
-};
-
-/**
- * Fetch item bloodline rolls of a user
- * @param client Drizzle client
- * @param userId User ID
- * @returns Item bloodline rolls
- */
-export const fetchItemBloodlineRolls = async (
-  client: DrizzleClient,
-  userId: string,
-) => {
-  return await client.query.bloodlineRolls.findMany({
-    where: and(eq(bloodlineRolls.userId, userId), eq(bloodlineRolls.type, "ITEM")),
-    with: { bloodline: true },
-  });
-};
-
-/**
- * Fetch user's historic bloodlines
- * @param client Drizzle client
- * @param userId User ID
- * @returns User's historic bloodlines
- */
-export const fetchUserHistoricBloodlines = async (
-  client: DrizzleClient,
-  userId: string,
-) => {
-  // Get all unique bloodlineIds the user has ever rolled
-  const userRolls = await client.query.bloodlineRolls.findMany({
-    where: and(
-      eq(bloodlineRolls.userId, userId),
-      isNotNull(bloodlineRolls.bloodlineId),
-    ),
-    with: { bloodline: { with: { village: true } } },
-  });
-  const userBloodlines = getUnique(userRolls, "bloodlineId")
-    .filter(
-      (roll): roll is typeof roll & { bloodline: NonNullable<typeof roll.bloodline> } =>
-        !!roll.bloodline,
-    )
-    .map((roll) => roll.bloodline);
-  // Return array of bloodline objects
-  return userBloodlines;
-};
-
-/**
- * Fetch a bloodline by ID
- * @param client Drizzle client
- * @param bloodlineId Bloodline ID
- * @returns Bloodline
- */
-export const fetchMonthlyBloodlineSwaps = async (
-  client: DrizzleClient,
-  userId: string,
-) => {
-  const results = await client.query.actionLog.findMany({
-    where: and(
-      eq(actionLog.userId, userId),
-      eq(actionLog.tableName, "bloodlineSwap"),
-      gte(
-        actionLog.createdAt,
-        secondsFromDate(-BLOODLINE_SWAP_FREE_DAYS * DAY_S, new Date()),
-      ),
-    ),
-    columns: { id: true, createdAt: true },
-  });
-  return results;
-};
-
-export const fetchBloodline = async (client: DrizzleClient, bloodlineId: string) => {
-  return await client.query.bloodline.findFirst({
-    where: eq(bloodline.id, bloodlineId),
-  });
-};
-
-/**
- * Fetch all bloodlines
- * @param client Drizzle client
- * @returns All bloodlines
- */
-export const fetchBloodlines = async (client: DrizzleClient) => {
-  return await client.query.bloodline.findMany({ where: eq(bloodline.hidden, false) });
 };
 
 /**

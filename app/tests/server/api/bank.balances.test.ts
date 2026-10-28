@@ -1,8 +1,9 @@
+import { fetchUserBalances } from "@/queries/bank";
 
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "bun:test";
 import { userData } from "@/drizzle/schema";
-import { bankRouter, fetchUserBalances } from "@/server/api/routers/bank";
+import { bankRouter } from "@/server/api/routers/bank";
 import { insertUsers } from "../../setup/factories";
 import {
   callerFor,

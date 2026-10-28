@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { and, eq, gt, gte, isNull, sql } from "drizzle-orm";
+import { eq, gte, isNull, sql } from "drizzle-orm";
 import { after } from "next/server";
 import {
   BasicElementName,
@@ -9,7 +9,7 @@ import {
   STATS_PER_ENERGY,
   type TimedMasteryName,
 } from "@/drizzle/constants";
-import { trainingLog, userData } from "@/drizzle/schema";
+import { userData } from "@/drizzle/schema";
 import { activeTrainedElement } from "@/libs/elementalMastery";
 import { petExperienceGainSql } from "@/libs/pets/experience";
 import { filterQuestTrackersForDbPersist, getNewTrackers } from "@/libs/quest";
@@ -34,6 +34,12 @@ import {
   trainingBoost,
   trainingEnergyMessage,
 } from "@/libs/train";
+import { findUserWithBloodline } from "@/queries/profile";
+import {
+  insertTrainingLog,
+  listTrainingLogForGetTrainingLog,
+  updateUserDataForUpdateTrainingSpeed,
+} from "@/queries/train";
 import { trainingCaptchaMessage } from "@/routers/misc";
 import type { UserWithRelations } from "@/routers/profile";
 import { fetchUpdatedUser, getUserProgressionUpdate } from "@/routers/profile";
@@ -70,10 +76,7 @@ export const trainRouter = createTRPCRouter({
     .input(selectTrainedElementSchema)
     .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-        with: { bloodline: true },
-      });
+      const user = await findUserWithBloodline(ctx.drizzle, ctx);
       if (!user) return errorResponse("User not found");
       if (user.status !== "AWAKE")
         return errorResponse("Must be awake to change your trained element");
@@ -264,13 +267,14 @@ export const trainRouter = createTRPCRouter({
       // History is independent of the committed gains; keep it off the response path.
       after(async () => {
         try {
-          await ctx.drizzle.insert(trainingLog).values({
-            userId: ctx.userId,
+          await insertTrainingLog(
+            ctx.drizzle,
+            ctx.userId,
             amount,
-            stat: input.stat,
-            speed: user.trainingSpeed,
+            input.stat,
+            user.trainingSpeed,
             trainingFinishedAt,
-          });
+          );
         } catch (error) {
           Sentry.captureException(error, {
             tags: { source: "train.startTraining.trainingLog" },
@@ -473,13 +477,14 @@ export const trainRouter = createTRPCRouter({
         const trainingFinishedAt = new Date();
         after(async () => {
           try {
-            await ctx.drizzle.insert(trainingLog).values({
-              userId: ctx.userId,
-              amount: gained,
-              stat: trained,
+            await insertTrainingLog(
+              ctx.drizzle,
+              ctx.userId,
+              gained,
+              trained,
               speed,
               trainingFinishedAt,
-            });
+            );
           } catch (error) {
             Sentry.captureException(error, {
               tags: { source: "train.stopMasteryTraining.trainingLog" },
@@ -524,10 +529,11 @@ export const trainRouter = createTRPCRouter({
       if (user.currentlyTrainingMastery) {
         return errorResponse("Cannot change training speed while training");
       }
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ trainingSpeed: input.speed })
-        .where(eq(userData.userId, ctx.userId));
+      const result = await updateUserDataForUpdateTrainingSpeed(
+        ctx.drizzle,
+        input,
+        ctx,
+      );
       if (result.rowsAffected === 0) {
         return errorResponse("Could not update user");
       }
@@ -541,12 +547,7 @@ export const trainRouter = createTRPCRouter({
     })
     .input(trainingLogInputSchema)
     .query(async ({ ctx, input }) => {
-      return ctx.drizzle.query.trainingLog.findMany({
-        where: and(
-          eq(trainingLog.userId, input.userId),
-          gt(trainingLog.trainingFinishedAt, sql`NOW() - INTERVAL 1 DAY`),
-        ),
-      });
+      return listTrainingLogForGetTrainingLog(ctx.drizzle, input);
     }),
 });
 

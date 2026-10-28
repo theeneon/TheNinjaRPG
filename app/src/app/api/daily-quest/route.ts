@@ -1,10 +1,16 @@
-import { and, eq, gte, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gte, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { type UserRank, VILLAGE_SYNDICATE_ID } from "@/drizzle/constants";
-import { quest, questHistory, userData } from "@/drizzle/schema";
+import { questHistory, userData } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
 import { getQuestMaxLevel } from "@/libs/quest";
 import { availableQuestLetterRanks } from "@/libs/train";
+import {
+  listQuestForGET,
+  selectUserDataForGET,
+  updateQuestHistoryForGET,
+} from "@/queries/quests";
+import { listVillagesWithStructures } from "@/queries/village";
 import { upsertQuestEntries } from "@/routers/quests";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
@@ -73,42 +79,12 @@ export async function GET(request: Request) {
     // Reset all current dailies and load the independent assignment inputs together. A resumed
     // run skips the close: it would shut the dailies this day's earlier invocation handed out.
     const [dailies, villages, userRankPerVillageLevel] = await Promise.all([
-      drizzleDB.query.quest.findMany({
-        where: and(
-          eq(quest.questType, "daily"),
-          isNotNull(quest.content),
-          eq(quest.hidden, false),
-        ),
-      }),
-      drizzleDB.query.village.findMany({
-        with: { structures: true },
-      }),
-      drizzleDB
-        .select({
-          rank: userData.rank,
-          villageId: userData.villageId,
-          level: userData.level,
-          count: sql`count(${userData.userId})`.mapWith(Number),
-        })
-        .from(userData)
-        .where(and(eq(userData.isAi, false), gte(userData.updatedAt, activeSince)))
-        .groupBy(userData.rank, userData.villageId, userData.level),
+      listQuestForGET(drizzleDB),
+      listVillagesWithStructures(drizzleDB),
+      selectUserDataForGET(drizzleDB, activeSince),
       // Guarded and idempotent, so a deadlock with the other midnight crons just reruns it.
       // Only open attempts (no endAt) are closed; earlier days' closed rows keep their endAt.
-      isResume
-        ? undefined
-        : retryOnDeadlock(() =>
-            drizzleDB
-              .update(questHistory)
-              .set({ completed: 0, endAt: new Date() })
-              .where(
-                and(
-                  eq(questHistory.questType, "daily"),
-                  eq(questHistory.completed, 0),
-                  isNull(questHistory.endAt),
-                ),
-              ),
-          ),
+      isResume ? undefined : retryOnDeadlock(() => updateQuestHistoryForGET(drizzleDB)),
     ]);
 
     // Book-keeping to do upsert afterwards more efficiently

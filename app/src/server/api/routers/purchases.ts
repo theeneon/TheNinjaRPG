@@ -1,12 +1,11 @@
-import { and, desc, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 import {
   STORE_FEDERAL_PRODUCTS,
   STORE_PLATFORMS,
   STORE_REP_PRODUCTS,
 } from "@/drizzle/constants";
-import { storePurchase } from "@/drizzle/schema";
 import { env } from "@/env/server.mjs";
+import { selectStorePurchaseForRecent } from "@/queries/purchases";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 
 export const purchasesRouter = createTRPCRouter({
@@ -71,35 +70,7 @@ export const purchasesRouter = createTRPCRouter({
       ),
     )
     .query(async ({ ctx, input }) => {
-      const rows = await ctx.drizzle
-        .select({
-          id: storePurchase.id,
-          transactionId: storePurchase.transactionId,
-          productId: storePurchase.productId,
-          store: storePurchase.store,
-          reputationPoints: storePurchase.reputationPoints,
-          federalStatus: storePurchase.federalStatus,
-          acceptedAt: storePurchase.acceptedAt,
-          grantedAt: storePurchase.grantedAt,
-          revokedAt: storePurchase.revokedAt,
-          expiresAt: storePurchase.expiresAt,
-          createdAt: storePurchase.createdAt,
-        })
-        .from(storePurchase)
-        .where(
-          and(
-            eq(storePurchase.userId, ctx.userId),
-            ...(input.transactionId
-              ? [eq(storePurchase.transactionId, input.transactionId)]
-              : []),
-            ...(input.productId ? [eq(storePurchase.productId, input.productId)] : []),
-            ...(input.createdAfter
-              ? [gte(storePurchase.createdAt, input.createdAfter)]
-              : []),
-          ),
-        )
-        .orderBy(desc(storePurchase.createdAt))
-        .limit(input.limit);
+      const rows = await selectStorePurchaseForRecent(ctx.drizzle, ctx, input);
       return rows;
     }),
 });

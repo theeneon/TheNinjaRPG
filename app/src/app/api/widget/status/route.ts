@@ -1,6 +1,5 @@
-import { and, eq, gte } from "drizzle-orm";
 import { PUSH_TOKEN_STALE_DAYS } from "@/drizzle/constants";
-import { userDevice } from "@/drizzle/schema";
+import { findUserDeviceForGET } from "@/queries/push";
 import { drizzleDB } from "@/server/db";
 import { secondsFromNow } from "@/utils/time";
 
@@ -33,31 +32,7 @@ export async function GET(request: Request) {
   // on the system's timeline budget for every install that has one, so this is the most
   // frequently hit new endpoint in the app. Drizzle emits this as a single statement with
   // a lateral join, not as two queries.
-  const device = await drizzleDB.query.userDevice.findFirst({
-    columns: { userId: true },
-    where: and(
-      eq(userDevice.widgetToken, token),
-      gte(userDevice.lastSeenAt, freshSince),
-    ),
-    with: {
-      user: {
-        columns: {
-          username: true,
-          avatar: true,
-          rank: true,
-          level: true,
-          curHealth: true,
-          maxHealth: true,
-          curChakra: true,
-          maxChakra: true,
-          curStamina: true,
-          maxStamina: true,
-          unreadNotifications: true,
-        },
-        with: { village: { columns: { name: true } } },
-      },
-    },
-  });
+  const device = await findUserDeviceForGET(drizzleDB, token, freshSince);
   // Kept apart: an unknown or stale token is not authorised, whereas a device whose
   // account has since gone is a device pointing at nothing.
   if (!device) {

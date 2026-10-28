@@ -1,3 +1,4 @@
+import { fetchActiveWar, warRaidCombatGuard } from "@/queries/war";
 
 import { and, eq, getTableName, sql } from "drizzle-orm";
 import { beforeEach, expect, it, vi } from "bun:test";
@@ -25,10 +26,10 @@ import {
   war,
   warAlly,
 } from "@/drizzle/schema";
-import { warRouter, fetchActiveWar } from "@/routers/war";
+import { warRouter } from "@/routers/war";
 import * as serverSentry from "@/server/utils/sentry";
 import { applyVillageMissionShrineDamage } from "@/server/utils/villageMission";
-import { startDeclaredWar, handleWarEnd, warRaidCombatGuard, applyRaidHealthDecay } from "@/server/utils/war";
+import { startDeclaredWar, handleWarEnd, applyRaidHealthDecay } from "@/server/utils/war";
 import { insertUsers } from "../../setup/factories";
 import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
 

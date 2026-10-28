@@ -15,6 +15,8 @@ import * as actualNextServer from "next/server";
 import * as actualDb from "@/server/db";
 import * as actualProfile from "@/routers/profile";
 import * as actualSparring from "@/routers/sparring";
+import * as actualProfileQueries from "@/queries/profile";
+import * as actualSparringQueries from "@/queries/sparring";
 import * as actualCron from "@/server/utils/cron";
 import { peekTestDatabase, withEmptyIsolationHistory } from "./testDatabase";
 import { afterTasks } from "./after";
@@ -47,6 +49,8 @@ const delegating = <T extends object>(actual: T) =>
 
 vi.mock("@/routers/profile", () => delegating(actualProfile));
 vi.mock("@/routers/sparring", () => delegating(actualSparring));
+vi.mock("@/queries/profile", () => delegating(actualProfileQueries));
+vi.mock("@/queries/sparring", () => delegating(actualSparringQueries));
 
 /** Cron authentication stays real until a suite answers it with `stubCronAuth`. */
 vi.mock("@/server/utils/cron", () => delegating(actualCron));
@@ -79,17 +83,17 @@ export const stubDatabase = (stub: object) => {
   databaseStub = withEmptyIsolationHistory(stub);
 };
 
-/** Route one `@/routers/profile` export to `implementation` for the current suite. */
+/** Override a profile workflow or query export for the current suite. */
 export const stubProfile = (
-  name: keyof typeof actualProfile & string,
+  name: (keyof typeof actualProfile | keyof typeof actualProfileQueries) & string,
   implementation: AnyFn,
 ) => {
   stubs.set(name, implementation);
 };
 
-/** Route one `@/routers/sparring` export to `implementation` for the current suite. */
+/** Override a sparring workflow or query export for the current suite. */
 export const stubSparring = (
-  name: keyof typeof actualSparring & string,
+  name: (keyof typeof actualSparring | keyof typeof actualSparringQueries) & string,
   implementation: AnyFn,
 ) => {
   stubs.set(name, implementation);

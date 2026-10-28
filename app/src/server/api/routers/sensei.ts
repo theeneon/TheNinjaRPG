@@ -1,22 +1,21 @@
-import { and, asc, eq, isNull, lte, ne, or } from "drizzle-orm";
 import { z } from "zod";
-import { SENSEI_MAX_STUDENT_LEVEL, SENSEI_RANKS } from "@/drizzle/constants";
-import { userData, userRequest } from "@/drizzle/schema";
+import { SENSEI_RANKS } from "@/drizzle/constants";
 import { getServerPusher } from "@/libs/pusher";
-import { fetchUser } from "@/routers/profile";
+import { fetchUser } from "@/queries/profile";
 import {
-  fetchRequest,
-  fetchRequests,
-  insertRequest,
-  updateRequestState,
-} from "@/routers/sparring";
+  fetchStudents,
+  updateUserDataForAcceptRequest,
+  updateUserDataForRemoveStudent,
+} from "@/queries/sensei";
+import { fetchRequests, insertRequest } from "@/queries/sparring";
+
+import { fetchRequest, updateRequestState } from "@/routers/sparring";
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { idSchema } from "@/validators/misc";
 
 const pusher = getServerPusher();
@@ -132,10 +131,11 @@ export const senseiRouter = createTRPCRouter({
         return errorResponse("Can only have 3 active students");
       }
       // Mutate. If not successfull, assume student already has a sensei
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ senseiId })
-        .where(and(eq(userData.userId, studentId), isNull(userData.senseiId)));
+      const result = await updateUserDataForAcceptRequest(
+        ctx.drizzle,
+        senseiId,
+        studentId,
+      );
       if (result.rowsAffected !== 0) {
         await updateRequestState(ctx.drizzle, input.id, "ACCEPTED", "SENSEI");
         void pusher.trigger(request.senderId, "event", {
@@ -168,10 +168,7 @@ export const senseiRouter = createTRPCRouter({
         return errorResponse("Can only remove Genin students");
       }
       // Update
-      await ctx.drizzle
-        .update(userData)
-        .set({ senseiId: null })
-        .where(eq(userData.userId, student.userId));
+      await updateUserDataForRemoveStudent(ctx.drizzle, student);
       return { success: true, message: "Student removed" };
     }),
   leaveSensei: protectedProcedure
@@ -185,45 +182,7 @@ export const senseiRouter = createTRPCRouter({
         return errorResponse("You do not have a sensei");
       }
       // Update
-      await ctx.drizzle
-        .update(userData)
-        .set({ senseiId: null })
-        .where(eq(userData.userId, user.userId));
+      await updateUserDataForRemoveStudent(ctx.drizzle, user);
       return { success: true, message: "Left sensei" };
     }),
 });
-
-/**
- * Fetches the students associated with a sensei.
- *
- * @param client - The Drizzle client instance.
- * @param userId - The ID of the sensei.
- * @returns - A promise that resolves when the students are fetched.
- */
-export const fetchStudents = async (client: DrizzleClient, userId: string) => {
-  return await client.query.userData.findMany({
-    where: and(
-      eq(userData.senseiId, userId),
-      lte(userData.level, SENSEI_MAX_STUDENT_LEVEL),
-    ),
-    orderBy: asc(userData.level),
-  });
-};
-
-/**
- * Clears requests affected by village or rank changes while preserving home access.
- *
- * @param client - The DrizzleClient instance used to perform the delete operation.
- * @param userId - The ID of the user whose requests should be deleted.
- * @returns A Promise that resolves to the result of the delete operation.
- */
-export const deleteRequests = async (client: DrizzleClient, userId: string) => {
-  return await client
-    .delete(userRequest)
-    .where(
-      and(
-        or(eq(userRequest.senderId, userId), eq(userRequest.receiverId, userId)),
-        ne(userRequest.type, "HOME"),
-      ),
-    );
-};

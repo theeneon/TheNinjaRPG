@@ -1,3 +1,4 @@
+import { readAgentProposal } from "@/queries/contentReview";
 
 import { CONTENT_PROPOSAL_RETENTION_DAYS } from "@/drizzle/constants";
 import { eq } from "drizzle-orm";
@@ -19,7 +20,8 @@ import { entityKey, loadEntities } from "@/libs/contentReview/entities";
 import { refreshProposalFreshness } from "@/libs/contentReview/outdate";
 import * as media from "@/libs/contentReview/media";
 import { epidemicAssetId, importEpidemicSfx } from "@/libs/contentReview/media";
-import { ingestAgentSubmission, readAgentProposal, reviseAgentProposal } from "@/libs/contentReview/submit";
+
+import { ingestAgentSubmission, reviseAgentProposal } from "@/libs/contentReview/submit";
 import * as socials from "@/libs/socials";
 import { badgeRouter } from "@/server/api/routers/badge";
 import { contentReviewRouter } from "@/server/api/routers/contentReview";

@@ -1,0 +1,548 @@
+/**
+ * Database access for dungeon; authorization and transaction scopes stay in callers.
+ */
+import {
+  and,
+  desc,
+  eq,
+  getTableColumns,
+  inArray,
+  isNull,
+  type SQL,
+  sql,
+} from "drizzle-orm";
+import { nanoid } from "nanoid";
+import {
+  actionLog,
+  battle,
+  dungeon,
+  dungeonMember,
+  dungeonRun,
+  item,
+  jutsu,
+  mapAsset,
+  rewardPackage,
+  userData,
+} from "@/drizzle/schema";
+import type { CompleteBattle } from "@/libs/combat/types";
+import type { DrizzleClient } from "@/server/db";
+import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
+import type { DungeonContent, DungeonRunState } from "@/validators/dungeon";
+
+/** Build the `userData` lookup for `getAvailable`, selecting only `sector`, using predicates on `userId`. */
+export const findUserDataForGetAvailable = (
+  client: Pick<DrizzleClient, "query">,
+  ctx: { userId: string },
+) =>
+  client.query.userData.findFirst({
+    where: eq(userData.userId, ctx.userId),
+    columns: { sector: true },
+  });
+
+/** Build the `dungeon` listing for `getAvailable`. */
+export const listDungeonForGetAvailable = (client: Pick<DrizzleClient, "query">) =>
+  client.query.dungeon.findMany();
+
+/** Build the `dungeonMember` selection for `getState`, using predicates on `userId`, `state`, `status`. */
+export const selectDungeonMemberForGetState = (
+  client: Pick<DrizzleClient, "select">,
+  ctx: { userId: string },
+) =>
+  client
+    .select({ id: dungeonRun.id })
+    .from(dungeonMember)
+    .innerJoin(dungeonRun, eq(dungeonRun.id, dungeonMember.runId))
+    .where(
+      and(
+        eq(dungeonMember.userId, ctx.userId),
+        sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.memberIds')`,
+      ),
+    )
+    .union(
+      client
+        .select({ id: dungeonRun.id })
+        .from(dungeonRun)
+        .where(
+          and(
+            eq(dungeonRun.status, "LOBBY"),
+            sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.invitedIds')`,
+          ),
+        ),
+    )
+    .as("visibleDungeonRuns");
+
+/** Build the `candidates` selection for `getState`. */
+export const selectCandidatesForGetState = (
+  client: Pick<DrizzleClient, "select">,
+  candidates: ReturnType<typeof selectDungeonMemberForGetState>,
+  ctx: { userId: string },
+) =>
+  client
+    .select(getTableColumns(dungeonRun))
+    .from(candidates)
+    .innerJoin(dungeonRun, eq(dungeonRun.id, candidates.id))
+    .orderBy(
+      // Keep the player's party, unclaimed rewards and invitations ahead of paid history.
+      desc(
+        sql`EXISTS (SELECT 1 FROM ${dungeonMember} WHERE ${dungeonMember.runId} = ${dungeonRun.id} AND ${dungeonMember.activeUserId} = ${ctx.userId})`,
+      ),
+      desc(eq(dungeonRun.status, "LOBBY")),
+      desc(dungeonRun.createdAt),
+    )
+    .limit(20);
+
+/** Build the `userData` listing for `getState`, using predicates on `userId`. */
+export const listUserDataForGetState = (
+  client: Pick<DrizzleClient, "query">,
+  ids: string[],
+) =>
+  client.query.userData.findMany({
+    where: inArray(userData.userId, ids),
+    columns: { userId: true, username: true, status: true, isBanned: true },
+  });
+
+/** Build the `dungeonMember` listing for `getState`, using predicates on `runId`. */
+export const listDungeonMemberForGetState = (
+  client: Pick<DrizzleClient, "query">,
+  runs: import("@/drizzle/schema").DungeonRun[],
+) =>
+  client.query.dungeonMember.findMany({
+    where: inArray(
+      dungeonMember.runId,
+      runs.map((r) => r.id),
+    ),
+  });
+
+/** Build the `dungeonRun` listing for `getState`, using predicates on `id`. */
+export const listDungeonRunForGetState = (
+  client: Pick<DrizzleClient, "query">,
+  runs: import("@/drizzle/schema").DungeonRun[],
+) =>
+  client.query.dungeonRun.findMany({
+    where: inArray(
+      dungeonRun.id,
+      runs.map((r) => r.id),
+    ),
+    orderBy: desc(dungeonRun.createdAt),
+  });
+
+/** Build the `battle` listing for `getState`, selecting only `id`, using predicates on `id`. */
+export const listBattleForGetState = (
+  client: Pick<DrizzleClient, "query">,
+  interrupted: import("@/drizzle/schema").DungeonRun[],
+) =>
+  client.query.battle.findMany({
+    where: inArray(
+      battle.id,
+      interrupted.map((r) => r.battleId as string),
+    ),
+    columns: { id: true },
+  });
+
+/** Build the `item` listing for `save`, selecting only `id` and `effects`, using predicates on `id`. */
+export const listItemForSave = (
+  client: Pick<DrizzleClient, "query">,
+  drops: DungeonContent["rewards"]["drops"],
+) =>
+  client.query.item.findMany({
+    where: inArray(
+      item.id,
+      drops.filter((d) => d.type === "item" || d.type === "cache").map((d) => d.id),
+    ),
+    columns: { id: true, effects: true },
+  });
+
+/** Build the `jutsu` listing for `save`, selecting only `id`, using predicates on `id`. */
+export const listJutsuForSave = (
+  client: Pick<DrizzleClient, "query">,
+  drops: DungeonContent["rewards"]["drops"],
+) =>
+  client.query.jutsu.findMany({
+    where: inArray(
+      jutsu.id,
+      drops.filter((d) => d.type === "jutsu").map((d) => d.id),
+    ),
+    columns: { id: true },
+  });
+
+/** Build the `mapAsset` lookup for `save`, selecting only `id`, using predicates on `id`. */
+export const findMapAssetForSave = (
+  client: Pick<DrizzleClient, "query">,
+  input: { content: { structureAssetId: string } },
+) =>
+  client.query.mapAsset.findFirst({
+    columns: { id: true },
+    where: eq(mapAsset.id, input.content.structureAssetId),
+  });
+
+/** Build the `rewardPackage` listing for `save`, using predicates on `id`. */
+export const listRewardPackageForSave = (
+  client: Pick<DrizzleClient, "query">,
+  drops: DungeonContent["rewards"]["drops"],
+) =>
+  client.query.rewardPackage.findMany({
+    where: inArray(
+      rewardPackage.id,
+      drops.filter((d) => d.type === "package").map((d) => d.id),
+    ),
+  });
+
+/** Build the `dungeon` insert for `save`, updating duplicate keys. */
+export const insertDungeonForSave = (
+  client: Pick<DrizzleClient, "insert">,
+  id: string,
+  content: DungeonContent,
+) =>
+  client
+    .insert(dungeon)
+    .values({ id, content, updatedAt: new Date() })
+    .onDuplicateKeyUpdate({
+      set: { content, updatedAt: new Date() },
+    });
+
+/** Build the `actionLog` insert for `save`. */
+export const insertActionLogForSave = (
+  client: Pick<DrizzleClient, "insert">,
+  ctx: { userId: string },
+  id: string,
+  content: DungeonContent,
+) =>
+  client.insert(actionLog).values({
+    id: nanoid(),
+    userId: ctx.userId,
+    relatedId: id,
+    tableName: "dungeon",
+    relatedMsg: "Updated dungeon",
+    changes: [JSON.stringify(content)],
+  });
+
+/** Build the `dungeon` lookup for `create`, using predicates on `id`. */
+export const findDungeonForCreate = (
+  client: Pick<DrizzleClient, "query">,
+  input: { id: string },
+) => client.query.dungeon.findFirst({ where: eq(dungeon.id, input.id) });
+
+/** Build the `dungeonMember` lookup for `create`, using predicates on `activeUserId`. */
+export const findDungeonMemberForCreate = (
+  client: Pick<DrizzleClient, "query">,
+  ctx: { userId: string },
+) =>
+  client.query.dungeonMember.findFirst({
+    where: eq(dungeonMember.activeUserId, ctx.userId),
+  });
+
+/** Build the `dungeonRun` insert for `create`. */
+export const insertDungeonRunForCreate = (
+  client: Pick<DrizzleClient, "insert">,
+  id: string,
+  definition: { id: string },
+  ctx: { userId: string },
+  content: import("@/validators/dungeon").DungeonContent,
+) =>
+  client.insert(dungeonRun).values({
+    id,
+    dungeonId: definition.id,
+    leaderId: ctx.userId,
+    content,
+    status: "LOBBY",
+    createdAt: new Date(),
+    state: {
+      memberIds: [ctx.userId],
+      invitedIds: [],
+      readyIds: [],
+      floor: 0,
+      clearedFloors: [],
+      message: "Invite teammates, then have everyone ready up.",
+    },
+  });
+
+/** Build a dungeon membership insert that marks the user active in the run. */
+export const insertDungeonMember = (
+  client: Pick<DrizzleClient, "insert">,
+  runId: string,
+  userId: string,
+) =>
+  client
+    .insert(dungeonMember)
+    .values({ runId: runId, userId: userId, activeUserId: userId });
+
+/** Build the `dungeonRun` deletion for `create`, including predicates on `id`, `version`, `status`. */
+export const deleteDungeonRunForCreate = (
+  client: Pick<DrizzleClient, "delete">,
+  id: string,
+) =>
+  client
+    .delete(dungeonRun)
+    .where(
+      and(
+        eq(dungeonRun.id, id),
+        eq(dungeonRun.version, 0),
+        eq(dungeonRun.status, "LOBBY"),
+        sql`NOT EXISTS (SELECT 1 FROM ${dungeonMember} WHERE ${dungeonMember.runId} = ${dungeonRun.id})`,
+      ),
+    );
+
+/** Build the `dungeonRun` lookup for `act`, using predicates on `id`. */
+export const findDungeonRunForAct = (
+  client: Pick<DrizzleClient, "query">,
+  input: { id: string },
+) => client.query.dungeonRun.findFirst({ where: eq(dungeonRun.id, input.id) });
+
+/** Build the `dungeonMember` listing for `act`, using predicates on `activeUserId`. */
+export const listDungeonMemberForAct = (
+  client: Pick<DrizzleClient, "query">,
+  ctx: { userId: string },
+  input: { userId?: undefined | string },
+) =>
+  client.query.dungeonMember.findMany({
+    where: inArray(dungeonMember.activeUserId, [
+      ctx.userId,
+      ...(input.userId ? [input.userId] : []),
+    ]),
+  });
+
+/** Build the `dungeonRun` update for `reserve`, using predicates on `id` and `version`. */
+export const updateDungeonRunForReserve = (
+  client: Pick<DrizzleClient, "update">,
+  battleId: string,
+  expiresAt: Date,
+  run: { version: number; expiresAt: null | Date; id: string },
+  state: DungeonRunState,
+) =>
+  client
+    .update(dungeonRun)
+    .set({
+      status: "FIGHTING",
+      battleId,
+      expiresAt,
+      version: run.version + 1,
+      state: {
+        ...state,
+        entryStartedAt: Date.now(),
+        entryPreviousDeadline: run.expiresAt?.getTime() ?? null,
+      },
+    })
+    .where(and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)));
+
+/** Build the `dungeonRun` update for `updateParty`, using predicates on `id` and `version`. */
+export const updateDungeonRunForUpdateParty = (
+  client: Pick<DrizzleClient, "update">,
+  state: DungeonRunState,
+  status:
+    | "LOBBY"
+    | "STARTING"
+    | "FIGHTING"
+    | "BETWEEN"
+    | "PAUSED"
+    | "COMPLETED"
+    | "ENDED",
+  run: { id: string; version: number },
+) =>
+  client
+    .update(dungeonRun)
+    .set({ state, status, version: sql`${dungeonRun.version} + 1` })
+    .where(and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)));
+
+/** Build the `dungeonMember` deletion for `updateParty`, using predicates on `runId` and `userId`. */
+export const deleteDungeonMemberForUpdateParty = (
+  client: Pick<DrizzleClient, "delete">,
+  run: { id: string },
+  removedUser: string,
+) =>
+  client
+    .delete(dungeonMember)
+    .where(and(eq(dungeonMember.runId, run.id), eq(dungeonMember.userId, removedUser)));
+
+/** Build the active-user reset for every member of a dungeon run. */
+export const clearDungeonActiveUsers = (
+  client: Pick<DrizzleClient, "update">,
+  runId: string,
+) =>
+  client
+    .update(dungeonMember)
+    .set({ activeUserId: null })
+    .where(eq(dungeonMember.runId, runId));
+
+/** Build the `dungeonMember` lookup for `claim`, using predicates on `runId` and `userId`. */
+export const findDungeonMemberForClaim = (
+  client: Pick<DrizzleClient, "query">,
+  input: { id: string },
+  ctx: { userId: string },
+) =>
+  client.query.dungeonMember.findFirst({
+    where: and(eq(dungeonMember.runId, input.id), eq(dungeonMember.userId, ctx.userId)),
+  });
+
+/**
+ * Build the `dungeonMember` update for `claim`, setting `reward` and `activeUserId`,
+ * using predicates on `runId`, `userId`, `reward`.
+ */
+export const updateDungeonMemberForClaim = (
+  client: Pick<DrizzleClient, "update">,
+  receipt: {
+    money: number;
+    experience: number;
+    tokens: number;
+    prestige: number;
+    items: string[];
+    jutsus: string[];
+    rewards: import("@/validators/rewards").PostProcessedRewards;
+  },
+  run: { id: string },
+  ctx: { userId: string },
+) =>
+  client
+    .update(dungeonMember)
+    .set({ reward: receipt, activeUserId: null })
+    .where(
+      and(
+        eq(dungeonMember.runId, run.id),
+        eq(dungeonMember.userId, ctx.userId),
+        isNull(dungeonMember.reward),
+      ),
+    );
+
+/** Build the `dungeonRun` update for `rollbackDungeonStart`, using predicates on `id`, `battleId`, `version`. */
+export const updateDungeonRunForRollbackDungeonStart = (
+  client: Pick<DrizzleClient, "update">,
+  run: { expiresAt: null | Date; id: string },
+  state: Omit<DungeonRunState, "entryStartedAt" | "entryPreviousDeadline">,
+  battleId: string,
+  version: number,
+) =>
+  client
+    .update(dungeonRun)
+    .set({
+      status: run.expiresAt ? "BETWEEN" : "LOBBY",
+      battleId: null,
+      expiresAt: run.expiresAt,
+      version: sql`${dungeonRun.version} + 1`,
+      state: { ...state, readyIds: [] },
+    })
+    .where(
+      and(
+        eq(dungeonRun.id, run.id),
+        eq(dungeonRun.battleId, battleId),
+        eq(dungeonRun.version, version),
+      ),
+    );
+
+/** Build the `dungeonRun` update for `settleDungeonBattle`, including predicates on `id`, `battleId`, `version`. */
+export const updateDungeonRunForSettleDungeonBattle = (
+  client: Pick<DrizzleClient, "update">,
+  next: Omit<DungeonRunState, "readyIds"> & { readyIds: never[] },
+  status: "BETWEEN" | "COMPLETED" | "ENDED",
+  meta: { runId: string; runVersion: number },
+  current: { id: string },
+) =>
+  client
+    .update(dungeonRun)
+    .set({
+      state: next,
+      status,
+      battleId: null,
+      version: sql`${dungeonRun.version} + 1`,
+    })
+    .where(
+      and(
+        eq(dungeonRun.id, meta.runId),
+        eq(dungeonRun.battleId, current.id),
+        eq(dungeonRun.version, meta.runVersion),
+        eq(dungeonRun.status, "FIGHTING"),
+      ),
+    );
+
+/** Build the `userData` update for `settleDungeonBattle`, using predicates on `userId` and `battleId`. */
+export const updateUserDataForSettleDungeonBattle = (
+  client: Pick<DrizzleClient, "update">,
+  dungeonEnergyRecoverySql: (
+    snapshot: CompleteBattle | undefined,
+    memberIds: string[],
+    at: Date,
+  ) => SQL<unknown>,
+  current: import("@/libs/combat/types").CompleteBattle,
+  meta: { runState: { memberIds: string[] } },
+  settledAt: Date,
+) =>
+  client
+    .update(userData)
+    .set({
+      status: "AWAKE",
+      battleId: null,
+      bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
+      bracketImmunityPausedAt: null,
+      curHealth: sql`${userData.maxHealth}`,
+      curChakra: sql`${userData.maxChakra}`,
+      curStamina: sql`${userData.maxStamina}`,
+      curEnergy: dungeonEnergyRecoverySql(current, meta.runState.memberIds, settledAt),
+      regenAt: settledAt,
+      updatedAt: settledAt,
+    })
+    .where(
+      and(
+        inArray(userData.userId, meta.runState.memberIds),
+        eq(userData.battleId, current.id),
+      ),
+    );
+
+/** Build the `battle` lookup for `expireDungeonRun`, using predicates on `id`. */
+export const findBattleForExpireDungeonRun = (
+  client: Pick<DrizzleClient, "query">,
+  run: { battleId: string },
+) => client.query.battle.findFirst({ where: eq(battle.id, run.battleId) });
+
+/** Build the `dungeonRun` update for `expireDungeonRun`, using predicates on `id` and `version`. */
+export const updateDungeonRunForExpireDungeonRun = (
+  client: Pick<DrizzleClient, "update">,
+  run: {
+    state: DungeonRunState;
+    id: string;
+    version: number;
+  },
+) =>
+  client
+    .update(dungeonRun)
+    .set({
+      status: "ENDED",
+      battleId: null,
+      version: sql`${dungeonRun.version} + 1`,
+      state: {
+        ...run.state,
+        readyIds: [],
+        message: "The one-hour dungeon deadline expired.",
+      },
+    })
+    .where(and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)));
+
+/** Build the `userData` update for `expireDungeonRun`, using predicates on `userId` and `battleId`. */
+export const updateUserDataForExpireDungeonRun = (
+  client: Pick<DrizzleClient, "update">,
+  dungeonEnergyRecoverySql: (
+    snapshot: CompleteBattle | undefined,
+    memberIds: string[],
+    at: Date,
+  ) => SQL<unknown>,
+  snapshot: undefined | import("@/drizzle/schema").Battle,
+  run: { state: { memberIds: string[] }; battleId: string },
+  settledAt: Date,
+) =>
+  client
+    .update(userData)
+    .set({
+      status: "AWAKE",
+      battleId: null,
+      bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
+      bracketImmunityPausedAt: null,
+      curHealth: sql`${userData.maxHealth}`,
+      curChakra: sql`${userData.maxChakra}`,
+      curStamina: sql`${userData.maxStamina}`,
+      curEnergy: dungeonEnergyRecoverySql(snapshot, run.state.memberIds, settledAt),
+      updatedAt: settledAt,
+      regenAt: settledAt,
+    })
+    .where(
+      and(
+        inArray(userData.userId, run.state.memberIds),
+        eq(userData.battleId, run.battleId),
+      ),
+    );

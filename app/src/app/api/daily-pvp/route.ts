@@ -1,15 +1,18 @@
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { cookies } from "next/headers";
-import {
-  CLAN_BOOST_PERCENT_PER_LEVEL,
-  PVP_EXPERIENCE_DAILY_DECAY,
-} from "@/drizzle/constants";
-import { anbuSquad, clan, gameSetting, userData } from "@/drizzle/schema";
+import { userData } from "@/drizzle/schema";
 import {
   getGameSetting,
   handleEndpointError,
   lockWithDailyTimer,
 } from "@/libs/gamesettings";
+import { updateAnbuSquadForDecayClansAndAnbu } from "@/queries/anbu";
+import { updateClanForDecayClansAndAnbu } from "@/queries/clan";
+import { updateGameSettingForDecayClansAndAnbu } from "@/queries/gamesettings";
+import {
+  selectUserDataForDecayPlayerPvpExperience,
+  updateUserDataForDecayPlayerPvpExperience,
+} from "@/queries/pvprank";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -58,25 +61,10 @@ const decayClansAndAnbu = async (dayStart: Date) => {
   if (marker.time >= dayStart) return;
   await retryOnDeadlock(() =>
     drizzleDB.transaction(async (tx) => {
-      const claim = await tx
-        .update(gameSetting)
-        .set({ time: dayStart })
-        .where(and(eq(gameSetting.id, marker.id), lt(gameSetting.time, dayStart)));
+      const claim = await updateGameSettingForDecayClansAndAnbu(tx, dayStart, marker);
       if (claim.rowsAffected !== 1) return;
-      await tx.update(anbuSquad).set({
-        pvpActivity: sql`${anbuSquad.pvpActivity} * 0.95`,
-      });
-      await tx.update(clan).set({
-        pvpActivity: sql`${clan.pvpActivity} * 0.95`,
-        trainingBoost: sql`GREATEST(${clan.trainingBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        ryoBoost: sql`GREATEST(${clan.ryoBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        regenBoost: sql`GREATEST(${clan.regenBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        missionRewardBoost: sql`GREATEST(${clan.missionRewardBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        craftingTimeBoost: sql`GREATEST(${clan.craftingTimeBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        craftingExpBoost: sql`GREATEST(${clan.craftingExpBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        hunterExpBoost: sql`GREATEST(${clan.hunterExpBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-        gathererExpBoost: sql`GREATEST(${clan.gathererExpBoost} - ${CLAN_BOOST_PERCENT_PER_LEVEL}, 0)`,
-      });
+      await updateAnbuSquadForDecayClansAndAnbu(tx);
+      await updateClanForDecayClansAndAnbu(tx);
     }),
   );
 };
@@ -92,23 +80,17 @@ const decayPlayerPvpExperience = async (dayStart: Date) => {
     eq(userData.isAi, false),
     lt(userData.pvpExperienceDecayAt, dayStart),
   );
-  const candidates = await drizzleDB
-    .select({ userId: userData.userId })
-    .from(userData)
-    .where(pending);
+  const candidates = await selectUserDataForDecayPlayerPvpExperience(
+    drizzleDB,
+    pending,
+  );
   const userIds = candidates.map((c) => c.userId);
   for (let i = 0; i < userIds.length; i += USER_DECAY_BATCH_SIZE) {
     const batch = userIds.slice(i, i + USER_DECAY_BATCH_SIZE);
     // Leave updatedAt alone: it doubles as last activity (online counts, cleanup,
     // sector lists), and no snapshot claim writes these columns as absolute values.
     await retryOnDeadlock(() =>
-      drizzleDB
-        .update(userData)
-        .set({
-          pvpExperience: sql`FLOOR(${userData.pvpExperience} * ${1 - PVP_EXPERIENCE_DAILY_DECAY} * 100) / 100`,
-          pvpExperienceDecayAt: dayStart,
-        })
-        .where(and(inArray(userData.userId, batch), pending)),
+      updateUserDataForDecayPlayerPvpExperience(drizzleDB, dayStart, batch, pending),
     );
   }
 };

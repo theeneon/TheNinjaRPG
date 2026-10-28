@@ -6,12 +6,14 @@ import { isAvailableUserQuests } from "@/libs/quest";
 import { canBootstrapQuestType, fetchQuestBootstrap } from "@/server/api/routers/profile";
 import { fetchUncompletedQuests, questsRouter } from "@/server/api/routers/quests";
 import { commitQuestObjectiveRewards } from "@/server/api/routers/quests";
-import { fetchQuestDiscoveryCandidates } from "@/server/utils/questDiscovery";
+
 import { QuestReward } from "@/validators/rewardPackages";
 import { AllObjectives, QuestTracker } from "@/validators/objectives";
 import { PostProcessedRewardSchema } from "@/validators/rewards";
 import { insertQuestHistory, insertQuests, insertUsers } from "../../setup/factories";
 import { callerFor, describeWithDatabase, getTestDatabase, resetTables } from "../../setup/testDatabase";
+import { fetchQuestDiscoveryCandidates } from "@/queries/quests";
+
 
 describeWithDatabase("Elite Jonin milestone claims", () => {
   beforeEach(async () => resetTables(questHistory, quest, userData));

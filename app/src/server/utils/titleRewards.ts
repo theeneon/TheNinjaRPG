@@ -1,5 +1,4 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
-import { title } from "@/drizzle/schema";
+import { selectTitleForValidateTitleRewardIds } from "@/queries/title";
 import type { DrizzleClient } from "@/server/db";
 
 /**
@@ -21,16 +20,7 @@ export const validateTitleRewardIds = async (
   };
   const ids = [...new Set(collect(rewards))];
   if (!ids.length) return null;
-  const available = await client
-    .select({ id: title.id })
-    .from(title)
-    .where(
-      and(
-        inArray(title.id, ids),
-        isNull(title.legacyOwnerId),
-        eq(title.archived, false),
-      ),
-    );
+  const available = await selectTitleForValidateTitleRewardIds(client, ids);
   return available.length === ids.length
     ? null
     : "A reward title is missing, archived or private. Select an available title.";

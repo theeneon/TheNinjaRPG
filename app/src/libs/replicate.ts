@@ -8,9 +8,9 @@ import type { IMG_ORIENTATION } from "@/drizzle/constants";
 import type { UserData, UserRank } from "@/drizzle/schema";
 import { env } from "@/env/server.mjs";
 import { servedUfsUrl } from "@/libs/uploadthing";
+import { fetchAttributes } from "@/queries/profile";
 import type { DrizzleClient } from "@/server/db";
 import type { GenerateAudioInput } from "@/validators/audio";
-import { fetchAttributes } from "../server/api/routers/profile";
 
 // Singleton Replicate instance to avoid connection pool exhaustion
 let replicateInstance: Replicate | null = null;

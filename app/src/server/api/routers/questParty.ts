@@ -1,15 +1,8 @@
-import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { QUEST_PARTY_MAX_MEMBERS, QUEST_PARTY_TYPES } from "@/drizzle/constants";
-import type { Quest } from "@/drizzle/schema";
-import {
-  overworldAiPlacement,
-  quest,
-  questHistory,
-  questParty,
-  user2conversation,
-  userData,
-} from "@/drizzle/schema";
+import { QUEST_PARTY_TYPES } from "@/drizzle/constants";
+import { type Quest, questParty, userData } from "@/drizzle/schema";
+
 import { questCoopParty, transitionCoopParty } from "@/libs/coop";
 import { isQuestComplete } from "@/libs/objectives";
 import { getServerPusher } from "@/libs/pusher";
@@ -23,11 +16,37 @@ import {
   questTypeConcurrentBlockMessage,
   questUiAccessBlockMessage,
 } from "@/libs/quest";
+import { deleteConversationMembership } from "@/queries/comments";
+import {
+  deleteClaimedQuestParty,
+  deleteQuestPartyForCreate,
+  deleteQuestPartyForRemoveMember,
+  deleteUser2conversationForDisband,
+  findOverworldAiPlacementForOverview,
+  findQuestPartyForDisband,
+  findQuestPartyForInvite,
+  findQuestPartyForRemoveMember,
+  findUserDataForInvite,
+  findUserDataForInvite2,
+  findUserDataForRemoveMember,
+  insertQuestPartyForCreate,
+  listOverworldAiPlacementForStartQuestPartyEncounter,
+  listQuestPartyForOverview,
+  releaseQuestPartyBattleClaim,
+  releaseTeamSlot,
+  updateQuestHistoryForAcceptTeamQuest,
+  updateQuestPartyForDisband,
+  updateQuestPartyForInvite,
+  updateQuestPartyForJoin,
+  updateQuestPartyForPublish,
+  updateQuestPartyForRecover,
+  updateQuestPartyForRemoveMember,
+} from "@/queries/questParty";
+import { fetchQuest, fetchUserQuestByQuestId } from "@/queries/quests";
+import { fetchSectorVillage } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
-import type { UserWithRelations } from "@/routers/profile";
-import { fetchUpdatedUser } from "@/routers/profile";
-import { assignQuestToUser, fetchUserQuestByQuestId } from "@/routers/quests";
-import { fetchSectorVillage } from "@/routers/village";
+import { fetchUpdatedUser, type UserWithRelations } from "@/routers/profile";
+import { assignQuestToUser } from "@/routers/quests";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
@@ -35,13 +54,8 @@ import {
   cleanupCoopBattleStart,
   joinCoopChat,
   launchCoopEncounter,
-  leaveCoopChat,
 } from "@/server/utils/coop";
-import {
-  questPartyRelations,
-  saveQuestPartyMember,
-  synchronizeQuestParty,
-} from "@/server/utils/questParty";
+import { saveQuestPartyMember, synchronizeQuestParty } from "@/server/utils/questParty";
 import { secondsPassed } from "@/utils/time";
 import { QuestTracker } from "@/validators/objectives";
 import {
@@ -57,10 +71,7 @@ export const questPartyRouter = createTRPCRouter({
   disband: protectedProcedure
     .input(questPartyIdSchema)
     .mutation(async ({ ctx, input }) => {
-      const loaded = await ctx.drizzle.query.questParty.findFirst({
-        where: eq(questParty.id, input.partyId),
-        with: questPartyRelations,
-      });
+      const loaded = await findQuestPartyForDisband(ctx.drizzle, input);
       const party = loaded?.quest
         ? await synchronizeQuestParty(ctx.drizzle, loaded)
         : loaded;
@@ -77,16 +88,7 @@ export const questPartyRouter = createTRPCRouter({
       if (members.some((member) => member.status === "BATTLE"))
         return errorResponse("Finish all members' battles before disbanding the team");
       const claimId = `claiming:${Date.now()}:${nanoid()}`;
-      const claimed = await ctx.drizzle
-        .update(questParty)
-        .set({ battleId: claimId, version: party.version + 1 })
-        .where(
-          and(
-            eq(questParty.id, party.id),
-            eq(questParty.version, party.version),
-            isNull(questParty.battleId),
-          ),
-        );
+      const claimed = await updateQuestPartyForDisband(ctx.drizzle, claimId, party);
       if (claimed.rowsAffected !== 1)
         return errorResponse("The team changed. Please try again");
       // Keep canonical progress until every member has atomically saved it and detached.
@@ -98,25 +100,15 @@ export const questPartyRouter = createTRPCRouter({
           ),
         );
         if (detached.some((saved) => !saved)) {
-          await ctx.drizzle
-            .update(questParty)
-            .set({ battleId: null, version: sql`${questParty.version} + 1` })
-            .where(and(eq(questParty.id, party.id), eq(questParty.battleId, claimId)));
+          await releaseQuestPartyBattleClaim(ctx.drizzle, party.id, claimId);
           return errorResponse(
             "Finish all members' battles before disbanding the team",
           );
         }
-        await ctx.drizzle
-          .delete(questParty)
-          .where(and(eq(questParty.id, party.id), eq(questParty.battleId, claimId)));
-        await ctx.drizzle
-          .delete(user2conversation)
-          .where(eq(user2conversation.conversationId, party.id));
+        await deleteClaimedQuestParty(ctx.drizzle, party.id, claimId);
+        await deleteUser2conversationForDisband(ctx.drizzle, party);
       } catch (error) {
-        await ctx.drizzle
-          .update(questParty)
-          .set({ battleId: null, version: sql`${questParty.version} + 1` })
-          .where(and(eq(questParty.id, party.id), eq(questParty.battleId, claimId)));
+        await releaseQuestPartyBattleClaim(ctx.drizzle, party.id, claimId);
         throw error;
       }
       // Notifications are best effort once personal progress and membership have saved.
@@ -159,35 +151,7 @@ export const questPartyRouter = createTRPCRouter({
         userId: ctx.userId,
         allowQuestPartySyncFallback: true,
       }),
-      ctx.drizzle.query.questParty.findMany({
-        where: or(
-          eq(questParty.isPublic, true),
-          sql`JSON_CONTAINS(${questParty.invitedUserIds}, JSON_QUOTE(${ctx.userId}))`,
-          sql`JSON_CONTAINS(${questParty.memberIds}, JSON_QUOTE(${ctx.userId}))`,
-        ),
-        with: {
-          quest: {
-            columns: {
-              name: true,
-              image: true,
-              teamEnabled: true,
-              hidden: true,
-              content: true,
-              consecutiveObjectives: true,
-            },
-          },
-          members: {
-            columns: { userId: true, username: true, status: true, sector: true },
-          },
-        },
-        orderBy: [
-          desc(
-            sql`JSON_CONTAINS(${questParty.invitedUserIds}, JSON_QUOTE(${ctx.userId})) OR JSON_CONTAINS(${questParty.memberIds}, JSON_QUOTE(${ctx.userId}))`,
-          ),
-          desc(questParty.createdAt),
-        ],
-        limit: 100,
-      }),
+      listQuestPartyForOverview(ctx.drizzle, ctx),
     ]);
     const objectiveIds = new Set(
       user?.questParty?.quest.content.objectives.map((entry) => entry.id) ?? [],
@@ -202,12 +166,8 @@ export const questPartyRouter = createTRPCRouter({
     // The bound placement comes from the active objective; its live tile overrides authored coordinates.
     const placement =
       encounter?.task === "defeat_opponents" && encounter.overworldPlacementId
-        ? await ctx.drizzle.query.overworldAiPlacement.findFirst({
-            where: and(
-              eq(overworldAiPlacement.id, encounter.overworldPlacementId),
-              eq(overworldAiPlacement.isActive, true),
-            ),
-            columns: { sector: true, longitude: true, latitude: true },
+        ? await findOverworldAiPlacementForOverview(ctx.drizzle, {
+            overworldPlacementId: encounter.overworldPlacementId,
           })
         : undefined;
     // Generic battles gather at the leader; hidden map objectives reveal their tile in-sector.
@@ -290,7 +250,7 @@ export const questPartyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [{ user }, definition, history] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.quest.findFirst({ where: eq(quest.id, input.questId) }),
+        fetchQuest(ctx.drizzle, input.questId),
         fetchUserQuestByQuestId(ctx.drizzle, ctx.userId, input.questId),
       ]);
       if (!user) return errorResponse("User not found");
@@ -323,16 +283,14 @@ export const questPartyRouter = createTRPCRouter({
           party: undefined,
           goals: personal.goals.map((goal) => ({ ...goal, collected: false })),
         };
-        await ctx.drizzle.insert(questParty).values({
-          id: partyId,
-          questId: definition.id,
-          leaderId: ctx.userId,
-          isPublic: input.isPublic,
-          memberIds: [ctx.userId],
-          invitedUserIds: [],
+        await insertQuestPartyForCreate(
+          ctx.drizzle,
+          partyId,
+          definition,
+          ctx,
+          input,
           tracker,
-          contributions: {},
-        });
+        );
         await Promise.all([
           saveQuestPartyMember(
             ctx.drizzle,
@@ -349,7 +307,7 @@ export const questPartyRouter = createTRPCRouter({
         return { success: true, message: "Quest team formed" };
       } catch (error) {
         await releaseTeamSlot(ctx.drizzle, ctx.userId, partyId);
-        await ctx.drizzle.delete(questParty).where(eq(questParty.id, partyId));
+        await deleteQuestPartyForCreate(ctx.drizzle, partyId);
         throw error;
       }
     }),
@@ -359,10 +317,7 @@ export const questPartyRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [{ user }, loaded] = await Promise.all([
         fetchUpdatedUser({ client: ctx.drizzle, userId: ctx.userId }),
-        ctx.drizzle.query.questParty.findFirst({
-          where: eq(questParty.id, input.partyId),
-          with: questPartyRelations,
-        }),
+        findQuestPartyForDisband(ctx.drizzle, input),
       ]);
       if (!user || !loaded) return errorResponse("Quest team not found");
       const block = teamQuestBlock(user, loaded.quest);
@@ -395,22 +350,12 @@ export const questPartyRouter = createTRPCRouter({
       user.questPartyId = party.id;
       user.updatedAt = reserved.claimedAt;
       // One roster CAS enforces capacity and prevents joins while an encounter is starting.
-      const joined = await ctx.drizzle
-        .update(questParty)
-        .set({
-          memberIds: transition.party.memberIds,
-          invitedUserIds: transition.party.invitedIds,
-          battleId: joinClaimId,
-          version: party.version + 1,
-        })
-        .where(
-          and(
-            eq(questParty.id, party.id),
-            eq(questParty.version, party.version),
-            isNull(questParty.battleId),
-            sql`JSON_LENGTH(${questParty.memberIds}) < ${QUEST_PARTY_MAX_MEMBERS}`,
-          ),
-        );
+      const joined = await updateQuestPartyForJoin(
+        ctx.drizzle,
+        transition,
+        joinClaimId,
+        party,
+      );
       if (joined.rowsAffected !== 1) {
         await releaseTeamSlot(ctx.drizzle, ctx.userId, party.id);
         return errorResponse(
@@ -432,12 +377,7 @@ export const questPartyRouter = createTRPCRouter({
             ctx.userId,
           ),
         ]);
-        await ctx.drizzle
-          .update(questParty)
-          .set({ battleId: null, version: sql`${questParty.version} + 1` })
-          .where(
-            and(eq(questParty.id, party.id), eq(questParty.battleId, joinClaimId)),
-          );
+        await releaseQuestPartyBattleClaim(ctx.drizzle, party.id, joinClaimId);
         return {
           success: true,
           message: "Joined quest team. All objectives are shared",
@@ -452,17 +392,9 @@ export const questPartyRouter = createTRPCRouter({
     .input(questPartyInviteSchema)
     .mutation(async ({ ctx, input }) => {
       const [party, invited, inviter] = await Promise.all([
-        ctx.drizzle.query.questParty.findFirst({
-          where: eq(questParty.id, input.partyId),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.username, input.username),
-          columns: { userId: true, isBanned: true, isAi: true },
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { isBanned: true, questPartyId: true },
-        }),
+        findQuestPartyForInvite(ctx.drizzle, input),
+        findUserDataForInvite(ctx.drizzle, input),
+        findUserDataForInvite2(ctx.drizzle, ctx),
       ]);
       if (
         !party ||
@@ -481,13 +413,7 @@ export const questPartyRouter = createTRPCRouter({
         invited.userId,
       );
       if (!transition.success) return errorResponse(transition.message);
-      const saved = await ctx.drizzle
-        .update(questParty)
-        .set({
-          invitedUserIds: transition.party.invitedIds,
-          version: party.version + 1,
-        })
-        .where(and(eq(questParty.id, party.id), eq(questParty.version, party.version)));
+      const saved = await updateQuestPartyForInvite(ctx.drizzle, transition, party);
       if (saved.rowsAffected !== 1)
         return errorResponse("Team changed. Please try again");
       await Promise.allSettled([
@@ -505,10 +431,7 @@ export const questPartyRouter = createTRPCRouter({
   remove: protectedProcedure
     .input(questPartyRemoveSchema)
     .mutation(async ({ ctx, input }) => {
-      const loaded = await ctx.drizzle.query.questParty.findFirst({
-        where: eq(questParty.id, input.partyId),
-        with: questPartyRelations,
-      });
+      const loaded = await findQuestPartyForDisband(ctx.drizzle, input);
       if (
         !loaded ||
         loaded.leaderId !== ctx.userId ||
@@ -554,10 +477,7 @@ export const questPartyRouter = createTRPCRouter({
   leave: protectedProcedure
     .input(questPartyIdSchema)
     .mutation(async ({ ctx, input }) => {
-      const loaded = await ctx.drizzle.query.questParty.findFirst({
-        where: eq(questParty.id, input.partyId),
-        with: questPartyRelations,
-      });
+      const loaded = await findQuestPartyForDisband(ctx.drizzle, input);
       if (!loaded) return errorResponse("You are not in this team");
       if (!loaded.memberIds.includes(ctx.userId)) {
         const member = loaded.members.find((entry) => entry.userId === ctx.userId);
@@ -633,10 +553,7 @@ const acceptTeamQuest = async (
       );
     if (history?.pendingRewardChoice)
       return errorResponse("Claim your pending quest reward choice first");
-    await client
-      .update(questHistory)
-      .set({ previousAttempts: sql`${questHistory.previousAttempts} + 1` })
-      .where(eq(questHistory.id, history.id));
+    await updateQuestHistoryForAcceptTeamQuest(client, history);
     user.userQuests.push({
       id: `party-${user.questPartyId}`,
       userId: user.userId,
@@ -665,16 +582,6 @@ const acceptTeamQuest = async (
   });
 };
 
-/** Release only this party's character reservation and invalidate stale character snapshots. */
-const releaseTeamSlot = (client: DrizzleClient, userId: string, partyId: string) =>
-  client
-    .update(userData)
-    .set({
-      questPartyId: null,
-      updatedAt: sql`GREATEST(NOW(3), DATE_ADD(${userData.updatedAt}, INTERVAL 1000 MICROSECOND))`,
-    })
-    .where(and(eq(userData.userId, userId), eq(userData.questPartyId, partyId)));
-
 /**
  * Remove one roster member through CAS, then save their solo continuation and revoke chat access.
  * The canonical tracker survives partial cleanup; unrelated combat defers detachment so its
@@ -690,14 +597,8 @@ const removeMember = async (
   // The roster and leader move in one CAS; no missing-row locks or transactions.
   for (let attempt = 0; attempt < 5; attempt++) {
     const [party, member] = await Promise.all([
-      client.query.questParty.findFirst({
-        where: eq(questParty.id, partyId),
-        with: { quest: true },
-      }),
-      client.query.userData.findFirst({
-        where: eq(userData.userId, userId),
-        columns: { questPartyId: true, status: true },
-      }),
+      findQuestPartyForRemoveMember(client, partyId),
+      findUserDataForRemoveMember(client, userId),
     ]);
     if (!party) return { success: true, message: "Already left quest team" };
     // Recheck leadership on each CAS retry so a transfer cannot authorize a stale removal.
@@ -713,17 +614,9 @@ const removeMember = async (
       // The roster CAS may have committed before the personal save failed.
       if (!(await saveQuestPartyMember(client, party, userId, true)))
         return errorResponse("Finish your battle before leaving the quest team");
-      await leaveCoopChat(client, partyId, userId);
+      await deleteConversationMembership(client, partyId, userId);
       if (!party.memberIds.length) {
-        const deleted = await client
-          .delete(questParty)
-          .where(
-            and(
-              eq(questParty.id, partyId),
-              eq(questParty.version, party.version),
-              isNull(questParty.battleId),
-            ),
-          );
+        const deleted = await deleteQuestPartyForRemoveMember(client, partyId, party);
         if (deleted.rowsAffected !== 1) continue;
       }
       return { success: true, message: "Already left quest team" };
@@ -745,53 +638,29 @@ const removeMember = async (
       ? null
       : `claiming:${Date.now()}:${nanoid()}`;
     // Retain the last roster and canonical progress while its personal save commits.
-    const saved = await client
-      .update(questParty)
-      .set({
-        memberIds: members.length ? members : party.memberIds,
-        battleId: departureClaimId,
-        leaderId: transition.party.leaderId,
-        invitedUserIds: transition.party.invitedIds,
-        version: party.version + 1,
-      })
-      .where(
-        and(
-          eq(questParty.id, partyId),
-          eq(questParty.version, party.version),
-          battleGuard,
-        ),
-      );
+    const saved = await updateQuestPartyForRemoveMember(
+      client,
+      members,
+      party,
+      departureClaimId,
+      transition,
+      partyId,
+      battleGuard,
+    );
     if (saved.rowsAffected !== 1) continue;
     try {
       const detached = await saveQuestPartyMember(client, party, userId, true);
       if (!detached) {
         if (departureClaimId)
-          await client
-            .update(questParty)
-            .set({ battleId: null, version: sql`${questParty.version} + 1` })
-            .where(
-              and(
-                eq(questParty.id, partyId),
-                eq(questParty.battleId, departureClaimId),
-              ),
-            );
+          await releaseQuestPartyBattleClaim(client, partyId, departureClaimId);
         return errorResponse("Finish your battle before leaving the quest team");
       }
-      await leaveCoopChat(client, partyId, userId);
+      await deleteConversationMembership(client, partyId, userId);
       if (departureClaimId)
-        await client
-          .delete(questParty)
-          .where(
-            and(eq(questParty.id, partyId), eq(questParty.battleId, departureClaimId)),
-          );
+        await deleteClaimedQuestParty(client, partyId, departureClaimId);
     } catch (error) {
       if (departureClaimId)
-        await client
-          .update(questParty)
-          .set({ battleId: null, version: sql`${questParty.version} + 1` })
-          .where(
-            and(eq(questParty.id, partyId), eq(questParty.battleId, departureClaimId)),
-          );
+        await releaseQuestPartyBattleClaim(client, partyId, departureClaimId);
       throw error;
     }
     return {
@@ -851,14 +720,7 @@ export const startQuestPartyEncounter = async ({
     );
     // Only bound encounters need a placement lookup; its live tile is authoritative.
     const placements = placementIds.length
-      ? await client.query.overworldAiPlacement.findMany({
-          where: and(
-            inArray(overworldAiPlacement.id, placementIds),
-            eq(overworldAiPlacement.isActive, true),
-          ),
-          columns: { id: true, sector: true, longitude: true, latitude: true },
-          with: { aiTemplate: { columns: { isAi: true } } },
-        })
+      ? await listOverworldAiPlacementForStartQuestPartyEncounter(client, placementIds)
       : [];
     atPlacementIds = new Set(
       placements
@@ -905,16 +767,7 @@ export const startQuestPartyEncounter = async ({
   if (!transition.success) return errorResponse(transition.message);
   return launchCoopEncounter({
     reserve: async ({ claimId }) => {
-      const claim = await client
-        .update(questParty)
-        .set({ battleId: claimId, version: party.version + 1 })
-        .where(
-          and(
-            eq(questParty.id, party.id),
-            eq(questParty.version, party.version),
-            isNull(questParty.battleId),
-          ),
-        );
+      const claim = await updateQuestPartyForDisband(client, claimId, party);
       return claim.rowsAffected === 1;
     },
     initiate: ({ battleId }) =>
@@ -964,25 +817,11 @@ export const startQuestPartyEncounter = async ({
         ambush?.scaleGains ?? objective?.scaleGains ?? 1,
       ),
     publish: async ({ claimId }, result) => {
-      await client
-        .update(questParty)
-        .set({
-          battleId: result.battleId ?? null,
-          version: sql`${questParty.version} + 1`,
-        })
-        .where(and(eq(questParty.id, party.id), eq(questParty.battleId, claimId)));
+      await updateQuestPartyForPublish(client, result, party, claimId);
     },
     recover: async ({ claimId, battleId }) => {
       await cleanupCoopBattleStart(client, battleId, party.memberIds);
-      await client
-        .update(questParty)
-        .set({ battleId: null, version: sql`${questParty.version} + 1` })
-        .where(
-          and(
-            eq(questParty.id, party.id),
-            or(eq(questParty.battleId, claimId), eq(questParty.battleId, battleId)),
-          ),
-        );
+      await updateQuestPartyForRecover(client, party, claimId, battleId);
     },
   });
 };

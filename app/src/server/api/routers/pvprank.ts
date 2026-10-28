@@ -1,17 +1,4 @@
 import { TRPCError } from "@trpc/server";
-import {
-  and,
-  asc,
-  count,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNull,
-  lte,
-  notExists,
-  sql,
-} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -21,19 +8,6 @@ import {
   RANKED_REQUIRED_RANK,
   RANKED_SANNIN_TOP_PLAYERS,
 } from "@/drizzle/constants";
-import {
-  item,
-  jutsu,
-  logQueueLengths,
-  logRankedPicks,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  rankedLoadout,
-  rankedPvpQueue,
-  rankedSeason,
-  rankedUserRewards,
-  userData,
-} from "@/drizzle/schema";
 import { collapseRewards, postProcessRewards } from "@/libs/quest";
 import {
   getRankedRadius,
@@ -42,8 +16,42 @@ import {
   validateJutsuLoadout,
 } from "@/libs/ranked_pvp";
 import { hasRequiredRank } from "@/libs/train";
+import { listJutsuByIds } from "@/queries/jutsu";
+import { fetchUser, wakeQueuedUser } from "@/queries/profile";
+import {
+  countRankedPvpQueueForGetRankedQueueCount,
+  deleteRankedPvpQueueForCheckRankedPvpMatches,
+  deleteRankedPvpQueueForDeleteUserRankedQueueRow,
+  deleteRankedPvpQueueForQueueForRankedPvp,
+  deleteRankedSeasonForDeleteSeason,
+  deleteRankedUserRewardsForDeleteSeason,
+  executeResultForQueueForRankedPvp,
+  fetchAllSeasons,
+  fetchCurrentSeason,
+  fetchUserRankedQueue,
+  findRankedLoadoutByUserId,
+  findRankedSeasonById,
+  findUserDataForLeaveRankedPvpQueue,
+  insertLogQueueLengthsForCheckRankedPvpMatches,
+  insertLogRankedPicksForCheckRankedPvpMatches,
+  insertRankedLoadoutForGetRankedLoadout,
+  insertRankedPvpQueueForQueueForRankedPvp,
+  insertRankedSeasonForCreateSeason,
+  insertRankedUserRewardsForEndRankedSeason,
+  listItemForUpdateRankedLoadout,
+  listRankedPvpQueueForCheckRankedPvpMatches,
+  listUserDataForEndRankedSeason,
+  selectRankedPvpQueueForGetRankedPvpQueue,
+  selectRankedUserRewardsForGetUnclaimedUserSeasonRewards,
+  updateRankedLoadoutForUpdateRankedLoadout,
+  updateRankedSeasonForEndRankedSeason,
+  updateRankedSeasonForUpdateSeason,
+  updateRankedUserRewardsForClaimSeasonRewards,
+  updateUserDataForEndRankedSeason,
+  updateUserDataForEnterRankedSeason,
+  updateUserDataForGetRankedPvpQueue,
+} from "@/queries/pvprank";
 import { initiateBattle } from "@/routers/combat";
-import { fetchUser } from "@/routers/profile";
 import { updateRewards } from "@/server/api/routers/quests";
 import {
   baseServerResponse,
@@ -95,16 +103,11 @@ export const pvpRankRouter = createTRPCRouter({
         return errorResponse("No unclaimed season rewards");
       }
       const rewardIds = rewards.map((reward) => reward.id);
-      const claimResult = await ctx.drizzle
-        .update(rankedUserRewards)
-        .set({ claimed: true, claimedAt: new Date() })
-        .where(
-          and(
-            eq(rankedUserRewards.userId, ctx.userId),
-            inArray(rankedUserRewards.id, rewardIds),
-            eq(rankedUserRewards.claimed, false),
-          ),
-        );
+      const claimResult = await updateRankedUserRewardsForClaimSeasonRewards(
+        ctx.drizzle,
+        ctx,
+        rewardIds,
+      );
       if (claimResult.rowsAffected !== rewardIds.length) {
         return errorResponse("Season rewards already claimed");
       }
@@ -145,9 +148,7 @@ export const pvpRankRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get a specific ranked season" } })
     .input(idSchema)
     .query(async ({ ctx, input }) => {
-      const season = await ctx.drizzle.query.rankedSeason.findFirst({
-        where: eq(rankedSeason.id, input.id),
-      });
+      const season = await findRankedSeasonById(ctx.drizzle, input.id);
       if (!season) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Season not found" });
       }
@@ -206,10 +207,7 @@ export const pvpRankRouter = createTRPCRouter({
       }
       // insert new season
       const id = nanoid();
-      await ctx.drizzle.insert(rankedSeason).values({
-        id,
-        ...seasonData,
-      });
+      await insertRankedSeasonForCreateSeason(ctx.drizzle, id, seasonData);
 
       return { success: true, message: "Season created successfully" };
     }),
@@ -223,9 +221,7 @@ export const pvpRankRouter = createTRPCRouter({
       const [user, currentSeason, existingSeason, titleError] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchCurrentSeason(ctx.drizzle),
-        ctx.drizzle.query.rankedSeason.findFirst({
-          where: eq(rankedSeason.id, input.id),
-        }),
+        findRankedSeasonById(ctx.drizzle, input.id),
         validateTitleRewardIds(ctx.drizzle, input),
       ]);
       // Guard
@@ -263,13 +259,7 @@ export const pvpRankRouter = createTRPCRouter({
         });
       }
       // update season
-      await ctx.drizzle
-        .update(rankedSeason)
-        .set({
-          ...data,
-          updatedAt: new Date(),
-        })
-        .where(eq(rankedSeason.id, id));
+      await updateRankedSeasonForUpdateSeason(ctx.drizzle, data, id);
       return { success: true, message: "Season updated successfully" };
     }),
 
@@ -286,10 +276,8 @@ export const pvpRankRouter = createTRPCRouter({
       }
       // delete season
       await Promise.all([
-        ctx.drizzle.delete(rankedSeason).where(eq(rankedSeason.id, input.id)),
-        ctx.drizzle
-          .delete(rankedUserRewards)
-          .where(eq(rankedUserRewards.seasonId, input.id)),
+        deleteRankedSeasonForDeleteSeason(ctx.drizzle, input),
+        deleteRankedUserRewardsForDeleteSeason(ctx.drizzle, input),
       ]);
       return { success: true, message: "Season deleted successfully" };
     }),
@@ -305,9 +293,7 @@ export const pvpRankRouter = createTRPCRouter({
         return errorResponse("You don't have permission to end ranked seasons");
       }
       // Verify season exists & not already ended
-      const season = await ctx.drizzle.query.rankedSeason.findFirst({
-        where: eq(rankedSeason.id, input.id),
-      });
+      const season = await findRankedSeasonById(ctx.drizzle, input.id);
       if (!season) {
         return errorResponse("Season not found");
       }
@@ -325,9 +311,7 @@ export const pvpRankRouter = createTRPCRouter({
   getRankedLoadout: protectedProcedure
     .meta({ mcp: { description: "Get user's ranked PvP loadout" } })
     .query(async ({ ctx }) => {
-      let loadout = await ctx.drizzle.query.rankedLoadout.findFirst({
-        where: eq(rankedLoadout.userId, ctx.userId),
-      });
+      let loadout = await findRankedLoadoutByUserId(ctx.drizzle, ctx.userId);
       if (!loadout) {
         loadout = {
           id: nanoid(),
@@ -343,7 +327,7 @@ export const pvpRankRouter = createTRPCRouter({
             favoriteConsumableIds: [],
           },
         };
-        await ctx.drizzle.insert(rankedLoadout).values(loadout);
+        await insertRankedLoadoutForGetRankedLoadout(ctx.drizzle, loadout);
         return loadout;
       }
       return (await cleanRankedProhibitedSelections(ctx.drizzle, loadout)).loadout;
@@ -363,50 +347,13 @@ export const pvpRankRouter = createTRPCRouter({
         await deleteUserRankedQueueRow(ctx.drizzle, ctx.userId, true);
       } else if (user.status === "QUEUED" && !queueEntry) {
         await retryOnDeadlock(() =>
-          ctx.drizzle
-            .update(userData)
-            .set({ status: "ASLEEP" })
-            .where(
-              and(
-                eq(userData.userId, ctx.userId),
-                eq(userData.status, "QUEUED"),
-                // Independent reads may precede a ranked claim or belong to a clan lobby.
-                notExists(
-                  ctx.drizzle
-                    .select({ id: rankedPvpQueue.id })
-                    .from(rankedPvpQueue)
-                    .where(
-                      and(
-                        eq(rankedPvpQueue.userId, userData.userId),
-                        eq(rankedPvpQueue.hasClaimed, true),
-                      ),
-                    ),
-                ),
-                notExists(
-                  ctx.drizzle
-                    .select({ id: mpvpBattleUser.id })
-                    .from(mpvpBattleUser)
-                    .innerJoin(
-                      mpvpBattleQueue,
-                      eq(mpvpBattleUser.clanBattleId, mpvpBattleQueue.id),
-                    )
-                    .where(
-                      and(
-                        eq(mpvpBattleUser.userId, userData.userId),
-                        isNull(mpvpBattleQueue.winnerId),
-                      ),
-                    ),
-                ),
-              ),
-            ),
+          updateUserDataForGetRankedPvpQueue(ctx.drizzle, ctx),
         );
       }
       // Get the queue count
-      const queueCount = await ctx.drizzle
-        .select({ count: count() })
-        .from(rankedPvpQueue)
-        .where(eq(rankedPvpQueue.hasClaimed, true))
-        .then((result) => result[0]?.count ?? 0);
+      const queueCount = await selectRankedPvpQueueForGetRankedPvpQueue(
+        ctx.drizzle,
+      ).then((result) => result[0]?.count ?? 0);
 
       return {
         inQueue: !!queueEntry,
@@ -420,9 +367,7 @@ export const pvpRankRouter = createTRPCRouter({
     .meta({
       mcp: { description: "Get number of players in ranked PvP queue" },
     })
-    .query(({ ctx }) =>
-      ctx.drizzle.$count(rankedPvpQueue, eq(rankedPvpQueue.hasClaimed, true)),
-    ),
+    .query(({ ctx }) => countRankedPvpQueueForGetRankedQueueCount(ctx.drizzle)),
 
   // Update the ranked loadout
   updateRankedLoadout: protectedProcedure
@@ -440,19 +385,11 @@ export const pvpRankRouter = createTRPCRouter({
       // Query all relevant information
       const itemIds = [...new Set([...loadout.weaponIds, ...loadout.consumableIds])];
       const [items, jutsus, currentLoadout] = await Promise.all([
-        itemIds.length > 0
-          ? ctx.drizzle.query.item.findMany({
-              where: and(inArray(item.id, itemIds), eq(item.inShop, true)),
-            })
-          : [],
+        itemIds.length > 0 ? listItemForUpdateRankedLoadout(ctx.drizzle, itemIds) : [],
         loadout.jutsuIds.length > 0
-          ? ctx.drizzle.query.jutsu.findMany({
-              where: inArray(jutsu.id, loadout.jutsuIds),
-            })
+          ? listJutsuByIds(ctx.drizzle, loadout.jutsuIds)
           : [],
-        ctx.drizzle.query.rankedLoadout.findFirst({
-          where: eq(rankedLoadout.userId, ctx.userId),
-        }),
+        findRankedLoadoutByUserId(ctx.drizzle, ctx.userId),
       ]);
       // Guard & ensure that all the items & jutsus exist and are of correct type
       if (!currentLoadout) {
@@ -471,13 +408,11 @@ export const pvpRankRouter = createTRPCRouter({
         return errorResponse(jutsuCheck.message || itemCheck.message);
       }
       // Run mutation
-      await ctx.drizzle
-        .update(rankedLoadout)
-        .set({
-          loadout,
-          updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${rankedLoadout.updatedAt}))`,
-        })
-        .where(eq(rankedLoadout.id, currentLoadout.id));
+      await updateRankedLoadoutForUpdateRankedLoadout(
+        ctx.drizzle,
+        loadout,
+        currentLoadout,
+      );
       // Return success
       return { success: true, message: "Ranked loadout updated successfully" };
     }),
@@ -504,13 +439,7 @@ export const pvpRankRouter = createTRPCRouter({
         );
       }
       // Mutation
-      await ctx.drizzle
-        .update(userData)
-        .set({
-          rankedLp: 150,
-          villagePrestige: user.villagePrestige - RANKED_ENTRY_COST,
-        })
-        .where(eq(userData.userId, ctx.userId));
+      await updateUserDataForEnterRankedSeason(ctx.drizzle, user, ctx);
       return { success: true, message: "Ranked season entered successfully" };
     }),
 
@@ -525,9 +454,7 @@ export const pvpRankRouter = createTRPCRouter({
       const [existingQueue, user, currentLoadout, currentSeason] = await Promise.all([
         fetchUserRankedQueue(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.rankedLoadout.findFirst({
-          where: eq(rankedLoadout.userId, ctx.userId),
-        }),
+        findRankedLoadoutByUserId(ctx.drizzle, ctx.userId),
         fetchCurrentSeason(ctx.drizzle),
       ]);
       // Guard
@@ -575,30 +502,14 @@ export const pvpRankRouter = createTRPCRouter({
       // Publish an unclaimed row, then atomically acquire QUEUED and mark its owner.
       // Unclaimed rows cannot match or prevent clan cleanup from releasing a user.
       const queueId = nanoid();
-      await ctx.drizzle.insert(rankedPvpQueue).values({
-        id: queueId,
-        userId: ctx.userId,
-        rankedLp: user.rankedLp,
-        hasClaimed: false,
-        queueStartTime: new Date(),
-        createdAt: new Date(),
-      });
+      await insertRankedPvpQueueForQueueForRankedPvp(ctx.drizzle, queueId, ctx, user);
       let hasClaimedQueue = false;
       try {
         // Drizzle's MySQL update builder cannot JOIN and SET both tables. As with
         // purchase delivery, one parameterized UPDATE makes ownership durable with
         // the status claim. Removing this exact provisional row makes the claim fail.
         const result = await retryOnDeadlock(() =>
-          ctx.drizzle.execute(sql`
-            UPDATE ${userData}
-            INNER JOIN ${rankedPvpQueue}
-              ON ${rankedPvpQueue.userId} = ${userData.userId}
-            SET ${userData.status} = 'QUEUED', ${rankedPvpQueue.hasClaimed} = true
-            WHERE ${userData.userId} = ${user.userId}
-              AND ${userData.status} = 'AWAKE'
-              AND ${rankedPvpQueue.id} = ${queueId}
-              AND ${rankedPvpQueue.hasClaimed} = false
-          `),
+          executeResultForQueueForRankedPvp(ctx.drizzle, user, queueId),
         );
         hasClaimedQueue = result.rowsAffected > 0;
       } finally {
@@ -606,14 +517,7 @@ export const pvpRankRouter = createTRPCRouter({
         // unclaimed row, preserving both an ambiguous success and another winning join.
         if (!hasClaimedQueue) {
           await retryOnDeadlock(() =>
-            ctx.drizzle
-              .delete(rankedPvpQueue)
-              .where(
-                and(
-                  eq(rankedPvpQueue.id, queueId),
-                  eq(rankedPvpQueue.hasClaimed, false),
-                ),
-              ),
+            deleteRankedPvpQueueForQueueForRankedPvp(ctx.drizzle, queueId),
           );
         }
       }
@@ -649,10 +553,7 @@ export const pvpRankRouter = createTRPCRouter({
         deleteUserRankedQueueRow(ctx.drizzle, ctx.userId),
         // Guard on QUEUED so a concurrent match that already claimed us into a
         // battle (status BATTLE) is not clobbered back to AWAKE.
-        ctx.drizzle
-          .update(userData)
-          .set({ status: "AWAKE" })
-          .where(and(eq(userData.userId, ctx.userId), eq(userData.status, "QUEUED"))),
+        wakeQueuedUser(ctx.drizzle, ctx.userId),
       ]);
       // No row matched: status changed between the guard read and this update.
       // That can mean a concurrent match claimed us into a battle, OR a failed
@@ -660,10 +561,7 @@ export const pvpRankRouter = createTRPCRouter({
       // out of the queue either way; re-read battleId (cold path) to report
       // accurately rather than assume a battle.
       if (leaveResult.rowsAffected === 0) {
-        const current = await ctx.drizzle.query.userData.findFirst({
-          columns: { battleId: true },
-          where: eq(userData.userId, ctx.userId),
-        });
+        const current = await findUserDataForLeaveRankedPvpQueue(ctx.drizzle, ctx);
         if (current?.battleId) {
           return errorResponse("You've been matched into a ranked battle");
         }
@@ -680,11 +578,7 @@ export const pvpRankRouter = createTRPCRouter({
     .mutation(async ({ ctx }) => {
       // Get all queued players
       const [queuedPlayers, topPlayersLP] = await Promise.all([
-        ctx.drizzle.query.rankedPvpQueue.findMany({
-          where: eq(rankedPvpQueue.hasClaimed, true),
-          with: { user: { columns: { status: true }, with: { rankedLoadout: true } } },
-          orderBy: asc(rankedPvpQueue.queueStartTime),
-        }),
+        listRankedPvpQueueForCheckRankedPvpMatches(ctx.drizzle),
         fetchSanninRankedPlayers(ctx.drizzle),
       ]);
 
@@ -786,28 +680,16 @@ export const pvpRankRouter = createTRPCRouter({
           })),
         ];
         const postMatchTasks: PromiseLike<unknown>[] = [
-          ctx.drizzle
-            .delete(rankedPvpQueue)
-            .where(inArray(rankedPvpQueue.userId, [ctx.userId, opponentEntry.userId])),
-          ctx.drizzle
-            .insert(logQueueLengths)
-            .values({
-              rankedRank: rankedRank,
-              ceiledMinutes: Math.ceil(secondsInQueue / 60),
-              count: 1,
-            })
-            .onDuplicateKeyUpdate({
-              set: { count: sql`${logQueueLengths.count} + 1` },
-            }),
+          deleteRankedPvpQueueForCheckRankedPvpMatches(ctx.drizzle, ctx, opponentEntry),
+          insertLogQueueLengthsForCheckRankedPvpMatches(
+            ctx.drizzle,
+            rankedRank,
+            secondsInQueue,
+          ),
         ];
         if (rankedPickRows.length > 0) {
           postMatchTasks.push(
-            ctx.drizzle
-              .insert(logRankedPicks)
-              .values(rankedPickRows)
-              .onDuplicateKeyUpdate({
-                set: { count: sql`${logRankedPicks.count} + 1` },
-              }),
+            insertLogRankedPicksForCheckRankedPvpMatches(ctx.drizzle, rankedPickRows),
           );
         }
         // Winner path only: remove both players from the queue and write match
@@ -825,21 +707,6 @@ export const pvpRankRouter = createTRPCRouter({
 });
 
 /**
- * Fetch the user's claimed ranked PvP queue, excluding joins still acquiring status.
- * @param client - The Drizzle client
- * @param userId - The user's ID
- * @returns The queue entry
- */
-export const fetchUserRankedQueue = async (client: DrizzleClient, userId: string) => {
-  return await client.query.rankedPvpQueue.findFirst({
-    where: and(eq(rankedPvpQueue.userId, userId), eq(rankedPvpQueue.hasClaimed, true)),
-    columns: {
-      queueStartTime: true,
-    },
-  });
-};
-
-/**
  * Delete a user's ranked PvP queue rows, either for an intentional leave or stale cleanup.
  * Cleanup rechecks status in the DELETE: a provisional row's owner can claim QUEUED
  * after the caller's read. Intentional leaves still remove rows while the user is QUEUED.
@@ -855,48 +722,8 @@ export const deleteUserRankedQueueRow = (
   onlyIfNotQueued = false,
 ) =>
   retryOnDeadlock(() =>
-    client.delete(rankedPvpQueue).where(
-      and(
-        eq(rankedPvpQueue.userId, userId),
-        onlyIfNotQueued
-          ? notExists(
-              client
-                .select({ userId: userData.userId })
-                .from(userData)
-                .where(and(eq(userData.userId, userId), eq(userData.status, "QUEUED"))),
-            )
-          : undefined,
-      ),
-    ),
+    deleteRankedPvpQueueForDeleteUserRankedQueueRow(client, userId, onlyIfNotQueued),
   );
-
-/**
- * Fetch all ranked seasons
- * @param client - The Drizzle client
- * @returns All ranked seasons
- */
-export const fetchAllSeasons = async (client: DrizzleClient) => {
-  return await client.query.rankedSeason.findMany({
-    orderBy: (season, { desc }) => [desc(season.startDate)],
-  });
-};
-
-/**
- * Fetch the current ranked season
- * @param client - The Drizzle client
- * @returns The current ranked season
- */
-export const fetchCurrentSeason = async (client: DrizzleClient) => {
-  const now = new Date();
-  const season = await client.query.rankedSeason.findFirst({
-    where: and(
-      lte(rankedSeason.startDate, now),
-      gte(rankedSeason.endDate, now),
-      eq(rankedSeason.ended, false),
-    ),
-  });
-  return season || null;
-};
 
 /**
  * Get the unclaimed season rewards for a user
@@ -908,21 +735,10 @@ export const getUnclaimedUserSeasonRewards = async (
   client: DrizzleClient,
   userId: string,
 ) => {
-  const joinedResults = await client
-    .select({
-      id: rankedUserRewards.id,
-      seasonId: rankedSeason.id,
-      seasonName: rankedSeason.name,
-      division: rankedUserRewards.division,
-      claimed: rankedUserRewards.claimed,
-      seasonRewards: rankedSeason.rewards,
-      seasonEndDate: rankedSeason.endDate,
-    })
-    .from(rankedUserRewards)
-    .innerJoin(rankedSeason, eq(rankedUserRewards.seasonId, rankedSeason.id))
-    .where(
-      and(eq(rankedUserRewards.userId, userId), eq(rankedUserRewards.claimed, false)),
-    );
+  const joinedResults = await selectRankedUserRewardsForGetUnclaimedUserSeasonRewards(
+    client,
+    userId,
+  );
   return joinedResults.map((row) => {
     const divisionRewards = row.seasonRewards.find(
       (d) => d.division === row.division,
@@ -939,17 +755,8 @@ export const getUnclaimedUserSeasonRewards = async (
 export const endRankedSeason = async (client: DrizzleClient, seasonId: string) => {
   // Fetch users with LP > 0 and the season to end (validate again in case caller skipped)
   const [users, season] = await Promise.all([
-    client.query.userData.findMany({
-      columns: {
-        userId: true,
-        rankedLp: true,
-      },
-      orderBy: (userData, { desc }) => [desc(userData.rankedLp)],
-      where: gt(userData.rankedLp, 0),
-    }),
-    client.query.rankedSeason.findFirst({
-      where: eq(rankedSeason.id, seasonId),
-    }),
+    listUserDataForEndRankedSeason(client),
+    findRankedSeasonById(client, seasonId),
   ]);
 
   if (!season) {
@@ -977,16 +784,12 @@ export const endRankedSeason = async (client: DrizzleClient, seasonId: string) =
   // Execute database updates in parallel (no explicit transaction)
   await Promise.all([
     // Reset LP for everyone
-    client
-      .update(userData)
-      .set({ rankedLp: 0, rankedStreak: 0 })
-      .where(gt(userData.rankedLp, 0)),
+    updateUserDataForEndRankedSeason(client),
     // Mark season as ended
-    client
-      .update(rankedSeason)
-      .set({ ended: true, endDate: new Date() })
-      .where(eq(rankedSeason.id, season.id)),
+    updateRankedSeasonForEndRankedSeason(client, season),
     // Insert rewards rows if any
-    rewardRows.length > 0 ? client.insert(rankedUserRewards).values(rewardRows) : null,
+    rewardRows.length > 0
+      ? insertRankedUserRewardsForEndRankedSeason(client, rewardRows)
+      : null,
   ]);
 };

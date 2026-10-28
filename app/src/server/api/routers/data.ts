@@ -1,19 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  lt,
-  lte,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
-import { nanoid } from "nanoid";
+import { and, eq, gte, inArray, isNotNull, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import type {
   ItemType,
@@ -31,14 +16,11 @@ import {
   RANKED_RANKS,
   RecruitmentMetricMax,
   RecruitmentMetrics,
-  TUTORIAL_STEPS_COUNT,
 } from "@/drizzle/constants";
 import {
   abEvent,
-  actionLog,
   bloodline,
   dataBattleAction,
-  historicalIp,
   item,
   jutsu,
   logBattleLengths,
@@ -46,19 +28,82 @@ import {
   logRankedPicks,
   paypalTransaction,
   quest,
-  questHistory,
   referralSource,
   skillTree,
   userData,
-  userItem,
-  userJutsu,
-  userSkill,
   visitorLog,
 } from "@/drizzle/schema";
 import { aggregateExperiments } from "@/libs/experimentAnalytics";
 import { getRankedRank } from "@/libs/ranked_pvp";
 import { collapseRewards } from "@/libs/rewards";
-import { fetchPublicUsers } from "@/routers/profile";
+import { fetchBloodline } from "@/queries/bloodline";
+import {
+  deleteDataBattleActionForDeleteAllDataBattleAction,
+  deleteDataBattleActionForDeleteSingleDataBattleAction,
+  deleteLogBattleLengthsForClearAllBattleLengths,
+  deleteLogQueueLengthsForClearAllQueueLengths,
+  insertActionLogForClearAllBattleLengths,
+  insertActionLogForClearAllQueueLengths,
+  insertActionLogForDeleteAllDataBattleAction,
+  insertActionLogForDeleteSingleDataBattleAction,
+  listBloodlineForGetBloodlineEffectsBalanceStatistics,
+  listItemForGetItemEffectsBalanceStatistics,
+  listJutsuForGetJutsuEffectsBalanceStatistics,
+  listSkillTreeForGetSkillTreeBalanceStatistics,
+  listSkillTreeForGetSkillTreeEffectsBalanceStatistics,
+  selectAbEventForGetAbTests,
+  selectBloodlineForGetBloodlineBalanceStatistics,
+  selectDataBattleActionForGetAiBalanceStatistics,
+  selectDataBattleActionForGetBloodlineBalanceStatistics,
+  selectDataBattleActionForGetItemBalanceStatistics,
+  selectDataBattleActionForGetJutsuBalanceStatistics,
+  selectDataBattleActionForGetStatistics,
+  selectDistinctAbEventForGetAbTests,
+  selectDistinctReferralSourceForGetReferralSources,
+  selectDistinctVisitorLogForGetVisitorUtmSources,
+  selectLogBattleLengthsForGetBattleLengthStatistics,
+  selectLogQueueLengthsForGetQueueLengthStatistics,
+  selectLogRankedPicksForGetRankedLoadoutStatistics,
+  selectLogRankedPicksForGetRankedLoadoutStatistics2,
+  selectLogRankedPicksForGetRankedLoadoutStatistics3,
+  selectPaypalTransactionForGetRecruitmentMainMetrics,
+  selectPaypalTransactionForGetRevenueByReferralSource,
+  selectQuestForGetQuestRewardStatistics,
+  selectQuestForGetRecruitmentMainMetrics,
+  selectQuestForGetRecruitmentMainMetrics2,
+  selectQuestHistoryForGetRecruitmentMainMetrics,
+  selectQuestHistoryForGetRecruitmentMainMetrics2,
+  selectUserDataForGetBloodlineBalanceStatistics,
+  selectUserDataForGetRankedRankDistributionStatistics,
+  selectUserDataForGetRecruitmentDailyCountsBySource,
+  selectUserDataForGetRecruitmentDailyCountsBySource2,
+  selectUserDataForGetRecruitmentDailyCountsBySource3,
+  selectUserDataForGetRecruitmentDailyLevelStats,
+  selectUserDataForGetRecruitmentLevelDistribution,
+  selectUserDataForGetRecruitmentLevelDistribution2,
+  selectUserDataForGetRecruitmentLevelDistribution3,
+  selectUserDataForGetRecruitmentLevelDistribution4,
+  selectUserDataForGetStatistics,
+  selectUserDataForGetStatistics2,
+  selectUserItemForGetItemBalanceStatistics,
+  selectUserItemForGetStatistics,
+  selectUserJutsuForGetJutsuBalanceStatistics,
+  selectUserJutsuForGetStatistics,
+  selectUserJutsuForGetStatistics2,
+  selectUserSkillForGetSkillTreeBalanceStatistics,
+  selectVisitorLogForGetRecruitmentMainMetrics,
+  selectVisitorLogForGetRecruitmentMainMetrics2,
+  selectVisitorLogForGetRecruitmentMainMetrics3,
+  selectVisitorLogForGetRecruitmentMainMetrics4,
+  selectVisitorLogForGetRecruitmentMainMetrics5,
+  selectVisitorLogForGetRecruitmentMainMetrics6,
+  selectVisitorLogForGetRecruitmentMainMetrics7,
+} from "@/queries/data";
+import { fetchItem } from "@/queries/item";
+import { fetchJutsu } from "@/queries/jutsu";
+import { fetchUser } from "@/queries/profile";
+import { fetchSkillTreeViewer } from "@/queries/skillTree";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -67,6 +112,7 @@ import {
   publicProcedure,
   serverError,
 } from "@/server/api/trpc";
+import { fetchPublicUsers } from "@/server/utils/profile";
 import { fetchSanninRankedPlayers } from "@/server/utils/ranked";
 import { type DeviceType, getDeviceType } from "@/utils/hardware";
 import {
@@ -75,22 +121,17 @@ import {
   canViewRecruitmentAnalytics,
   canViewRevenueAnalytics,
 } from "@/utils/permissions";
-import { WEEK_S } from "@/utils/time";
 import type { QueryCondition } from "@/utils/typeutils";
 import { bloodlineFilteringSchema } from "@/validators/bloodline";
 import { itemFilteringSchema } from "@/validators/item";
 import { jutsuFilteringSchema } from "@/validators/jutsu";
 import { skillTreeFilteringSchema } from "@/validators/skillTree";
 import { getPublicUsersSchema } from "@/validators/user";
-import { bloodlineDatabaseFilter, fetchBloodline } from "./bloodline";
-import { fetchItem, itemDatabaseFilter } from "./item";
-import { fetchJutsu, jutsuDatabaseFilter } from "./jutsu";
-import { fetchUser } from "./profile";
-import {
-  fetchSkillTreeViewer,
-  isSkillVisible,
-  skillTreeDatabaseFilter,
-} from "./skillTree";
+import { bloodlineDatabaseFilter } from "./bloodline";
+import { itemDatabaseFilter } from "./item";
+import { jutsuDatabaseFilter } from "./jutsu";
+
+import { isSkillVisible, skillTreeDatabaseFilter } from "./skillTree";
 
 export const dataRouter = createTRPCRouter({
   /** Return full-history variant counts for tests with an event in the last week. */
@@ -110,10 +151,7 @@ export const dataRouter = createTRPCRouter({
       }
       // Query
       // Recent activity selects experiments; their cohorts include all history.
-      const activeExperiments = ctx.drizzle
-        .selectDistinct({ experiment: abEvent.experiment })
-        .from(abEvent)
-        .where(gte(abEvent.createdAt, new Date(Date.now() - WEEK_S * 1000)));
+      const activeExperiments = selectDistinctAbEventForGetAbTests(ctx.drizzle);
       const whereConds: QueryCondition[] = [
         inArray(abEvent.experiment, activeExperiments),
       ];
@@ -124,36 +162,8 @@ export const dataRouter = createTRPCRouter({
       // first-visit cohort, without loading successes from unrelated experiments.
       // The unique experiment/event/IP key prevents non-null IPs from fanning out.
       // Aggregate exposure user-agent cohorts before transferring retained history.
-      const completion = alias(abEvent, "completion");
-      const rows = await ctx.drizzle
-        .select({
-          experiment: sql<string>`ANY_VALUE(${abEvent.experiment})`,
-          variant: sql<string>`ANY_VALUE(${abEvent.variant})`,
-          userAgent: sql<string | null>`ANY_VALUE(${abEvent.userAgent})`,
-          loaded: sql`COUNT(*)`.mapWith(Number),
-          // Empty IPs and completion IDs cannot identify an attributable conversion.
-          register:
-            sql`COUNT(CASE WHEN LENGTH(${abEvent.ipHash}) > 0 AND LENGTH(${completion.id}) > 0 THEN 1 END)`.mapWith(
-              Number,
-            ),
-        })
-        .from(abEvent)
-        .leftJoin(
-          completion,
-          and(
-            eq(completion.experiment, abEvent.experiment),
-            eq(completion.ipHash, abEvent.ipHash),
-            eq(completion.variant, abEvent.variant),
-            eq(completion.event, "success"),
-          ),
-        )
-        .where(and(eq(abEvent.event, "loaded"), ...whereConds))
-        // Binary groups keep keys exact; ANY_VALUE returns their original text.
-        .groupBy(
-          sql`BINARY ${abEvent.experiment}`,
-          sql`BINARY ${abEvent.variant}`,
-          sql`BINARY ${abEvent.userAgent}`,
-        );
+
+      const rows = await selectAbEventForGetAbTests(ctx.drizzle, whereConds);
 
       return aggregateExperiments(rows, input.deviceType);
     }),
@@ -166,11 +176,7 @@ export const dataRouter = createTRPCRouter({
       return [];
     }
     // Query
-    const rows = await ctx.drizzle
-      .selectDistinct({ utmSource: visitorLog.utmSource })
-      .from(visitorLog)
-      .where(and(isNotNull(visitorLog.utmSource), ne(visitorLog.utmSource, "")))
-      .orderBy(asc(visitorLog.utmSource));
+    const rows = await selectDistinctVisitorLogForGetVisitorUtmSources(ctx.drizzle);
     return rows
       .map((r) => r.utmSource)
       .filter((v): v is string => typeof v === "string");
@@ -224,231 +230,42 @@ export const dataRouter = createTRPCRouter({
         completedTierQuestsRaw,
       ] = await Promise.all([
         // allVisitorsRow (with userAgent for device splitting)
-        ctx.drizzle
-          .select({
-            userAgent: visitorLog.userAgent,
-          })
-          .from(visitorLog)
-          .where(visitorWhere.length > 0 ? and(...visitorWhere) : undefined),
+        selectVisitorLogForGetRecruitmentMainMetrics(ctx.drizzle, visitorWhere),
         // signupsRow: users with an entry in ReferralSource (mapped via historical IP to the visit)
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-            username: userData.username,
-            questData: userData.questData,
-            tutorialStep: userData.tutorialStep,
-            tutorialOn: userData.tutorialOn,
-            userAgent: visitorLog.userAgent,
-          })
-          .from(visitorLog)
-          .innerJoin(historicalIp, eq(historicalIp.ipHash, visitorLog.ipHash))
-          .leftJoin(userData, eq(userData.userId, historicalIp.userId))
-          .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-          .where(
-            and(
-              ...(visitorWhere.length > 0 ? visitorWhere : []),
-              eq(userData.isAi, false),
-              lt(userData.tutorialStep, 100),
-              gte(userData.createdAt, visitorLog.createdAt),
-              ...(input.utmSource && input.utmSource.length > 0
-                ? [eq(referralSource.source, input.utmSource)]
-                : []),
-            ),
-          ),
+        selectVisitorLogForGetRecruitmentMainMetrics2(ctx.drizzle, visitorWhere, input),
         // nonStudentSignupsRow: fetch individual users beyond STUDENT rank
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-            userAgent: visitorLog.userAgent,
-            tutorialOn: userData.tutorialOn,
-          })
-          .from(visitorLog)
-          .innerJoin(historicalIp, eq(historicalIp.ipHash, visitorLog.ipHash))
-          .innerJoin(userData, eq(userData.userId, historicalIp.userId))
-          .where(
-            and(
-              ...(visitorWhere.length > 0 ? visitorWhere : []),
-              eq(userData.isAi, false),
-              gte(userData.createdAt, visitorLog.createdAt),
-              ne(userData.rank, "STUDENT"),
-            ),
-          ),
+        selectVisitorLogForGetRecruitmentMainMetrics3(ctx.drizzle, visitorWhere),
         // nonStudentGeninSignupsRow: fetch individual users with userAgent for device splitting
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-            userAgent: visitorLog.userAgent,
-            tutorialOn: userData.tutorialOn,
-          })
-          .from(visitorLog)
-          .innerJoin(historicalIp, eq(historicalIp.ipHash, visitorLog.ipHash))
-          .innerJoin(userData, eq(userData.userId, historicalIp.userId))
-          .where(
-            and(
-              ...(visitorWhere.length > 0 ? visitorWhere : []),
-              eq(userData.isAi, false),
-              gte(userData.createdAt, visitorLog.createdAt),
-              ne(userData.rank, "STUDENT"),
-              ne(userData.rank, "GENIN"),
-            ),
-          ),
+        selectVisitorLogForGetRecruitmentMainMetrics4(ctx.drizzle, visitorWhere),
         // pvpSignupsRow: fetch individual users with userAgent for device splitting
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-            userAgent: visitorLog.userAgent,
-          })
-          .from(visitorLog)
-          .innerJoin(historicalIp, eq(historicalIp.ipHash, visitorLog.ipHash))
-          .innerJoin(userData, eq(userData.userId, historicalIp.userId))
-          .where(
-            and(
-              ...(visitorWhere.length > 0 ? visitorWhere : []),
-              eq(userData.isAi, false),
-              gte(userData.createdAt, visitorLog.createdAt),
-              gt(userData.pvpFights, 0),
-            ),
-          ),
+        selectVisitorLogForGetRecruitmentMainMetrics5(ctx.drizzle, visitorWhere),
         // tutorialFinishedSignupsRow: fetch individual users with userAgent for device splitting
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-            userAgent: visitorLog.userAgent,
-          })
-          .from(visitorLog)
-          .innerJoin(historicalIp, eq(historicalIp.ipHash, visitorLog.ipHash))
-          .innerJoin(userData, eq(userData.userId, historicalIp.userId))
-          .where(
-            and(
-              ...(visitorWhere.length > 0 ? visitorWhere : []),
-              eq(userData.isAi, false),
-              gte(userData.createdAt, visitorLog.createdAt),
-              gte(userData.tutorialStep, TUTORIAL_STEPS_COUNT),
-              lt(userData.tutorialStep, 100),
-            ),
-          ),
+        selectVisitorLogForGetRecruitmentMainMetrics6(ctx.drizzle, visitorWhere),
         // totalRevenueRow: fetch individual transactions with userAgent for device splitting
-        ctx.drizzle
-          .select({
-            amount: paypalTransaction.amount,
-            userAgent: visitorLog.userAgent,
-            userId: userData.userId,
-            userCreatedAt: userData.createdAt,
-            transactionCreatedAt: paypalTransaction.createdAt,
-          })
-          .from(paypalTransaction)
-          .innerJoin(userData, eq(paypalTransaction.createdById, userData.userId))
-          .innerJoin(historicalIp, eq(historicalIp.userId, userData.userId))
-          .innerJoin(visitorLog, eq(visitorLog.ipHash, historicalIp.ipHash))
-          .where(
-            and(
-              ...(input.utmSource && input.utmSource.length > 0
-                ? [eq(visitorLog.utmSource, input.utmSource)]
-                : [isNotNull(visitorLog.utmSource)]),
-              inArray(paypalTransaction.status, ["COMPLETED", "REVIEW_REQUIRED"]),
-              eq(userData.isAi, false),
-              gte(userData.createdAt, visitorLog.createdAt),
-            ),
-          ),
+        selectPaypalTransactionForGetRecruitmentMainMetrics(ctx.drizzle, input),
         // allTimeSignupsForValue: all-time signups count for signupValueUsd (no time filter, only utmSource)
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-          })
-          .from(visitorLog)
-          .innerJoin(historicalIp, eq(historicalIp.ipHash, visitorLog.ipHash))
-          .leftJoin(userData, eq(userData.userId, historicalIp.userId))
-          .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-          .where(
-            and(
-              input.utmSource && input.utmSource.length > 0
-                ? eq(visitorLog.utmSource, input.utmSource)
-                : ne(visitorLog.utmSource, ""),
-              eq(userData.isAi, false),
-              lt(userData.tutorialStep, 100),
-              gte(userData.createdAt, visitorLog.createdAt),
-              ...(input.utmSource && input.utmSource.length > 0
-                ? [eq(referralSource.source, input.utmSource)]
-                : []),
-            ),
-          ),
+        selectVisitorLogForGetRecruitmentMainMetrics7(ctx.drizzle, input),
         // quests: Fetch quest data to get objective descriptions
         input.questFunnels && input.questFunnels.length > 0
-          ? ctx.drizzle
-              .select({
-                id: quest.id,
-                content: quest.content,
-              })
-              .from(quest)
-              .where(inArray(quest.id, input.questFunnels))
+          ? selectQuestForGetRecruitmentMainMetrics(ctx.drizzle, {
+              questFunnels: input.questFunnels,
+            })
           : Promise.resolve([]),
         // completedQuests: Fetch completed quest history for all signup users
         input.questFunnels && input.questFunnels.length > 0
-          ? ctx.drizzle
-              .select({
-                userId: questHistory.userId,
-                questId: questHistory.questId,
-              })
-              .from(questHistory)
-              .innerJoin(userData, eq(userData.userId, questHistory.userId))
-              .innerJoin(historicalIp, eq(historicalIp.userId, userData.userId))
-              .innerJoin(visitorLog, eq(visitorLog.ipHash, historicalIp.ipHash))
-              .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-              .where(
-                and(
-                  ...(visitorWhere.length > 0 ? visitorWhere : []),
-                  eq(userData.isAi, false),
-                  lt(userData.tutorialStep, 100),
-                  gte(userData.createdAt, visitorLog.createdAt),
-                  ...(input.utmSource && input.utmSource.length > 0
-                    ? [eq(referralSource.source, input.utmSource)]
-                    : []),
-                  inArray(questHistory.questId, input.questFunnels),
-                  eq(questHistory.completed, 1),
-                ),
-              )
+          ? selectQuestHistoryForGetRecruitmentMainMetrics(ctx.drizzle, visitorWhere, {
+              utmSource: input.utmSource,
+              questFunnels: input.questFunnels,
+            })
           : Promise.resolve([]),
         // tierQuests: Fetch all tier quests ordered by tierLevel
-        ctx.drizzle
-          .select({
-            id: quest.id,
-            name: quest.name,
-            description: quest.description,
-            tierLevel: quest.tierLevel,
-          })
-          .from(quest)
-          .where(eq(quest.questType, "tier"))
-          .orderBy(asc(quest.tierLevel)),
+        selectQuestForGetRecruitmentMainMetrics2(ctx.drizzle),
         // completedTierQuests: Fetch completed tier quests for users who finished tutorial
-        ctx.drizzle
-          .select({
-            odUserId: userData.userId,
-            questId: questHistory.questId,
-          })
-          .from(questHistory)
-          .innerJoin(userData, eq(userData.userId, questHistory.userId))
-          .innerJoin(historicalIp, eq(historicalIp.userId, userData.userId))
-          .innerJoin(visitorLog, eq(visitorLog.ipHash, historicalIp.ipHash))
-          .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-          .innerJoin(quest, eq(quest.id, questHistory.questId))
-          .where(
-            and(
-              ...(visitorWhere.length > 0 ? visitorWhere : []),
-              eq(userData.isAi, false),
-              lt(userData.tutorialStep, 100),
-              gte(userData.createdAt, visitorLog.createdAt),
-              gte(userData.tutorialStep, TUTORIAL_STEPS_COUNT),
-              // By default exclude users who disabled the tutorial
-              ...(input.includeTierTutorialDisabled
-                ? []
-                : [ne(userData.tutorialOn, false)]),
-              ...(input.utmSource && input.utmSource.length > 0
-                ? [eq(referralSource.source, input.utmSource)]
-                : []),
-              eq(quest.questType, "tier"),
-              eq(questHistory.completed, 1),
-            ),
-          ),
+        selectQuestHistoryForGetRecruitmentMainMetrics2(
+          ctx.drizzle,
+          visitorWhere,
+          input,
+        ),
       ]);
 
       // Create mutable versions for filtering
@@ -703,11 +520,7 @@ export const dataRouter = createTRPCRouter({
       return [];
     }
     // Query
-    const rows = await ctx.drizzle
-      .selectDistinct({ source: referralSource.source })
-      .from(referralSource)
-      .where(ne(referralSource.source, ""))
-      .orderBy(asc(referralSource.source));
+    const rows = await selectDistinctReferralSourceForGetReferralSources(ctx.drizzle);
     const base = rows.map((r) => r.source);
     const set = new Set(base);
     set.add("Dynamic");
@@ -746,18 +559,10 @@ export const dataRouter = createTRPCRouter({
         whereConditions.push(lte(paypalTransaction.createdAt, new Date(input.endDate)));
 
       // Query revenue grouped by utmSource using visitorLog tracking
-      const rows = await ctx.drizzle
-        .select({
-          source: visitorLog.utmSource,
-          totalUsd: sql`SUM(${paypalTransaction.amount})`.mapWith(Number),
-        })
-        .from(paypalTransaction)
-        .innerJoin(userData, eq(paypalTransaction.createdById, userData.userId))
-        .innerJoin(historicalIp, eq(historicalIp.userId, userData.userId))
-        .innerJoin(visitorLog, eq(visitorLog.ipHash, historicalIp.ipHash))
-        .where(and(...whereConditions))
-        .groupBy(visitorLog.utmSource)
-        .orderBy(asc(visitorLog.utmSource));
+      const rows = await selectPaypalTransactionForGetRevenueByReferralSource(
+        ctx.drizzle,
+        whereConditions,
+      );
 
       return rows.map((r) => ({
         source: r.source ?? "",
@@ -878,96 +683,53 @@ export const dataRouter = createTRPCRouter({
       // Referred users from various sources
       const realPromise = wantReal
         ? metric !== "completedQuests"
-          ? ctx.drizzle
-              .select({
-                source: referralSource.source,
-                level: clampedExpr,
-                count: sql`COUNT(${userData.userId})`.mapWith(Number),
-              })
-              .from(userData)
-              .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-              .where(and(...realWhere))
-              .groupBy(referralSource.source, clampedExpr)
-              .orderBy(asc(referralSource.source), asc(clampedExpr))
-          : ctx.drizzle
-              .select({
-                source: referralSource.source,
-                level:
-                  sql<number>`COALESCE(SUM(CASE WHEN ${questHistory.completed} = 1 THEN 1 ELSE 0 END), 0)`.mapWith(
-                    Number,
-                  ),
-                userId: userData.userId,
-              })
-              .from(userData)
-              .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-              .leftJoin(questHistory, eq(questHistory.userId, userData.userId))
-              .where(and(...realWhere))
-              .groupBy(referralSource.source, userData.userId)
-              .then((rows) =>
-                aggregateCountsBySource(
-                  rows as { source: string; level: number; userId: string }[],
-                ),
-              )
+          ? selectUserDataForGetRecruitmentLevelDistribution(
+              ctx.drizzle,
+              clampedExpr,
+              realWhere,
+            )
+          : selectUserDataForGetRecruitmentLevelDistribution2(
+              ctx.drizzle,
+              realWhere,
+            ).then((rows) =>
+              aggregateCountsBySource(
+                rows as { source: string; level: number; userId: string }[],
+              ),
+            )
         : Promise.resolve([] as { source: string; level: number; count: number }[]);
 
       // Dynamic signups (non recruited or from referral sources)
       const dynPromise =
         !selected || wantsDynamic
           ? metric !== "completedQuests"
-            ? ctx.drizzle
-                .select({
-                  level: clampedExpr,
-                  count: sql`COUNT(${userData.userId})`.mapWith(Number),
-                })
-                .from(userData)
-                .where(and(...dynamicWhere))
-                .groupBy(clampedExpr)
-                .orderBy(asc(clampedExpr))
-            : ctx.drizzle
-                .select({
-                  level:
-                    sql<number>`COALESCE(SUM(CASE WHEN ${questHistory.completed} = 1 THEN 1 ELSE 0 END), 0)`.mapWith(
-                      Number,
-                    ),
-                  userId: userData.userId,
-                })
-                .from(userData)
-                .leftJoin(questHistory, eq(questHistory.userId, userData.userId))
-                .where(and(...dynamicWhere))
-                .groupBy(userData.userId)
-                .then((rows) =>
-                  aggregateCounts(rows as { level: number; userId: string }[]),
-                )
+            ? selectUserDataForGetRecruitmentLevelDistribution3(
+                ctx.drizzle,
+                clampedExpr,
+                dynamicWhere,
+              )
+            : selectUserDataForGetRecruitmentLevelDistribution4(
+                ctx.drizzle,
+                dynamicWhere,
+              ).then((rows) =>
+                aggregateCounts(rows as { level: number; userId: string }[]),
+              )
           : Promise.resolve([] as { level: number; count: number }[]);
 
       // Recruited users
       const recruitedPromise =
         !selected || wantsRecruited
           ? metric !== "completedQuests"
-            ? ctx.drizzle
-                .select({
-                  level: clampedExpr,
-                  count: sql`COUNT(${userData.userId})`.mapWith(Number),
-                })
-                .from(userData)
-                .where(and(...recruitedWhere))
-                .groupBy(clampedExpr)
-                .orderBy(asc(clampedExpr))
-            : ctx.drizzle
-                .select({
-                  level:
-                    sql<number>`COALESCE(SUM(CASE WHEN ${questHistory.completed} = 1 THEN 1 ELSE 0 END), 0)`.mapWith(
-                      Number,
-                    ),
-                  userId: userData.userId,
-                })
-                .from(userData)
-                .leftJoin(questHistory, eq(questHistory.userId, userData.userId))
-                .where(and(...recruitedWhere))
-                .groupBy(userData.userId)
-                .then((rows) =>
-                  aggregateCounts(rows as { level: number; userId: string }[]),
-                )
+            ? selectUserDataForGetRecruitmentLevelDistribution3(
+                ctx.drizzle,
+                clampedExpr,
+                recruitedWhere,
+              )
+            : selectUserDataForGetRecruitmentLevelDistribution4(
+                ctx.drizzle,
+                recruitedWhere,
+              ).then((rows) =>
+                aggregateCounts(rows as { level: number; userId: string }[]),
+              )
           : Promise.resolve([] as { level: number; count: number }[]);
 
       const [rows, dynamicRows, recruitedRows] = await Promise.all([
@@ -1021,48 +783,15 @@ export const dataRouter = createTRPCRouter({
       const dayExpr = sql<string>`CAST(${userData.createdAt} AS DATE)`;
 
       // No selection: only users with any referral source (historical behavior)
-      const rows = await ctx.drizzle
-        .select({
-          day: dayExpr,
-          mean: sql`AVG(${userData.level})`.mapWith(Number),
-          std: sql`STDDEV_SAMP(${userData.level})`.mapWith(Number),
-          count: sql`COUNT(${userData.userId})`.mapWith(Number),
-        })
-        .from(userData)
-        .leftJoin(referralSource, eq(referralSource.userId, userData.userId))
-        .where(
-          selected
-            ? and(
-                eq(userData.isAi, false),
-                ...(input.startDate
-                  ? [gte(userData.createdAt, new Date(input.startDate))]
-                  : []),
-                ...(input.endDate
-                  ? [lte(userData.createdAt, new Date(input.endDate))]
-                  : []),
-                or(
-                  ...(realSources && realSources.length > 0
-                    ? [inArray(referralSource.source, realSources)]
-                    : []),
-                  ...(wantsDynamic ? [sql`(${referralSource.userId} IS NULL)`] : []),
-                  ...(wantsRecruited
-                    ? [sql`(${userData.recruiterId} IS NOT NULL)`]
-                    : []),
-                ),
-              )
-            : and(
-                eq(userData.isAi, false),
-                ...(input.startDate
-                  ? [gte(userData.createdAt, new Date(input.startDate))]
-                  : []),
-                ...(input.endDate
-                  ? [lte(userData.createdAt, new Date(input.endDate))]
-                  : []),
-                sql`${referralSource.userId} IS NOT NULL`,
-              ),
-        )
-        .groupBy(dayExpr)
-        .orderBy(asc(dayExpr));
+      const rows = await selectUserDataForGetRecruitmentDailyLevelStats(
+        ctx.drizzle,
+        dayExpr,
+        selected,
+        input,
+        realSources,
+        wantsDynamic,
+        wantsRecruited,
+      );
       return rows.map((r) => ({
         date: r.day as unknown as string,
         mean: Number(r.mean ?? 0),
@@ -1110,17 +839,11 @@ export const dataRouter = createTRPCRouter({
       }
 
       const realPromise = wantReal
-        ? ctx.drizzle
-            .select({
-              day: dayExpr,
-              source: referralSource.source,
-              count: sql`COUNT(${userData.userId})`.mapWith(Number),
-            })
-            .from(userData)
-            .innerJoin(referralSource, eq(referralSource.userId, userData.userId))
-            .where(and(...realWhere))
-            .groupBy(dayExpr, referralSource.source)
-            .orderBy(asc(dayExpr), asc(referralSource.source))
+        ? selectUserDataForGetRecruitmentDailyCountsBySource(
+            ctx.drizzle,
+            dayExpr,
+            realWhere,
+          )
         : Promise.resolve(
             [] as { day: Date | string; source: string; count: number }[],
           );
@@ -1128,51 +851,20 @@ export const dataRouter = createTRPCRouter({
       // Dynamic series
       const dynPromise =
         !selected || wantsDynamic
-          ? ctx.drizzle
-              .select({
-                day: dayExpr,
-                count: sql`COUNT(${userData.userId})`.mapWith(Number),
-              })
-              .from(userData)
-              .where(
-                and(
-                  eq(userData.isAi, false),
-                  sql`${userData.recruiterId} IS NULL`,
-                  sql`NOT EXISTS(SELECT 1 FROM ${referralSource} rs2 WHERE rs2.userId = ${userData.userId})`,
-                  ...(input.startDate
-                    ? [gte(userData.createdAt, new Date(input.startDate))]
-                    : []),
-                  ...(input.endDate
-                    ? [lte(userData.createdAt, new Date(input.endDate))]
-                    : []),
-                ),
-              )
-              .groupBy(dayExpr)
-              .orderBy(asc(dayExpr))
+          ? selectUserDataForGetRecruitmentDailyCountsBySource2(
+              ctx.drizzle,
+              dayExpr,
+              input,
+            )
           : Promise.resolve([] as { day: Date | string; count: number }[]);
 
       const recPromise =
         !selected || wantsRecruited
-          ? ctx.drizzle
-              .select({
-                day: dayExpr,
-                count: sql`COUNT(${userData.userId})`.mapWith(Number),
-              })
-              .from(userData)
-              .where(
-                and(
-                  eq(userData.isAi, false),
-                  sql`${userData.recruiterId} IS NOT NULL`,
-                  ...(input.startDate
-                    ? [gte(userData.createdAt, new Date(input.startDate))]
-                    : []),
-                  ...(input.endDate
-                    ? [lte(userData.createdAt, new Date(input.endDate))]
-                    : []),
-                ),
-              )
-              .groupBy(dayExpr)
-              .orderBy(asc(dayExpr))
+          ? selectUserDataForGetRecruitmentDailyCountsBySource3(
+              ctx.drizzle,
+              dayExpr,
+              input,
+            )
           : Promise.resolve([] as { day: Date | string; count: number }[]);
 
       const [rows, dynamicRows, recruitedRows] = await Promise.all([
@@ -1228,23 +920,8 @@ export const dataRouter = createTRPCRouter({
       }
       // Delete
       await Promise.all([
-        ctx.drizzle
-          .delete(dataBattleAction)
-          .where(
-            and(
-              eq(dataBattleAction.contentId, input.contentId),
-              eq(dataBattleAction.type, input.type),
-            ),
-          ),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "battleAction",
-          changes: [`Deleted ${input.type} battle action: ${input.contentId}`],
-          relatedId: input.contentId,
-          relatedMsg: `Delete: ${input.contentId}`,
-          relatedImage: null,
-        }),
+        deleteDataBattleActionForDeleteSingleDataBattleAction(ctx.drizzle, input),
+        insertActionLogForDeleteSingleDataBattleAction(ctx.drizzle, ctx, input),
       ]);
       return { success: true, message: "Data battle action deleted" };
     }),
@@ -1260,18 +937,8 @@ export const dataRouter = createTRPCRouter({
       }
       // Delete
       await Promise.all([
-        ctx.drizzle
-          .delete(dataBattleAction)
-          .where(eq(dataBattleAction.type, input.type)),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "battleAction",
-          changes: [`Deleted all ${input.type} battle actions`],
-          relatedId: null,
-          relatedMsg: `Delete: All ${input.type} battle actions`,
-          relatedImage: null,
-        }),
+        deleteDataBattleActionForDeleteAllDataBattleAction(ctx.drizzle, input),
+        insertActionLogForDeleteAllDataBattleAction(ctx.drizzle, ctx, input),
       ]);
       return { success: true, message: "Data battle action deleted" };
     }),
@@ -1316,43 +983,20 @@ export const dataRouter = createTRPCRouter({
       // Run all queries in parallel for efficiency
       const [allBloodlines, userCounts, battleStats] = await Promise.all([
         // Get all bloodlines (filtered by rank/classification if specified)
-        ctx.drizzle
-          .select({
-            id: bloodline.id,
-            name: bloodline.name,
-          })
-          .from(bloodline)
-          .where(
-            bloodlineWhereConditions.length > 0
-              ? and(...bloodlineWhereConditions)
-              : undefined,
-          ),
+        selectBloodlineForGetBloodlineBalanceStatistics(
+          ctx.drizzle,
+          bloodlineWhereConditions,
+        ),
 
         // Get user counts per bloodline
-        ctx.drizzle
-          .select({
-            bloodlineId: userData.bloodlineId,
-            userCount:
-              sql<number>`COUNT(CASE WHEN ${userData.bloodlineId} IS NOT NULL THEN 1 END)`.mapWith(
-                Number,
-              ),
-          })
-          .from(userData)
-          .groupBy(userData.bloodlineId),
+        selectUserDataForGetBloodlineBalanceStatistics(ctx.drizzle),
 
         // Get battle statistics
-        ctx.drizzle
-          .select({
-            name: bloodline.name,
-            bloodlineId: bloodline.id,
-            battleWon: dataBattleAction.battleWon,
-            count: sql`SUM(${dataBattleAction.count})`.mapWith(Number),
-          })
-          .from(dataBattleAction)
-          .innerJoin(bloodline, eq(dataBattleAction.contentId, bloodline.id))
-          .groupBy(bloodline.name, bloodline.id, dataBattleAction.battleWon)
-          .where(and(...whereConditions))
-          .having(gte(sql`SUM(${dataBattleAction.count})`, input.minCount)),
+        selectDataBattleActionForGetBloodlineBalanceStatistics(
+          ctx.drizzle,
+          whereConditions,
+          input,
+        ),
       ]);
 
       // Create maps for quick lookup
@@ -1450,33 +1094,12 @@ export const dataRouter = createTRPCRouter({
 
       // Run equippedCounts and usage queries in parallel for efficiency
       const [equippedCounts, usage] = await Promise.all([
-        ctx.drizzle
-          .select({
-            jutsuId: userJutsu.jutsuId,
-            equippedCount:
-              sql<number>`COUNT(CASE WHEN ${userJutsu.equipped} = 1 THEN 1 END)`.mapWith(
-                Number,
-              ),
-          })
-          .from(userJutsu)
-          .groupBy(userJutsu.jutsuId),
-        ctx.drizzle
-          .select({
-            name: jutsu.name,
-            jutsuId: jutsu.id,
-            battleWon: dataBattleAction.battleWon,
-            count: sql`SUM(${dataBattleAction.count})`.mapWith(Number),
-          })
-          .from(dataBattleAction)
-          .innerJoin(jutsu, eq(dataBattleAction.contentId, jutsu.id))
-          .groupBy(
-            jutsu.name,
-            jutsu.id,
-            dataBattleAction.battleWon,
-            dataBattleAction.battleType,
-          )
-          .where(and(...whereConditions))
-          .having(havingClause),
+        selectUserJutsuForGetJutsuBalanceStatistics(ctx.drizzle),
+        selectDataBattleActionForGetJutsuBalanceStatistics(
+          ctx.drizzle,
+          whereConditions,
+          havingClause,
+        ),
       ]);
 
       // Create a map for quick lookup
@@ -1501,24 +1124,10 @@ export const dataRouter = createTRPCRouter({
       // Build where conditions
       const baseFilters = jutsuDatabaseFilter(input);
       // Fetch results
-      const results = await ctx.drizzle.query.jutsu.findMany({
-        where: and(...baseFilters),
-        with: {
-          bloodline: {
-            columns: {
-              name: true,
-            },
-          },
-        },
-        columns: {
-          id: true,
-          name: true,
-          jutsuType: true,
-          cooldown: true,
-          requiredRank: true,
-          effects: true,
-        },
-      });
+      const results = await listJutsuForGetJutsuEffectsBalanceStatistics(
+        ctx.drizzle,
+        baseFilters,
+      );
       return results.map((jutsu) => ({
         ...jutsu,
         effects: jutsu.effects.filter((effect) => effects.includes(effect.type)),
@@ -1535,17 +1144,10 @@ export const dataRouter = createTRPCRouter({
       // Build where conditions
       const baseFilters = itemDatabaseFilter(input);
       // Fetch results
-      const results = await ctx.drizzle.query.item.findMany({
-        where: and(...baseFilters),
-        columns: {
-          id: true,
-          name: true,
-          itemType: true,
-          rarity: true,
-          slot: true,
-          effects: true,
-        },
-      });
+      const results = await listItemForGetItemEffectsBalanceStatistics(
+        ctx.drizzle,
+        baseFilters,
+      );
       return results.map((item) => ({
         ...item,
         effects: item.effects.filter((effect) => effects.includes(effect.type)),
@@ -1562,23 +1164,10 @@ export const dataRouter = createTRPCRouter({
       // Build where conditions
       const baseFilters = bloodlineDatabaseFilter(input);
       // Fetch results
-      const results = await ctx.drizzle.query.bloodline.findMany({
-        where: and(...baseFilters),
-        with: {
-          village: {
-            columns: {
-              name: true,
-            },
-          },
-        },
-        columns: {
-          id: true,
-          name: true,
-          rank: true,
-          statClassification: true,
-          effects: true,
-        },
-      });
+      const results = await listBloodlineForGetBloodlineEffectsBalanceStatistics(
+        ctx.drizzle,
+        baseFilters,
+      );
       return results.map((bloodline) => ({
         ...bloodline,
         effects: bloodline.effects.filter((effect) => effects.includes(effect.type)),
@@ -1663,27 +1252,10 @@ export const dataRouter = createTRPCRouter({
       const [user, userCounts, skills] = await Promise.all([
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
         // Get user counts per skill
-        ctx.drizzle
-          .select({
-            skillId: userSkill.skillId,
-            userCount: sql`COUNT(${userSkill.userId})`.mapWith(Number),
-          })
-          .from(userSkill)
-          .groupBy(userSkill.skillId),
+        selectUserSkillForGetSkillTreeBalanceStatistics(ctx.drizzle),
 
         // Get all skills (filtered by effects/tiers if specified)
-        ctx.drizzle.query.skillTree.findMany({
-          where: whereConditions.length > 0 ? and(...whereConditions) : undefined,
-          columns: {
-            id: true,
-            name: true,
-            tier: true,
-            costSkillPoints: true,
-            effects: true,
-            hidden: true,
-          },
-          with: { folder: { columns: { hidden: true } } },
-        }),
+        listSkillTreeForGetSkillTreeBalanceStatistics(ctx.drizzle, whereConditions),
       ]);
       const includeHidden = canAccessHiddenSkillTree(user?.role);
 
@@ -1718,18 +1290,7 @@ export const dataRouter = createTRPCRouter({
       // Fetch results
       const [user, results] = await Promise.all([
         fetchSkillTreeViewer(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.skillTree.findMany({
-          where: and(...baseFilters),
-          columns: {
-            id: true,
-            name: true,
-            tier: true,
-            costSkillPoints: true,
-            effects: true,
-            hidden: true,
-          },
-          with: { folder: { columns: { hidden: true } } },
-        }),
+        listSkillTreeForGetSkillTreeEffectsBalanceStatistics(ctx.drizzle, baseFilters),
       ]);
       return results
         .filter((skill) => isSkillVisible(skill, canAccessHiddenSkillTree(user?.role)))
@@ -1776,33 +1337,12 @@ export const dataRouter = createTRPCRouter({
 
       // Run equippedCounts and usage queries in parallel for efficiency
       const [equippedCounts, usage] = await Promise.all([
-        ctx.drizzle
-          .select({
-            itemId: userItem.itemId,
-            equippedCount:
-              sql<number>`COUNT(CASE WHEN ${userItem.equipped} = 1 THEN 1 END)`.mapWith(
-                Number,
-              ),
-          })
-          .from(userItem)
-          .groupBy(userItem.itemId),
-        ctx.drizzle
-          .select({
-            name: item.name,
-            itemId: item.id,
-            battleWon: dataBattleAction.battleWon,
-            count: sql`SUM(${dataBattleAction.count})`.mapWith(Number),
-          })
-          .from(dataBattleAction)
-          .innerJoin(item, eq(dataBattleAction.contentId, item.id))
-          .groupBy(
-            item.name,
-            item.id,
-            dataBattleAction.battleWon,
-            dataBattleAction.battleType,
-          )
-          .where(and(...whereConditions))
-          .having(havingClause),
+        selectUserItemForGetItemBalanceStatistics(ctx.drizzle),
+        selectDataBattleActionForGetItemBalanceStatistics(
+          ctx.drizzle,
+          whereConditions,
+          havingClause,
+        ),
       ]);
 
       // Create a map for quick lookup
@@ -1856,22 +1396,11 @@ export const dataRouter = createTRPCRouter({
 
       // Run battleCounts and usage queries in parallel for efficiency
       const [usage] = await Promise.all([
-        ctx.drizzle
-          .select({
-            name: sql<string>`CONCAT(${userData.username}, ' - lvl', ${userData.level})`,
-            aiUserId: userData.userId,
-            battleWon: dataBattleAction.battleWon,
-            count: sql`SUM(${dataBattleAction.count})`.mapWith(Number),
-          })
-          .from(dataBattleAction)
-          .innerJoin(userData, eq(dataBattleAction.contentId, userData.userId))
-          .groupBy(
-            userData.userId,
-            dataBattleAction.battleWon,
-            dataBattleAction.battleType,
-          )
-          .where(and(...whereConditions))
-          .having(havingClause),
+        selectDataBattleActionForGetAiBalanceStatistics(
+          ctx.drizzle,
+          whereConditions,
+          havingClause,
+        ),
       ]);
 
       // Add battle count to each result
@@ -1920,17 +1449,11 @@ export const dataRouter = createTRPCRouter({
       const havingClause = gte(sql`SUM(${logBattleLengths.count})`, input.minCount);
 
       // Fetch battle length data
-      const battleLengthsRaw = await ctx.drizzle
-        .select({
-          battleType: logBattleLengths.battleType,
-          rounds: logBattleLengths.rounds,
-          count: sql`SUM(${logBattleLengths.count})`.mapWith(Number),
-        })
-        .from(logBattleLengths)
-        .groupBy(logBattleLengths.battleType, logBattleLengths.rounds)
-        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-        .having(havingClause)
-        .orderBy(asc(logBattleLengths.rounds));
+      const battleLengthsRaw = await selectLogBattleLengthsForGetBattleLengthStatistics(
+        ctx.drizzle,
+        whereConditions,
+        havingClause,
+      );
 
       // Normalize counts per battleType
       const totalCountsByType = battleLengthsRaw.reduce<Record<string, number>>(
@@ -1971,17 +1494,11 @@ export const dataRouter = createTRPCRouter({
       const havingClause = gte(sql`SUM(${logQueueLengths.count})`, input.minCount);
 
       // Fetch queue length data
-      const queueLengths = await ctx.drizzle
-        .select({
-          rankedRank: logQueueLengths.rankedRank,
-          ceiledMinutes: logQueueLengths.ceiledMinutes,
-          count: sql`SUM(${logQueueLengths.count})`.mapWith(Number),
-        })
-        .from(logQueueLengths)
-        .groupBy(logQueueLengths.rankedRank, logQueueLengths.ceiledMinutes)
-        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined)
-        .having(havingClause)
-        .orderBy(asc(logQueueLengths.ceiledMinutes));
+      const queueLengths = await selectLogQueueLengthsForGetQueueLengthStatistics(
+        ctx.drizzle,
+        whereConditions,
+        havingClause,
+      );
 
       return queueLengths;
     }),
@@ -1996,16 +1513,8 @@ export const dataRouter = createTRPCRouter({
       }
       // Delete
       await Promise.all([
-        ctx.drizzle.delete(logBattleLengths),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "battleLengths",
-          changes: ["Cleared all battle length data"],
-          relatedId: null,
-          relatedMsg: "Clear: All battle length data",
-          relatedImage: null,
-        }),
+        deleteLogBattleLengthsForClearAllBattleLengths(ctx.drizzle),
+        insertActionLogForClearAllBattleLengths(ctx.drizzle, ctx),
       ]);
       return { success: true, message: "All battle length data cleared" };
     }),
@@ -2020,16 +1529,8 @@ export const dataRouter = createTRPCRouter({
       }
       // Delete
       await Promise.all([
-        ctx.drizzle.delete(logQueueLengths),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "queueLengths",
-          changes: ["Cleared all queue length data"],
-          relatedId: null,
-          relatedMsg: "Clear: All queue length data",
-          relatedImage: null,
-        }),
+        deleteLogQueueLengthsForClearAllQueueLengths(ctx.drizzle),
+        insertActionLogForClearAllQueueLengths(ctx.drizzle, ctx),
       ]);
       return { success: true, message: "All queue length data cleared" };
     }),
@@ -2057,75 +1558,27 @@ export const dataRouter = createTRPCRouter({
 
       // Fetch ranked loadout data with content names
       const [jutsuPicks, itemPicks, consumablePicks] = await Promise.all([
-        ctx.drizzle
-          .select({
-            type: logRankedPicks.type,
-            contentId: logRankedPicks.contentId,
-            battleType: logRankedPicks.battleType,
-            count: sql`SUM(${logRankedPicks.count})`.mapWith(Number),
-            name: jutsu.name,
-          })
-          .from(logRankedPicks)
-          .innerJoin(jutsu, eq(logRankedPicks.contentId, jutsu.id))
-          .where(
-            and(
-              eq(logRankedPicks.type, "jutsu"),
-              typeConditions,
-              nameConditions
-                ? sql`LOWER(${jutsu.name}) LIKE LOWER(${`%${input.name}%`})`
-                : undefined,
-            ),
-          )
-          .groupBy(logRankedPicks.contentId, logRankedPicks.battleType)
-          .having(havingClause)
-          .orderBy(sql`SUM(${logRankedPicks.count}) DESC`)
-          .limit(input.limit),
-        ctx.drizzle
-          .select({
-            type: logRankedPicks.type,
-            contentId: logRankedPicks.contentId,
-            battleType: logRankedPicks.battleType,
-            count: sql`SUM(${logRankedPicks.count})`.mapWith(Number),
-            name: item.name,
-          })
-          .from(logRankedPicks)
-          .innerJoin(item, eq(logRankedPicks.contentId, item.id))
-          .where(
-            and(
-              eq(logRankedPicks.type, "item"),
-              typeConditions,
-              nameConditions
-                ? sql`LOWER(${item.name}) LIKE LOWER(${`%${input.name}%`})`
-                : undefined,
-            ),
-          )
-          .groupBy(logRankedPicks.contentId, logRankedPicks.battleType)
-          .having(havingClause)
-          .orderBy(sql`SUM(${logRankedPicks.count}) DESC`)
-          .limit(input.limit),
-        ctx.drizzle
-          .select({
-            type: logRankedPicks.type,
-            contentId: logRankedPicks.contentId,
-            battleType: logRankedPicks.battleType,
-            count: sql`SUM(${logRankedPicks.count})`.mapWith(Number),
-            name: item.name,
-          })
-          .from(logRankedPicks)
-          .innerJoin(item, eq(logRankedPicks.contentId, item.id))
-          .where(
-            and(
-              eq(logRankedPicks.type, "consumable"),
-              typeConditions,
-              nameConditions
-                ? sql`LOWER(${item.name}) LIKE LOWER(${`%${input.name}%`})`
-                : undefined,
-            ),
-          )
-          .groupBy(logRankedPicks.contentId, logRankedPicks.battleType)
-          .having(havingClause)
-          .orderBy(sql`SUM(${logRankedPicks.count}) DESC`)
-          .limit(input.limit),
+        selectLogRankedPicksForGetRankedLoadoutStatistics(
+          ctx.drizzle,
+          typeConditions,
+          nameConditions,
+          input,
+          havingClause,
+        ),
+        selectLogRankedPicksForGetRankedLoadoutStatistics2(
+          ctx.drizzle,
+          typeConditions,
+          nameConditions,
+          input,
+          havingClause,
+        ),
+        selectLogRankedPicksForGetRankedLoadoutStatistics3(
+          ctx.drizzle,
+          typeConditions,
+          nameConditions,
+          input,
+          havingClause,
+        ),
       ]);
 
       // Combine all results and sort by count
@@ -2155,21 +1608,10 @@ export const dataRouter = createTRPCRouter({
       // Get top players LP for rank calculation
       const [topPlayersLPArray, users] = await Promise.all([
         fetchSanninRankedPlayers(ctx.drizzle),
-        ctx.drizzle
-          .select({
-            userId: userData.userId,
-            username: userData.username,
-            rankedLp: userData.rankedLp,
-            level: userData.level,
-            villageId: userData.villageId,
-          })
-          .from(userData)
-          .where(
-            and(
-              eq(userData.isAi, false),
-              whereConditions.length > 0 ? and(...whereConditions) : undefined,
-            ),
-          ),
+        selectUserDataForGetRankedRankDistributionStatistics(
+          ctx.drizzle,
+          whereConditions,
+        ),
       ]);
 
       // Calculate ranks for each user and ignore Unranked players
@@ -2210,17 +1652,10 @@ export const dataRouter = createTRPCRouter({
       if (input.questTypes && input.questTypes.length > 0)
         whereConditions.push(inArray(quest.questType, input.questTypes));
 
-      const rows = await ctx.drizzle
-        .select({
-          id: quest.id,
-          name: quest.name,
-          questRank: quest.questRank,
-          questType: quest.questType,
-          requiredLevel: quest.requiredLevel,
-          content: quest.content,
-        })
-        .from(quest)
-        .where(whereConditions.length > 0 ? and(...whereConditions) : undefined);
+      const rows = await selectQuestForGetQuestRewardStatistics(
+        ctx.drizzle,
+        whereConditions,
+      );
 
       const metric = input.reward;
       return rows.map((q) => {
@@ -2255,72 +1690,32 @@ export const dataRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       // General User Statistics
-      const usage = await ctx.drizzle
-        .select({
-          battleWon: dataBattleAction.battleWon,
-          battleType: dataBattleAction.battleType,
-          count: sql`COUNT(${dataBattleAction.id})`.mapWith(Number),
-        })
-        .from(dataBattleAction)
-        .groupBy(dataBattleAction.battleWon, dataBattleAction.battleType)
-        .where(
-          and(
-            eq(dataBattleAction.contentId, input.id),
-            ...(input.battleType
-              ? [eq(dataBattleAction.battleType, input.battleType)]
-              : []),
-            ...(input.startDate
-              ? [gte(dataBattleAction.createdAt, new Date(input.startDate))]
-              : []),
-            ...(input.endDate
-              ? [lte(dataBattleAction.createdAt, new Date(input.endDate))]
-              : []),
-          ),
-        );
+      const usage = await selectDataBattleActionForGetStatistics(ctx.drizzle, input);
       // Process different inputs
       if (input.type === "jutsu") {
         // Jutsu Statistics
         const info = await fetchJutsu(ctx.drizzle, input.id);
-        const levelDistribution = await ctx.drizzle
-          .select({
-            level: userJutsu.level,
-            count: sql`COUNT(${userJutsu.userId})`.mapWith(Number),
-          })
-          .from(userJutsu)
-          .groupBy(userJutsu.level)
-          .where(eq(userJutsu.jutsuId, input.id))
-          .orderBy(asc(userJutsu.level));
-        const total = await ctx.drizzle
-          .select({ count: sql`count(*)`.mapWith(Number) })
-          .from(userJutsu)
-          .where(eq(userJutsu.jutsuId, input.id));
+        const levelDistribution = await selectUserJutsuForGetStatistics(
+          ctx.drizzle,
+          input,
+        );
+        const total = await selectUserJutsuForGetStatistics2(ctx.drizzle, input);
         const totalUsers = total?.[0]?.count || 0;
         return { info, usage, totalUsers, levelDistribution };
       } else if (input.type === "bloodline") {
         // Bloodline Statistics
         const info = await fetchBloodline(ctx.drizzle, input.id);
-        const levelDistribution = await ctx.drizzle
-          .select({
-            level: userData.level,
-            count: sql`COUNT(${userData.userId})`.mapWith(Number),
-          })
-          .from(userData)
-          .groupBy(userData.level)
-          .where(eq(userData.bloodlineId, input.id))
-          .orderBy(asc(userData.level));
-        const total = await ctx.drizzle
-          .select({ count: sql`count(*)`.mapWith(Number) })
-          .from(userData)
-          .where(eq(userData.bloodlineId, input.id));
+        const levelDistribution = await selectUserDataForGetStatistics(
+          ctx.drizzle,
+          input,
+        );
+        const total = await selectUserDataForGetStatistics2(ctx.drizzle, input);
         const totalUsers = total?.[0]?.count || 0;
         return { info, usage, totalUsers, levelDistribution };
       } else if (input.type === "item") {
         // Item Statistics
         const info = await fetchItem(ctx.drizzle, input.id);
-        const total = await ctx.drizzle
-          .select({ count: sql`count(*)`.mapWith(Number) })
-          .from(userItem)
-          .where(eq(userItem.id, input.id));
+        const total = await selectUserItemForGetStatistics(ctx.drizzle, input);
         const totalUsers = total?.[0]?.count || 0;
         return { info, usage, totalUsers, levelDistribution: null };
       } else if (input.type === "ai") {

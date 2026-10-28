@@ -1,16 +1,19 @@
-import { and, count, eq, gte, lt, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import {
-  abEvent,
-  type BountyContribution,
-  bounty,
-  bountyContribution,
-  bountySignup,
-  userData,
-  visitorLog,
-} from "@/drizzle/schema";
+import type { BountyContribution } from "@/drizzle/schema";
 import { handleEndpointError, lockWithHourlyTimer } from "@/libs/gamesettings";
+import {
+  deleteBountyContributions,
+  deleteBountySignups,
+  listBountyContributions,
+  listBountyForBountyExpire,
+  updateBountyForBountyExpire,
+} from "@/queries/bounty";
+import {
+  deleteAbEventForDeleteExpiredVisitorAnalytics,
+  deleteVisitorLogForDeleteExpiredVisitorAnalytics,
+} from "@/queries/data";
+import { countUsersActiveInLastDay, incrementUserMoney } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { accrueVillageStructureMaintenance } from "@/server/utils/villageMaintenance";
@@ -63,12 +66,7 @@ export async function GET(request: Request) {
 const bountyExpire = async () => {
   // Find bounties that are OPEN and older than 1 week
   const oneWeekAgo = new Date(Date.now() - ONE_WEEK_MS);
-  const expiredBounties = await drizzleDB.query.bounty.findMany({
-    where: and(eq(bounty.status, "OPEN"), lt(bounty.createdAt, oneWeekAgo)),
-    with: {
-      hunters: true,
-    },
-  });
+  const expiredBounties = await listBountyForBountyExpire(drizzleDB, oneWeekAgo);
 
   if (expiredBounties.length === 0) {
     return expiredBounties;
@@ -78,34 +76,26 @@ const bountyExpire = async () => {
   await Promise.all(
     expiredBounties.map(async (expiredBounty: (typeof expiredBounties)[number]) => {
       // Get all contributions for this bounty
-      const contributions = await drizzleDB.query.bountyContribution.findMany({
-        where: eq(bountyContribution.bountyId, expiredBounty.id),
-      });
+      const contributions = await listBountyContributions(drizzleDB, expiredBounty.id);
 
       // Execute all mutations in parallel for each bounty
       await Promise.all([
         // Update bounty status to EXPIRED
-        drizzleDB
-          .update(bounty)
-          .set({ status: "EXPIRED" })
-          .where(eq(bounty.id, expiredBounty.id)),
+        updateBountyForBountyExpire(drizzleDB, expiredBounty),
 
         // Remove all hunter signups for this bounty
-        drizzleDB
-          .delete(bountySignup)
-          .where(eq(bountySignup.bountyId, expiredBounty.id)),
+        deleteBountySignups(drizzleDB, expiredBounty.id),
 
         // Remove all contributions for this bounty
-        drizzleDB
-          .delete(bountyContribution)
-          .where(eq(bountyContribution.bountyId, expiredBounty.id)),
+        deleteBountyContributions(drizzleDB, expiredBounty.id),
 
         // Refund all contributors their money
         ...contributions.map((contribution: BountyContribution) =>
-          drizzleDB
-            .update(userData)
-            .set({ money: sql`${userData.money} + ${contribution.amountRyo}` })
-            .where(eq(userData.userId, contribution.contributorUserId)),
+          incrementUserMoney(
+            drizzleDB,
+            contribution.amountRyo,
+            contribution.contributorUserId,
+          ),
         ),
       ]);
     }),
@@ -117,10 +107,7 @@ const dailyActivePlayers = async (
   timerCheck: Awaited<ReturnType<typeof lockWithHourlyTimer>>,
 ) => {
   // Count users active in the last 24 hours (updatedAt within last 24 hours)
-  const result = await drizzleDB
-    .select({ count: count() })
-    .from(userData)
-    .where(gte(userData.updatedAt, secondsFromNow(-3600 * 24))); // 24 hours = 3600 * 24 seconds
+  const result = await countUsersActiveInLastDay(drizzleDB); // 24 hours = 3600 * 24 seconds
 
   const activeCount = result?.[0]?.count ?? 0;
 
@@ -136,8 +123,8 @@ const dailyActivePlayers = async (
 const deleteExpiredVisitorAnalytics = async () => {
   const cutoff = secondsFromNow(-VISITOR_ANALYTICS_RETENTION_S);
   const [visits, abEvents] = await Promise.all([
-    drizzleDB.delete(visitorLog).where(lt(visitorLog.createdAt, cutoff)),
-    drizzleDB.delete(abEvent).where(lt(abEvent.createdAt, cutoff)),
+    deleteVisitorLogForDeleteExpiredVisitorAnalytics(drizzleDB, cutoff),
+    deleteAbEventForDeleteExpiredVisitorAnalytics(drizzleDB, cutoff),
   ]);
   return { visits: visits.rowsAffected, abEvents: abEvents.rowsAffected };
 };

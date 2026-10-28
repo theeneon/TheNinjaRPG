@@ -1,16 +1,21 @@
 import * as Sentry from "@sentry/nextjs";
 import { TRPCError } from "@trpc/server";
 import { getHTTPStatusCodeFromError } from "@trpc/server/http";
-import { and, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   DMG_SETTING_DEFAULTS,
   DMG_SETTING_NAMES,
-  PET_ART_PROVIDER_SETTING,
   PetArtProviders,
 } from "@/drizzle/constants";
-import { gameSetting } from "@/drizzle/schema";
 import type { DmgConfig } from "@/libs/combat/constants";
+import {
+  findGameSettingByName,
+  findGameSettingForFetchPetArtProvider,
+  insertGameSettings,
+  selectGameSettingForFetchDmgConfig,
+  updateGameSettingForUpdate,
+  updateGameSettingForUpdateGameSetting,
+} from "@/queries/gamesettings";
 import type { DrizzleClient } from "@/server/db";
 import {
   addDays,
@@ -28,12 +33,10 @@ import {
  * @returns The game setting for the specified timer name.
  */
 export const getGameSetting = async (client: DrizzleClient, name: string) => {
-  let setting = await client.query.gameSetting.findFirst({
-    where: eq(gameSetting.name, name),
-  });
+  let setting = await findGameSettingByName(client, name);
   if (!setting) {
     setting = { id: nanoid(), name: name, time: addDays(new Date(), -30), value: 0 };
-    await client.insert(gameSetting).values(setting);
+    await insertGameSettings(client, [setting]);
   }
   return setting;
 };
@@ -53,10 +56,7 @@ export const updateGameSetting = async (
   time: Date,
 ) => {
   const setting = await getGameSetting(client, settingName);
-  await client
-    .update(gameSetting)
-    .set({ value, time })
-    .where(eq(gameSetting.name, setting.name));
+  await updateGameSettingForUpdateGameSetting(client, value, time, setting);
 };
 
 /**
@@ -72,10 +72,7 @@ const claimGameTimer = async (
   const timer = await getGameSetting(client, name);
   const now = new Date();
   const claim = isEligible(timer.time, now)
-    ? await client
-        .update(gameSetting)
-        .set({ value: 0, time: now })
-        .where(and(eq(gameSetting.id, timer.id), eq(gameSetting.time, timer.time)))
+    ? await updateGameSettingForUpdate(client, 0, now, timer, timer.time)
     : undefined;
   const isClaimed = claim?.rowsAffected === 1;
   let ownsClaim = isClaimed;
@@ -83,10 +80,7 @@ const claimGameTimer = async (
   // Completion values, resume markers and rollback all relinquish this claim.
   const update = async (value: number, time: Date) => {
     if (!ownsClaim) return false;
-    const result = await client
-      .update(gameSetting)
-      .set({ value, time })
-      .where(and(eq(gameSetting.id, timer.id), eq(gameSetting.time, now)));
+    const result = await updateGameSettingForUpdate(client, value, time, timer, now);
     ownsClaim = false;
     return result.rowsAffected === 1;
   };
@@ -235,9 +229,7 @@ const gameTimerWaitResponse = (previous: Date, durationMs: number) => {
  * into PetArtProviders, and an absent or unknown value selects GPT.
  */
 export const fetchPetArtProvider = async (client: DrizzleClient) => {
-  const setting = await client.query.gameSetting.findFirst({
-    where: eq(gameSetting.name, PET_ART_PROVIDER_SETTING),
-  });
+  const setting = await findGameSettingForFetchPetArtProvider(client);
   return PetArtProviders[setting?.value ?? 0] ?? "GPT";
 };
 
@@ -247,10 +239,7 @@ export const fetchPetArtProvider = async (client: DrizzleClient) => {
  * Returns a DmgConfig object ready for use in combat calculations.
  */
 export const fetchDmgConfig = async (client: DrizzleClient): Promise<DmgConfig> => {
-  const settings = await client
-    .select()
-    .from(gameSetting)
-    .where(inArray(gameSetting.name, DMG_SETTING_NAMES));
+  const settings = await selectGameSettingForFetchDmgConfig(client);
 
   // Find which settings are missing and insert them with defaults
   const existingNames = new Set(settings.map((s) => s.name));
@@ -262,7 +251,7 @@ export const fetchDmgConfig = async (client: DrizzleClient): Promise<DmgConfig> 
       time: addDays(new Date(), -30),
       value: DMG_SETTING_DEFAULTS[name] ?? 0,
     }));
-    await client.insert(gameSetting).values(newSettings);
+    await insertGameSettings(client, newSettings);
     settings.push(...newSettings);
   }
 

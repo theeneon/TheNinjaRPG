@@ -1,12 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import {
   and,
-  desc,
   eq,
   exists,
   gt,
   gte,
-  inArray,
   isNull,
   like,
   lt,
@@ -25,15 +23,46 @@ import {
   auctionHouseLevelMessage,
 } from "@/drizzle/constants";
 import {
-  actionLog,
+  type actionLog,
   auctionBid,
   auctionListing,
   item,
-  notification,
+  type notification,
   userData,
   userItem,
 } from "@/drizzle/schema";
 import { getAuctionPriceError } from "@/libs/itemEconomy";
+import {
+  executeCancelResForCancelAuction,
+  executeRaiseStatementForPlaceBid,
+  executeResultForSettleAuctionWithoutRefunds,
+  executeResultForSettleAuctionWithoutRefunds2,
+  fetchAuctionListing,
+  fetchAuctionListingIds,
+  findAuctionBidForCancelAuction,
+  findAuctionListingForCancelAuction,
+  findAuctionListingForGetAuctionListing,
+  findUserItemForCreateAuctionListing,
+  insertActionLogForCancelAuction,
+  insertActionLogForCreateAuctionListing,
+  insertActionLogForRecordBidActivity,
+  insertAuctionBidForPlaceBid,
+  insertAuctionListingForCreateAuctionListing,
+  insertNotificationForRecordBidActivity,
+  listAuctionListingForGetAuctionListings,
+  selectAuctionBidForGetAuctionListings,
+  updateAuctionBidForSettleAuction,
+  updateAuctionBidForSettleAuction2,
+  updateAuctionListingForPlaceBid,
+  updateAuctionListingForSettleAuction,
+  updateAuctionListingForSettleAuction2,
+  updateUserDataForPlaceBid,
+  updateUserDataForSettleAuction,
+  updateUserItemForCreateAuctionListing,
+  updateUserItemForSettleAuction,
+} from "@/queries/auction";
+import { incrementNotificationCounters } from "@/queries/misc";
+import { fetchUser, findUserIdentityById, findUserRoleById } from "@/queries/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -51,7 +80,6 @@ import {
 } from "@/validators/auction";
 import { auctionOfferProcedures } from "./auctionOffers";
 import { splitItemStack } from "./item";
-import { fetchUser } from "./profile";
 
 export const auctionRouter = createTRPCRouter({
   ...auctionOfferProcedures,
@@ -65,51 +93,8 @@ export const auctionRouter = createTRPCRouter({
       const { auctionId } = input;
 
       const [listing, caller] = await Promise.all([
-        ctx.drizzle.query.auctionListing.findFirst({
-          where: eq(auctionListing.id, auctionId),
-          with: {
-            userItem: {
-              with: {
-                item: true,
-                imbuements: {
-                  with: {
-                    item: true,
-                  },
-                },
-              },
-            },
-            seller: {
-              columns: {
-                userId: true,
-                username: true,
-                avatar: true,
-              },
-            },
-            targetUser: {
-              columns: {
-                userId: true,
-                username: true,
-                avatar: true,
-              },
-            },
-            bids: {
-              with: {
-                bidder: {
-                  columns: {
-                    userId: true,
-                    username: true,
-                    avatar: true,
-                  },
-                },
-              },
-              orderBy: desc(auctionBid.createdAt),
-            },
-          },
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { role: true },
-        }),
+        findAuctionListingForGetAuctionListing(ctx.drizzle, auctionId),
+        findUserRoleById(ctx.drizzle, ctx.userId),
       ]);
 
       if (
@@ -164,17 +149,7 @@ export const auctionRouter = createTRPCRouter({
       if (onlyBidOn) {
         whereConditions.push(eq(auctionListing.listingType, "AUCTION"));
         whereConditions.push(
-          exists(
-            ctx.drizzle
-              .select({ id: auctionBid.id })
-              .from(auctionBid)
-              .where(
-                and(
-                  eq(auctionBid.auctionId, auctionListing.id),
-                  eq(auctionBid.bidderId, ctx.userId),
-                ),
-              ),
-          ),
+          exists(selectAuctionBidForGetAuctionListings(ctx.drizzle, ctx)),
         );
       } else if (listingType) {
         whereConditions.push(eq(auctionListing.listingType, listingType));
@@ -229,63 +204,20 @@ export const auctionRouter = createTRPCRouter({
       const skip = currentCursor * limit;
       const whereClause = and(...whereConditions);
 
-      let q = ctx.drizzle
-        .select({ id: auctionListing.id })
-        .from(auctionListing)
-        .innerJoin(userItem, eq(auctionListing.userItemId, userItem.id))
-        .innerJoin(item, eq(userItem.itemId, item.id));
-
-      if (filterSellerByUsername) {
-        q = q.innerJoin(userData, eq(auctionListing.sellerId, userData.userId));
-      }
-      if (applyUserListingPrivacy) {
-        q = q.innerJoin(listingCallerUser, eq(listingCallerUser.userId, ctx.userId));
-      }
-
-      const listings = await q
-        .where(whereClause)
-        .orderBy(desc(auctionListing.expiresAt))
-        .limit(limit)
-        .offset(skip);
+      const listings = await fetchAuctionListingIds(ctx.drizzle, {
+        filterSellerByUsername,
+        applyUserListingPrivacy,
+        userId: ctx.userId,
+        where: whereClause,
+        limit,
+        offset: skip,
+      });
 
       // Fetch full related data for the filtered results
       const listingIds = listings.map((listing) => listing.id);
       const fullListings =
         listingIds.length > 0
-          ? await ctx.drizzle.query.auctionListing.findMany({
-              where: inArray(auctionListing.id, listingIds),
-              with: {
-                userItem: {
-                  with: {
-                    item: true,
-                    imbuements: {
-                      with: {
-                        item: true,
-                      },
-                    },
-                  },
-                },
-                seller: {
-                  columns: {
-                    userId: true,
-                    username: true,
-                    avatar: true,
-                  },
-                },
-                targetUser: {
-                  columns: {
-                    userId: true,
-                    username: true,
-                    avatar: true,
-                  },
-                },
-                bids: {
-                  orderBy: desc(auctionBid.amount),
-                  limit: 1,
-                },
-              },
-              orderBy: desc(auctionListing.expiresAt),
-            })
+          ? await listAuctionListingForGetAuctionListings(ctx.drizzle, listingIds)
           : [];
 
       const nextCursor = listings.length < limit ? null : currentCursor + 1;
@@ -323,29 +255,10 @@ export const auctionRouter = createTRPCRouter({
 
       // Check if user item exists and get the item data
       const [userItemData, user, targetUser] = await Promise.all([
-        ctx.drizzle.query.userItem.findFirst({
-          where: and(
-            eq(userItem.id, userItemId),
-            eq(userItem.userId, ctx.userId),
-            gt(userItem.quantity, 0),
-            eq(userItem.equipped, "NONE"),
-            eq(userItem.isInAuction, false),
-            or(
-              isNull(userItem.craftingFinishedAt),
-              lt(userItem.craftingFinishedAt, new Date()),
-            ),
-          ),
-          with: {
-            item: true,
-            imbuements: true,
-          },
-        }),
+        findUserItemForCreateAuctionListing(ctx.drizzle, userItemId, ctx),
         fetchUser(ctx.drizzle, ctx.userId),
         listingType === "DIRECT" && targetUserId
-          ? ctx.drizzle.query.userData.findFirst({
-              where: eq(userData.userId, targetUserId),
-              columns: { userId: true },
-            })
+          ? findUserIdentityById(ctx.drizzle, targetUserId)
           : Promise.resolve(undefined),
       ]);
       // Guard
@@ -446,23 +359,12 @@ export const auctionRouter = createTRPCRouter({
       // Also require no active imbuement at write time.
       // Pin the reservation to the priced quantity, including the actual split result.
       // This also excludes negative merge claims and zero-quantity merge tombstones.
-      const markInAuctionResult = await ctx.drizzle
-        .update(userItem)
-        .set({
-          isInAuction: true,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(userItem.id, auctionUserItemId),
-            eq(userItem.userId, ctx.userId),
-            eq(userItem.quantity, listingQuantity),
-            gt(userItem.quantity, 0),
-            eq(userItem.equipped, "NONE"),
-            eq(userItem.isInAuction, false),
-            sql`NOT EXISTS (SELECT 1 FROM UserItemImbuement WHERE UserItemImbuement.userItemId = ${auctionUserItemId} AND UserItemImbuement.craftingFinishedAt > NOW())`,
-          ),
-        );
+      const markInAuctionResult = await updateUserItemForCreateAuctionListing(
+        ctx.drizzle,
+        auctionUserItemId,
+        ctx,
+        listingQuantity,
+      );
       if (markInAuctionResult.rowsAffected === 0) {
         return errorResponse(
           "Item quantity or availability changed, or item is being imbued; please refresh and try again",
@@ -472,38 +374,34 @@ export const auctionRouter = createTRPCRouter({
       // Create the auction listing
       const auctionId = nanoid();
       await Promise.all([
-        ctx.drizzle.insert(auctionListing).values({
-          id: auctionId,
-          sellerId: ctx.userId,
-          userItemId: auctionUserItemId,
+        insertAuctionListingForCreateAuctionListing(
+          ctx.drizzle,
+          auctionId,
+          ctx,
+          auctionUserItemId,
           listingType,
-          targetUserId: targetUserId || null,
+          targetUserId,
           startingPrice,
-          buyoutPrice: buyoutPrice || null,
-          currentPrice: startingPrice,
+          buyoutPrice,
           currencyType,
           expiresAt,
-          bidderMinLevel: storedBidderMinLevel,
-          bidderMaxLevel: storedBidderMaxLevel,
-        }),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "auctionListing",
-          changes: JSON.stringify({
-            action: "CREATE_AUCTION",
-            userItemId: auctionUserItemId,
-            originalUserItemId: userItemId,
-            itemId: userItemData.itemId,
-            quantity: listingQuantity,
-            startingPrice,
-            buyoutPrice,
-            expiresAt,
-            bidderMinLevel: storedBidderMinLevel,
-            bidderMaxLevel: storedBidderMaxLevel,
-          }),
-          relatedId: auctionId,
-        }),
+          storedBidderMinLevel,
+          storedBidderMaxLevel,
+        ),
+        insertActionLogForCreateAuctionListing(
+          ctx.drizzle,
+          ctx,
+          auctionUserItemId,
+          userItemId,
+          userItemData,
+          listingQuantity,
+          startingPrice,
+          buyoutPrice,
+          expiresAt,
+          storedBidderMinLevel,
+          storedBidderMaxLevel,
+          auctionId,
+        ),
       ]);
 
       return { success: true, message: "Auction listing created successfully" };
@@ -666,25 +564,22 @@ export const auctionRouter = createTRPCRouter({
           )
         : undefined;
 
-      const balance =
-        auction.currencyType === "MONEY" ? userData.bank : userData.reputationPoints;
       // Drizzle has no multi-table UPDATE builder. Keep the listing first to match
       // settlement's lock order; one statement couples all three existing rows.
-      const raiseStatement = existingBid
-        ? sql`
-            UPDATE ${auctionListing}
-            STRAIGHT_JOIN ${auctionBid} ON ${auctionBid.auctionId} = ${auctionListing.id}
-              AND ${auctionBid.id} = ${existingBid.id}
-            STRAIGHT_JOIN ${userData} ON ${userData.userId} = ${auctionBid.bidderId}
-            SET ${auctionListing.currentPrice} = ${amount},
-                ${auctionListing.updatedAt} = ${updatedAt},
-                ${auctionBid.amount} = ${amount},
-                ${balance} = ${balance} - ${amountToDeduct}
-            WHERE ${and(listingGuard, bidderGuard, bidGuard)}
-          `
-        : null;
-      if (raiseStatement && !isBuyoutBid) {
-        const raised = await retryOnDeadlock(() => ctx.drizzle.execute(raiseStatement));
+      if (existingBid && !isBuyoutBid) {
+        const raised = await retryOnDeadlock(() =>
+          executeRaiseStatementForPlaceBid(
+            ctx.drizzle,
+            existingBid,
+            auction,
+            amount,
+            updatedAt,
+            amountToDeduct,
+            listingGuard,
+            bidderGuard,
+            bidGuard,
+          ),
+        );
         if (raised.rowsAffected === 0)
           return errorResponse(
             "Auction, bid or balance changed; please refresh and try again",
@@ -716,40 +611,46 @@ export const auctionRouter = createTRPCRouter({
         // A buyout with losing bids also needs the complete-refund checks in settleAuction.
         const settlement = await retryOnDeadlock(() =>
           ctx.drizzle.transaction(async (tx) => {
-            if (raiseStatement) {
-              const raised = await tx.execute(raiseStatement);
+            if (existingBid) {
+              const raised = await executeRaiseStatementForPlaceBid(
+                tx,
+                existingBid,
+                auction,
+                amount,
+                updatedAt,
+                amountToDeduct,
+                listingGuard,
+                bidderGuard,
+                bidGuard,
+              );
               requireBidWrite(
                 raised.rowsAffected,
                 "Auction, bid or balance changed; please refresh and try again",
               );
             } else {
-              const claim = await tx
-                .update(auctionListing)
-                .set({ currentPrice: amount, updatedAt })
-                .where(listingGuard);
+              const claim = await updateAuctionListingForPlaceBid(
+                tx,
+                amount,
+                updatedAt,
+                listingGuard,
+              );
               requireBidWrite(
                 claim.rowsAffected,
                 "Auction changed; please refresh and try again",
               );
 
-              const debit = await tx
-                .update(userData)
-                .set(
-                  auction.currencyType === "MONEY"
-                    ? { bank: sql`${userData.bank} - ${amountToDeduct}` }
-                    : {
-                        reputationPoints: sql`${userData.reputationPoints} - ${amountToDeduct}`,
-                      },
-                )
-                .where(bidderGuard);
+              const debit = await updateUserDataForPlaceBid(
+                tx,
+                auction,
+                amountToDeduct,
+                bidderGuard,
+              );
               requireBidWrite(
                 debit.rowsAffected,
                 "Balance or trading access changed; please refresh and try again",
               );
 
-              await tx
-                .insert(auctionBid)
-                .values({ id: bidId, auctionId, bidderId: ctx.userId, amount });
+              await insertAuctionBidForPlaceBid(tx, bidId, auctionId, ctx, amount);
             }
             await recordBidActivity(tx, bidLog, outbidNotification);
             // Buyout escrow, delivery and every payment share this commit.
@@ -798,16 +699,11 @@ export const auctionRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const { auctionId } = input;
 
-      const auction = await ctx.drizzle.query.auctionListing.findFirst({
-        where: and(
-          eq(auctionListing.id, auctionId),
-          eq(auctionListing.sellerId, ctx.userId),
-        ),
-        columns: {
-          userItemId: true,
-          status: true,
-        },
-      });
+      const auction = await findAuctionListingForCancelAuction(
+        ctx.drizzle,
+        auctionId,
+        ctx,
+      );
 
       if (!auction) {
         return errorResponse("Listing not found");
@@ -817,44 +713,22 @@ export const auctionRouter = createTRPCRouter({
       }
 
       // One guarded statement cancels the listing and clears isInAuction atomically.
-      const cancelRes = await ctx.drizzle.execute(sql`
-        UPDATE \`AuctionListing\` AS al
-        INNER JOIN \`UserItem\` AS ui ON ui.\`id\` = al.\`userItemId\`
-        SET al.\`status\` = 'CANCELLED',
-            al.\`updatedAt\` = CURRENT_TIMESTAMP(3),
-            ui.\`isInAuction\` = 0,
-            ui.\`updatedAt\` = CURRENT_TIMESTAMP(3)
-        WHERE al.\`id\` = ${auctionId}
-          AND al.\`sellerId\` = ${ctx.userId}
-          AND al.\`status\` = 'ACTIVE'
-          AND NOT EXISTS (
-            SELECT 1 FROM \`AuctionBid\` AS ab WHERE ab.\`auctionId\` = al.\`id\`
-          )
-      `);
+      const cancelRes = await executeCancelResForCancelAuction(
+        ctx.drizzle,
+        auctionId,
+        ctx,
+      );
 
       const cancelledRows = Number(cancelRes.rowsAffected ?? 0);
       if (cancelledRows === 0) {
-        const anyBid = await ctx.drizzle.query.auctionBid.findFirst({
-          where: eq(auctionBid.auctionId, auctionId),
-          columns: { id: true },
-        });
+        const anyBid = await findAuctionBidForCancelAuction(ctx.drizzle, auctionId);
         if (anyBid) {
           return errorResponse("Cannot cancel: a bid was placed on this listing");
         }
         return errorResponse("Could not cancel listing");
       }
 
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "auctionListing",
-        changes: JSON.stringify({
-          action: "CANCEL_AUCTION",
-          auctionId,
-          userItemId: auction.userItemId,
-        }),
-        relatedId: auctionId,
-      });
+      await insertActionLogForCancelAuction(ctx.drizzle, ctx, auctionId, auction);
 
       return {
         success: true,
@@ -862,40 +736,6 @@ export const auctionRouter = createTRPCRouter({
       };
     }),
 });
-
-/**
- * Fetch an auction listing with bids
- * @param drizzle - Drizzle client
- * @param auctionId - Auction ID
- * @returns - Auction listing with bids
- */
-export const fetchAuctionListing = async (
-  drizzle: Pick<DrizzleClient, "query">,
-  auctionId: string,
-) => {
-  const auction = await drizzle.query.auctionListing.findFirst({
-    where: eq(auctionListing.id, auctionId),
-    with: {
-      bids: true,
-      userItem: {
-        with: {
-          item: {
-            columns: { name: true },
-          },
-        },
-      },
-      targetUser: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-        },
-      },
-    },
-  });
-
-  return auction;
-};
 
 /** Settle expiration and buyout through the same atomic listing claim. */
 export const completeAuctionInternal = async (
@@ -965,56 +805,31 @@ const settleAuctionWithoutRefunds = async (
   );
   let rowsAffected: number;
   if (!bid || !winningBid) {
-    const result = await database.execute(sql`
-      UPDATE ${auctionListing}
-      STRAIGHT_JOIN ${userItem} ON ${userItem.id} = ${auctionListing.userItemId}
-      SET ${auctionListing.status} = 'EXPIRED', ${auctionListing.buyerId} = NULL,
-          ${auctionListing.updatedAt} = CURRENT_TIMESTAMP(3),
-          ${userItem.isInAuction} = 0, ${userItem.updatedAt} = CURRENT_TIMESTAMP(3)
-      WHERE ${and(listingGuard, itemGuard)}
-        AND NOT EXISTS (SELECT 1 FROM ${auctionBid} WHERE ${auctionBid.auctionId} = ${auctionListing.id})
-    `);
+    const result = await executeResultForSettleAuctionWithoutRefunds(
+      database,
+      listingGuard,
+      itemGuard,
+    );
     rowsAffected = result.rowsAffected;
   } else {
     const seller = alias(userData, "auctionSettlementSeller");
-    const otherBid = alias(auctionBid, "auctionSettlementOtherBid");
+
     const sellerBalance =
       auction.currencyType === "MONEY" ? seller.bank : seller.reputationPoints;
     const buyerBalance =
       auction.currencyType === "MONEY" ? userData.bank : userData.reputationPoints;
     // Separate seller and buyer aliases yield exactly one match. Constant prices avoid
     // depending on MySQL's unspecified multi-table assignment order during a bid raise.
-    const result = await database.execute(sql`
-      UPDATE ${auctionListing}
-      STRAIGHT_JOIN ${userItem} ON ${userItem.id} = ${auctionListing.userItemId}
-      STRAIGHT_JOIN ${auctionBid} ON ${auctionBid.auctionId} = ${auctionListing.id}
-      STRAIGHT_JOIN ${userData} AS ${seller} ON ${seller.userId} = ${auctionListing.sellerId}
-      STRAIGHT_JOIN ${userData} ON ${userData.userId} = ${auctionBid.bidderId}
-      LEFT JOIN ${auctionBid} AS ${otherBid} ON ${otherBid.auctionId} = ${auctionListing.id} AND ${otherBid.id} <> ${auctionBid.id}
-      SET ${auctionListing.status} = 'SOLD', ${auctionListing.buyerId} = ${winningBid.bidderId},
-          ${auctionListing.currentPrice} = ${winningBid.amount},
-          ${auctionListing.expiresAt} = CURRENT_TIMESTAMP(3), ${auctionListing.updatedAt} = CURRENT_TIMESTAMP(3),
-          ${userItem.userId} = ${winningBid.bidderId}, ${userItem.isInAuction} = 0,
-          ${userItem.activeVariantId} = NULL, ${userItem.storedAtHome} = 0,
-          ${userItem.homeX} = NULL, ${userItem.homeY} = NULL, ${userItem.homeRotation} = 0,
-          ${userItem.updatedAt} = CURRENT_TIMESTAMP(3),
-          ${auctionBid.amount} = ${winningBid.amount}, ${auctionBid.status} = 'WON',
-          ${sellerBalance} = ${sellerBalance} + ${winningBid.amount},
-          ${seller.updatedAt} = GREATEST(CURRENT_TIMESTAMP(3), TIMESTAMPADD(MICROSECOND, 1000, ${seller.updatedAt})),
-          ${buyerBalance} = ${buyerBalance} - ${raise?.amountToDeduct ?? 0},
-          ${userData.updatedAt} = GREATEST(CURRENT_TIMESTAMP(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))
-      WHERE ${and(
-        listingGuard,
-        itemGuard,
-        raise?.bidderGuard,
-        eq(auctionBid.id, bid.id),
-        eq(auctionBid.bidderId, bid.bidderId),
-        eq(auctionBid.amount, bid.amount),
-        eq(auctionBid.status, "ACTIVE"),
-        ne(userData.userId, seller.userId),
-        isNull(otherBid.id),
-      )}
-    `);
+    const result = await executeResultForSettleAuctionWithoutRefunds2(
+      database,
+      winningBid,
+      sellerBalance,
+      buyerBalance,
+      raise,
+      listingGuard,
+      itemGuard,
+      bid,
+    );
     rowsAffected = result.rowsAffected;
   }
   if (rowsAffected === 0)
@@ -1044,18 +859,12 @@ const settleAuction = async (
   // unspecified, so it cannot safely claim once and verify every refund in that form.
   // One alias per recipient would hit MySQL's 61-table join limit; bid counts are unbounded.
   // Claim once here, then check all credit/bid row counts and roll back any missing recipient.
-  const claim = await tx
-    .update(auctionListing)
-    .set({
-      updatedAt: sql`GREATEST(CURRENT_TIMESTAMP(3), TIMESTAMPADD(MICROSECOND, 1000, ${auctionListing.updatedAt}))`,
-    })
-    .where(
-      and(
-        eq(auctionListing.id, auctionId),
-        eq(auctionListing.status, "ACTIVE"),
-        winnerId ? undefined : lte(auctionListing.expiresAt, now),
-      ),
-    );
+  const claim = await updateAuctionListingForSettleAuction(
+    tx,
+    auctionId,
+    winnerId,
+    now,
+  );
   requireAuctionSettlementWrite(
     claim.rowsAffected,
     "Auction is no longer active or has not expired yet; please refresh",
@@ -1083,31 +892,7 @@ const settleAuction = async (
   )
     throwAuctionSettlementConflict("Buyout bid is no longer available; please refresh");
 
-  const delivery = await tx
-    .update(userItem)
-    .set({
-      isInAuction: false,
-      updatedAt: now,
-      ...(winningBid
-        ? {
-            userId: winningBid.bidderId,
-            // The recipient chooses their own unlocked cosmetic and room placement.
-            activeVariantId: null,
-            storedAtHome: false,
-            homeX: null,
-            homeY: null,
-            homeRotation: 0,
-          }
-        : {}),
-    })
-    .where(
-      and(
-        eq(userItem.id, auction.userItemId),
-        eq(userItem.userId, auction.sellerId),
-        eq(userItem.isInAuction, true),
-        gt(userItem.quantity, 0),
-      ),
-    );
+  const delivery = await updateUserItemForSettleAuction(tx, now, winningBid, auction);
   requireAuctionSettlementWrite(
     delivery.rowsAffected,
     "Reserved auction item is unavailable",
@@ -1128,58 +913,28 @@ const settleAuction = async (
     )} ELSE 0 END`;
     // One payment statement keeps settlement bounded even with many losing bids.
     // Touch the winner too, so a missing recipient rolls back the item transfer.
-    const payment = await tx
-      .update(userData)
-      .set({
-        ...(auction.currencyType === "MONEY"
-          ? { bank: sql`${userData.bank} + ${amounts}` }
-          : { reputationPoints: sql`${userData.reputationPoints} + ${amounts}` }),
-        updatedAt: sql`GREATEST(CURRENT_TIMESTAMP(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-      })
-      .where(
-        inArray(
-          userData.userId,
-          accounts.map(([id]) => id),
-        ),
-      );
+    const payment = await updateUserDataForSettleAuction(
+      tx,
+      auction,
+      amounts,
+      accounts,
+    );
     if (payment.rowsAffected !== credits.size)
       throwAuctionSettlementConflict("Auction recipient account is unavailable");
   }
   if (winningBid) {
-    const won = await tx
-      .update(auctionBid)
-      .set({ status: "WON" })
-      .where(and(eq(auctionBid.id, winningBid.id), eq(auctionBid.status, "ACTIVE")));
+    const won = await updateAuctionBidForSettleAuction(tx, winningBid);
     requireAuctionSettlementWrite(
       won.rowsAffected,
       "Winning bid changed; please refresh",
     );
   }
   if (refunds.length) {
-    const refunded = await tx
-      .update(auctionBid)
-      .set({ status: "REFUNDED" })
-      .where(
-        and(
-          inArray(
-            auctionBid.id,
-            refunds.map((bid) => bid.id),
-          ),
-          eq(auctionBid.status, "ACTIVE"),
-        ),
-      );
+    const refunded = await updateAuctionBidForSettleAuction2(tx, refunds);
     if (refunded.rowsAffected !== refunds.length)
       throwAuctionSettlementConflict("Refund bids changed; please refresh");
   }
-  await tx
-    .update(auctionListing)
-    .set({
-      status: winningBid ? "SOLD" : "EXPIRED",
-      buyerId: winningBid?.bidderId ?? null,
-      ...(winningBid ? { expiresAt: now } : {}),
-      updatedAt: now,
-    })
-    .where(eq(auctionListing.id, auctionId));
+  await updateAuctionListingForSettleAuction2(tx, winningBid, now, auctionId);
 
   return {
     success: true,
@@ -1220,15 +975,12 @@ const recordBidActivity = async (
   hasCommitted = false,
 ) => {
   const writes = [
-    async () => client.insert(actionLog).values(log),
+    async () => insertActionLogForRecordBidActivity(client, log),
     ...(outbid
       ? [
           async () => {
-            await client.insert(notification).values(outbid);
-            await client
-              .update(userData)
-              .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-              .where(eq(userData.userId, outbid.userId));
+            await insertNotificationForRecordBidActivity(client, outbid);
+            await incrementNotificationCounters(client, [outbid.userId]);
           },
         ]
       : []),

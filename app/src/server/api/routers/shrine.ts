@@ -1,17 +1,3 @@
-import {
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNull,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -33,20 +19,60 @@ import {
   WAR_SHRINE_MAINTENANCE_DAYS,
 } from "@/drizzle/constants";
 import {
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  sector,
-  userData,
-  village,
-} from "@/drizzle/schema";
-import {
   areWarObjectivesRevealed,
   getWarSide,
   isObjectiveWarActive,
 } from "@/libs/objectiveWar";
 import { getServerPusher } from "@/libs/pusher";
+import { fetchActiveUserMpvpBattles } from "@/queries/clan";
+import { fetchUser, queueAwakeUser, wakeQueuedUser } from "@/queries/profile";
+import {
+  claimBattleQueue,
+  deleteQueueById,
+  deleteUnclaimedBattleQueue,
+  releaseBattleQueueClaim,
+  setQueueBattleId,
+} from "@/queries/raids";
+import {
+  deleteMpvpBattleQueueForGetShrineBattles,
+  deleteMpvpBattleUserForLeaveShrineBattle,
+  findMpvpBattleQueueForJoinShrineBattle,
+  findMpvpBattleQueueForLeaveShrineBattle,
+  findMpvpBattleUserForJoinShrineBattle,
+  findSectorByNumber,
+  findSectorForPayWeeklyMaintenance,
+  findSectorWithVillage,
+  findUserDataForJoinShrineBattle,
+  findVillageForGetBoostTemplate,
+  insertMpvpBattleQueueForChallengeShrine,
+  insertMpvpBattleUserForJoinShrineBattle,
+  listMpvpBattleQueueForGetShrineBattles,
+  listSectorForGetCapturedSectors,
+  listUserDataForGetShrineAis,
+  listUserDataForInitiateShrineBattle,
+  selectMpvpBattleQueueForLeaveShrineBattle,
+  selectMpvpBattleUserForGetUserQueuedShrineBattle,
+  selectMpvpBattleUserForLeaveShrineBattle,
+  selectSectorForHasLevel3Shrine,
+  updateSectorForPayWeeklyMaintenance,
+  updateSectorForUpgradeShrine,
+  updateUserDataForChallengeShrine2,
+  updateVillageForActivateBoost,
+  updateVillageForPayWeeklyMaintenance,
+  updateVillageForPayWeeklyMaintenance2,
+  updateVillageForSetBoostTemplate,
+  updateVillageForToggleVillageAiDefender,
+  updateVillageForUnlockAiDefender,
+  updateVillageForUpgradeShrine,
+  updateVillageForUpgradeShrine2,
+} from "@/queries/shrine";
+import {
+  fetchAlliances,
+  findVillageById,
+  findVillageBySector,
+} from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
-import { fetchUpdatedUser, fetchUser } from "@/routers/profile";
+import { fetchUpdatedUser } from "@/routers/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -57,18 +83,11 @@ import {
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { isMysqlDuplicateKeyError } from "@/server/utils/mysqlErrors";
-import {
-  boostInactivePredicate,
-  setActiveBoostExpression,
-  setShrineSettingsKeyExpression,
-} from "@/server/utils/shrine";
 import { findRelationship } from "@/utils/alliance";
 import { canSeeSecretData } from "@/utils/permissions";
 import { secondsFromDate } from "@/utils/time";
 import { getBoostTemplateSchema, setBoostTemplateSchema } from "@/validators/shrine";
 import { userDeltaResponseSchema } from "@/validators/userCache";
-import { fetchActiveUserMpvpBattles } from "./clan";
-import { fetchAlliances } from "./village";
 import { fetchActiveWars } from "./war";
 
 // Pusher instance
@@ -79,31 +98,7 @@ export const shrineRouter = createTRPCRouter({
   getShrineAis: publicProcedure
     .meta({ mcp: { description: "Get all shrine AI defenders" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.userData.findMany({
-        where: and(eq(userData.isAi, true), eq(userData.inShrines, true)),
-        with: {
-          jutsus: {
-            columns: {
-              level: true,
-            },
-            with: {
-              jutsu: {
-                columns: {
-                  name: true,
-                },
-              },
-            },
-          },
-        },
-        columns: {
-          userId: true,
-          username: true,
-          level: true,
-          rank: true,
-          avatar: true,
-        },
-        orderBy: asc(userData.level),
-      });
+      return await listUserDataForGetShrineAis(ctx.drizzle);
     }),
 
   /** List standing captured shrines; destroyed remnants cannot be maintained. */
@@ -111,9 +106,7 @@ export const shrineRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get captured sectors for a village" } })
     .input(z.object({ villageId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const sectors = await ctx.drizzle.query.sector.findMany({
-        where: and(eq(sector.villageId, input.villageId), gt(sector.shrineLevel, 0)),
-      });
+      const sectors = await listSectorForGetCapturedSectors(ctx.drizzle, input);
       return sectors;
     }),
 
@@ -128,9 +121,7 @@ export const shrineRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.sector.findFirst({
-          where: eq(sector.sector, input.sectorNumber),
-        }),
+        findSectorByNumber(ctx.drizzle, input.sectorNumber),
       ]);
 
       // Guards
@@ -157,35 +148,27 @@ export const shrineRouter = createTRPCRouter({
 
       // IMPORTANT: do token update with DB-guard + atomic decrement
       // We do tokens first; if it fails, we do nothing else.
-      const tokenRes = await ctx.drizzle
-        .update(village)
-        .set({ tokens: sql`${village.tokens} - ${SHRINE_UPGRADE_COST}` })
-        .where(
-          and(eq(village.id, user.villageId), gte(village.tokens, SHRINE_UPGRADE_COST)),
-        );
+      const tokenRes = await updateVillageForUpgradeShrine(ctx.drizzle, {
+        villageId: user.villageId,
+      });
 
       if (tokenRes.rowsAffected === 0) {
         return errorResponse("Not enough village tokens to upgrade shrine");
       }
 
       // Match ownership and level so a concurrent capture or upgrade triggers a refund.
-      const shrineUpdateRes = await ctx.drizzle
-        .update(sector)
-        .set({ shrineLevel: targetSector.shrineLevel + 1 })
-        .where(
-          and(
-            eq(sector.sector, input.sectorNumber),
-            eq(sector.villageId, user.villageId),
-            eq(sector.shrineLevel, targetSector.shrineLevel),
-          ),
-        );
+      const shrineUpdateRes = await updateSectorForUpgradeShrine(
+        ctx.drizzle,
+        targetSector,
+        input,
+        { villageId: user.villageId },
+      );
 
       if (shrineUpdateRes.rowsAffected === 0) {
         // Refund tokens since the guarded update failed
-        await ctx.drizzle
-          .update(village)
-          .set({ tokens: sql`${village.tokens} + ${SHRINE_UPGRADE_COST}` })
-          .where(eq(village.id, user.villageId));
+        await updateVillageForUpgradeShrine2(ctx.drizzle, {
+          villageId: user.villageId,
+        });
         return errorResponse(
           "Shrine upgrade failed - shrine may have been upgraded by another request",
         );
@@ -245,22 +228,13 @@ export const shrineRouter = createTRPCRouter({
       // race conditions with concurrent cron writes to other boost keys.
       const boostExpiry = secondsFromDate(SHRINE_BOOST_DURATION_HOURS * 60 * 60, now);
 
-      const updateRes = await ctx.drizzle
-        .update(village)
-        .set({
-          tokens: sql`${village.tokens} - ${SHRINE_BOOST_COST}`,
-          shrineSettings: setActiveBoostExpression(
-            input.boostType,
-            boostExpiry.toISOString(),
-          ),
-        })
-        .where(
-          and(
-            eq(village.id, user.villageId),
-            gte(village.tokens, SHRINE_BOOST_COST),
-            boostInactivePredicate(input.boostType, now.toISOString()),
-          ),
-        );
+      const updateRes = await updateVillageForActivateBoost(
+        ctx.drizzle,
+        input,
+        boostExpiry,
+        { villageId: user.villageId },
+        now,
+      );
 
       if (updateRes.rowsAffected === 0) {
         return errorResponse(
@@ -319,21 +293,11 @@ export const shrineRouter = createTRPCRouter({
 
       const updatedUnlocks = [...currentUnlocks, input.aiId];
 
-      const updateRes = await ctx.drizzle
-        .update(village)
-        .set({
-          tokens: sql`${village.tokens} - ${SHRINE_AI_UNLOCK_COST}`,
-          shrineSettings: setShrineSettingsKeyExpression(
-            "unlockedAiIds",
-            updatedUnlocks,
-          ),
-        })
-        .where(
-          and(
-            eq(village.id, user.villageId),
-            gte(village.tokens, SHRINE_AI_UNLOCK_COST),
-          ),
-        );
+      const updateRes = await updateVillageForUnlockAiDefender(
+        ctx.drizzle,
+        updatedUnlocks,
+        { villageId: user.villageId },
+      );
 
       if (updateRes.rowsAffected === 0) {
         return errorResponse("Not enough village tokens to unlock AI defender");
@@ -400,12 +364,9 @@ export const shrineRouter = createTRPCRouter({
         message = `AI defender ${ai.username} added to active defenders`;
       }
 
-      await ctx.drizzle
-        .update(village)
-        .set({
-          shrineSettings: setShrineSettingsKeyExpression("activeAiIds", newAssigns),
-        })
-        .where(eq(village.id, user.villageId));
+      await updateVillageForToggleVillageAiDefender(ctx.drizzle, newAssigns, {
+        villageId: user.villageId,
+      });
 
       return {
         success: true,
@@ -431,10 +392,7 @@ export const shrineRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.sector.findFirst({
-          where: eq(sector.id, input.sectorId),
-          with: { village: true },
-        }),
+        findSectorForPayWeeklyMaintenance(ctx.drizzle, input),
       ]);
 
       if (!user) return errorResponse("User not found");
@@ -466,15 +424,9 @@ export const shrineRouter = createTRPCRouter({
         currentNextMaintainanceDueDate,
       );
 
-      const tokenRes = await ctx.drizzle
-        .update(village)
-        .set({ tokens: sql`${village.tokens} - ${SHRINE_WEEKLY_MAINTENANCE_COST}` })
-        .where(
-          and(
-            eq(village.id, user.villageId),
-            gte(village.tokens, SHRINE_WEEKLY_MAINTENANCE_COST),
-          ),
-        );
+      const tokenRes = await updateVillageForPayWeeklyMaintenance(ctx.drizzle, {
+        villageId: user.villageId,
+      });
 
       if (tokenRes.rowsAffected === 0) {
         return errorResponse("Not enough village tokens for maintenance");
@@ -482,29 +434,19 @@ export const shrineRouter = createTRPCRouter({
 
       // Match the saved deadline, live shrine and ownership; a concurrent capture,
       // destruction or payment must fail this update and refund the token debit.
-      const maintenanceUpdateRes = await ctx.drizzle
-        .update(sector)
-        .set({ nextMaintainanceDueDate: nextNextMaintainanceDueDate })
-        .where(
-          and(
-            eq(sector.id, input.sectorId),
-            eq(sector.villageId, user.villageId),
-            gt(sector.shrineLevel, 0),
-            targetSector.nextMaintainanceDueDate === null
-              ? isNull(sector.nextMaintainanceDueDate)
-              : eq(
-                  sector.nextMaintainanceDueDate,
-                  targetSector.nextMaintainanceDueDate,
-                ),
-          ),
-        );
+      const maintenanceUpdateRes = await updateSectorForPayWeeklyMaintenance(
+        ctx.drizzle,
+        nextNextMaintainanceDueDate,
+        input,
+        { villageId: user.villageId },
+        targetSector,
+      );
 
       if (maintenanceUpdateRes.rowsAffected === 0) {
         // Refund tokens since the guarded update failed
-        await ctx.drizzle
-          .update(village)
-          .set({ tokens: sql`${village.tokens} + ${SHRINE_WEEKLY_MAINTENANCE_COST}` })
-          .where(eq(village.id, user.villageId));
+        await updateVillageForPayWeeklyMaintenance2(ctx.drizzle, {
+          villageId: user.villageId,
+        });
         return errorResponse(
           "Maintenance update failed - sector may have been modified by another request",
         );
@@ -528,10 +470,7 @@ export const shrineRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const [user, targetVillage] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.village.findFirst({
-          where: eq(village.id, input.villageId),
-          columns: { id: true, shrineSettings: true },
-        }),
+        findVillageForGetBoostTemplate(ctx.drizzle, input),
       ]);
 
       if (!user) {
@@ -589,17 +528,12 @@ export const shrineRouter = createTRPCRouter({
       }
 
       const templateUpdatedAt = new Date().toISOString();
-      await ctx.drizzle
-        .update(village)
-        .set({
-          shrineSettings: sql`JSON_SET(
-            COALESCE(${village.shrineSettings}, JSON_OBJECT()),
-            '$.boostTemplate', CAST(${JSON.stringify(input.template)} AS JSON),
-            '$.boostTemplateUpdatedBy', ${user.username},
-            '$.boostTemplateUpdatedAt', ${templateUpdatedAt}
-          )`,
-        })
-        .where(eq(village.id, input.villageId));
+      await updateVillageForSetBoostTemplate(
+        ctx.drizzle,
+        input,
+        user,
+        templateUpdatedAt,
+      );
 
       return {
         success: true,
@@ -634,36 +568,11 @@ export const shrineRouter = createTRPCRouter({
       const shrineLobbyStaleBefore = shrineLobbyFreshAfter();
       // Fetch all battles with FIFO ordering (oldest first)
       const [battles, activeWars, viewer] = await Promise.all([
-        ctx.drizzle.query.mpvpBattleQueue.findMany({
-          where: and(
-            eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-            eq(mpvpBattleQueue.sector, input.sectorNumber),
-            isNull(mpvpBattleQueue.battleId),
-            gt(mpvpBattleQueue.createdAt, shrineLobbyStaleBefore),
-          ),
-          with: {
-            queue: {
-              columns: {
-                userId: true,
-                side: true,
-                slot: true,
-                createdAt: true,
-              },
-              with: {
-                user: {
-                  columns: {
-                    username: true,
-                    level: true,
-                    rank: true,
-                    avatar: true,
-                    villageId: true,
-                  },
-                },
-              },
-            },
-          },
-          orderBy: asc(mpvpBattleQueue.createdAt), // FIFO ordering - oldest first
-        }),
+        listMpvpBattleQueueForGetShrineBattles(
+          ctx.drizzle,
+          input,
+          shrineLobbyStaleBefore,
+        ),
         fetchActiveWars(ctx.drizzle),
         fetchUser(ctx.drizzle, ctx.userId),
       ]);
@@ -676,14 +585,7 @@ export const shrineRouter = createTRPCRouter({
 
       // Non-blocking cleanup of empty queues (fire and forget)
       if (emptyBattleIds.length > 0) {
-        void ctx.drizzle
-          .delete(mpvpBattleQueue)
-          .where(
-            and(
-              inArray(mpvpBattleQueue.id, emptyBattleIds),
-              isNull(mpvpBattleQueue.battleId),
-            ),
-          );
+        void deleteMpvpBattleQueueForGetShrineBattles(ctx.drizzle, emptyBattleIds);
       }
 
       return nonEmptyBattles.map((entry) => {
@@ -720,20 +622,11 @@ export const shrineRouter = createTRPCRouter({
     .meta({ mcp: { description: "Get user's queued shrine battle" } })
     .query(async ({ ctx }) => {
       const shrineLobbyStaleBefore = shrineLobbyFreshAfter();
-      const [activeEntry] = await ctx.drizzle
-        .select({ battleId: mpvpBattleQueue.id, sector: mpvpBattleQueue.sector })
-        .from(mpvpBattleUser)
-        .innerJoin(mpvpBattleQueue, eq(mpvpBattleUser.clanBattleId, mpvpBattleQueue.id))
-        .where(
-          and(
-            eq(mpvpBattleUser.userId, ctx.userId),
-            eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-            isNull(mpvpBattleQueue.battleId),
-            gt(mpvpBattleQueue.createdAt, shrineLobbyStaleBefore),
-          ),
-        )
-        .orderBy(desc(mpvpBattleUser.createdAt))
-        .limit(1);
+      const [activeEntry] = await selectMpvpBattleUserForGetUserQueuedShrineBattle(
+        ctx.drizzle,
+        ctx,
+        shrineLobbyStaleBefore,
+      );
 
       return activeEntry ?? null;
     }),
@@ -757,17 +650,10 @@ export const shrineRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.sector.findFirst({
-          where: eq(sector.sector, input.sectorNumber),
-          with: {
-            village: true,
-          },
-        }),
+        findSectorWithVillage(ctx.drizzle, input.sectorNumber),
         fetchActiveWars(ctx.drizzle),
         fetchAlliances(ctx.drizzle),
-        ctx.drizzle.query.village.findFirst({
-          where: eq(village.sector, input.sectorNumber),
-        }),
+        findVillageBySector(ctx.drizzle, input.sectorNumber),
         // Check if user is already in any active battle queue
         fetchActiveUserMpvpBattles(ctx.drizzle, ctx.userId),
       ]);
@@ -879,44 +765,34 @@ export const shrineRouter = createTRPCRouter({
 
       // Create new shrine battle queue with rollback on failure
       const shrineBattleId = nanoid();
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ status: "QUEUED" })
-        .where(and(eq(userData.userId, user.userId), eq(userData.status, "AWAKE")));
+      const result = await queueAwakeUser(ctx.drizzle, user);
       if (result.rowsAffected === 0) return errorResponse("Was not awake?");
 
       try {
         // Insert queue first, then user - sequence allows compensating delete on failure
-        await ctx.drizzle.insert(mpvpBattleQueue).values({
-          id: shrineBattleId,
-          createdAt: new Date(),
-          battleType: "SHRINE_BATTLE",
-          attackerEntityId: attackerSide,
-          defenderEntityId: targetSector.villageId,
-          sector: input.sectorNumber,
-        });
+        await insertMpvpBattleQueueForChallengeShrine(
+          ctx.drizzle,
+          shrineBattleId,
+          attackerSide,
+          targetSector,
+          input,
+        );
 
         try {
-          await ctx.drizzle.insert(mpvpBattleUser).values({
-            id: nanoid(),
-            userId: user.userId,
-            clanBattleId: shrineBattleId,
-            side: "ATTACKER",
-            slot: 0, // First attacker gets slot 0
-          });
+          await insertMpvpBattleUserForJoinShrineBattle(
+            ctx.drizzle,
+            user,
+            { shrineBattleId, side: "ATTACKER" },
+            0,
+          );
         } catch (userInsertError) {
           // Compensating delete: remove the queue we just created
-          await ctx.drizzle
-            .delete(mpvpBattleQueue)
-            .where(eq(mpvpBattleQueue.id, shrineBattleId));
+          await deleteQueueById(ctx.drizzle, shrineBattleId);
           throw userInsertError;
         }
       } catch (error) {
         // Rollback user status on any insert failure
-        await ctx.drizzle
-          .update(userData)
-          .set({ status: "AWAKE" })
-          .where(eq(userData.userId, user.userId));
+        await updateUserDataForChallengeShrine2(ctx.drizzle, user);
         throw error;
       }
 
@@ -956,25 +832,11 @@ export const shrineRouter = createTRPCRouter({
             client: ctx.drizzle,
             userId: ctx.userId,
           }),
-          ctx.drizzle.query.mpvpBattleQueue.findFirst({
-            where: and(
-              eq(mpvpBattleQueue.id, input.shrineBattleId),
-              eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-              gt(mpvpBattleQueue.createdAt, shrineLobbyStaleBefore),
-            ),
-            with: {
-              queue: {
-                with: {
-                  user: {
-                    columns: {
-                      username: true,
-                      villageId: true,
-                    },
-                  },
-                },
-              },
-            },
-          }),
+          findMpvpBattleQueueForJoinShrineBattle(
+            ctx.drizzle,
+            input,
+            shrineLobbyStaleBefore,
+          ),
           // Check if user is already in any active battle queue
           fetchActiveUserMpvpBattles(ctx.drizzle, ctx.userId),
           fetchActiveWars(ctx.drizzle),
@@ -1045,47 +907,30 @@ export const shrineRouter = createTRPCRouter({
       }
 
       // Update user status
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({ status: "QUEUED" })
-        .where(and(eq(userData.userId, user.userId), eq(userData.status, "AWAKE")));
+      const result = await queueAwakeUser(ctx.drizzle, user);
       if (result.rowsAffected === 0) return errorResponse("Was not awake?");
 
       // Try to insert with slot - unique constraint prevents race conditions
       try {
-        await ctx.drizzle.insert(mpvpBattleUser).values({
-          id: nanoid(),
-          userId: user.userId,
-          clanBattleId: input.shrineBattleId,
-          side: input.side,
-          slot: availableSlot,
-        });
+        await insertMpvpBattleUserForJoinShrineBattle(
+          ctx.drizzle,
+          user,
+          input,
+          availableSlot,
+        );
       } catch (error) {
         // On any insert failure, verify user status and revert if needed
         const isDuplicateError = isMysqlDuplicateKeyError(error);
 
         // Verify user is still QUEUED and not in any queue before reverting
         const [currentUser, existingEntry] = await Promise.all([
-          ctx.drizzle.query.userData.findFirst({
-            where: eq(userData.userId, user.userId),
-            columns: { status: true },
-          }),
-          ctx.drizzle.query.mpvpBattleUser.findFirst({
-            where: and(
-              eq(mpvpBattleUser.userId, user.userId),
-              eq(mpvpBattleUser.clanBattleId, input.shrineBattleId),
-            ),
-          }),
+          findUserDataForJoinShrineBattle(ctx.drizzle, user),
+          findMpvpBattleUserForJoinShrineBattle(ctx.drizzle, user, input),
         ]);
 
         // Only revert if user is still QUEUED and not in this battle
         if (currentUser?.status === "QUEUED" && !existingEntry) {
-          await ctx.drizzle
-            .update(userData)
-            .set({ status: "AWAKE" })
-            .where(
-              and(eq(userData.userId, user.userId), eq(userData.status, "QUEUED")),
-            );
+          await wakeQueuedUser(ctx.drizzle, user.userId);
         }
 
         if (isDuplicateError) {
@@ -1121,72 +966,46 @@ export const shrineRouter = createTRPCRouter({
 
       // Use a subquery to only delete if the parent battle hasn't started and isn't stale
       // This ensures atomic check + delete for the mpvpBattleUser row
-      const activeQueueSubquery = ctx.drizzle
-        .select({ id: mpvpBattleQueue.id })
-        .from(mpvpBattleQueue)
-        .where(
-          and(
-            eq(mpvpBattleQueue.id, input.shrineBattleId),
-            isNull(mpvpBattleQueue.battleId),
-            gt(mpvpBattleQueue.createdAt, shrineLobbyStaleBefore),
-          ),
-        );
+      const activeQueueSubquery = selectMpvpBattleQueueForLeaveShrineBattle(
+        ctx.drizzle,
+        input,
+        shrineLobbyStaleBefore,
+      );
 
-      const deleteResult = await ctx.drizzle
-        .delete(mpvpBattleUser)
-        .where(
-          and(
-            eq(mpvpBattleUser.userId, user.userId),
-            inArray(mpvpBattleUser.clanBattleId, activeQueueSubquery),
-          ),
-        );
+      const deleteResult = await deleteMpvpBattleUserForLeaveShrineBattle(
+        ctx.drizzle,
+        user,
+        activeQueueSubquery,
+      );
 
       // If no rows deleted, either user wasn't in queue, battle started, or lobby expired
       if (deleteResult.rowsAffected === 0) {
-        const battle = await ctx.drizzle.query.mpvpBattleQueue.findFirst({
-          where: eq(mpvpBattleQueue.id, input.shrineBattleId),
-          columns: { battleId: true, createdAt: true },
-        });
+        const battle = await findMpvpBattleQueueForLeaveShrineBattle(
+          ctx.drizzle,
+          input,
+        );
         if (battle?.battleId) {
           return errorResponse("Shrine battle already started - cannot leave");
         }
         if (battle && battle.createdAt <= shrineLobbyStaleBefore) {
           // Lobby is confirmed stale — reset status immediately so the user
           // isn't blocked until the cron tick clears it.
-          await ctx.drizzle
-            .update(userData)
-            .set({ status: "AWAKE" })
-            .where(
-              and(eq(userData.userId, user.userId), eq(userData.status, "QUEUED")),
-            );
+          await wakeQueuedUser(ctx.drizzle, user.userId);
           return errorResponse("Shrine battle expired");
         }
         return errorResponse("Not in this shrine battle queue");
       }
 
       // Only update user status if we successfully deleted the queue entry
-      await ctx.drizzle
-        .update(userData)
-        .set({ status: "AWAKE" })
-        .where(and(eq(userData.userId, user.userId), eq(userData.status, "QUEUED")));
+      await wakeQueuedUser(ctx.drizzle, user.userId);
 
       // If no one left in queue, delete the battle queue
-      const counts = await ctx.drizzle
-        .select({ remaining: count() })
-        .from(mpvpBattleUser)
-        .where(eq(mpvpBattleUser.clanBattleId, input.shrineBattleId));
+      const counts = await selectMpvpBattleUserForLeaveShrineBattle(ctx.drizzle, input);
       const remaining = counts[0]?.remaining ?? 0;
 
       if (remaining === 0) {
         // Only delete if battleId is still null (battle hasn't started)
-        await ctx.drizzle
-          .delete(mpvpBattleQueue)
-          .where(
-            and(
-              eq(mpvpBattleQueue.id, input.shrineBattleId),
-              isNull(mpvpBattleQueue.battleId),
-            ),
-          );
+        await deleteUnclaimedBattleQueue(ctx.drizzle, input.shrineBattleId);
       }
 
       return { success: true, message: "Left shrine battle queue" };
@@ -1207,25 +1026,11 @@ export const shrineRouter = createTRPCRouter({
           client: ctx.drizzle,
           userId: ctx.userId,
         }),
-        ctx.drizzle.query.mpvpBattleQueue.findFirst({
-          where: and(
-            eq(mpvpBattleQueue.id, input.shrineBattleId),
-            eq(mpvpBattleQueue.battleType, "SHRINE_BATTLE"),
-            gt(mpvpBattleQueue.createdAt, shrineLobbyStaleBefore),
-          ),
-          with: {
-            queue: {
-              with: {
-                user: {
-                  columns: {
-                    username: true,
-                    villageId: true,
-                  },
-                },
-              },
-            },
-          },
-        }),
+        findMpvpBattleQueueForJoinShrineBattle(
+          ctx.drizzle,
+          input,
+          shrineLobbyStaleBefore,
+        ),
         fetchActiveWars(ctx.drizzle),
         fetchAlliances(ctx.drizzle),
       ]);
@@ -1310,9 +1115,10 @@ export const shrineRouter = createTRPCRouter({
       // If no player defenders, use AI defenders from the defender village
       if (defenderIds.length === 0) {
         // Use defenderEntityId directly - it's the village ID for shrine battles
-        const defenderVillage = await ctx.drizzle.query.village.findFirst({
-          where: eq(village.id, shrineBattle.defenderEntityId),
-        });
+        const defenderVillage = await findVillageById(
+          ctx.drizzle,
+          shrineBattle.defenderEntityId,
+        );
         if (defenderVillage?.shrineSettings?.activeAiIds) {
           defenderIds = defenderVillage.shrineSettings.activeAiIds.slice(
             0,
@@ -1321,11 +1127,9 @@ export const shrineRouter = createTRPCRouter({
         }
         // If still no village-configured AI, fall back to global shrine AIs
         if (defenderIds.length === 0) {
-          const globalAiDefenders = await ctx.drizzle.query.userData.findMany({
-            where: and(eq(userData.isAi, true), eq(userData.inShrines, true)),
-            columns: { userId: true },
-            limit: SHRINE_BATTLE_MAX_USERS_PER_SIDE,
-          });
+          const globalAiDefenders = await listUserDataForInitiateShrineBattle(
+            ctx.drizzle,
+          );
           defenderIds = globalAiDefenders.map((ai) => ai.userId);
         }
         // Final fallback: use the same hardcoded AI as solo shrine battles
@@ -1337,15 +1141,11 @@ export const shrineRouter = createTRPCRouter({
       // CRITICAL: Claim the battle BEFORE calling initiateBattle()
       // Use a placeholder battle ID to atomically claim this queue
       const claimId = `claiming-${nanoid()}`;
-      const claimResult = await ctx.drizzle
-        .update(mpvpBattleQueue)
-        .set({ battleId: claimId })
-        .where(
-          and(
-            eq(mpvpBattleQueue.id, input.shrineBattleId),
-            isNull(mpvpBattleQueue.battleId),
-          ),
-        );
+      const claimResult = await claimBattleQueue(
+        ctx.drizzle,
+        claimId,
+        input.shrineBattleId,
+      );
 
       // If no rows updated, another process already claimed this battle
       if (claimResult.rowsAffected === 0) {
@@ -1367,10 +1167,7 @@ export const shrineRouter = createTRPCRouter({
 
       if (result.success && result.battleId) {
         // Update with the real battleId (replace our claim placeholder)
-        await ctx.drizzle
-          .update(mpvpBattleQueue)
-          .set({ battleId: result.battleId })
-          .where(eq(mpvpBattleQueue.id, input.shrineBattleId));
+        await setQueueBattleId(ctx.drizzle, result.battleId, input.shrineBattleId);
 
         // Note: initiateBattle() sets human participants to status="BATTLE".
         // AI defender rows are never claimed or modified — the shared AI row
@@ -1394,15 +1191,7 @@ export const shrineRouter = createTRPCRouter({
       }
 
       // If initiateBattle failed, release the claim so others can try
-      await ctx.drizzle
-        .update(mpvpBattleQueue)
-        .set({ battleId: null })
-        .where(
-          and(
-            eq(mpvpBattleQueue.id, input.shrineBattleId),
-            eq(mpvpBattleQueue.battleId, claimId),
-          ),
-        );
+      await releaseBattleQueueClaim(ctx.drizzle, input.shrineBattleId, claimId);
 
       return errorResponse(`Failed to initiate shrine battle: ${result.message}`);
     }),
@@ -1416,16 +1205,6 @@ const hasLevel3Shrine = async (
   client: DrizzleClient,
   villageId: string,
 ): Promise<boolean> => {
-  const rows = await client
-    .select({ id: sector.id })
-    .from(sector)
-    .where(
-      and(
-        eq(sector.villageId, villageId),
-        eq(sector.shrineLevel, 3),
-        or(isNull(sector.boostLockedUntil), lte(sector.boostLockedUntil, new Date())),
-      ),
-    )
-    .limit(1);
+  const rows = await selectSectorForHasLevel3Shrine(client, villageId);
   return rows.length > 0;
 };

@@ -20,8 +20,8 @@ import {
   questTypeConcurrentBlockMessage,
 } from "@/libs/quest";
 import { canStartStatTraining, statTrainingBlockMessage } from "@/libs/train";
+import type { fetchQuestDiscoverySummaryCandidates } from "@/queries/quests";
 import type { UserWithRelations } from "@/server/api/routers/profile";
-import type { fetchQuestDiscoverySummaryCandidates } from "@/server/utils/questDiscovery";
 import {
   canAccessStructure,
   getOwnSectorVillage,

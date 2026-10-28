@@ -1,4 +1,5 @@
-import { readAgentProposal, reviseAgentProposal } from "@/libs/contentReview/submit";
+import { reviseAgentProposal } from "@/libs/contentReview/submit";
+import { readAgentProposal } from "@/queries/contentReview";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { agentProposalRevisionSchema } from "@/validators/contentReview";

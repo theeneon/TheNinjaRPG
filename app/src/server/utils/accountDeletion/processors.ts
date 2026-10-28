@@ -1,6 +1,5 @@
-import { eq } from "drizzle-orm";
 import { UTApi } from "uploadthing/server";
-import { userUpload } from "@/drizzle/schema";
+import { listUserUploadForRemoveAccountProcessorData } from "@/queries/accountDeletion";
 import { drizzleDB } from "@/server/db";
 
 export const removeAccountProcessorData = async (userId: string) => {
@@ -23,10 +22,7 @@ export const removeAccountProcessorData = async (userId: string) => {
   }
   // These rows are created by the upload completion handler for this owner's files.
   // Do not infer ownership from avatars or arbitrary external URLs copied into content.
-  const uploads = await drizzleDB.query.userUpload.findMany({
-    columns: { imageUrl: true },
-    where: eq(userUpload.userId, userId),
-  });
+  const uploads = await listUserUploadForRemoveAccountProcessorData(drizzleDB, userId);
   if (!uploads.length) return;
   const files = uploads.map((upload) => ownedUploadKey(upload.imageUrl));
   if (files.some((file) => file === null))

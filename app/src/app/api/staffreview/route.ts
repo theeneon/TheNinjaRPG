@@ -1,14 +1,12 @@
 import { openai } from "@ai-sdk/openai";
 import { generateText } from "ai";
-import { and, eq, gt, ne } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { OPENAI_REVIEW_MODEL, TERR_BOT_ID } from "@/drizzle/constants";
-import { userData, userReview } from "@/drizzle/schema";
 import { handleEndpointError, lockWithGameTimer } from "@/libs/gamesettings";
+import { listUserDataForGET, listUserReviewForGET } from "@/queries/reports";
 import { createConvo } from "@/routers/comments";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
-import { secondsFromNow } from "@/utils/time";
 
 const TIMER_NAME = "timer-720h";
 
@@ -36,20 +34,12 @@ export async function GET(request: Request) {
 
   try {
     // Get all staff
-    const staff = await drizzleDB.query.userData.findMany({
-      where: ne(userData.role, "USER"),
-    });
+    const staff = await listUserDataForGET(drizzleDB);
 
     // Query all user review from the last 7 days
     await Promise.all(
       staff.map(async (user) => {
-        const results = await drizzleDB.query.userReview.findMany({
-          where: and(
-            gt(userReview.createdAt, secondsFromNow(-frequency * 60 * 60)),
-            ne(userReview.review, ""),
-            eq(userReview.targetUserId, user.userId),
-          ),
-        });
+        const results = await listUserReviewForGET(drizzleDB, frequency, user);
         const allText = results.map((r) => r.review).join("\n");
 
         // Review

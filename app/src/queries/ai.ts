@@ -1,0 +1,143 @@
+/**
+ * Database access for ai; authorization and transaction scopes stay in callers.
+ */
+import { and, eq } from "drizzle-orm";
+import type { z } from "zod";
+import { aiProfile } from "@/drizzle/schema";
+import type { DrizzleClient } from "@/server/db";
+import type { updateAiProfileSchema } from "@/validators/ai";
+
+/**
+ * Fetches an AI profile from the database using the provided client and profile ID.
+ *
+ * @param client - The DrizzleClient instance used to query the database.
+ * @param id - The unique identifier of the AI profile to fetch.
+ * @returns The AI profile object, including its associated rules.
+ * @throws Will throw an error if the profile with the given ID is not found.
+ */
+export const fetchAiProfileById = async (client: DrizzleClient, id: string) => {
+  const profile = await client.query.aiProfile.findFirst({
+    where: eq(aiProfile.id, id),
+  });
+  if (!profile) {
+    throw new Error(`fetchAiProfile: Profile not found: ${id}`);
+  }
+  return profile;
+};
+
+/**
+ * Fetches an AI profile from the database using the provided client and user ID.
+ *
+ * @param client
+ * @param userId
+ * @returns
+ */
+export const fetchAiProfileByUserId = async (client: DrizzleClient, userId: string) => {
+  const profile = await client.query.aiProfile.findFirst({
+    where: eq(aiProfile.userId, userId),
+  });
+  return profile;
+};
+
+import { inArray, sql } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { item, jutsu, quest, userData } from "@/drizzle/schema";
+
+/** Build the `aiProfile` insert for `createAiProfile`. */
+export const insertAiProfileForCreateAiProfile = (
+  client: Pick<DrizzleClient, "insert">,
+  input: { userId: string; rules: import("@/validators/ai").AiRuleType[] },
+) =>
+  client
+    .insert(aiProfile)
+    .values({ id: nanoid(), userId: input.userId, rules: input.rules });
+
+/** Build the `jutsu` listing for `updateAiProfile`, using predicates on `id`. */
+export const listJutsuForUpdateAiProfile = (
+  client: Pick<DrizzleClient, "query">,
+  input: { rules: import("@/validators/ai").AiRuleType[] },
+) =>
+  client.query.jutsu.findMany({
+    where: inArray(
+      jutsu.id,
+      input.rules
+        .filter((r) => "jutsuId" in r.action)
+        .map((r) => (r.action as { jutsuId: string }).jutsuId),
+    ),
+  });
+
+/** Build the `item` listing for `updateAiProfile`, using predicates on `id`. */
+export const listItemForUpdateAiProfile = (
+  client: Pick<DrizzleClient, "query">,
+  input: { rules: import("@/validators/ai").AiRuleType[] },
+) =>
+  client.query.item.findMany({
+    where: inArray(
+      item.id,
+      input.rules
+        .filter((r) => "itemId" in r.action)
+        .map((r) => (r.action as { itemId: string }).itemId),
+    ),
+  });
+
+/**
+ * Build the `aiProfile` update for `updateAiProfile`, setting `rules` and
+ * `includeDefaultRules`, using predicates on `id`.
+ */
+export const updateAiProfileForUpdateAiProfile = (
+  client: Pick<DrizzleClient, "update">,
+  input: z.infer<typeof updateAiProfileSchema>,
+) =>
+  client
+    .update(aiProfile)
+    .set({ rules: input.rules, includeDefaultRules: input.includeDefaultRules })
+    .where(eq(aiProfile.id, input.id));
+
+/** Build the `userData` update for `toggleAiProfile`, setting `aiProfileId`, using predicates on `userId`. */
+export const updateUserDataForToggleAiProfile = (
+  client: Pick<DrizzleClient, "update">,
+  target: { userId: string },
+) =>
+  client
+    .update(userData)
+    .set({ aiProfileId: null })
+    .where(eq(userData.userId, target.userId));
+
+/** Build an AI profile assignment for one user. */
+export const setUserAiProfile = (
+  client: Pick<DrizzleClient, "update">,
+  profileId: string,
+  userId: string,
+) =>
+  client
+    .update(userData)
+    .set({ aiProfileId: profileId })
+    .where(eq(userData.userId, userId));
+
+/** Build the `aiProfile` insert for `toggleAiProfile`. */
+export const insertAiProfileForToggleAiProfile = (
+  client: Pick<DrizzleClient, "insert">,
+  id: string,
+  target: { userId: string },
+) => client.insert(aiProfile).values({ id, userId: target.userId, rules: [] });
+
+/** Build the `quest` listing for `getAiRelations`, selecting only `id` and `name`, using predicates on `content`. */
+export const listQuestForGetAiRelations = (
+  client: Pick<DrizzleClient, "query">,
+  aiId: string,
+) =>
+  client.query.quest.findMany({
+    columns: { id: true, name: true },
+    where: sql`(
+      JSON_SEARCH(${quest.content}, 'one', ${aiId}, NULL, '$.objectives[*].opponentAIs[*].ids[*]') IS NOT NULL
+      OR JSON_SEARCH(${quest.content}, 'one', ${aiId}, NULL, '$.objectives[*].allyAIs[*].ids[*]') IS NOT NULL
+      OR JSON_SEARCH(${quest.content}, 'one', ${aiId}, NULL, '$.objectives[*].attackers[*].ids[*]') IS NOT NULL
+    )`,
+  });
+
+/** Build the `userData` listing, selecting only `userId`, using predicates on `userId` and `isAi`. */
+export const listAiUserIds = (client: Pick<DrizzleClient, "query">, aiIds: string[]) =>
+  client.query.userData.findMany({
+    where: and(inArray(userData.userId, aiIds), eq(userData.isAi, true)),
+    columns: { userId: true },
+  });

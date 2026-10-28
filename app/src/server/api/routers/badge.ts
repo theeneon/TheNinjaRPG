@@ -1,15 +1,26 @@
-import { asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { IMG_AVATAR_DEFAULT } from "@/drizzle/constants";
-import { actionLog, badge, userBadge } from "@/drizzle/schema";
+import { badge } from "@/drizzle/schema";
 import {
   deletedReason,
   editedReason,
   outdateProposalsFor,
 } from "@/libs/contentReview/outdate";
 import { callDiscordContent } from "@/libs/socials";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteBadgeForDelete,
+  deleteUserBadgeForDelete,
+  fetchBadge,
+  findBadgeForUpdate,
+  insertActionLogForDelete,
+  insertActionLogForUpdate,
+  insertBadgeForCreate,
+  listBadgeForGetAll,
+  listBadgeForGetAllNames,
+  updateBadgeForUpdate,
+} from "@/queries/badge";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -18,7 +29,6 @@ import {
   publicProcedure,
   serverError,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { setEmptyStringsToNulls } from "@/server/utils/emptyStrings";
 import { calculateContentDiff } from "@/utils/diff";
 import { canChangeContent } from "@/utils/permissions";
@@ -29,10 +39,7 @@ export const badgeRouter = createTRPCRouter({
   getAllNames: publicProcedure
     .meta({ mcp: { description: "Get all badge names and images" } })
     .query(async ({ ctx }) => {
-      return await ctx.drizzle.query.badge.findMany({
-        columns: { id: true, name: true, image: true },
-        orderBy: (table, { asc }) => [asc(table.name)],
-      });
+      return await listBadgeForGetAllNames(ctx.drizzle);
     }),
   getAll: publicProcedure
     .meta({ mcp: { description: "Get all badges with pagination" } })
@@ -48,11 +55,7 @@ export const badgeRouter = createTRPCRouter({
       const currentCursor = input?.cursor ? input.cursor : 0;
       const limit = input?.limit ? input.limit : 100;
       const skip = currentCursor * limit;
-      const results = await ctx.drizzle.query.badge.findMany({
-        offset: skip,
-        limit: limit,
-        orderBy: asc(badge.name),
-      });
+      const results = await listBadgeForGetAll(ctx.drizzle, skip, limit);
       const nextCursor = results.length < limit ? null : currentCursor + 1;
       return {
         data: results,
@@ -77,10 +80,7 @@ export const badgeRouter = createTRPCRouter({
       const [user, entry, badgeWithName] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchBadge(ctx.drizzle, input.id),
-        ctx.drizzle.query.badge.findFirst({
-          columns: { name: true, id: true },
-          where: eq(badge.name, input.data.name),
-        }),
+        findBadgeForUpdate(ctx.drizzle, input),
       ]);
       if (user.isBanned)
         return errorResponse("You are banned and cannot perform this action");
@@ -96,16 +96,8 @@ export const badgeRouter = createTRPCRouter({
         });
         // Update database
         await Promise.all([
-          ctx.drizzle.update(badge).set(input.data).where(eq(badge.id, entry.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "badge",
-            changes: diff,
-            relatedId: entry.id,
-            relatedMsg: `Update: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          updateBadgeForUpdate(ctx.drizzle, input, entry),
+          insertActionLogForUpdate(ctx.drizzle, ctx, diff, entry),
         ]);
         await outdateProposalsFor(
           ctx.drizzle,
@@ -125,12 +117,7 @@ export const badgeRouter = createTRPCRouter({
     const user = await fetchUser(ctx.drizzle, ctx.userId);
     if (canChangeContent(user.role)) {
       const id = nanoid();
-      await ctx.drizzle.insert(badge).values({
-        id: id,
-        name: `New Badge - ${id}`,
-        image: IMG_AVATAR_DEFAULT,
-        description: "",
-      });
+      await insertBadgeForCreate(ctx.drizzle, id);
       return { success: true, message: id };
     } else {
       return { success: false, message: `Not allowed to create badge` };
@@ -146,17 +133,9 @@ export const badgeRouter = createTRPCRouter({
       ]);
       if (entry && canChangeContent(user.role)) {
         await Promise.all([
-          ctx.drizzle.delete(badge).where(eq(badge.id, input.id)),
-          ctx.drizzle.delete(userBadge).where(eq(userBadge.badgeId, input.id)),
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "badge",
-            changes: [`Deleted: ${entry.name}`],
-            relatedId: entry.id,
-            relatedMsg: `Delete: ${entry.name}`,
-            relatedImage: entry.image,
-          }),
+          deleteBadgeForDelete(ctx.drizzle, input),
+          deleteUserBadgeForDelete(ctx.drizzle, input),
+          insertActionLogForDelete(ctx.drizzle, ctx, entry),
         ]);
         await outdateProposalsFor(
           ctx.drizzle,
@@ -170,13 +149,3 @@ export const badgeRouter = createTRPCRouter({
       }
     }),
 });
-
-/**
- * COMMON QUERIES WHICH ARE REUSED
- */
-
-export const fetchBadge = async (client: DrizzleClient, id: string) => {
-  return await client.query.badge.findFirst({
-    where: eq(badge.id, id),
-  });
-};

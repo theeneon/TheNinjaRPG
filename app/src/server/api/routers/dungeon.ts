@@ -1,21 +1,39 @@
-import { and, desc, eq, getTableColumns, inArray, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { DUNGEON_RUN_SECONDS } from "@/drizzle/constants";
-import {
-  actionLog,
-  battle,
-  dungeon,
-  dungeonMember,
-  dungeonRun,
-  item,
-  jutsu,
-  mapAsset,
-  rewardPackage,
-  userData,
-} from "@/drizzle/schema";
 import { transitionCoopParty } from "@/libs/coop";
 import { dungeonFloorAt } from "@/libs/dungeon";
 import { dungeonRewardError, rollDungeonRewards } from "@/libs/dungeonRewards";
+import { listAiUserIds } from "@/queries/ai";
+import {
+  clearDungeonActiveUsers,
+  deleteDungeonMemberForUpdateParty,
+  deleteDungeonRunForCreate,
+  findDungeonForCreate,
+  findDungeonMemberForClaim,
+  findDungeonMemberForCreate,
+  findDungeonRunForAct,
+  findMapAssetForSave,
+  findUserDataForGetAvailable,
+  insertActionLogForSave,
+  insertDungeonForSave,
+  insertDungeonMember,
+  insertDungeonRunForCreate,
+  listBattleForGetState,
+  listDungeonForGetAvailable,
+  listDungeonMemberForAct,
+  listDungeonMemberForGetState,
+  listDungeonRunForGetState,
+  listItemForSave,
+  listJutsuForSave,
+  listRewardPackageForSave,
+  listUserDataForGetState,
+  selectCandidatesForGetState,
+  selectDungeonMemberForGetState,
+  updateDungeonMemberForClaim,
+  updateDungeonRunForReserve,
+  updateDungeonRunForUpdateParty,
+} from "@/queries/dungeon";
+import { findUserById, findUserRoleById } from "@/queries/profile";
 import { initiateBattle } from "@/routers/combat";
 import { updateRewards } from "@/routers/quests";
 import {
@@ -46,11 +64,8 @@ export const dungeonRouter = createTRPCRouter({
     .input(dungeonSectorSchema)
     .query(async ({ ctx, input }) => {
       const [user, definitions] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { sector: true },
-        }),
-        ctx.drizzle.query.dungeon.findMany(),
+        findUserDataForGetAvailable(ctx.drizzle, ctx),
+        listDungeonForGetAvailable(ctx.drizzle),
       ]);
       if (user?.sector !== input.sector) return [];
       return definitions.filter(
@@ -65,41 +80,8 @@ export const dungeonRouter = createTRPCRouter({
   getState: protectedProcedure.query(async ({ ctx }) => {
     // A derived UNION materializes indexed candidates once; IN can become a dependent
     // subquery that scans every historical run before probing membership.
-    const candidates = ctx.drizzle
-      .select({ id: dungeonRun.id })
-      .from(dungeonMember)
-      .innerJoin(dungeonRun, eq(dungeonRun.id, dungeonMember.runId))
-      .where(
-        and(
-          eq(dungeonMember.userId, ctx.userId),
-          sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.memberIds')`,
-        ),
-      )
-      .union(
-        ctx.drizzle
-          .select({ id: dungeonRun.id })
-          .from(dungeonRun)
-          .where(
-            and(
-              eq(dungeonRun.status, "LOBBY"),
-              sql`JSON_CONTAINS(${dungeonRun.state}, ${JSON.stringify(ctx.userId)}, '$.invitedIds')`,
-            ),
-          ),
-      )
-      .as("visibleDungeonRuns");
-    const runs = await ctx.drizzle
-      .select(getTableColumns(dungeonRun))
-      .from(candidates)
-      .innerJoin(dungeonRun, eq(dungeonRun.id, candidates.id))
-      .orderBy(
-        // Keep the player's party, unclaimed rewards and invitations ahead of paid history.
-        desc(
-          sql`EXISTS (SELECT 1 FROM ${dungeonMember} WHERE ${dungeonMember.runId} = ${dungeonRun.id} AND ${dungeonMember.activeUserId} = ${ctx.userId})`,
-        ),
-        desc(eq(dungeonRun.status, "LOBBY")),
-        desc(dungeonRun.createdAt),
-      )
-      .limit(20);
+    const candidates = selectDungeonMemberForGetState(ctx.drizzle, ctx);
+    const runs = await selectCandidatesForGetState(ctx.drizzle, candidates, ctx);
     const expiryNeedsRefresh = await Promise.all(
       runs.map((run) => expireDungeonRun(ctx.drizzle, run)),
     );
@@ -107,28 +89,10 @@ export const dungeonRouter = createTRPCRouter({
       ...new Set(runs.flatMap((r) => [...r.state.memberIds, ...r.state.invitedIds])),
     ];
     const [users, members, refreshedRuns] = await Promise.all([
-      ids.length
-        ? ctx.drizzle.query.userData.findMany({
-            where: inArray(userData.userId, ids),
-            columns: { userId: true, username: true, status: true, isBanned: true },
-          })
-        : [],
-      runs.length
-        ? ctx.drizzle.query.dungeonMember.findMany({
-            where: inArray(
-              dungeonMember.runId,
-              runs.map((r) => r.id),
-            ),
-          })
-        : [],
+      ids.length ? listUserDataForGetState(ctx.drizzle, ids) : [],
+      runs.length ? listDungeonMemberForGetState(ctx.drizzle, runs) : [],
       expiryNeedsRefresh.some(Boolean)
-        ? ctx.drizzle.query.dungeonRun.findMany({
-            where: inArray(
-              dungeonRun.id,
-              runs.map((r) => r.id),
-            ),
-            orderBy: desc(dungeonRun.createdAt),
-          })
+        ? listDungeonRunForGetState(ctx.drizzle, runs)
         : null,
     ]);
     // Selection prioritizes active parties; the response keeps its chronological ordering.
@@ -143,13 +107,7 @@ export const dungeonRouter = createTRPCRouter({
         Date.now() - r.state.entryStartedAt > 60000,
     );
     if (interrupted.length) {
-      const battles = await ctx.drizzle.query.battle.findMany({
-        where: inArray(
-          battle.id,
-          interrupted.map((r) => r.battleId as string),
-        ),
-        columns: { id: true },
-      });
+      const battles = await listBattleForGetState(ctx.drizzle, interrupted);
       const missing = interrupted.filter(
         (r) => !battles.some((b) => b.id === r.battleId),
       );
@@ -169,13 +127,7 @@ export const dungeonRouter = createTRPCRouter({
         ),
       );
       if (missing.length)
-        currentRuns = await ctx.drizzle.query.dungeonRun.findMany({
-          where: inArray(
-            dungeonRun.id,
-            currentRuns.map((r) => r.id),
-          ),
-          orderBy: desc(dungeonRun.createdAt),
-        });
+        currentRuns = await listDungeonRunForGetState(ctx.drizzle, currentRuns);
     }
     return {
       runs: currentRuns,
@@ -186,12 +138,9 @@ export const dungeonRouter = createTRPCRouter({
   }),
   /** Staff may inspect hidden and expired definitions when authoring dungeon content. */
   getAll: protectedProcedure.query(async ({ ctx }) => {
-    const user = await ctx.drizzle.query.userData.findFirst({
-      where: eq(userData.userId, ctx.userId),
-      columns: { role: true },
-    });
+    const user = await findUserRoleById(ctx.drizzle, ctx.userId);
     return user && canChangeContent(user.role)
-      ? ctx.drizzle.query.dungeon.findMany()
+      ? listDungeonForGetAvailable(ctx.drizzle)
       : [];
   }),
   /** Validate sources and grant limits, copying approved package snapshots before saving. */
@@ -208,47 +157,17 @@ export const dungeonRouter = createTRPCRouter({
       ];
       const drops = input.content.rewards.drops;
       const [user, ais, items, jutsus, entranceAsset, packages] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          columns: { role: true },
-        }),
-        ctx.drizzle.query.userData.findMany({
-          where: and(inArray(userData.userId, aiIds), eq(userData.isAi, true)),
-          columns: { userId: true },
-        }),
+        findUserRoleById(ctx.drizzle, ctx.userId),
+        listAiUserIds(ctx.drizzle, aiIds),
         drops.some((d) => d.type === "item" || d.type === "cache")
-          ? ctx.drizzle.query.item.findMany({
-              where: inArray(
-                item.id,
-                drops
-                  .filter((d) => d.type === "item" || d.type === "cache")
-                  .map((d) => d.id),
-              ),
-              columns: { id: true, effects: true },
-            })
+          ? listItemForSave(ctx.drizzle, drops)
           : [],
         drops.some((d) => d.type === "jutsu")
-          ? ctx.drizzle.query.jutsu.findMany({
-              where: inArray(
-                jutsu.id,
-                drops.filter((d) => d.type === "jutsu").map((d) => d.id),
-              ),
-              columns: { id: true },
-            })
+          ? listJutsuForSave(ctx.drizzle, drops)
           : [],
-        input.content.structureAssetId
-          ? ctx.drizzle.query.mapAsset.findFirst({
-              columns: { id: true },
-              where: eq(mapAsset.id, input.content.structureAssetId),
-            })
-          : null,
+        input.content.structureAssetId ? findMapAssetForSave(ctx.drizzle, input) : null,
         drops.some((d) => d.type === "package")
-          ? ctx.drizzle.query.rewardPackage.findMany({
-              where: inArray(
-                rewardPackage.id,
-                drops.filter((d) => d.type === "package").map((d) => d.id),
-              ),
-            })
+          ? listRewardPackageForSave(ctx.drizzle, drops)
           : [],
       ]);
       if (!user || !canChangeContent(user.role))
@@ -308,20 +227,8 @@ export const dungeonRouter = createTRPCRouter({
       if (rewardError) return errorResponse(rewardError);
       const id = input.id ?? nanoid();
       await Promise.all([
-        ctx.drizzle
-          .insert(dungeon)
-          .values({ id, content, updatedAt: new Date() })
-          .onDuplicateKeyUpdate({
-            set: { content, updatedAt: new Date() },
-          }),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          relatedId: id,
-          tableName: "dungeon",
-          relatedMsg: "Updated dungeon",
-          changes: [JSON.stringify(content)],
-        }),
+        insertDungeonForSave(ctx.drizzle, id, content),
+        insertActionLogForSave(ctx.drizzle, ctx, id, content),
       ]);
       await notifyMapLocationsChanged();
       return { success: true, message: "Dungeon saved.", id };
@@ -332,13 +239,9 @@ export const dungeonRouter = createTRPCRouter({
     .input(dungeonIdSchema)
     .mutation(async ({ ctx, input }) => {
       const [user, definition, active] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        ctx.drizzle.query.dungeon.findFirst({ where: eq(dungeon.id, input.id) }),
-        ctx.drizzle.query.dungeonMember.findFirst({
-          where: eq(dungeonMember.activeUserId, ctx.userId),
-        }),
+        findUserById(ctx.drizzle, ctx.userId),
+        findDungeonForCreate(ctx.drizzle, input),
+        findDungeonMemberForCreate(ctx.drizzle, ctx),
       ]);
       if (user?.status !== "AWAKE" || user.isBanned || user.isAi)
         return errorResponse(
@@ -358,38 +261,12 @@ export const dungeonRouter = createTRPCRouter({
       const id = nanoid();
       // The unique activeUserId prevents two parties for this account. A crash between
       // inserts can leave only an empty, unreferenced run, which support can remove.
-      await ctx.drizzle.insert(dungeonRun).values({
-        id,
-        dungeonId: definition.id,
-        leaderId: ctx.userId,
-        content,
-        status: "LOBBY",
-        createdAt: new Date(),
-        state: {
-          memberIds: [ctx.userId],
-          invitedIds: [],
-          readyIds: [],
-          floor: 0,
-          clearedFloors: [],
-          message: "Invite teammates, then have everyone ready up.",
-        },
-      });
+      await insertDungeonRunForCreate(ctx.drizzle, id, definition, ctx, content);
       try {
-        await ctx.drizzle
-          .insert(dungeonMember)
-          .values({ runId: id, userId: ctx.userId, activeUserId: ctx.userId });
+        await insertDungeonMember(ctx.drizzle, id, ctx.userId);
       } catch (error) {
         // Never remove a run if membership committed despite an ambiguous driver failure.
-        await ctx.drizzle
-          .delete(dungeonRun)
-          .where(
-            and(
-              eq(dungeonRun.id, id),
-              eq(dungeonRun.version, 0),
-              eq(dungeonRun.status, "LOBBY"),
-              sql`NOT EXISTS (SELECT 1 FROM ${dungeonMember} WHERE ${dungeonMember.runId} = ${dungeonRun.id})`,
-            ),
-          );
+        await deleteDungeonRunForCreate(ctx.drizzle, id);
         if (isMysqlDuplicateKeyError(error))
           return errorResponse("You already joined another dungeon.");
         throw error;
@@ -402,21 +279,10 @@ export const dungeonRouter = createTRPCRouter({
     .input(dungeonActionSchema)
     .mutation(async ({ ctx, input }) => {
       const [run, user, target, active] = await Promise.all([
-        ctx.drizzle.query.dungeonRun.findFirst({ where: eq(dungeonRun.id, input.id) }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
-        input.userId
-          ? ctx.drizzle.query.userData.findFirst({
-              where: eq(userData.userId, input.userId),
-            })
-          : undefined,
-        ctx.drizzle.query.dungeonMember.findMany({
-          where: inArray(dungeonMember.activeUserId, [
-            ctx.userId,
-            ...(input.userId ? [input.userId] : []),
-          ]),
-        }),
+        findDungeonRunForAct(ctx.drizzle, input),
+        findUserById(ctx.drizzle, ctx.userId),
+        input.userId ? findUserById(ctx.drizzle, input.userId) : undefined,
+        listDungeonMemberForAct(ctx.drizzle, ctx, input),
       ]);
       if (!run || !user) return errorResponse("Dungeon not found.");
       if (run.expiresAt && run.expiresAt.getTime() <= Date.now()) {
@@ -471,22 +337,13 @@ export const dungeonRouter = createTRPCRouter({
         const expiresAt = run.expiresAt ?? secondsFromNow(DUNGEON_RUN_SECONDS);
         return launchCoopEncounter({
           reserve: async ({ battleId }) => {
-            const claimed = await ctx.drizzle
-              .update(dungeonRun)
-              .set({
-                status: "FIGHTING",
-                battleId,
-                expiresAt,
-                version: run.version + 1,
-                state: {
-                  ...state,
-                  entryStartedAt: Date.now(),
-                  entryPreviousDeadline: run.expiresAt?.getTime() ?? null,
-                },
-              })
-              .where(
-                and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)),
-              );
+            const claimed = await updateDungeonRunForReserve(
+              ctx.drizzle,
+              battleId,
+              expiresAt,
+              run,
+              state,
+            );
             return claimed.rowsAffected === 1;
           },
           initiate: ({ battleId }) =>
@@ -522,31 +379,12 @@ export const dungeonRouter = createTRPCRouter({
       const updateParty = async (
         client: Pick<DrizzleClient, "update" | "insert" | "delete">,
       ) => {
-        const claim = await client
-          .update(dungeonRun)
-          .set({ state, status, version: sql`${dungeonRun.version} + 1` })
-          .where(and(eq(dungeonRun.id, run.id), eq(dungeonRun.version, run.version)));
+        const claim = await updateDungeonRunForUpdateParty(client, state, status, run);
         if (claim.rowsAffected !== 1) return false;
-        if (joined)
-          await client.insert(dungeonMember).values({
-            runId: run.id,
-            userId: ctx.userId,
-            activeUserId: ctx.userId,
-          });
+        if (joined) await insertDungeonMember(client, run.id, ctx.userId);
         if (removedUser)
-          await client
-            .delete(dungeonMember)
-            .where(
-              and(
-                eq(dungeonMember.runId, run.id),
-                eq(dungeonMember.userId, removedUser),
-              ),
-            );
-        if (ending)
-          await client
-            .update(dungeonMember)
-            .set({ activeUserId: null })
-            .where(eq(dungeonMember.runId, run.id));
+          await deleteDungeonMemberForUpdateParty(client, run, removedUser);
+        if (ending) await clearDungeonActiveUsers(client, run.id);
         return true;
       };
       try {
@@ -573,16 +411,9 @@ export const dungeonRouter = createTRPCRouter({
     .input(dungeonIdSchema)
     .mutation(async ({ ctx, input }) => {
       const [run, member, user] = await Promise.all([
-        ctx.drizzle.query.dungeonRun.findFirst({ where: eq(dungeonRun.id, input.id) }),
-        ctx.drizzle.query.dungeonMember.findFirst({
-          where: and(
-            eq(dungeonMember.runId, input.id),
-            eq(dungeonMember.userId, ctx.userId),
-          ),
-        }),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-        }),
+        findDungeonRunForAct(ctx.drizzle, input),
+        findDungeonMemberForClaim(ctx.drizzle, input, ctx),
+        findUserById(ctx.drizzle, ctx.userId),
       ]);
       if (!run || !member || !user || !run.state.memberIds.includes(ctx.userId))
         return errorResponse("You are not in this party.");
@@ -615,16 +446,7 @@ export const dungeonRouter = createTRPCRouter({
       // while granting first can duplicate them. Failed grants leave the receipt unclaimed.
       const paid = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
-          const claim = await tx
-            .update(dungeonMember)
-            .set({ reward: receipt, activeUserId: null })
-            .where(
-              and(
-                eq(dungeonMember.runId, run.id),
-                eq(dungeonMember.userId, ctx.userId),
-                isNull(dungeonMember.reward),
-              ),
-            );
+          const claim = await updateDungeonMemberForClaim(tx, receipt, run, ctx);
           if (claim.rowsAffected === 0) return false;
           // Reward tasks execute serially inside the driver's rotating transaction session.
           await updateRewards({

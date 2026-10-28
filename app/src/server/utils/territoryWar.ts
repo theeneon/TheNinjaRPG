@@ -1,56 +1,41 @@
 import { randomInt } from "node:crypto";
-import {
-  and,
-  desc,
-  eq,
-  getTableName,
-  gt,
-  isNull,
-  lte,
-  notExists,
-  sql,
-} from "drizzle-orm";
+import { getTableName, sql } from "drizzle-orm";
 import type { AnyMySqlColumn } from "drizzle-orm/mysql-core";
 import { nanoid } from "nanoid";
 import map from "@/data/hexasphere.json";
 import {
   TERRITORY_WAR_AI_POINTS,
   TERRITORY_WAR_BOOST_HOURS,
-  TERRITORY_WAR_DURATION_MINUTES,
   TERRITORY_WAR_INTERVAL_HOURS,
   TERRITORY_WAR_PVP_POINTS,
-  TERRITORY_WAR_TARGET_POINTS,
-  TERRITORY_WAR_TOKEN_REWARD,
   VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
-import {
-  clan,
-  notification,
-  territoryWar,
-  territoryWarScore,
-  userData,
-  village,
-} from "@/drizzle/schema";
+import type { userData } from "@/drizzle/schema";
 import { stillInBattle } from "@/libs/combat/actions";
 import { areBattleAllies } from "@/libs/combat/participants";
 import type { CompleteBattle } from "@/libs/combat/types";
 import type { TerritoryCompetitor } from "@/libs/territoryWar";
+import {
+  executeInsertedForSyncTerritoryWars,
+  executeReceiptForSettleTerritoryWarCombat,
+  executeResultForResolveTerritoryWar,
+  executeRowsForCleanupTerritoryWarTeams,
+  executeRowsForCleanupTerritoryWarTeams2,
+  executeRowsForResolveTerritoryWar,
+  fetchLatestTerritoryWar,
+  findTerritoryWarForSyncTerritoryWars,
+  findUserDataForFetchTerritoryWarUser,
+  insertNotificationForSyncTerritoryWars,
+  insertTerritoryWarScoreForSettleTerritoryWarCombat,
+  listSectorForSyncTerritoryWars,
+  listVillageForSyncTerritoryWars,
+  updateTerritoryWarForSettleTerritoryWarCombat,
+  updateTerritoryWarForSyncTerritoryWars,
+  updateUserDataForResolveTerritoryWar,
+} from "@/queries/territoryWar";
+import { listWarCampAiUserIds } from "@/queries/war";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-
-/** Latest scheduled event, including closed/expired results; does not advance its lifecycle. */
-export const fetchLatestTerritoryWar = (client: DrizzleClient) =>
-  client.query.territoryWar.findFirst({ orderBy: desc(territoryWar.startsAt) });
-/** Read-only, start-inclusive/end-exclusive admission window, optionally limited to a sector. */
-export const fetchActiveTerritoryWar = (client: DrizzleClient, sectorNumber?: number) =>
-  client.query.territoryWar.findFirst({
-    where: and(
-      isNull(territoryWar.resolvedAt),
-      lte(territoryWar.startsAt, new Date()),
-      gt(territoryWar.endsAt, new Date()),
-      sectorNumber === undefined ? undefined : eq(territoryWar.sector, sectorNumber),
-    ),
-  });
 
 /**
  * Aggregate frozen competitors' credit from surviving, non-fled humans only.
@@ -114,36 +99,25 @@ export const settleTerritoryWarCombat = async (
   const awards = territoryWarAwards(battle);
   if (!snapshot || !awards.length) return;
   // Serialize only this global event. The same guard excludes late and post-victory results.
-  const claimed = await client
-    .update(territoryWar)
-    .set({ version: sql`${territoryWar.version} + 1` })
-    .where(
-      and(
-        eq(territoryWar.id, snapshot.id),
-        isNull(territoryWar.resolvedAt),
-        lte(territoryWar.startsAt, now),
-        gt(territoryWar.endsAt, now),
-      ),
-    );
+  const claimed = await updateTerritoryWarForSettleTerritoryWarCombat(
+    client,
+    snapshot,
+    now,
+  );
   if (!claimed.rowsAffected) return;
-  const receipt = await client.execute(
-    sql`INSERT IGNORE INTO TerritoryWarReceipt (battleId, warId) VALUES (${battle.id}, ${snapshot.id})`,
+  const receipt = await executeReceiptForSettleTerritoryWarCombat(
+    client,
+    battle,
+    snapshot,
   );
   if (!receipt.rowsAffected) return;
   for (const { competitor, points } of awards) {
-    await client
-      .insert(territoryWarScore)
-      .values({
-        warId: snapshot.id,
-        competitorId: competitor.id,
-        name: competitor.name,
-        clanId: competitor.clanId,
-        villageId: competitor.villageId,
-        points,
-      })
-      .onDuplicateKeyUpdate({
-        set: { points: sql`${territoryWarScore.points} + ${points}` },
-      });
+    await insertTerritoryWarScoreForSettleTerritoryWarCombat(
+      client,
+      snapshot,
+      competitor,
+      points,
+    );
   }
   await resolveTerritoryWar(client, snapshot.id, now);
 };
@@ -160,30 +134,10 @@ export const resolveTerritoryWar = async (
   id: string,
   now = new Date(),
 ) => {
-  const result = await client.execute(sql`
-    UPDATE ${territoryWar}
-    INNER JOIN ${territoryWarScore} ON ${territoryWarScore.warId} = ${territoryWar.id}
-    LEFT JOIN ${territoryWarScore} higher ON higher.warId = ${territoryWar.id} AND higher.points > ${territoryWarScore.points}
-    LEFT JOIN ${clan} ON ${clan.id} = ${territoryWarScore.clanId}
-    LEFT JOIN ${village} ON ${village.id} = COALESCE(${territoryWarScore.villageId}, IF(${clan.hasHideout}, ${clan.villageId}, NULL))
-    SET ${village.tokens} = ${village.tokens} + ${TERRITORY_WAR_TOKEN_REWARD},
-        ${clan.points} = ${clan.points} + IF(${clan.hasHideout}, 0, ${TERRITORY_WAR_TOKEN_REWARD}),
-        ${village.territoryWarBoostUntil} = DATE_ADD(${now}, INTERVAL ${TERRITORY_WAR_BOOST_HOURS} HOUR),
-        ${clan.territoryWarBoostUntil} = DATE_ADD(${now}, INTERVAL ${TERRITORY_WAR_BOOST_HOURS} HOUR),
-        ${territoryWarScore.rewarded} = true,
-        ${territoryWar.resolvedAt} = ${now}
-    WHERE ${territoryWar.id} = ${id} AND ${territoryWar.resolvedAt} IS NULL AND ${territoryWarScore.rewarded} = false
-      AND ((${territoryWar.endsAt} > ${now} AND ${territoryWarScore.points} >= ${TERRITORY_WAR_TARGET_POINTS})
-        OR (${territoryWar.endsAt} <= ${now} AND ${territoryWarScore.points} > 0 AND higher.competitorId IS NULL))
-  `);
+  const result = await executeResultForResolveTerritoryWar(client, now, id);
   if (result.rowsAffected) {
-    await client.execute(
-      sql`INSERT INTO ${notification} (userId, content) SELECT guardianId, ${`Territory War victory! Winners receive ${TERRITORY_WAR_TOKEN_REWARD.toLocaleString()} tokens (or clan points) and a ${TERRITORY_WAR_BOOST_HOURS}-hour Territory War boost. See [the standings](/territory-war).`} FROM ${territoryWar} WHERE ${territoryWar.id} = ${id}`,
-    );
-    await client
-      .update(userData)
-      .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-      .where(eq(userData.isAi, false));
+    await executeRowsForResolveTerritoryWar(client, id);
+    await updateUserDataForResolveTerritoryWar(client);
   }
   return result;
 };
@@ -196,12 +150,9 @@ export const resolveTerritoryWar = async (
 export const syncTerritoryWars = async (client: DrizzleClient, now = new Date()) => {
   const [latest, owned, homes, guardians] = await Promise.all([
     fetchLatestTerritoryWar(client),
-    client.query.sector.findMany({ columns: { sector: true } }),
-    client.query.village.findMany({ columns: { sector: true } }),
-    client.query.userData.findMany({
-      columns: { userId: true },
-      where: and(eq(userData.isAi, true), eq(userData.isWarCamp, true)),
-    }),
+    listSectorForSyncTerritoryWars(client),
+    listVillageForSyncTerritoryWars(client),
+    listWarCampAiUserIds(client),
   ]);
   await cleanupTerritoryWarTeams(client, now);
   if (latest && !latest.resolvedAt) {
@@ -209,37 +160,10 @@ export const syncTerritoryWars = async (client: DrizzleClient, now = new Date())
     // Claim an empty expiry atomically: a scorer holding the event lock may still
     // commit its first points, so a preceding non-locking score read is insufficient.
     const expired = await retryOnDeadlock(() =>
-      client
-        .update(territoryWar)
-        .set({ resolvedAt: latest.endsAt })
-        .where(
-          and(
-            eq(territoryWar.id, latest.id),
-            isNull(territoryWar.resolvedAt),
-            lte(territoryWar.endsAt, now),
-            notExists(
-              client
-                .select({ id: territoryWarScore.competitorId })
-                .from(territoryWarScore)
-                .where(
-                  and(
-                    eq(territoryWarScore.warId, latest.id),
-                    gt(territoryWarScore.points, 0),
-                  ),
-                ),
-            ),
-          ),
-        ),
+      updateTerritoryWarForSyncTerritoryWars(client, latest, now),
     );
     if (!expired.rowsAffected) {
-      const pending = await client.query.territoryWar.findFirst({
-        columns: { id: true },
-        where: and(
-          eq(territoryWar.id, latest.id),
-          isNull(territoryWar.resolvedAt),
-          lte(territoryWar.endsAt, now),
-        ),
-      });
+      const pending = await findTerritoryWarForSyncTerritoryWars(client, latest, now);
       if (pending) {
         // Only scored, unresolved expiries need mixed-DML delivery: MySQL cannot
         // combine the guarded payout UPDATE with the announcement INSERT/counters.
@@ -278,20 +202,17 @@ export const syncTerritoryWars = async (client: DrizzleClient, now = new Date())
   await retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       const db = tx as unknown as DrizzleClient;
-      const inserted =
-        await db.execute(sql`INSERT IGNORE INTO TerritoryWar (id, predecessorId, sector, guardianId, startsAt, endsAt)
-      SELECT ${id}, ${latest?.id ?? "initial"}, ${sectorNumber}, ${guardianId}, ${now}, ${new Date(now.getTime() + TERRITORY_WAR_DURATION_MINUTES * 60000)}
-      WHERE NOT EXISTS (SELECT 1 FROM Sector WHERE Sector.sector = ${sectorNumber})
-        AND NOT EXISTS (SELECT 1 FROM Village WHERE Village.sector = ${sectorNumber})`);
+      const inserted = await executeInsertedForSyncTerritoryWars(
+        db,
+        id,
+        latest,
+        sectorNumber,
+        guardianId,
+        now,
+      );
       if (!inserted.rowsAffected) return;
-      await db.insert(notification).values({
-        userId: guardianId,
-        content: `Territory War! A guardian has appeared in sector ${sectorNumber} for ${TERRITORY_WAR_DURATION_MINUTES} minutes. First to ${TERRITORY_WAR_TARGET_POINTS} wins early; otherwise the highest positive score wins at the deadline. [Join the battle](/territory-war).`,
-      });
-      await db
-        .update(userData)
-        .set({ unreadNotifications: sql`${userData.unreadNotifications} + 1` })
-        .where(eq(userData.isAi, false));
+      await insertNotificationForSyncTerritoryWars(db, guardianId, sectorNumber);
+      await updateUserDataForResolveTerritoryWar(db);
     }),
   );
 };
@@ -302,20 +223,13 @@ export const cleanupTerritoryWarTeams = async (
   now = new Date(),
 ) => {
   const expired = sql`q.battleType = 'TERRITORY_WAR' AND (w.resolvedAt IS NOT NULL OR w.endsAt <= ${now}) AND b.id IS NULL`;
-  await client.execute(
-    sql`UPDATE UserData u INNER JOIN MpvpBattleUser m ON m.userId = u.userId INNER JOIN MpvpBattleQueue q ON q.id = m.clanBattleId INNER JOIN TerritoryWar w ON w.id = q.territoryWarId LEFT JOIN Battle b ON b.id = q.battleId SET u.status = 'AWAKE' WHERE ${expired} AND u.status = 'QUEUED'`,
-  );
-  await client.execute(
-    sql`DELETE q, m FROM MpvpBattleQueue q INNER JOIN TerritoryWar w ON w.id = q.territoryWarId LEFT JOIN Battle b ON b.id = q.battleId LEFT JOIN MpvpBattleUser m ON m.clanBattleId = q.id WHERE ${expired}`,
-  );
+  await executeRowsForCleanupTerritoryWarTeams(client, expired);
+  await executeRowsForCleanupTerritoryWarTeams2(client, expired);
 };
 
 /** Shared farming/lobby user snapshot with the village/clan needed for competitor and bonus rules. */
 export const fetchTerritoryWarUser = async (client: DrizzleClient, userId: string) => {
-  const user = await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    with: { village: true, clan: true },
-  });
+  const user = await findUserDataForFetchTerritoryWarUser(client, userId);
   if (!user) throw new Error("User not found");
   return user;
 };

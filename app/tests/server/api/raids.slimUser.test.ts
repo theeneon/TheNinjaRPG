@@ -1,8 +1,9 @@
+import { fetchRaidListUser, fetchRaidJoinUser } from "@/queries/raids";
 
 import { describe, expect, it, vi } from "bun:test";
 import type { Quest } from "@/drizzle/schema";
 import { isRaidListedForVillage } from "@/libs/raids";
-import { fetchRaidJoinUser, fetchRaidListUser } from "@/server/utils/raidUser";
+
 import { RaidObjective, type QuestContentType } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
 

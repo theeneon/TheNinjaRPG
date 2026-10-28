@@ -9,20 +9,32 @@
  * Failed CAS (`success: false` / `false`) means another request mutated the row first — return a
  * safe client error and retry-friendly message.
  */
-import { and, eq, exists, gt, gte, isNull, lt, lte, ne, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { and, eq, exists, sql } from "drizzle-orm";
 import type { BattleType } from "@/drizzle/constants";
-import type { UserItem } from "@/drizzle/schema";
 import {
-  bloodlineRolls,
+  type bloodlineRolls,
   huntingSession,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  rankedPvpQueue,
-  territoryWar,
+  type UserItem,
   userData,
   userItem,
 } from "@/drizzle/schema";
+
+import {
+  deleteBloodlineRollsForRemoveBloodlineFromPoolAtomically,
+  deleteUserItemForRestoreStaleUserItemMergeClaims,
+  deleteUserItemWhere,
+  insertUserItemForRefundUserItemQuantityAtomically,
+  insertUserItemForRefundUserItemQuantityAtomically2,
+  selectMpvpBattleUserForBattleClaimRollbackStatus,
+  selectRankedPvpQueueForBattleClaimRollbackStatus,
+  updateBloodlineRollsForRemoveBloodlineFromPoolAtomically,
+  updateTableForReservePityCredit,
+  updateUserDataForAdjustSeichiSilverAtomically,
+  updateUserDataForClaimActiveNpcQuest,
+  updateUserDataForClaimUserSnapshot,
+  updateUserItemForRestoreStaleUserItemMergeClaims,
+  updateUserItemForUpdateUserItemQuantityAtomically,
+} from "@/queries/concurrency";
 import type { DrizzleClient } from "@/server/db";
 import type { QueryCondition } from "@/utils/typeutils";
 
@@ -47,19 +59,14 @@ export const claimUserSnapshot = async ({
   set = {},
 }: ClaimUserSnapshotParams) => {
   const claimedAt = getNextUserSnapshotAt(updatedAt);
-  const result = await client
-    .update(userData)
-    .set({
-      updatedAt: claimedAt,
-      ...set,
-    })
-    .where(
-      and(
-        eq(userData.userId, userId),
-        eq(userData.updatedAt, updatedAt),
-        ...where.filter(Boolean),
-      ),
-    );
+  const result = await updateUserDataForClaimUserSnapshot(
+    client,
+    claimedAt,
+    set,
+    userId,
+    updatedAt,
+    where,
+  );
 
   return {
     success: result.rowsAffected === 1,
@@ -109,8 +116,12 @@ export const updateUserItemQuantityAtomically = async ({
 
   const result =
     nextQuantity > 0
-      ? await client.update(userItem).set({ quantity: nextQuantity }).where(where)
-      : await client.delete(userItem).where(where);
+      ? await updateUserItemForUpdateUserItemQuantityAtomically(
+          client,
+          nextQuantity,
+          where,
+        )
+      : await deleteUserItemWhere(client, where);
 
   return result.rowsAffected === 1;
 };
@@ -164,26 +175,20 @@ export const refundUserItemQuantityAtomically = async ({
 }: RefundUserItemQuantityAtomicallyParams) => {
   if (quantity <= 0) return;
 
-  const result = await client
-    .insert(userItem)
-    .values({ ...itemSnapshot, quantity })
-    .onDuplicateKeyUpdate({
-      set: {
-        quantity: sql`IF(${userItem.quantity} >= 0, ${userItem.quantity} + ${quantity}, ${userItem.quantity})`,
-      },
-    });
+  const result = await insertUserItemForRefundUserItemQuantityAtomically(
+    client,
+    itemSnapshot,
+    quantity,
+  );
   if (result.rowsAffected > 0) return;
 
   // The claimed original keeps its equipped slot when the merge publishes it back, so the
   // refund row must start unequipped — two rows can never share one slot.
-  await client.insert(userItem).values({
-    ...itemSnapshot,
-    id: nanoid(),
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    equipped: "NONE",
+  await insertUserItemForRefundUserItemQuantityAtomically2(
+    client,
+    itemSnapshot,
     quantity,
-  });
+  );
 };
 
 type RestoreStaleUserItemMergeClaimsParams = {
@@ -204,28 +209,8 @@ export const restoreStaleUserItemMergeClaims = async ({
   staleBefore,
 }: RestoreStaleUserItemMergeClaimsParams) => {
   await Promise.all([
-    client
-      .update(userItem)
-      .set({
-        quantity: sql`-${userItem.quantity}`,
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(userItem.userId, userId),
-          lt(userItem.quantity, 0),
-          lte(userItem.updatedAt, staleBefore),
-        ),
-      ),
-    client
-      .delete(userItem)
-      .where(
-        and(
-          eq(userItem.userId, userId),
-          eq(userItem.quantity, 0),
-          lte(userItem.updatedAt, staleBefore),
-        ),
-      ),
+    updateUserItemForRestoreStaleUserItemMergeClaims(client, userId, staleBefore),
+    deleteUserItemForRestoreStaleUserItemMergeClaims(client, userId, staleBefore),
   ]);
 };
 
@@ -257,15 +242,11 @@ export const adjustSeichiSilverAtomically = async ({
   userId,
   delta,
 }: AdjustSeichiSilverParams) => {
-  const result = await client
-    .update(userData)
-    .set({ seichiSilver: sql`${userData.seichiSilver} + ${delta}` })
-    .where(
-      and(
-        eq(userData.userId, userId),
-        delta < 0 ? gte(userData.seichiSilver, -delta) : undefined,
-      ),
-    );
+  const result = await updateUserDataForAdjustSeichiSilverAtomically(
+    client,
+    delta,
+    userId,
+  );
   return result.rowsAffected === 1;
 };
 
@@ -298,27 +279,19 @@ export const removeBloodlineFromPoolAtomically = async ({
 }: RemoveBloodlineFromPoolParams) => {
   const notEquipped = sql`NOT EXISTS (SELECT 1 FROM ${userData} WHERE ${userData.userId} = ${userId} AND ${userData.bloodlineId} = ${bloodlineId})`;
   const [deleteResult, updateResult] = await Promise.all([
-    client
-      .delete(bloodlineRolls)
-      .where(
-        and(
-          eq(bloodlineRolls.userId, userId),
-          eq(bloodlineRolls.bloodlineId, bloodlineId),
-          ne(bloodlineRolls.type, "NATURAL"),
-          notEquipped,
-        ),
-      ),
-    client
-      .update(bloodlineRolls)
-      .set({ bloodlineId: null, updatedAt: now })
-      .where(
-        and(
-          eq(bloodlineRolls.userId, userId),
-          eq(bloodlineRolls.bloodlineId, bloodlineId),
-          eq(bloodlineRolls.type, "NATURAL"),
-          notEquipped,
-        ),
-      ),
+    deleteBloodlineRollsForRemoveBloodlineFromPoolAtomically(
+      client,
+      userId,
+      bloodlineId,
+      notEquipped,
+    ),
+    updateBloodlineRollsForRemoveBloodlineFromPoolAtomically(
+      client,
+      now,
+      userId,
+      bloodlineId,
+      notEquipped,
+    ),
   ]);
   return deleteResult.rowsAffected + updateResult.rowsAffected > 0;
 };
@@ -335,26 +308,8 @@ export const claimActiveNpcQuest = async ({
   userId,
   questId,
 }: ActiveNpcQuestParams) => {
-  const res = await client
-    .update(userData)
-    .set({ activeNpcQuestId: questId })
-    .where(and(eq(userData.userId, userId), isNull(userData.activeNpcQuestId)));
+  const res = await updateUserDataForClaimActiveNpcQuest(client, questId, userId);
   return res.rowsAffected === 1;
-};
-
-/**
- * Releases the slot — CONDITIONAL on the specific questId so a concurrent interaction at a
- * different NPC can't clear a slot another NPC legitimately owns.
- */
-export const clearActiveNpcQuest = async ({
-  client,
-  userId,
-  questId,
-}: ActiveNpcQuestParams) => {
-  await client
-    .update(userData)
-    .set({ activeNpcQuestId: null })
-    .where(and(eq(userData.userId, userId), eq(userData.activeNpcQuestId, questId)));
 };
 
 /**
@@ -377,35 +332,12 @@ export const battleClaimRollbackStatus = (
 ) => {
   if (battleType === "TERRITORY_WAR" && clanBattle) {
     return sql`CASE WHEN ${exists(
-      client
-        .select({ one: sql`1` })
-        .from(mpvpBattleUser)
-        .innerJoin(mpvpBattleQueue, eq(mpvpBattleQueue.id, mpvpBattleUser.clanBattleId))
-        .innerJoin(territoryWar, eq(territoryWar.id, mpvpBattleQueue.territoryWarId))
-        .where(
-          and(
-            eq(mpvpBattleUser.userId, userData.userId),
-            eq(mpvpBattleQueue.id, clanBattle.queueId),
-            eq(mpvpBattleQueue.battleId, clanBattle.battleId),
-            eq(mpvpBattleQueue.battleType, "TERRITORY_WAR"),
-            isNull(territoryWar.resolvedAt),
-            lte(territoryWar.startsAt, sql`NOW(3)`),
-            gt(territoryWar.endsAt, sql`NOW(3)`),
-          ),
-        ),
+      selectMpvpBattleUserForBattleClaimRollbackStatus(client, clanBattle),
     )} THEN "QUEUED" ELSE "AWAKE" END`;
   }
   if (battleType === "RANKED_PVP") {
     return sql`CASE WHEN ${exists(
-      client
-        .select({ one: sql`1` })
-        .from(rankedPvpQueue)
-        .where(
-          and(
-            eq(rankedPvpQueue.userId, userData.userId),
-            eq(rankedPvpQueue.hasClaimed, true),
-          ),
-        ),
+      selectRankedPvpQueueForBattleClaimRollbackStatus(client),
     )} THEN "QUEUED" ELSE "AWAKE" END`;
   }
   return "AWAKE" as const;
@@ -430,39 +362,15 @@ export const reservePityCredit = async ({
   rollId,
   expectedPityRolls,
 }: ReservePityCreditParams) => {
-  const result = await client
-    .update(table)
-    .set({ pityRolls: sql`${table.pityRolls} + 1`, updatedAt: new Date() })
-    .where(and(eq(table.id, rollId), eq(table.pityRolls, expectedPityRolls)));
+  const result = await updateTableForReservePityCredit(
+    client,
+    table,
+    rollId,
+    expectedPityRolls,
+  );
   return result.rowsAffected === 1;
 };
 
-type RefundPityCreditParams = {
-  client: DrizzleClient;
-  table: typeof bloodlineRolls;
-  rollId: string;
-};
-
-/**
- * Return a credit reserved by `reservePityCredit` when the grant that followed it did not apply.
- * Callers MUST invoke this only when the grant's own compare-and-swap rejected (rowsAffected 0,
- * surfaced as a TRPCError from the grant helper) — NOT when a post-CAS side-effect write in that
- * helper throws, since those run only after the grant has committed and refunding then would hand
- * back a credit that already funded a grant. Each successful reservation is refunded at most once,
- * so `pityRolls` returns to the count the caller read without underflowing. The `pityRolls > 0`
- * predicate is a floor rather than the correctness mechanism: a misuse or duplicated refund becomes
- * a no-op instead of driving the (signed) column negative.
- */
-export const refundPityCredit = async ({
-  client,
-  table,
-  rollId,
-}: RefundPityCreditParams) => {
-  await client
-    .update(table)
-    .set({ pityRolls: sql`${table.pityRolls} - 1`, updatedAt: new Date() })
-    .where(and(eq(table.id, rollId), gt(table.pityRolls, 0)));
-};
 /**
  * Await lazy Drizzle query builders in order: PlanetScale sessions serialize statements.
  * Pass unstarted builders, not eager promises; already-running work cannot be sequenced here.

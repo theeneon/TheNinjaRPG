@@ -1,16 +1,29 @@
 import { createHash } from "node:crypto";
-import { and, eq, lt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { type SectorMapStatus, SectorMapStatuses } from "@/drizzle/constants";
-import { actionLog, sectorMap, villageStructure } from "@/drizzle/schema";
-import { mergeTerrainSpecs } from "@/libs/sector-map/terrains";
+import { sectorMap } from "@/drizzle/schema";
 import { normalizeTiledSectorMap } from "@/libs/sector-map/tiled";
 import {
   isVillageStructurePlacementAllowed,
   usesVillageWalls,
 } from "@/libs/sector-map/village-walls";
-import { fetchUser } from "@/routers/profile";
+import { fetchUser } from "@/queries/profile";
+import {
+  fetchTerrainRegistry,
+  findSectorMapForGetNextSectorMapVersion,
+  findSectorMapForGetSectorMapById,
+  findSectorMapForPublishSectorMap,
+  findVillageStructureForMoveStructure,
+  insertActionLogForMoveStructure,
+  insertSectorMapForSaveTiledSectorMap,
+  listSectorMapForListSectorMaps,
+  updateSectorMapForArchiveSectorMap,
+  updateSectorMapForPublishSectorMap,
+  updateSectorMapForSaveTiledSectorMap,
+  updateVillageStructureForMoveStructure,
+} from "@/queries/worldMap";
 import {
   createTRPCRouter,
   errorResponse,
@@ -25,10 +38,11 @@ import {
 import {
   buildSectorWindowLayout,
   fetchPublishedSectorMaps,
+  fetchSectorWindowEntries,
   getSectorNeighborIds,
-  getSectorTileType,
   invalidatePublishedMapCache,
 } from "@/server/utils/sectorMap";
+
 import { canChangeContent } from "@/utils/permissions";
 // Reuse the centralized sector-id bounds instead of redefining them here
 import { sectorIdSchema as sectorSchema } from "@/validators/travel";
@@ -63,32 +77,7 @@ export const worldMapRouter = createTRPCRouter({
       // Query + guard (parallel: the user fetch and the metadata listing)
       const [user, rows] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.sectorMap.findMany({
-          columns: {
-            id: true,
-            sector: true,
-            name: true,
-            width: true,
-            height: true,
-            status: true,
-            version: true,
-            sourceHash: true,
-            publishedAt: true,
-            publishedByUserId: true,
-            createdAt: true,
-            updatedAt: true,
-          },
-          with: {
-            publishedBy: {
-              columns: {
-                userId: true,
-                username: true,
-              },
-            },
-          },
-          where: conditions.length > 0 ? and(...conditions) : undefined,
-          orderBy: (table, { desc }) => [desc(table.createdAt)],
-        }),
+        listSectorMapForListSectorMaps(ctx.drizzle, conditions),
       ]);
       if (user.isBanned) throw serverError("FORBIDDEN", "You are banned");
       if (!canChangeContent(user.role)) throw serverError("FORBIDDEN", "Not allowed");
@@ -194,9 +183,7 @@ export const worldMapRouter = createTRPCRouter({
       if (user.isBanned) throw serverError("FORBIDDEN", "You are banned");
       if (!canChangeContent(user.role)) throw serverError("FORBIDDEN", "Not allowed");
       // Query
-      const map = await ctx.drizzle.query.sectorMap.findFirst({
-        where: eq(sectorMap.id, input.id),
-      });
+      const map = await findSectorMapForGetSectorMapById(ctx.drizzle, input);
       if (!map) throw serverError("NOT_FOUND", "Map does not exist");
       return map;
     }),
@@ -309,22 +296,17 @@ export const worldMapRouter = createTRPCRouter({
       // (fetchPublishedSectorMaps).
       // A same-version race collides on the unique index and is caught below.
       try {
-        await ctx.drizzle.insert(sectorMap).values({
+        await insertSectorMapForSaveTiledSectorMap(
+          ctx.drizzle,
           id,
-          sector: input.sector,
-          name: input.name,
-          width: normalizedMap.width,
-          height: normalizedMap.height,
+          input,
+          normalizedMap,
           status,
           version,
           sourceHash,
-          rawTiledJson: input.tiledJson,
-          normalizedJson: normalizedMap,
-          publishedAt: input.publish ? now : null,
-          publishedByUserId: input.publish ? ctx.userId : null,
-          createdAt: now,
-          updatedAt: now,
-        });
+          now,
+          ctx,
+        );
       } catch {
         return errorResponse(
           "A newer version was saved at the same time. Please reload and try again.",
@@ -335,16 +317,7 @@ export const worldMapRouter = createTRPCRouter({
         // highest version, so a concurrent publish (which gets an even higher
         // version) is never archived by this query — preventing two concurrent
         // publishes from archiving each other and leaving the sector unpublished.
-        await ctx.drizzle
-          .update(sectorMap)
-          .set({ status: "ARCHIVED", updatedAt: now })
-          .where(
-            and(
-              eq(sectorMap.sector, input.sector),
-              eq(sectorMap.status, "PUBLISHED"),
-              lt(sectorMap.version, version),
-            ),
-          );
+        await updateSectorMapForSaveTiledSectorMap(ctx.drizzle, now, input, version);
         invalidatePublishedMapCache(input.sector);
       }
 
@@ -373,10 +346,7 @@ export const worldMapRouter = createTRPCRouter({
       // future event entrances must remain reachable on the promoted map too.
       const [user, candidate, terrainRegistry, locations] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.sectorMap.findFirst({
-          columns: { sector: true, name: true, rawTiledJson: true },
-          where: eq(sectorMap.id, input.id),
-        }),
+        findSectorMapForPublishSectorMap(ctx.drizzle, input),
         fetchTerrainRegistry(ctx.drizzle),
         fetchPublicQuestLocations(ctx.drizzle, { fresh: true, includeScheduled: true }),
       ]);
@@ -414,34 +384,20 @@ export const worldMapRouter = createTRPCRouter({
       // works — it becomes the new highest and everything below is archived.
       const version = await getNextSectorMapVersion(ctx.drizzle, candidate.sector);
       try {
-        await ctx.drizzle
-          .update(sectorMap)
-          .set({
-            status: "PUBLISHED",
-            version,
-            normalizedJson: result.map,
-            width: result.map.width,
-            height: result.map.height,
-            publishedAt: now,
-            publishedByUserId: ctx.userId,
-            updatedAt: now,
-          })
-          .where(eq(sectorMap.id, input.id));
+        await updateSectorMapForPublishSectorMap(
+          ctx.drizzle,
+          version,
+          { map: result.map },
+          now,
+          ctx,
+          input,
+        );
       } catch {
         return errorResponse(
           "Another version was published at the same time. Please retry.",
         );
       }
-      await ctx.drizzle
-        .update(sectorMap)
-        .set({ status: "ARCHIVED", updatedAt: now })
-        .where(
-          and(
-            eq(sectorMap.sector, candidate.sector),
-            eq(sectorMap.status, "PUBLISHED"),
-            lt(sectorMap.version, version),
-          ),
-        );
+      await updateSectorMapForSaveTiledSectorMap(ctx.drizzle, now, candidate, version);
       invalidatePublishedMapCache(candidate.sector);
 
       return { success: true, message: "Map published" };
@@ -461,10 +417,7 @@ export const worldMapRouter = createTRPCRouter({
       if (!canChangeContent(user.role)) return errorResponse("Not allowed");
 
       // Mutation (rowsAffected doubles as the existence check)
-      const result = await ctx.drizzle
-        .update(sectorMap)
-        .set({ status: "ARCHIVED", updatedAt: new Date() })
-        .where(eq(sectorMap.id, input.id));
+      const result = await updateSectorMapForArchiveSectorMap(ctx.drizzle, input);
       if (result.rowsAffected === 0) return errorResponse("Map does not exist");
       // Archiving may unpublish a sector; clear the whole cache (rare admin op).
       invalidatePublishedMapCache();
@@ -491,10 +444,7 @@ export const worldMapRouter = createTRPCRouter({
       // on input.structureId — no dependency between them)
       const [user, structure] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.villageStructure.findFirst({
-          where: eq(villageStructure.id, input.structureId),
-          with: { village: { with: { structures: true } } },
-        }),
+        findVillageStructureForMoveStructure(ctx.drizzle, input),
       ]);
       if (user.isBanned) return errorResponse("You are banned");
       if (!canChangeContent(user.role)) return errorResponse("Not allowed");
@@ -539,32 +489,17 @@ export const worldMapRouter = createTRPCRouter({
       // CAS on the previously-read position rejects a stale move: if the row was
       // deleted or moved since we read it, the update matches nothing and we skip
       // the audit log rather than record a move that never happened.
-      const moved = await ctx.drizzle
-        .update(villageStructure)
-        .set({ longitude: input.longitude, latitude: input.latitude })
-        .where(
-          and(
-            eq(villageStructure.id, structure.id),
-            eq(villageStructure.longitude, structure.longitude),
-            eq(villageStructure.latitude, structure.latitude),
-          ),
-        );
+      const moved = await updateVillageStructureForMoveStructure(
+        ctx.drizzle,
+        input,
+        structure,
+      );
       if (moved.rowsAffected === 0) {
         return errorResponse(
           "The structure changed since you loaded it; reload and try again",
         );
       }
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "villageStructure",
-        changes: [
-          `Moved ${structure.name} of ${structure.village.name} from ${from} to ${to}`,
-        ],
-        relatedId: structure.id,
-        relatedMsg: `Move: ${structure.name}`,
-        relatedImage: structure.image,
-      });
+      await insertActionLogForMoveStructure(ctx.drizzle, ctx, structure, from, to);
       return {
         success: true,
         message: `${structure.name} moved to ${to}`,
@@ -587,57 +522,6 @@ const buildWindowLayoutBundle = (sector: number) => {
 };
 
 /**
- * The per-sector window data (published map, global tile type, village
- * structures/type) for a set of sectors in one parallel fetch. Sectors without
- * a published map are simply absent from the returned Map — callers decide
- * whether that is fatal (window center) or ignorable (neighbors).
- */
-const fetchSectorWindowEntries = async (client: DrizzleClient, sectors: number[]) => {
-  const [maps, villages] = await Promise.all([
-    fetchPublishedSectorMaps(client, sectors),
-    client.query.village.findMany({
-      // Same faction filter as travel.getSectorData, so a sector renders the
-      // same buildings whether it is the window center or a neighbor
-      where: (table, { and, inArray }) =>
-        and(
-          inArray(table.sector, sectors),
-          inArray(table.type, [
-            "VILLAGE",
-            "OUTLAW",
-            "STRONGHOLD",
-            "HIDEOUT",
-            "SAFEZONE",
-          ]),
-        ),
-      with: { structures: true },
-    }),
-  ]);
-  const entries = new Map<
-    number,
-    {
-      sector: number;
-      map: NonNullable<ReturnType<(typeof maps)["get"]>>;
-      globalTileType: number;
-      structures: (typeof villages)[number]["structures"];
-      villageType: (typeof villages)[number]["type"] | null;
-    }
-  >();
-  for (const sector of new Set(sectors)) {
-    const map = maps.get(sector);
-    if (!map) continue;
-    const village = villages.find((v) => v.sector === sector);
-    entries.set(sector, {
-      sector,
-      map,
-      globalTileType: getSectorTileType(sector),
-      structures: village?.structures ?? [],
-      villageType: village?.type ?? null,
-    });
-  }
-  return entries;
-};
-
-/**
  * sha256 hex digest of the JSON.stringify'd upload, used as the default
  * sourceHash when the client supplies none. Not canonicalized, so the same
  * logical document with different key ordering hashes differently.
@@ -653,28 +537,6 @@ const hashTiledJson = (json: unknown) => {
  * version when different published versions briefly overlap.
  */
 const getNextSectorMapVersion = async (client: DrizzleClient, sector: number) => {
-  const latest = await client.query.sectorMap.findFirst({
-    columns: { version: true },
-    where: eq(sectorMap.sector, sector),
-    orderBy: (table, { desc }) => [desc(table.version)],
-  });
+  const latest = await findSectorMapForGetNextSectorMapVersion(client, sector);
   return (latest?.version ?? 0) + 1;
-};
-
-/** The full terrain registry (built-ins overlaid with the MapTerrain library) */
-export const fetchTerrainRegistry = async (client: DrizzleClient) => {
-  const rows = await client.query.mapTerrain.findMany({
-    columns: {
-      key: true,
-      name: true,
-      colors: true,
-      textureUrl: true,
-      swatchColor: true,
-      battleBiome: true,
-      isWater: true,
-      depression: true,
-      defaultWalkCost: true,
-    },
-  });
-  return mergeTerrainSpecs(rows);
 };

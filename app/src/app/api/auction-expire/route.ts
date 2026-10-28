@@ -1,8 +1,7 @@
-import { and, eq, lt } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { auctionListing } from "@/drizzle/schema";
 import { handleEndpointError, lockWithGameTimer } from "@/libs/gamesettings";
+import { listAuctionListingForGET } from "@/queries/auction";
 import { completeAuctionInternal } from "@/server/api/routers/auction";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
@@ -25,12 +24,7 @@ export async function GET(request: Request) {
   try {
     // Find auctions that are ACTIVE and have expired
     const now = new Date();
-    const expiredAuctions = await drizzleDB.query.auctionListing.findMany({
-      where: and(
-        eq(auctionListing.status, "ACTIVE"),
-        lt(auctionListing.expiresAt, now),
-      ),
-    });
+    const expiredAuctions = await listAuctionListingForGET(drizzleDB, now);
 
     if (expiredAuctions.length === 0) {
       return NextResponse.json({

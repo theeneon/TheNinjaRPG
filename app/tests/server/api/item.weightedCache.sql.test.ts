@@ -1,7 +1,8 @@
+import { fetchItemWithCraftingRequirements } from "@/queries/item";
 import { beforeEach, expect, it } from "bun:test";
 import { eq } from "drizzle-orm";
 import { actionLog, item, userData, userItem } from "@/drizzle/schema";
-import { fetchItemWithCraftingRequirements, itemRouter } from "@/server/api/routers/item";
+import { itemRouter } from "@/server/api/routers/item";
 import type { DrizzleClient } from "@/server/db";
 import { CACHE_RESTRICTED_REWARD_MESSAGE } from "@/libs/weightedCache";
 import { ItemValidator, NonCombatConsumeRewardTag, RollRandomBloodline } from "@/validators/combat";

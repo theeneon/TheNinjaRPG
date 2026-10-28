@@ -1,14 +1,15 @@
-import { and, eq, gt, lt, ne, or, sql } from "drizzle-orm";
+import { and, eq, ne, or } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { cookies } from "next/headers";
 import {
   FED_GOLD_BANK_INTEREST,
   FED_NORMAL_BANK_INTEREST,
   FED_SILVER_BANK_INTEREST,
-  RYO_CAP,
 } from "@/drizzle/constants";
-import { dailyBankInterest, userData } from "@/drizzle/schema";
+import { userData } from "@/drizzle/schema";
 import { lockWithDailyTimer } from "@/libs/gamesettings";
+import { insertDailyBankInterestForGET, selectUserDataForGET } from "@/queries/bank";
+import { listVillagesWithStructures } from "@/queries/village";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { chunkArray } from "@/utils/array";
@@ -35,9 +36,7 @@ export async function GET(request: Request) {
     const today = new Date().toISOString().split("T")[0] ?? "";
 
     // Query all villages with their structures
-    const villages = await drizzleDB.query.village.findMany({
-      with: { structures: true },
-    });
+    const villages = await listVillagesWithStructures(drizzleDB);
 
     // Process each village
     const promises = villages.map(async (village: (typeof villages)[number]) => {
@@ -83,20 +82,7 @@ export async function GET(request: Request) {
       // Process each user type
       const typePromises = config.map(async (c) => {
         // Get users who have money in bank and haven't claimed today's interest
-        const usersWithBank = await drizzleDB
-          .select({
-            userId: userData.userId,
-            bank: userData.bank,
-          })
-          .from(userData)
-          .where(
-            and(
-              eq(userData.villageId, village.id),
-              gt(userData.bank, 0),
-              lt(userData.bank, RYO_CAP),
-              c.where,
-            ),
-          );
+        const usersWithBank = await selectUserDataForGET(drizzleDB, village, c);
 
         // Create interest records for each user
         const interestRecords = usersWithBank.map(
@@ -119,14 +105,7 @@ export async function GET(request: Request) {
           // balances and membership tiers. Never overwrite a snapshot that was
           // already created (or even claimed) by an earlier attempt.
           for (const batch of chunkArray(interestRecords, INTEREST_INSERT_BATCH_SIZE)) {
-            await drizzleDB
-              .insert(dailyBankInterest)
-              .values(batch)
-              .onDuplicateKeyUpdate({
-                set: {
-                  id: sql`id`,
-                },
-              });
+            await insertDailyBankInterestForGET(drizzleDB, batch);
           }
         }
 

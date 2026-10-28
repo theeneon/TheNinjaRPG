@@ -1,3 +1,4 @@
+import { renameParentalContact } from "@/queries/parentalControls";
 import { unflaggedModeration } from "../../setup/moderation";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
@@ -7,7 +8,7 @@ import { conversation, conversationComment, parentalControl, user2conversation, 
 import { parentalControlsRouter } from "@/server/api/routers/parentalControls";
 import { commentsRouter, fetchConversation, fetchUsersToNotify } from "@/server/api/routers/comments";
 import { Pusher } from "@/libs/pusher";
-import { hashParentalPin, renameParentalContact } from "@/server/utils/parentalControls";
+import { hashParentalPin } from "@/server/utils/parentalControls";
 import { createTRPCRouter } from "@/server/api/trpc";
 import { insertUsers } from "../../setup/factories";
 import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";

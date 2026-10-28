@@ -1,10 +1,11 @@
-import { and, eq, gte, inArray } from "drizzle-orm";
-import {
-  RANKED_LEGEND_LP_REQUIREMENT,
-  RANKED_SANNIN_TOP_PLAYERS,
-} from "@/drizzle/constants";
 import type { Item, Jutsu, RankedLoadout } from "@/drizzle/schema";
-import { item, jutsu, rankedLoadout, userData } from "@/drizzle/schema";
+import { listItemsByIds } from "@/queries/item";
+import { listJutsuByIds } from "@/queries/jutsu";
+import {
+  findRankedLoadoutForCleanRankedProhibitedSelections,
+  listUserDataForFetchSanninRankedPlayers,
+  updateRankedLoadoutForCleanRankedProhibitedSelections,
+} from "@/queries/pvprank";
 import type { DrizzleClient } from "@/server/db";
 import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 
@@ -15,15 +16,7 @@ const RANKED_LOADOUT_CLEANUP_MAX_ATTEMPTS = 3;
  * RANKED_SANNIN_TOP_PLAYERS players who have reached Legend (900+ LP).
  */
 export const fetchSanninRankedPlayers = async (client: DrizzleClient) => {
-  const users = await client.query.userData.findMany({
-    columns: {
-      userId: true,
-      rankedLp: true,
-    },
-    orderBy: (userData, { desc }) => [desc(userData.rankedLp)],
-    where: gte(userData.rankedLp, RANKED_LEGEND_LP_REQUIREMENT),
-    limit: RANKED_SANNIN_TOP_PLAYERS,
-  });
+  const users = await listUserDataForFetchSanninRankedPlayers(client);
   return users.map((u) => u.rankedLp);
 };
 
@@ -47,12 +40,10 @@ const filterProhibitedRankedSelections = async (
   ];
   const [selectedJutsus, selectedItems] = await Promise.all([
     referencedJutsuIds.length > 0
-      ? client.query.jutsu.findMany({
-          where: inArray(jutsu.id, referencedJutsuIds),
-        })
+      ? listJutsuByIds(client, referencedJutsuIds)
       : Promise.resolve([]),
     referencedItemIds.length > 0
-      ? client.query.item.findMany({ where: inArray(item.id, referencedItemIds) })
+      ? listItemsByIds(client, referencedItemIds)
       : Promise.resolve([]),
   ]);
   // Deleted jutsu and items missing from the shop can never pass
@@ -155,19 +146,17 @@ export const cleanRankedProhibitedSelections = async (
     ...filtered.loadout,
     updatedAt: nextUpdatedAt,
   };
-  const result = await client
-    .update(rankedLoadout)
-    .set({ loadout: loadout.loadout, updatedAt: nextUpdatedAt })
-    .where(
-      and(
-        eq(rankedLoadout.id, storedLoadout.id),
-        eq(rankedLoadout.updatedAt, storedLoadout.updatedAt),
-      ),
-    );
+  const result = await updateRankedLoadoutForCleanRankedProhibitedSelections(
+    client,
+    loadout,
+    nextUpdatedAt,
+    storedLoadout,
+  );
   if (result.rowsAffected === 0) {
-    const current = await client.query.rankedLoadout.findFirst({
-      where: eq(rankedLoadout.id, storedLoadout.id),
-    });
+    const current = await findRankedLoadoutForCleanRankedProhibitedSelections(
+      client,
+      storedLoadout,
+    );
     if (!current) {
       return { ...filtered, loadout };
     }

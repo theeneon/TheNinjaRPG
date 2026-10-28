@@ -1,8 +1,19 @@
-import { and, eq, gt, isNotNull, lte, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { FEDERAL_MONTHLY_USD_CENTS, type FederalStatus } from "@/drizzle/constants";
-import { stripeCheckout, stripePayment, userData } from "@/drizzle/schema";
+import type { stripeCheckout, stripePayment } from "@/drizzle/schema";
 import { env } from "@/env/server.mjs";
+import {
+  executeResultForClaim,
+  executeResultForUpgradeStripeFederalWithReps,
+  findStripeCheckoutById,
+  findStripePaymentForGrantStripeReceipt,
+  findStripePaymentForUpgradeStripeFederalWithReps,
+  insertStripePaymentForGrantStripeReceipt,
+  listStripePaymentForSettleStripePayments,
+  updateStripeCheckoutForFulfillStripeInvoice,
+  updateStripePaymentForClaim,
+  updateStripePaymentForGrantStripeReceipt,
+} from "@/queries/stripe";
 import { errorResponse } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -29,13 +40,8 @@ export const grantStripeReceipt = async (
   receipt: StripeReceipt,
 ) =>
   retryOnDeadlock(async () => {
-    await client
-      .insert(stripePayment)
-      .values(receipt)
-      .onDuplicateKeyUpdate({ set: { id: receipt.id } });
-    const stored = await client.query.stripePayment.findFirst({
-      where: eq(stripePayment.id, receipt.id),
-    });
+    await insertStripePaymentForGrantStripeReceipt(client, receipt);
+    const stored = await findStripePaymentForGrantStripeReceipt(client, receipt);
     if (
       !stored ||
       stored.checkoutId !== receipt.checkoutId ||
@@ -52,16 +58,12 @@ export const grantStripeReceipt = async (
       canonicalStoreUserId(client, stored.createdById),
     ]);
     if (recipientId !== stored.affectedUserId || buyerId !== stored.createdById) {
-      await client
-        .update(stripePayment)
-        .set({ affectedUserId: recipientId, createdById: buyerId })
-        .where(
-          and(
-            eq(stripePayment.id, stored.id),
-            eq(stripePayment.affectedUserId, stored.affectedUserId),
-            eq(stripePayment.createdById, stored.createdById),
-          ),
-        );
+      await updateStripePaymentForGrantStripeReceipt(
+        client,
+        recipientId,
+        buyerId,
+        stored,
+      );
     }
     // Reputation delivery shares the buyer lock with checkout reservations and PayPal
     // grants, so released reservations cannot turn delayed payments into excess credit.
@@ -71,9 +73,7 @@ export const grantStripeReceipt = async (
       if (stored.reputationPoints > 0) {
         const buyer = await lockPurchaseBuyer(client, buyerId);
         if (!buyer) throw new Error("Stripe receipt buyer is unavailable");
-        const current = await client.query.stripePayment.findFirst({
-          where: eq(stripePayment.id, stored.id),
-        });
+        const current = await findStripePaymentForGrantStripeReceipt(client, stored);
         if (current?.grantedAt) return;
         if (current?.reviewRequired) return "review_required" as const;
         if (
@@ -81,25 +81,15 @@ export const grantStripeReceipt = async (
             stored.reputationPoints >
           dynamicMonthlyRepCap(buyer)
         ) {
-          await client
-            .update(stripePayment)
-            .set({ reviewRequired: true })
-            .where(eq(stripePayment.id, stored.id));
+          await updateStripePaymentForClaim(client, stored);
           return "review_required" as const;
         }
       }
       if (!stored.grantedAt) {
         // The marker and credit commit together; an interrupted response can safely retry.
-        const result =
-          await client.execute(sql`UPDATE ${userData} u INNER JOIN ${stripePayment} p ON p.affectedUserId = u.userId
-      SET u.reputationPoints = u.reputationPoints + p.reputationPoints,
-          u.reputationPointsTotal = u.reputationPointsTotal + p.reputationPoints,
-          p.grantedAt = CURRENT_TIMESTAMP(3)
-      WHERE p.id = ${receipt.id} AND p.grantedAt IS NULL AND p.reviewRequired = FALSE`);
+        const result = await executeResultForClaim(client, receipt);
         if (result.rowsAffected === 0) {
-          const current = await client.query.stripePayment.findFirst({
-            where: eq(stripePayment.id, receipt.id),
-          });
+          const current = await findStripePaymentForGrantStripeReceipt(client, receipt);
           if (!current?.grantedAt && !(await isRetiredStoreUserId(client, recipientId)))
             throw new Error("Stripe receipt recipient is unavailable");
         }
@@ -166,9 +156,7 @@ export const fulfillStripeInvoice = async (
   const checkoutId = subscription.metadata.tnrCheckoutId;
   // Other products in the same Stripe account must never grant game value.
   if (!checkoutId) return;
-  const checkout = await client.query.stripeCheckout.findFirst({
-    where: eq(stripeCheckout.id, checkoutId),
-  });
+  const checkout = await findStripeCheckoutById(client, checkoutId);
   if (!checkout) throw new Error("Unknown Stripe subscription checkout");
   if (checkout.subscriptionId && checkout.subscriptionId !== subscriptionId)
     throw new Error("Stripe subscription does not match checkout");
@@ -176,19 +164,13 @@ export const fulfillStripeInvoice = async (
   if (!subscription.managed_payments?.enabled)
     throw new Error("Stripe subscription is not managed by Stripe");
   if (!coverage) throw new Error("Stripe paid invoice does not match checkout terms");
-  const linked = await client
-    .update(stripeCheckout)
-    .set({ subscriptionId })
-    .where(
-      and(
-        eq(stripeCheckout.id, checkoutId),
-        sql`(${stripeCheckout.subscriptionId} IS NULL OR ${stripeCheckout.subscriptionId} = ${subscriptionId})`,
-      ),
-    );
+  const linked = await updateStripeCheckoutForFulfillStripeInvoice(
+    client,
+    subscriptionId,
+    checkoutId,
+  );
   if (linked.rowsAffected === 0) {
-    const current = await client.query.stripeCheckout.findFirst({
-      where: eq(stripeCheckout.id, checkoutId),
-    });
+    const current = await findStripeCheckoutById(client, checkoutId);
     if (current?.subscriptionId !== subscriptionId)
       throw new Error("Stripe subscription does not match checkout");
   }
@@ -217,9 +199,7 @@ export const fulfillStripeSession = async (
   });
   const checkoutId = session.metadata?.tnrCheckoutId;
   if (!checkoutId) return "ignored" as const;
-  const checkout = await client.query.stripeCheckout.findFirst({
-    where: eq(stripeCheckout.id, checkoutId),
-  });
+  const checkout = await findStripeCheckoutById(client, checkoutId);
   if (!checkout) throw new Error("Unknown Stripe checkout");
   if (
     session.livemode !== stripeIsLive() ||
@@ -272,9 +252,7 @@ export const settleStripePayments = async (client: DrizzleClient, userId: string
   // Settlement is recoverable background work: a failed payment must not interrupt
   // registration after the character row exists but before starter data is created.
   try {
-    const receipts = await client.query.stripePayment.findMany({
-      where: eq(stripePayment.affectedUserId, userId),
-    });
+    const receipts = await listStripePaymentForSettleStripePayments(client, userId);
     for (const receipt of receipts) {
       if (!receipt.grantedAt && (!receipt.isSandbox || env.NODE_ENV !== "production")) {
         try {
@@ -304,32 +282,24 @@ export const upgradeStripeFederalWithReps = async (
 ) => {
   const cost = calcFedUgradeCost(currentTier, nextTier);
   if (!cost || cost < 0) return errorResponse("Invalid federal support upgrade.");
-  const receipt = await client.query.stripePayment.findFirst({
-    where: and(
-      eq(stripePayment.createdById, userId),
-      eq(stripePayment.affectedUserId, userId),
-      isNotNull(stripePayment.grantedAt),
-      gt(stripePayment.expiresAt, new Date()),
-      lte(stripePayment.purchasedAt, new Date()),
-      sql`COALESCE(${stripePayment.federalStatusOverride}, ${stripePayment.federalStatus}) = ${currentTier}`,
-      ...(env.NODE_ENV === "production" ? [eq(stripePayment.isSandbox, false)] : []),
-    ),
-  });
+  const receipt = await findStripePaymentForUpgradeStripeFederalWithReps(
+    client,
+    userId,
+    currentTier,
+  );
   if (!receipt)
     return errorResponse(
       "Could not find a paid subscription you own for this upgrade.",
     );
   const result = await retryOnDeadlock(() =>
-    client.execute(sql`UPDATE ${userData} u INNER JOIN ${stripePayment} p ON p.affectedUserId = u.userId
-    SET u.reputationPoints = u.reputationPoints - ${cost},
-        u.reputationPointsTotal = u.reputationPointsTotal - ${cost},
-        u.federalStatus = ${nextTier},
-        p.federalStatusOverride = ${nextTier}
-    WHERE p.id = ${receipt.id} AND p.createdById = ${userId} AND p.affectedUserId = ${userId}
-      AND p.grantedAt IS NOT NULL AND p.purchasedAt <= CURRENT_TIMESTAMP(3)
-      AND p.expiresAt > CURRENT_TIMESTAMP(3)
-      AND COALESCE(p.federalStatusOverride, p.federalStatus) = ${currentTier}
-      AND u.federalStatus = ${currentTier} AND u.reputationPoints >= ${cost}`),
+    executeResultForUpgradeStripeFederalWithReps(
+      client,
+      cost,
+      nextTier,
+      receipt,
+      userId,
+      currentTier,
+    ),
   );
   if (result.rowsAffected === 0)
     return errorResponse(

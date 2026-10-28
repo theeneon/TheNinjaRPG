@@ -1,8 +1,24 @@
-import { and, eq, gte, isNull, notExists, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { UserRole } from "@/drizzle/constants";
-import { actionLog, quest, rewardNode, rewardPackage } from "@/drizzle/schema";
-import { fetchUser } from "@/routers/profile";
+import type { rewardPackage } from "@/drizzle/schema";
+import { fetchUser } from "@/queries/profile";
+import {
+  deleteRewardNodeForDeleteNode,
+  deleteRewardPackageForDeletePackage,
+  findRewardNodeForSaveNode,
+  findRewardPackageForSavePackage,
+  insertActionLogForDeleteNode,
+  insertActionLogForDeletePackage,
+  insertActionLogForSaveNode,
+  insertActionLogForSavePackage,
+  insertRewardNodeForSaveNode,
+  insertRewardPackageForSavePackage,
+  listRewardNodeForGetCatalog,
+  listRewardPackageForGetCatalog,
+  updateRewardNodeForSaveNode,
+  updateRewardPackageForSavePackage,
+} from "@/queries/rewardPackages";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -11,7 +27,6 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
-import { calculateContentDiff } from "@/utils/diff";
 import { canAwardReputation, canManageRewards, isStaffRole } from "@/utils/permissions";
 import { idSchema } from "@/validators/misc";
 import type { QuestContentType } from "@/validators/objectives";
@@ -25,12 +40,8 @@ export const rewardPackagesRouter = createTRPCRouter({
     if (!isStaffRole(user.role))
       throw serverError("FORBIDDEN", "Rewards are only available to staff");
     const [packages, nodes] = await Promise.all([
-      ctx.drizzle.query.rewardPackage.findMany({
-        orderBy: (table, { asc }) => [asc(table.name)],
-      }),
-      ctx.drizzle.query.rewardNode.findMany({
-        orderBy: (table, { asc }) => [asc(table.name)],
-      }),
+      listRewardPackageForGetCatalog(ctx.drizzle),
+      listRewardNodeForGetCatalog(ctx.drizzle),
     ]);
     return { packages, nodes };
   }),
@@ -42,9 +53,7 @@ export const rewardPackagesRouter = createTRPCRouter({
       const [user, entry, titleError] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         input.id
-          ? ctx.drizzle.query.rewardPackage.findFirst({
-              where: eq(rewardPackage.id, input.id),
-            })
+          ? findRewardPackageForSavePackage(ctx.drizzle, { id: input.id })
           : undefined,
         validateTitleRewardIds(ctx.drizzle, [input.data.rewards]),
       ]);
@@ -60,19 +69,9 @@ export const rewardPackagesRouter = createTRPCRouter({
       const id = entry?.id ?? nanoid();
       await Promise.all([
         entry
-          ? ctx.drizzle
-              .update(rewardPackage)
-              .set({ ...input.data, updatedAt: new Date() })
-              .where(eq(rewardPackage.id, id))
-          : ctx.drizzle.insert(rewardPackage).values({ id, ...input.data }),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "rewardPackage",
-          relatedId: id,
-          relatedMsg: `${entry ? "Update" : "Create"}: ${input.data.name}`,
-          changes: calculateContentDiff(entry ?? {}, input.data),
-        }),
+          ? updateRewardPackageForSavePackage(ctx.drizzle, input, id)
+          : insertRewardPackageForSavePackage(ctx.drizzle, id, input),
+        insertActionLogForSavePackage(ctx.drizzle, ctx, id, entry, input),
       ]);
       return { success: true, message: "Reward package saved" };
     }),
@@ -83,11 +82,7 @@ export const rewardPackagesRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, entry] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        input.id
-          ? ctx.drizzle.query.rewardNode.findFirst({
-              where: eq(rewardNode.id, input.id),
-            })
-          : undefined,
+        input.id ? findRewardNodeForSaveNode(ctx.drizzle, { id: input.id }) : undefined,
       ]);
       if (user.isBanned || !canManageRewards(user.role))
         return errorResponse("Not allowed to maintain reward nodes");
@@ -95,16 +90,9 @@ export const rewardPackagesRouter = createTRPCRouter({
       const id = entry?.id ?? nanoid();
       await Promise.all([
         entry
-          ? ctx.drizzle.update(rewardNode).set(input.data).where(eq(rewardNode.id, id))
-          : ctx.drizzle.insert(rewardNode).values({ id, ...input.data }),
-        ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: ctx.userId,
-          tableName: "rewardNode",
-          relatedId: id,
-          relatedMsg: `${entry ? "Update" : "Create"}: ${input.data.name}`,
-          changes: calculateContentDiff(entry ?? {}, input.data),
-        }),
+          ? updateRewardNodeForSaveNode(ctx.drizzle, input, id)
+          : insertRewardNodeForSaveNode(ctx.drizzle, id, input),
+        insertActionLogForSaveNode(ctx.drizzle, ctx, id, entry, input),
       ]);
       return { success: true, message: "Reward node saved" };
     }),
@@ -117,38 +105,12 @@ export const rewardPackagesRouter = createTRPCRouter({
       if (user.isBanned || !canManageRewards(user.role))
         return errorResponse("Not allowed to delete reward packages");
       // Snapshots retain their payload even if a hidden quest is saved concurrently with deletion.
-      const result = await ctx.drizzle.delete(rewardPackage).where(
-        and(
-          eq(rewardPackage.id, input.id),
-          notExists(
-            ctx.drizzle
-              .select({ id: quest.id })
-              .from(quest)
-              .where(
-                and(
-                  eq(quest.hidden, false),
-                  or(isNull(quest.endsAt), gte(quest.endsAt, sql`CURRENT_DATE`)),
-                  or(
-                    sql`JSON_CONTAINS(COALESCE(JSON_EXTRACT(${quest.content}, '$.reward.reward_packages[*].packageId'), JSON_ARRAY()), JSON_QUOTE(${input.id})) = 1`,
-                    sql`JSON_CONTAINS(COALESCE(JSON_EXTRACT(${quest.content}, '$.objectives[*].reward_packages[*].packageId'), JSON_ARRAY()), JSON_QUOTE(${input.id})) = 1`,
-                  ),
-                ),
-              ),
-          ),
-        ),
-      );
+      const result = await deleteRewardPackageForDeletePackage(ctx.drizzle, input);
       if (result.rowsAffected === 0)
         return errorResponse(
           "Package not found or used by an active quest. Remove it from active quests first.",
         );
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "rewardPackage",
-        relatedId: input.id,
-        relatedMsg: "Delete reward package",
-        changes: ["Deleted reward package"],
-      });
+      await insertActionLogForDeletePackage(ctx.drizzle, ctx, input);
       return { success: true, message: "Reward package deleted" };
     }),
   /** Remove a catalog grouping; existing rewards remain accessible through fallback groups. */
@@ -159,15 +121,8 @@ export const rewardPackagesRouter = createTRPCRouter({
       const user = await fetchUser(ctx.drizzle, ctx.userId);
       if (user.isBanned || !canManageRewards(user.role))
         return errorResponse("Not allowed to delete reward nodes");
-      await ctx.drizzle.delete(rewardNode).where(eq(rewardNode.id, input.id));
-      await ctx.drizzle.insert(actionLog).values({
-        id: nanoid(),
-        userId: ctx.userId,
-        tableName: "rewardNode",
-        relatedId: input.id,
-        relatedMsg: "Delete reward node",
-        changes: ["Deleted reward node"],
-      });
+      await deleteRewardNodeForDeleteNode(ctx.drizzle, input);
+      await insertActionLogForDeleteNode(ctx.drizzle, ctx, input);
       return { success: true, message: "Reward node deleted" };
     }),
 });

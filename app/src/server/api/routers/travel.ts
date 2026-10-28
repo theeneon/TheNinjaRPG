@@ -1,21 +1,6 @@
 import { randomInt } from "node:crypto";
 import type { inferRouterOutputs } from "@trpc/server";
-import {
-  and,
-  asc,
-  eq,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  lt,
-  lte,
-  ne,
-  or,
-  sql,
-} from "drizzle-orm";
-import { nanoid } from "nanoid";
+import { and, eq, gt, isNotNull, lt, sql } from "drizzle-orm";
 import { after } from "next/server";
 import { z } from "zod";
 import * as map from "@/data/hexasphere.json";
@@ -25,7 +10,6 @@ import {
   IMG_AVATAR_DEFAULT,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
   REGEN_SECONDS,
-  ROBBING_IMMUNITY_DURATION,
   ROBBING_STOLLEN_AMOUNT,
   ROBBING_SUCCESS_CHANCE,
   ROBBING_VILLAGE_PRESTIGE_GAIN,
@@ -33,19 +17,8 @@ import {
   SECTOR_WIDTH,
   UserStatuses,
 } from "@/drizzle/constants";
-import type { UserData } from "@/drizzle/schema";
-import {
-  actionLog,
-  battle,
-  clan,
-  overworldAiPlacement,
-  questHistory,
-  userData,
-  userItem,
-  userSkill,
-  village,
-  war,
-} from "@/drizzle/schema";
+import { type UserData, userData } from "@/drizzle/schema";
+
 import { getQuestMapLocations } from "@/libs/mapLocations";
 import {
   getWarRelationship,
@@ -77,13 +50,38 @@ import {
   findGlobalTravelDestination,
   findLandingNear,
   maxDistance,
-  SECTOR_BATTLE_STALE_SECONDS,
 } from "@/libs/travel";
 import { isTutorialActive } from "@/libs/tutorial";
+import {
+  fetchAllGameSettings,
+  fetchUser,
+  findUserById,
+  incrementUserMoney,
+} from "@/queries/profile";
+import { fetchIsolatedPyramid } from "@/queries/quests";
+import {
+  fetchSectorWindowData,
+  findUserDataForGetSectorData,
+  findUserDataForMoveInSector,
+  findVillageForMoveInSector,
+  insertActionLogForRobPlayer,
+  listQuestHistoryForGetSectorData,
+  listQuestHistoryForGetSectorData2,
+  listSectorForGetAllSectors,
+  listUserDataForCompleteExpiredGlobalTravel,
+  listWarForGetSectorData,
+  selectBattleForGetSectorData,
+  updateClanForRobPlayer,
+  updateUserDataForCompleteExpiredGlobalTravel,
+  updateUserDataForMoveInSector,
+  updateUserDataForRobPlayer,
+  updateUserDataForRobPlayer2,
+  updateUserDataForStartGlobalMove,
+} from "@/queries/travel";
+import { fetchSectorVillage, findVillageBySector } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
-import { fetchAllGameSettings, fetchUpdatedUser, fetchUser } from "@/routers/profile";
+import { fetchUpdatedUser } from "@/routers/profile";
 import { breakStealth } from "@/routers/stealth";
-import { fetchSector, fetchSectorVillage } from "@/routers/village";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -97,21 +95,14 @@ import { isTransientDatabaseError } from "@/server/dbRetry";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
-import { fetchIsolatedPyramid } from "@/server/utils/pyramidIsolation";
 import {
-  buildSectorWindowLayout,
   fetchPublishedSectorMap,
   fetchPublishedSectorMaps,
   getSectorNeighborIds,
   publishedMapsToPrefetchForMove,
   resolveSectorCrossing,
 } from "@/server/utils/sectorMap";
-import { activeWarAllyWhere } from "@/server/utils/warAlly";
-import {
-  activeWarMercenaryWhere,
-  canEnterWarCamp,
-  fetchWarCampEntry,
-} from "@/server/utils/warMercenary";
+import { canEnterWarCamp, fetchWarCampEntry } from "@/server/utils/warMercenary";
 import { findRelationship } from "@/utils/alliance";
 import { groupBy } from "@/utils/grouping";
 import { secondsFromNow, secondsPassed } from "@/utils/time";
@@ -153,9 +144,7 @@ export const travelRouter = createTRPCRouter({
       const [user, target, sectorData, pvpAverage] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         fetchUser(ctx.drizzle, input.userId),
-        ctx.drizzle.query.village.findFirst({
-          where: eq(village.sector, input.sector),
-        }),
+        findVillageBySector(ctx.drizzle, input.sector),
         fetchPvpExperienceAverage(ctx.drizzle),
       ]);
 
@@ -244,73 +233,37 @@ export const travelRouter = createTRPCRouter({
         // concurrent request could have changed since the read: immunity, balance, status and
         // position. Nothing is credited unless this guarded statement wins.
         const now = new Date();
-        const targetUpdate = await ctx.drizzle
-          .update(userData)
-          .set({
-            money: sql`${userData.money} - ${stolenAmount}`,
-            robImmunityUntil: secondsFromNow(ROBBING_IMMUNITY_DURATION),
-          })
-          .where(
-            and(
-              eq(userData.userId, target.userId),
-              gte(userData.money, stolenAmount),
-              or(
-                isNull(userData.robImmunityUntil),
-                lte(userData.robImmunityUntil, now),
-              ),
-              or(isNull(userData.immunityUntil), lte(userData.immunityUntil, now)),
-              eq(userData.status, "AWAKE"),
-              eq(userData.isBanned, false),
-              eq(userData.sector, input.sector),
-              eq(userData.longitude, input.longitude),
-              eq(userData.latitude, input.latitude),
-            ),
-          );
+        const targetUpdate = await updateUserDataForRobPlayer(
+          ctx.drizzle,
+          stolenAmount,
+          target,
+          now,
+          input,
+        );
         if (targetUpdate.rowsAffected === 0) {
           return errorResponse("Target can no longer be robbed");
         }
 
         // Victim debit succeeded — now credit the robber and clan in parallel
         const [robberUpdate] = await Promise.all([
-          ctx.drizzle
-            .update(userData)
-            .set({
-              money: sql`${userData.money} + ${stolenAmount}`,
-              villagePrestige: sql`${userData.villagePrestige} + ${prestigeGain}`,
-            })
-            .where(eq(userData.userId, ctx.userId)),
+          updateUserDataForRobPlayer2(ctx.drizzle, stolenAmount, prestigeGain, ctx),
           ...(user.clanId
-            ? [
-                ctx.drizzle
-                  .update(clan)
-                  .set({
-                    points: sql`${clan.points} + 1`,
-                    activityPoints: sql`${clan.activityPoints} + 1`,
-                  })
-                  .where(eq(clan.id, user.clanId)),
-              ]
+            ? [updateClanForRobPlayer(ctx.drizzle, { clanId: user.clanId })]
             : []),
         ]);
 
         if (robberUpdate.rowsAffected === 0) {
           // Return the stolen ryo since the robber could not be credited
-          await ctx.drizzle
-            .update(userData)
-            .set({ money: sql`${userData.money} + ${stolenAmount}` })
-            .where(eq(userData.userId, target.userId));
+          await incrementUserMoney(ctx.drizzle, stolenAmount, target.userId);
           return errorResponse("Failed to update robber's data");
         }
 
         // Log the action
-        const logInsert = await ctx.drizzle.insert(actionLog).values({
-          id: nanoid(),
-          userId: user.userId,
-          tableName: "user",
-          changes: [`Was robbed for ${stolenAmount} ryo by ${user.username}`],
-          relatedId: user.userId,
-          relatedMsg: `Was robbed by ${user.username}`,
-          relatedImage: user.avatarLight,
-        });
+        const logInsert = await insertActionLogForRobPlayer(
+          ctx.drizzle,
+          user,
+          stolenAmount,
+        );
         if (logInsert.rowsAffected === 0) {
           // Non-critical error, continue but log it
           console.error("Failed to insert action log for robbery");
@@ -371,50 +324,13 @@ export const travelRouter = createTRPCRouter({
     .query(async ({ input, ctx }) => {
       // The client's sector usually matches; overlap its reads with the authoritative user lookup.
       const [user, sectorWindowData, fetchedWarData, liveBattles] = await Promise.all([
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, ctx.userId),
-          with: {
-            anbuSquad: {
-              columns: { id: true, name: true, image: true, villageId: true },
-            },
-          },
-        }),
+        findUserDataForGetSectorData(ctx.drizzle, ctx),
         fetchSectorWindowData(ctx.drizzle, ctx.userId, input.sector),
-        ctx.drizzle.query.war.findMany({
-          where: eq(war.status, "ACTIVE"),
-          with: {
-            attackerVillage: {
-              columns: {
-                name: true,
-                id: true,
-                villageGraphic: true,
-                sector: true,
-                kageId: true,
-              },
-            },
-            defenderVillage: {
-              columns: {
-                name: true,
-                id: true,
-                villageGraphic: true,
-                sector: true,
-                kageId: true,
-              },
-            },
-            warMercenaries: { where: activeWarMercenaryWhere() },
-            warAllies: {
-              where: activeWarAllyWhere(),
-              columns: { villageId: true, supportVillageId: true },
-            },
-          },
-        }),
+        listWarForGetSectorData(ctx.drizzle),
         // All recently-advanced battles. The Battle table only holds a handful of rows
         // (the cleaner drops them after a day), so this indexed range scan is cheaper than
         // a second sequential round-trip filtered by the sector's battle ids.
-        ctx.drizzle
-          .select({ id: battle.id })
-          .from(battle)
-          .where(gte(battle.updatedAt, secondsFromNow(-SECTOR_BATTLE_STALE_SECONDS))),
+        selectBattleForGetSectorData(ctx.drizzle),
       ]);
 
       if (!user) {
@@ -521,24 +437,8 @@ export const travelRouter = createTRPCRouter({
       // Quest history can only affect placements backed by an AI template.
       const [userQuests, completedQuests] = placements.some((p) => p.aiTemplate?.isAi)
         ? await Promise.all([
-            ctx.drizzle.query.questHistory.findMany({
-              where: and(
-                eq(questHistory.userId, ctx.userId),
-                eq(questHistory.completed, 0),
-                isNull(questHistory.endAt),
-              ),
-              with: { quest: true },
-            }),
-            ctx.drizzle.query.questHistory.findMany({
-              columns: { id: true, questId: true, completed: true },
-              where: and(
-                eq(questHistory.userId, ctx.userId),
-                or(
-                  gte(questHistory.completed, 1),
-                  gt(questHistory.previousCompletes, 0),
-                ),
-              ),
-            }),
+            listQuestHistoryForGetSectorData(ctx.drizzle, ctx),
+            listQuestHistoryForGetSectorData2(ctx.drizzle, ctx),
           ])
         : [[], []];
       const activeQuests = getUserQuests({ ...user, userQuests, completedQuests });
@@ -694,24 +594,15 @@ export const travelRouter = createTRPCRouter({
       if (!destination) {
         return errorResponse("The destination sector has no walkable tiles");
       }
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          warMission: null,
-          sector: input.sector,
-          longitude: destination.x,
-          latitude: destination.y,
-          status: "TRAVEL",
-          travelFinishAt: endTime,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.status, "AWAKE"),
-            eq(userData.sector, departureSector),
-            eq(userData.updatedAt, user.updatedAt),
-          ),
-        );
+      const result = await updateUserDataForStartGlobalMove(
+        ctx.drizzle,
+        input,
+        destination,
+        endTime,
+        ctx,
+        departureSector,
+        user,
+      );
       if (result.rowsAffected === 1) {
         user.sector = input.sector;
         user.longitude = destination.x;
@@ -800,12 +691,7 @@ export const travelRouter = createTRPCRouter({
   getAllSectors: protectedProcedure
     .meta({ mcp: { description: "Get all sector ownership info" } })
     .query(async ({ ctx }) => {
-      const allSectors = await ctx.drizzle.query.sector.findMany({
-        columns: {
-          sector: true,
-          villageId: true,
-        },
-      });
+      const allSectors = await listSectorForGetAllSectors(ctx.drizzle);
       const groupedSectors = groupBy(allSectors, "villageId");
       const converted = [...groupedSectors.keys()].map((key) => {
         const sectors = groupedSectors.get(key) || [];
@@ -885,10 +771,7 @@ export const travelRouter = createTRPCRouter({
       const prefetchedCampSector = sectorsToPrefetch[1];
       const [maps, originalUser, warCampEntry, isolated] = await Promise.all([
         fetchPublishedSectorMaps(ctx.drizzle, sectorsToPrefetch).catch(() => null),
-        ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, userId),
-          with: { anbuSquad: true },
-        }),
+        findUserDataForMoveInSector(ctx.drizzle, userId),
         prefetchedCampSector === undefined
           ? undefined
           : fetchWarCampEntry(ctx.drizzle, userId, prefetchedCampSector).catch(
@@ -1015,41 +898,19 @@ export const travelRouter = createTRPCRouter({
             );
       // Optimistic update & query simultaneously
       const moveOutcome = await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({
-            ...(targetSector !== originalUser.sector ? { warMission: null } : {}),
-            sector: targetSector,
-            longitude: destination.x,
-            latitude: destination.y,
-            location,
-          })
-          .where(
-            and(
-              eq(userData.userId, userId),
-              eq(userData.status, "AWAKE"),
-              eq(userData.sector, sector),
-              eq(userData.updatedAt, moveUser.updatedAt),
-              // Guard on the player's ACTUAL stored position (the raw input),
-              // not the snapped walkable coordinate — otherwise a snapped move
-              // never matches the row and the player is soft-locked.
-              eq(userData.longitude, input.curLongitude),
-              eq(userData.latitude, input.curLatitude),
-              villageId
-                ? eq(userData.villageId, villageId)
-                : isNull(userData.villageId),
-            ),
-          ),
-        isVillage
-          ? ctx.drizzle.query.village.findFirst({
-              with: {
-                structures: true,
-                relationshipA: true,
-                relationshipB: true,
-              },
-              where: eq(village.sector, targetSector),
-            })
-          : undefined,
+        updateUserDataForMoveInSector(
+          ctx.drizzle,
+          targetSector,
+          originalUser,
+          destination,
+          location,
+          userId,
+          sector,
+          moveUser,
+          input,
+          villageId,
+        ),
+        isVillage ? findVillageForMoveInSector(ctx.drizzle, targetSector) : undefined,
       ]).catch((error: unknown) => {
         // The CAS guard makes a blind retry unsafe: a re-issue after the first
         // attempt already applied would match zero rows. Degrade to an ordinary
@@ -1140,9 +1001,7 @@ export const travelRouter = createTRPCRouter({
         // The read above raced the update, so it can predate whatever made the guard
         // miss and would then explain the failure wrongly - or not at all, leaving the
         // throw below. Re-read for the failure path; the success path keeps the snapshot.
-        const latest = await ctx.drizzle.query.userData.findFirst({
-          where: eq(userData.userId, userId),
-        });
+        const latest = await findUserById(ctx.drizzle, userId);
         if (!latest) {
           return errorResponse("Your character no longer exists. Please refresh.");
         }
@@ -1274,21 +1133,7 @@ export const completeExpiredGlobalTravel = async (client: DrizzleClient) => {
   // Mirrors `hasEnergyQueue`.
   const hasQueue = gt(userData.energyQueueTail, userData.energyQueueHead);
   const [users, settings] = await Promise.all([
-    client.query.userData.findMany({
-      where: and(expiredTravel, hasQueue),
-      with: {
-        bloodline: true,
-        raidBuffs: true,
-        clan: true,
-        village: { with: { structures: true } },
-        items: {
-          where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
-          with: { item: true, imbuements: { with: { item: true } } },
-        },
-        titles: true,
-        userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
-      },
-    }),
+    listUserDataForCompleteExpiredGlobalTravel(client, expiredTravel, hasQueue),
     fetchAllGameSettings(client),
   ]);
   await Promise.all([
@@ -1301,117 +1146,10 @@ export const completeExpiredGlobalTravel = async (client: DrizzleClient) => {
     ),
     // Empty queues keep the existing lazy passive recovery behavior.
     retryOnDeadlock(() =>
-      client
-        .update(userData)
-        .set({ status: "AWAKE", travelFinishAt: null })
-        .where(and(expiredTravel, sql`NOT (${hasQueue})`)),
+      updateUserDataForCompleteExpiredGlobalTravel(client, expiredTravel, hasQueue),
     ),
   ]);
 };
-
-/** Read the sector window without depending on the viewer's profile. */
-const fetchSectorWindowData = (client: DrizzleClient, userId: string, sector: number) =>
-  Promise.all([
-    client.query.userData.findMany({
-      columns: {
-        userId: true,
-        username: true,
-        longitude: true,
-        latitude: true,
-        location: true,
-        curHealth: true,
-        maxHealth: true,
-        sector: true,
-        status: true,
-        avatar: true,
-        avatarLight: true,
-        level: true,
-        experience: true,
-        rank: true,
-        isOutlaw: true,
-        isBanned: true,
-        immunityUntil: true,
-        robImmunityUntil: true,
-        updatedAt: true,
-        villageId: true,
-        battleId: true,
-        anbuId: true,
-        stealthActive: true,
-        stealthActivatedAt: true,
-        stealth: true,
-      },
-      where: and(
-        eq(userData.sector, sector),
-        eq(userData.isAi, false),
-        inArray(userData.status, ["AWAKE", "BATTLE"]),
-        eq(userData.isBanned, false),
-        gte(userData.updatedAt, secondsFromNow(-36000)),
-        ne(userData.userId, userId),
-      ),
-      with: {
-        anbuSquad: {
-          columns: {
-            id: true,
-            name: true,
-            image: true,
-            villageId: true,
-          },
-        },
-      },
-    }),
-    client.query.village.findFirst({
-      where: and(
-        eq(village.sector, sector),
-        inArray(village.type, [
-          "VILLAGE",
-          "OUTLAW",
-          "STRONGHOLD",
-          "HIDEOUT",
-          "SAFEZONE",
-        ]),
-      ),
-      with: { structures: true },
-    }),
-    fetchSector(client, sector),
-    client.query.overworldAiPlacement.findMany({
-      where: and(
-        inArray(
-          overworldAiPlacement.sector,
-          buildSectorWindowLayout(sector).map((entry) => entry.sector),
-        ),
-        eq(overworldAiPlacement.isActive, true),
-      ),
-      // Stable order so the arrival-prompt `find`-first NPC can't flip between polls when two
-      // placements share a tile (which would ping-pong the modal open on every sector refresh).
-      orderBy: asc(overworldAiPlacement.id),
-      columns: {
-        id: true,
-        aiTemplateUserId: true,
-        interactionType: true,
-        sectorType: true,
-        locationType: true,
-        sector: true,
-        longitude: true,
-        latitude: true,
-        positionVersion: true,
-      },
-      with: {
-        aiTemplate: {
-          columns: {
-            userId: true,
-            username: true,
-            avatar: true,
-            avatarLight: true,
-            curHealth: true,
-            maxHealth: true,
-            level: true,
-            rank: true,
-            isAi: true,
-          },
-        },
-      },
-    }),
-  ]);
 
 type RouterOutput = inferRouterOutputs<typeof travelRouter>;
 export type SectorVillage = RouterOutput["getSectorData"]["village"];

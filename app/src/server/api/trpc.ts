@@ -1,3 +1,5 @@
+import { updateUserDataForEnforceRateLimit } from "@/queries/concurrency";
+import { fetchIsolatedPyramid } from "@/queries/quests";
 /**
  * YOU PROBABLY DON'T NEED TO EDIT THIS FILE, UNLESS:
  * 1. You want to modify request context (see Part 1)
@@ -14,13 +16,11 @@ import type { TRPC_ERROR_CODE_KEY } from "@trpc/server/rpc";
 import { middlewareMarker } from "@trpc/server/unstable-core-do-not-import";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
-import { eq, sql } from "drizzle-orm";
 import type { ReadonlyHeaders } from "next/dist/server/web/spec-extension/adapters/headers";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import type { NextRequest } from "next/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
-import { userData } from "@/drizzle/schema";
 import { LEMU_EXPERIMENT, normalizeLemuVariant } from "@/libs/lemuExperiment";
 import type { McpMeta } from "@/libs/mcp";
 import {
@@ -48,7 +48,7 @@ import {
  */
 import { drizzleDB } from "@/server/db";
 import { enforceBotId } from "@/server/utils/botid";
-import { fetchIsolatedPyramid } from "@/server/utils/pyramidIsolation";
+
 import { hasSensitiveTrpcInput } from "@/server/utils/trpcInput";
 import { measureTrpcCall } from "@/server/utils/trpcMetrics";
 import { getClientIp } from "@/utils/network";
@@ -230,14 +230,9 @@ const enforceRateLimit = async (
     // Authentication retries must never debit an existing character (and a newly
     // authenticated identity may not have created a character yet).
     if (context.userId && !path.startsWith("nativeAuth.")) {
-      const result = await context.drizzle
-        .update(userData)
-        .set({
-          movedTooFastCount: sql`${userData.movedTooFastCount} + 1`,
-          money: sql`GREATEST(${userData.money} * 0.99, 0)`,
-          bank: sql`GREATEST(${userData.bank} * 0.99, 0)`,
-        })
-        .where(eq(userData.userId, context.userId));
+      const result = await updateUserDataForEnforceRateLimit(context.drizzle, {
+        userId: context.userId,
+      });
       if (result.rowsAffected === 0) {
         throw new TRPCError({
           message: `User not found for rate limit penalty`,

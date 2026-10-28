@@ -1,4 +1,3 @@
-import { and, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import {
   ELDER_MIN_VOTING_COUNT,
@@ -9,15 +8,7 @@ import {
   WAR_MAX_DURATION_DAYS,
   WAR_TOKEN_REDUCTION_INTERVAL_HOURS,
 } from "@/drizzle/constants";
-import {
-  notification,
-  userData,
-  village,
-  villageElderVote,
-  villageStructure,
-  war,
-} from "@/drizzle/schema";
-import { fetchExpiredElderVotes, resolveElderVote } from "@/libs/elder";
+import { resolveElderVote } from "@/libs/elder";
 import {
   getGameSetting,
   handleEndpointError,
@@ -25,17 +16,34 @@ import {
   updateGameSetting,
 } from "@/libs/gamesettings";
 import { isVillageInvolvedInAnyWar } from "@/libs/war";
-import type { FetchActiveWarsReturnType } from "@/server/api/routers/war";
-import { fetchActiveWars } from "@/server/api/routers/war";
+import {
+  fetchExpiredElderVotes,
+  listVillageForProcessExpiredElderVotes,
+  selectUserDataForProcessExpiredElderVotes,
+  updateVillageElderVoteForRejectWithNotification,
+} from "@/queries/elder";
+import {
+  incrementNotificationCounters,
+  insertNotificationForSubmitNotification,
+} from "@/queries/misc";
+import { updateVillageStructureForClearExpiredStructureBonuses } from "@/queries/village";
+import {
+  approvePendingWarDeclaration,
+  expireWarPoints,
+  listActiveWarsWithRules,
+  updateWarForGET,
+  updateWarForGET2,
+  updateWarVillageTokens,
+} from "@/queries/war";
+import {
+  type FetchActiveWarsReturnType,
+  fetchActiveWars,
+} from "@/server/api/routers/war";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 import { syncStrongholdMembership } from "@/server/utils/faction";
 import { settleKageRemoval } from "@/server/utils/kageGovernance";
-import {
-  expireWarPoints,
-  settleObjectiveWarSchedule,
-  syncWarCamps,
-} from "@/server/utils/objectiveWar";
+import { settleObjectiveWarSchedule, syncWarCamps } from "@/server/utils/objectiveWar";
 import {
   applyRaidHealthDecay,
   handleWarEnd,
@@ -61,9 +69,7 @@ export async function GET(request: Request) {
     const now = new Date();
     await syncStrongholdMembership(drizzleDB);
     // Replay due camp results and daily drains before settlement chooses a winner.
-    const dueObjectiveWars = await drizzleDB.query.war.findMany({
-      where: and(eq(war.status, "ACTIVE"), isNotNull(war.rules)),
-    });
+    const dueObjectiveWars = await listActiveWarsWithRules(drizzleDB);
     await Promise.all(
       dueObjectiveWars.map((w) => settleObjectiveWarSchedule(drizzleDB, w, now)),
     );
@@ -180,26 +186,22 @@ export async function GET(request: Request) {
           defenderHealthAfterDrain <= 0
         ) {
           // Apply the health drain before ending war so handleWarEnd sees accurate values
-          const result = await drizzleDB
-            .update(war)
-            .set({
-              attackerWarHealth: sql`GREATEST(attackerWarHealth - ${totalHealthDrain}, 0)`,
-              defenderWarHealth: sql`GREATEST(defenderWarHealth - ${totalHealthDrain}, 0)`,
-            })
-            .where(and(eq(war.id, activeWar.id), isNull(war.endedAt)));
+          const result = await updateWarForGET(drizzleDB, totalHealthDrain, activeWar);
 
           // Only proceed if the war update actually modified a row (guarded update)
           if (result.rowsAffected > 0) {
             // Update token counts
             await Promise.all([
-              drizzleDB
-                .update(village)
-                .set({ tokens: activeWar.attackerVillage.tokens })
-                .where(eq(village.id, activeWar.attackerVillage.id)),
-              drizzleDB
-                .update(village)
-                .set({ tokens: activeWar.defenderVillage.tokens })
-                .where(eq(village.id, activeWar.defenderVillage.id)),
+              updateWarVillageTokens(
+                drizzleDB,
+                activeWar.attackerVillage.tokens,
+                activeWar.attackerVillage.id,
+              ),
+              updateWarVillageTokens(
+                drizzleDB,
+                activeWar.defenderVillage.tokens,
+                activeWar.defenderVillage.id,
+              ),
             ]);
 
             // Build updated war object with drained health values to avoid an extra DB roundtrip
@@ -220,25 +222,25 @@ export async function GET(request: Request) {
         }
 
         // Update token counts, war health drain, and last reduction time
-        const result = await drizzleDB
-          .update(war)
-          .set({
-            lastTokenReductionAt: now,
-            attackerWarHealth: sql`GREATEST(attackerWarHealth - ${totalHealthDrain}, 0)`,
-            defenderWarHealth: sql`GREATEST(defenderWarHealth - ${totalHealthDrain}, 0)`,
-          })
-          .where(and(eq(war.id, activeWar.id), isNull(war.endedAt)));
+        const result = await updateWarForGET2(
+          drizzleDB,
+          now,
+          totalHealthDrain,
+          activeWar,
+        );
 
         if (result.rowsAffected > 0) {
           await Promise.all([
-            drizzleDB
-              .update(village)
-              .set({ tokens: activeWar.attackerVillage.tokens })
-              .where(eq(village.id, activeWar.attackerVillage.id)),
-            drizzleDB
-              .update(village)
-              .set({ tokens: activeWar.defenderVillage.tokens })
-              .where(eq(village.id, activeWar.defenderVillage.id)),
+            updateWarVillageTokens(
+              drizzleDB,
+              activeWar.attackerVillage.tokens,
+              activeWar.attackerVillage.id,
+            ),
+            updateWarVillageTokens(
+              drizzleDB,
+              activeWar.defenderVillage.tokens,
+              activeWar.defenderVillage.id,
+            ),
           ]);
         }
       }
@@ -268,18 +270,7 @@ export async function GET(request: Request) {
  * Handles both positive bonuses (winner) and negative bonuses (loser penalties)
  */
 async function clearExpiredStructureBonuses(now: Date) {
-  await drizzleDB
-    .update(villageStructure)
-    .set({
-      temporaryLevelBonus: 0,
-      temporaryLevelBonusExpiresAt: null,
-    })
-    .where(
-      and(
-        isNotNull(villageStructure.temporaryLevelBonusExpiresAt),
-        lt(villageStructure.temporaryLevelBonusExpiresAt, now),
-      ),
-    );
+  await updateVillageStructureForClearExpiredStructureBonuses(drizzleDB, now);
 }
 
 /**
@@ -292,13 +283,8 @@ async function processExpiredElderVotes() {
   // Pre-fetch all required data before the loop to avoid DB roundtrips inside it
   const [expiredVotes, allElders, allVillages, activeWars] = await Promise.all([
     fetchExpiredElderVotes(drizzleDB),
-    drizzleDB
-      .select({ userId: userData.userId, villageId: userData.villageId })
-      .from(userData)
-      .where(and(eq(userData.rank, "ELDER"), eq(userData.isAi, false))),
-    drizzleDB.query.village.findMany({
-      columns: { id: true, name: true, kageId: true, tokens: true },
-    }),
+    selectUserDataForProcessExpiredElderVotes(drizzleDB),
+    listVillageForProcessExpiredElderVotes(drizzleDB),
     fetchActiveWars(drizzleDB),
   ]);
   if (expiredVotes.length === 0) return;
@@ -364,17 +350,13 @@ async function handleExpiredWarDeclaration(
 
   const rejectWithNotification = async (content: string) => {
     await Promise.all([
-      drizzleDB
-        .update(villageElderVote)
-        .set({ status: "REJECTED" })
-        .where(eq(villageElderVote.id, vote.id)),
-      drizzleDB
-        .insert(notification)
-        .values({ userId: vote.initiatedByUserId, content }),
-      drizzleDB
-        .update(userData)
-        .set({ unreadNotifications: sql`unreadNotifications + 1` })
-        .where(eq(userData.userId, vote.initiatedByUserId)),
+      updateVillageElderVoteForRejectWithNotification(drizzleDB, vote),
+      insertNotificationForSubmitNotification(
+        drizzleDB,
+        { userId: vote.initiatedByUserId },
+        { content },
+      ),
+      incrementNotificationCounters(drizzleDB, [vote.initiatedByUserId]),
     ]);
   };
 
@@ -393,12 +375,7 @@ async function handleExpiredWarDeclaration(
   }
 
   // APPROVED → atomically claim the motion, then start war
-  const warClaimResult = await drizzleDB
-    .update(villageElderVote)
-    .set({ status: "APPROVED" })
-    .where(
-      and(eq(villageElderVote.id, vote.id), eq(villageElderVote.status, "PENDING")),
-    );
+  const warClaimResult = await approvePendingWarDeclaration(drizzleDB, vote.id);
   if (warClaimResult.rowsAffected === 0) return;
 
   if (!attackerVillage) {

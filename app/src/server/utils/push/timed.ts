@@ -1,20 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Redis } from "@upstash/redis";
-import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
-import { PUSH_TOKEN_STALE_DAYS } from "@/drizzle/constants";
-import {
-  type UserData,
-  userData,
-  userDevice,
-  userJutsu,
-  type VillageStructure,
-} from "@/drizzle/schema";
+import type { UserData, VillageStructure } from "@/drizzle/schema";
 import { calcHealFinish } from "@/libs/hospital";
 import { calcCovertTrainingFinishAt } from "@/libs/stealth";
 import { masteryTrainingEndsAt } from "@/libs/train";
+import {
+  listUserDataForDeliverDueTimedPushes,
+  selectDistinctUserDeviceForDeliverDueTimedPushes,
+} from "@/queries/push";
 import type { DrizzleClient } from "@/server/db";
 import { isPushEnabled, sendPushToUsers } from "@/server/utils/push";
-import { secondsFromDate } from "@/utils/time";
 import { getStrucBoost } from "@/utils/village";
 import { mapWithConcurrency } from "./batch";
 import { timerElapsed } from "./messages";
@@ -144,35 +139,20 @@ export const deliverDueTimedPushes = async (
   now = new Date(),
 ) => {
   if (!isPushEnabled()) return { processed: 0 };
-  const devices = await client
-    .selectDistinct({ userId: userDevice.userId })
-    .from(userDevice)
-    .where(
-      gte(userDevice.lastSeenAt, secondsFromDate(-PUSH_TOKEN_STALE_DAYS * 86400, now)),
-    );
+  const devices = await selectDistinctUserDeviceForDeliverDueTimedPushes(client, now);
   const userIds = devices.map(({ userId }) => userId);
   if (!userIds.length) return { processed: 0 };
   const send = createTimedPushSender(Redis.fromEnv());
   let processed = 0;
   // Keep recipient predicates bounded as native adoption grows.
   for (let offset = 0; offset < userIds.length; offset += 200) {
-    const users = await client.query.userData.findMany({
-      where: and(
-        inArray(userData.userId, userIds.slice(offset, offset + 200)),
-        eq(userData.isAi, false),
-      ),
-      with: {
-        village: { with: { structures: true } },
-        jutsus: {
-          columns: { id: true, finishTraining: true },
-          where: and(
-            isNotNull(userJutsu.finishTraining),
-            lte(userJutsu.finishTraining, now),
-            gte(userJutsu.finishTraining, secondsFromDate(-LOOKBACK_SECONDS, now)),
-          ),
-        },
-      },
-    });
+    const users = await listUserDataForDeliverDueTimedPushes(
+      client,
+      userIds,
+      offset,
+      now,
+      LOOKBACK_SECONDS,
+    );
     const events = users.flatMap((user) => dueTimedPushEvents(user, now));
     const outcomes = await mapWithConcurrency(
       events,

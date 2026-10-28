@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
-import { ACTIVE_VOTING_SITES } from "@/drizzle/constants";
-import { userVote } from "@/drizzle/schema";
 import { handleEndpointError, lockWithDailyTimer } from "@/libs/gamesettings";
+import { updateUserVoteForGET } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 import { authenticateCronRequest } from "@/server/utils/cron";
 
@@ -20,10 +19,7 @@ export async function GET(request: Request) {
 
   // Perform work
   try {
-    await drizzleDB.update(userVote).set({
-      claimed: false,
-      ...Object.fromEntries(ACTIVE_VOTING_SITES.map((site) => [site, false])),
-    });
+    await updateUserVoteForGET(drizzleDB);
     return Response.json(`OK`);
   } catch (cause) {
     // Rollback

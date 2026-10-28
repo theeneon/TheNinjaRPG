@@ -1,8 +1,10 @@
 import { auth, reverificationError } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
 import { after } from "next/server";
-import { accountDeletion } from "@/drizzle/schema";
 import { isNativeUserAgent } from "@/libs/native/userAgent";
+import {
+  findAccountDeletionForRequest,
+  insertAccountDeletionForRequest,
+} from "@/queries/accountDeletion";
 import { createTRPCRouter, errorResponse, protectedProcedure } from "@/server/api/trpc";
 import { prepareAppleDeletion } from "@/server/utils/accountDeletion/apple";
 import { processAccountDeletions } from "@/server/utils/accountDeletion/process";
@@ -42,10 +44,7 @@ export const accountDeletionRouter = createTRPCRouter({
         );
       }
       try {
-        const existing = await ctx.drizzle.query.accountDeletion.findFirst({
-          columns: { userId: true },
-          where: eq(accountDeletion.userId, ctx.userId),
-        });
+        const existing = await findAccountDeletionForRequest(ctx.drizzle, ctx);
         if (existing) {
           after(() => processAccountDeletions(ctx.userId));
           return { success: true, message: "Your deletion request is already saved." };
@@ -56,10 +55,7 @@ export const accountDeletionRouter = createTRPCRouter({
         );
         if (apple.error) return errorResponse(apple.error);
         // Duplicate clicks and lost responses cannot reset a partially processed request.
-        await ctx.drizzle
-          .insert(accountDeletion)
-          .values({ userId: ctx.userId, appleRevokedSubject: apple.subject })
-          .onDuplicateKeyUpdate({ set: { userId: ctx.userId } });
+        await insertAccountDeletionForRequest(ctx.drizzle, ctx, apple);
         // Next keeps this work alive after the response, even if the app closes.
         // Only this account is eligible; the cleaner recovers interrupted attempts.
         after(() => processAccountDeletions(ctx.userId));

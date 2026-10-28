@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
-import { eq } from "drizzle-orm";
 import type { z } from "zod";
-import { actionLog } from "@/drizzle/schema";
+import {
+  deleteActionLogForCommitCacheConsumption,
+  insertActionLogForCommitCacheConsumption,
+  updateActionLogForCommitCacheConsumption,
+} from "@/queries/item";
+import { findActionLogById } from "@/queries/logs";
 import { errorResponse } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
@@ -66,30 +70,29 @@ export const commitCacheConsumption = async ({
   retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       // The unique receipt serializes retries before they can claim a second stack unit.
-      const claimed = await tx.insert(actionLog).ignore().values({
-        id: receiptId,
+      const claimed = await insertActionLogForCommitCacheConsumption(
+        tx,
+        receiptId,
         userId,
-        tableName: "userItem",
-        relatedId: itemId,
+        itemId,
         relatedMsg,
-        changes: [],
-      });
+      );
       if (claimed.rowsAffected === 0) {
-        const receipt = await tx.query.actionLog.findFirst({
-          where: eq(actionLog.id, receiptId),
-        });
+        const receipt = await findActionLogById(tx, receiptId);
         return readCacheReceipt(receipt?.changes, userItemId);
       }
       const response = await consume(tx as unknown as DrizzleClient);
       if (!response.success) {
-        await tx.delete(actionLog).where(eq(actionLog.id, receiptId));
+        await deleteActionLogForCommitCacheConsumption(tx, receiptId);
         return response;
       }
-      await tx
-        .update(actionLog)
-        // ActionLog readers expect string arrays; the receipt retains its structured payload as JSON.
-        .set({ changes: [JSON.stringify({ userItemId, response, selections })] })
-        .where(eq(actionLog.id, receiptId));
+      await updateActionLogForCommitCacheConsumption(
+        tx,
+        userItemId,
+        response,
+        selections,
+        receiptId,
+      );
       return response;
     }),
   );

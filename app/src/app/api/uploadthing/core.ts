@@ -1,8 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, eq, gt, isNotNull, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
-import type { FileRouter } from "uploadthing/next";
-import { createUploadthing } from "uploadthing/next";
+import { createUploadthing, type FileRouter } from "uploadthing/next";
+
 import { UploadThingError, UTApi, UTFiles } from "uploadthing/server";
 import { z } from "zod";
 import {
@@ -10,11 +8,16 @@ import {
   TAVERN_IMAGE_MAX_SIZE_MB,
   TAVERN_IMAGE_UPLOAD_DAILY_LIMIT,
 } from "@/drizzle/constants";
-import { historicalAvatar, userData, userUpload } from "@/drizzle/schema";
 import { classifyNsfwImage } from "@/libs/moderator";
 import { createThumbnail } from "@/libs/replicate";
 import { extensionCustomId, servedUfsUrl } from "@/libs/uploadthing";
-import { insertHistoricalSoundEffect } from "@/server/api/routers/audio";
+import { insertHistoricalSoundEffect } from "@/queries/audio";
+import {
+  insertHistoricalAvatarForUploadHistoricalAvatar,
+  selectHistoricalAvatarForAvatarMiddleware,
+  updateUserAvatar,
+} from "@/queries/avatar";
+import { findUserById, insertUserUploadForTavernUploader } from "@/queries/profile";
 import { drizzleDB } from "@/server/db";
 import { claimTavernImageUpload } from "@/server/utils/tavernUploads";
 import { getUserFederalStatus } from "@/utils/paypal";
@@ -74,9 +77,7 @@ const adminMiddleware = async () => {
   const { userId } = await auth();
   if (!userId) throw new UploadThingError("Unauthorized");
 
-  const user = await drizzleDB.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-  });
+  const user = await findUserById(drizzleDB, userId);
   if (!user) throw new UploadThingError("User not found");
   if (user.isBanned) throw new UploadThingError("You are banned");
 
@@ -124,11 +125,7 @@ export const ourFileRouter = {
     .onUploadComplete(async ({ metadata, file }) => {
       const moderation = await moderateUploadedImage(file);
       if (moderation.error) return moderation;
-      await drizzleDB.insert(userUpload).values({
-        id: nanoid(),
-        userId: metadata.userId,
-        imageUrl: servedUfsUrl(file),
-      });
+      await insertUserUploadForTavernUploader(drizzleDB, metadata, file);
       return moderation;
     }),
   anbuUploader: f({ image: { maxFileSize: "512KB" } })
@@ -287,9 +284,7 @@ const fetchUploadUser = async () => {
   // Fetch & Guard
   const { userId } = await auth();
   if (!userId) throw new UploadThingError("Unauthorized");
-  const user = await drizzleDB.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-  });
+  const user = await findUserById(drizzleDB, userId);
   if (!user) throw new UploadThingError("User not found");
   if (user.isBanned) throw new UploadThingError("You are banned");
   return user;
@@ -299,16 +294,7 @@ const fetchUploadUser = async () => {
 const avatarMiddleware = async (fedRequirement?: (typeof FederalStatuses)[number]) => {
   const user = await fetchUploadUser();
   // Limit
-  const avatars = await drizzleDB
-    .select({ count: sql`count(*)`.mapWith(Number) })
-    .from(historicalAvatar)
-    .where(
-      and(
-        eq(historicalAvatar.userId, user.userId),
-        isNotNull(historicalAvatar.avatar),
-        gt(historicalAvatar.createdAt, sql`NOW() - INTERVAL 1 DAY`),
-      ),
-    );
+  const avatars = await selectHistoricalAvatarForAvatarMiddleware(drizzleDB, user);
   const nRecentAvatars = avatars?.[0]?.count || 0;
   if (nRecentAvatars > 50) throw new Error("Can only upload 50 files per day");
   // Federal check
@@ -335,17 +321,13 @@ const uploadHistoricalAvatar = async (
   const thumbnailUrl = await createThumbnail(fileUrl);
   const userPatch = { avatar: fileUrl, avatarLight: thumbnailUrl };
   const promises = [
-    drizzleDB.insert(historicalAvatar).values({
-      replicateId: null,
-      avatar: fileUrl,
-      avatarLight: thumbnailUrl,
-      status: "succeeded",
-      userId: userId,
-      done: true,
-    }),
-    ...(updateUser
-      ? [drizzleDB.update(userData).set(userPatch).where(eq(userData.userId, userId))]
-      : []),
+    insertHistoricalAvatarForUploadHistoricalAvatar(
+      drizzleDB,
+      fileUrl,
+      thumbnailUrl,
+      userId,
+    ),
+    ...(updateUser ? [updateUserAvatar(drizzleDB, userPatch, userId)] : []),
   ];
   const [, userUpdate] = await Promise.all(promises);
   return userUpdate?.rowsAffected === 1 ? userPatch : undefined;

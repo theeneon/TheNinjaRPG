@@ -1,9 +1,7 @@
-import { and, eq } from "drizzle-orm";
 import type { Metadata } from "next";
 import { cache } from "react";
-import { conceptImage } from "@/drizzle/schema";
-import { indexableConceptArt } from "@/libs/conceptart";
 import { absoluteUrl, noindexMetadata, SITE_NAME } from "@/libs/seo";
+import { findIndexableConceptImageMetadata } from "@/queries/conceptart";
 import { drizzleDB } from "@/server/db";
 import ConceptBox_ConceptImage from "./conceptimage";
 
@@ -26,11 +24,7 @@ const cardFor = (id: string) => ({
 // query resolves -- without them the server sent every concept-art URL an identical
 // spinner.
 const fetchArt = cache(async (id: string) => {
-  return await drizzleDB.query.conceptImage.findFirst({
-    columns: { prompt: true },
-    with: { user: { columns: { username: true } } },
-    where: and(eq(conceptImage.id, id), indexableConceptArt),
-  });
+  return await findIndexableConceptImageMetadata(drizzleDB, id);
 });
 
 export async function generateMetadata(props: Props): Promise<Metadata> {

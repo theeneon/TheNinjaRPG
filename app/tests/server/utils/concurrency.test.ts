@@ -1,3 +1,4 @@
+import { clearActiveNpcQuest } from "@/queries/concurrency";
 
 import type { SQL } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/mysql-core";
@@ -7,7 +8,6 @@ import {
   battleClaimRollbackStatus,
   claimActiveNpcQuest,
   claimUserSnapshot,
-  clearActiveNpcQuest,
   consumeUserItemAtomically,
   getNextUserSnapshotAt,
   refundUserItemQuantityAtomically,

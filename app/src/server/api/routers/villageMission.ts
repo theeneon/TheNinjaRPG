@@ -1,6 +1,5 @@
-import { and, eq, exists, gte, isNull, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { quest, userData, village } from "@/drizzle/schema";
+
 import { boostPvpGain } from "@/libs/pvpExperience";
 import { collapseRewards } from "@/libs/rewards";
 import { getVillageLoyaltyBonuses } from "@/libs/villageLoyalty";
@@ -8,14 +7,22 @@ import {
   getVillageMissionProgress,
   isVillageMissionAvailable,
 } from "@/libs/villageMission";
-import { fetchUser } from "@/routers/profile";
+import { fetchUser } from "@/queries/profile";
+import { findVillageById } from "@/queries/village";
+import {
+  listQuestForSelect,
+  updateVillageForCancel,
+  updateVillageForClaim,
+  updateVillageForSelect,
+} from "@/queries/villageMission";
+
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
+
 import { getRandomElement } from "@/utils/array";
 import { isStaffRole } from "@/utils/permissions";
 import { idSchema } from "@/validators/misc";
@@ -30,7 +37,7 @@ export const villageMissionRouter = createTRPCRouter({
   get: protectedProcedure.input(idSchema).query(async ({ ctx, input }) => {
     const [user, villageData] = await Promise.all([
       fetchUser(ctx.drizzle, ctx.userId),
-      ctx.drizzle.query.village.findFirst({ where: eq(village.id, input.id) }),
+      findVillageById(ctx.drizzle, input.id),
     ]);
     if (
       !villageData ||
@@ -51,10 +58,8 @@ export const villageMissionRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, villageData, candidates] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.village.findFirst({ where: eq(village.id, input.villageId) }),
-        ctx.drizzle.query.quest.findMany({
-          where: eq(quest.questType, "village_mission"),
-        }),
+        findVillageById(ctx.drizzle, input.villageId),
+        listQuestForSelect(ctx.drizzle),
       ]);
       if (
         !villageData ||
@@ -107,23 +112,14 @@ export const villageMissionRouter = createTRPCRouter({
         rerolled: !!current,
         startedAt: new Date().toISOString(),
       };
-      const result = await ctx.drizzle
-        .update(village)
-        .set({
-          // Copy counters inside the statement so contributions racing selection belong to exactly one mission.
-          activeMission: sql`JSON_SET(${JSON.stringify(mission)}, '$.baseline', ${village.missionCounters})`,
-        })
-        .where(
-          and(
-            leaderGuard(ctx.drizzle, input.villageId, ctx.userId, !input.missionId),
-            current
-              ? and(
-                  sql`JSON_UNQUOTE(JSON_EXTRACT(${village.activeMission}, '$.id')) = ${current.id}`,
-                  sql`JSON_EXTRACT(${village.activeMission}, '$.rerolled') = false`,
-                )
-              : isNull(village.activeMission),
-          ),
-        );
+      const result = await updateVillageForSelect(
+        ctx.drizzle,
+        mission,
+
+        ctx,
+        input,
+        current,
+      );
       if (result.rowsAffected === 0)
         return errorResponse(
           "Village leadership or mission changed; refresh and try again",
@@ -145,21 +141,7 @@ export const villageMissionRouter = createTRPCRouter({
       if (user.isBanned) return errorResponse("You are banned");
       if (user.villageId !== input.villageId || user.isOutlaw)
         return errorResponse("You must belong to this village");
-      const result = await ctx.drizzle
-        .update(village)
-        .set({ activeMission: null })
-        .where(
-          and(
-            leaderGuard(ctx.drizzle, input.villageId, ctx.userId, true),
-            sql`JSON_UNQUOTE(JSON_EXTRACT(${village.activeMission}, '$.id')) = ${input.missionId}`,
-            exists(
-              ctx.drizzle
-                .select({ userId: userData.userId })
-                .from(userData)
-                .where(and(eq(userData.userId, ctx.userId), ne(userData.role, "USER"))),
-            ),
-          ),
-        );
+      const result = await updateVillageForCancel(ctx.drizzle, ctx, input);
       if (result.rowsAffected === 0)
         return errorResponse(
           "Village membership or mission changed; refresh and try again",
@@ -176,7 +158,7 @@ export const villageMissionRouter = createTRPCRouter({
     .mutation(async ({ ctx, input }) => {
       const [user, villageData] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.village.findFirst({ where: eq(village.id, input.villageId) }),
+        findVillageById(ctx.drizzle, input.villageId),
       ]);
       if (
         !villageData ||
@@ -202,24 +184,14 @@ export const villageMissionRouter = createTRPCRouter({
               ),
             )
           : mission.rewardTokens;
-      const result = await ctx.drizzle
-        .update(village)
-        .set({
-          tokens: sql`${village.tokens} + ${rewardTokens}`,
-          activeMission: null,
-        })
-        .where(
-          and(
-            leaderGuard(ctx.drizzle, input.villageId, ctx.userId),
-            sql`JSON_UNQUOTE(JSON_EXTRACT(${village.activeMission}, '$.id')) = ${mission.id}`,
-            ...mission.objectives.map((objective) =>
-              gte(
-                sql`COALESCE(JSON_EXTRACT(${village.missionCounters}, ${`$.${objective.task}`}), 0) - COALESCE(JSON_EXTRACT(${village.activeMission}, ${`$.baseline.${objective.task}`}), 0)`,
-                objective.value,
-              ),
-            ),
-          ),
-        );
+      const result = await updateVillageForClaim(
+        ctx.drizzle,
+        rewardTokens,
+
+        ctx,
+        input,
+        mission,
+      );
       if (result.rowsAffected === 0)
         return errorResponse(
           "Village leadership or mission changed; refresh and try again",
@@ -230,38 +202,3 @@ export const villageMissionRouter = createTRPCRouter({
       };
     }),
 });
-
-const leaderGuard = (
-  client: Pick<DrizzleClient, "select">,
-  villageId: string,
-  userId: string,
-  allowStaff = false,
-) =>
-  and(
-    eq(village.id, villageId),
-    allowStaff
-      ? or(
-          eq(village.kageId, userId),
-          exists(
-            client
-              .select({ userId: userData.userId })
-              .from(userData)
-              .where(and(eq(userData.userId, userId), ne(userData.role, "USER"))),
-          ),
-        )
-      : eq(village.kageId, userId),
-    eq(village.type, "VILLAGE"),
-    exists(
-      client
-        .select({ userId: userData.userId })
-        .from(userData)
-        .where(
-          and(
-            eq(userData.userId, userId),
-            eq(userData.villageId, village.id),
-            eq(userData.isOutlaw, false),
-            eq(userData.isBanned, false),
-          ),
-        ),
-    ),
-  );

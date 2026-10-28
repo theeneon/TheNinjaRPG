@@ -1,9 +1,12 @@
 import * as Sentry from "@sentry/nextjs";
-import { and, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { historicalAvatar } from "@/drizzle/schema";
 import { txt2imgGPT, txt2imgNanoBanana } from "@/libs/replicate";
-import { fetchUser } from "@/routers/profile";
+import {
+  insertHistoricalAvatarForCreateImg,
+  listHistoricalAvatarForCreateImg,
+} from "@/queries/avatar";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -21,13 +24,7 @@ export const generativeAiRouter = createTRPCRouter({
       // Query
       const [user, historicalToday] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.historicalAvatar.findMany({
-          where: and(
-            eq(historicalAvatar.status, "content-success"),
-            eq(historicalAvatar.done, true),
-            gte(historicalAvatar.createdAt, sql`NOW() - INTERVAL 1 DAY`),
-          ),
-        }),
+        listHistoricalAvatarForCreateImg(ctx.drizzle),
       ]);
       // Guard
       if (!canChangeContent(user.role)) {
@@ -80,14 +77,7 @@ export const generativeAiRouter = createTRPCRouter({
       }
       // Store for future reference
       if (resultUrls && resultUrls.length > 0) {
-        await ctx.drizzle.insert(historicalAvatar).values(
-          resultUrls.map((url) => ({
-            avatar: url,
-            userId: input.relationId,
-            status: "content-success",
-            done: true,
-          })),
-        );
+        await insertHistoricalAvatarForCreateImg(ctx.drizzle, resultUrls, input);
       }
       return { success: true, message: "Image generated", url: resultUrls?.[0] };
     }),

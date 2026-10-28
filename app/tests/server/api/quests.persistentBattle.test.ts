@@ -1,3 +1,4 @@
+import { fetchBattle } from "@/queries/combat";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { ENERGY_QUEST_REWARDS, TERMINAL_DIALOG_PREFIX } from "@/drizzle/constants";
@@ -5,7 +6,7 @@ import { aiProfile, battle, battleHistory, quest, questHistory, userData } from 
 import { updateUser } from "@/libs/combat/database";
 import { calcBattleResult } from "@/libs/combat/util";
 import { Pusher, type PusherClient } from "@/libs/pusher";
-import { combatRouter, fetchBattle, initiateBattle } from "@/server/api/routers/combat";
+import { combatRouter, initiateBattle } from "@/server/api/routers/combat";
 import { bankRouter } from "@/server/api/routers/bank";
 import { fetchUpdatedUser } from "@/server/api/routers/profile";
 import { questsRouter } from "@/server/api/routers/quests";

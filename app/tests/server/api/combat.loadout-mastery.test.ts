@@ -1,3 +1,4 @@
+import { fetchBattleEssentials } from "@/queries/combat";
 import { eq } from "drizzle-orm";
 import { type BattleType, MAX_PLAYER_LEVEL, RANKED_PVP_STATS, REGEN_SECONDS } from "@/drizzle/constants";
 import { userJutsuToAction } from "@/libs/combat/actions";
@@ -27,11 +28,7 @@ import {
 } from "@/drizzle/schema";
 import type { CombatQueryUser } from "@/libs/combat/types";
 import { Pusher } from "@/libs/pusher";
-import {
-  combatRouter,
-  fetchBattleEssentials,
-  processUsersForBattle,
-} from "@/server/api/routers/combat";
+import { combatRouter, processUsersForBattle } from "@/server/api/routers/combat";
 import { fetchUserItemsWithVariants } from "@/server/api/routers/item";
 import { fetchUserJutsus } from "@/server/api/routers/jutsu";
 import { getTagSchema } from "@/validators/combat";

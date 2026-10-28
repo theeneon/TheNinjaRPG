@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { userData } from "@/drizzle/schema";
+import { findUserIdentityById } from "@/queries/profile";
+
 import { drizzleDB } from "@/server/db";
 import { getDiscordConfig } from "@/server/utils/discord/config";
 import {
@@ -36,10 +36,7 @@ export async function GET(request: Request) {
         request.url,
       ),
     );
-  const character = await drizzleDB.query.userData.findFirst({
-    columns: { userId: true },
-    where: eq(userData.userId, userId),
-  });
+  const character = await findUserIdentityById(drizzleDB, userId);
   if (!character)
     return NextResponse.redirect(discordLinkResultUrl(request.url, "no_character"));
   // Linking without a consent screen only follows a click on our own pages: a same-origin

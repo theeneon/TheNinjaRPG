@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/nextjs";
-import { and, asc, eq, gt, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   JUTSU_LEVEL_CAP,
@@ -13,13 +13,10 @@ import {
   type Item,
   item,
   type Jutsu,
-  jutsu,
   type UserData,
   type UserQueue,
-  userCookingJob,
   userData,
-  userItem,
-  userJutsu,
+  type userItem,
   userQueue,
 } from "@/drizzle/schema";
 import {
@@ -45,17 +42,38 @@ import {
   checkJutsuVillage,
   masteryTrainingFields,
 } from "@/libs/train";
-import type { UserWithRelations } from "@/routers/profile";
-import { fetchStudents } from "@/routers/sensei";
-import type { DrizzleClient } from "@/server/db";
+import { insertUserItems } from "@/queries/item";
+import { debitUserMoney, incrementUserMoney } from "@/queries/profile";
+import { fetchStudents } from "@/queries/sensei";
 import {
-  completedQuestHistoryRelation,
-  userQuestHistoryRelation,
-} from "@/server/utils/achievementObjectives";
+  deleteDeadQueueRows,
+  deleteUserQueueForClaimQueueRow,
+  findUserDataForFetchQuestUser,
+  insertUserCookingJobForStartQueuedCraft,
+  insertUserItemForReturnMaterials,
+  insertUserJutsuForStartQueuedJutsu,
+  insertUserQueueForAppendQueueEntries,
+  insertUserQueueRows,
+  listUserQueueForFetchCraftingQueue,
+  listUserQueueForFetchJutsuTrainingQueue,
+  selectUserItemForSettleCrafts,
+  selectUserItemForSettleWaitingJobs,
+  selectUserJutsuForSettleJutsus,
+  selectUserJutsuForSettleWaitingJobs,
+  selectUserQueueForAppendQueueEntries,
+  selectUserQueueForFetchQueuedJutsuIds,
+  updateUserDataForSettleWaitingJobs,
+  updateUserDataForUpdateQueueOwner,
+  updateUserDataForUpdateQueueOwner2,
+  updateUserItemForMerge,
+  updateUserJutsuForStartQueuedJutsu,
+  updateUserQueueForRescheduleWaiting,
+} from "@/queries/train";
+import type { UserWithRelations } from "@/routers/profile";
+import type { DrizzleClient } from "@/server/db";
 import { claimUserSnapshot } from "@/server/utils/concurrency";
 import { isMysqlDuplicateKeyError, retryOnDeadlock } from "@/server/utils/mysqlErrors";
 import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
-import { territoryWarBoostWindowsSql } from "@/server/utils/territoryWar";
 import { getQueueTotalCapacity } from "@/utils/paypal";
 import type {
   CraftingQueueMaterial,
@@ -117,9 +135,6 @@ export type QueueEntryInsert = Omit<
   "id" | "userId" | "kind" | "position"
 >;
 
-const queueOf = (userId: string, kind: QueueKind) =>
-  and(eq(userQueue.userId, userId), eq(userQueue.kind, kind));
-
 /** Timed rows keep their timestamps; a row missing them is treated as due now. */
 const timed = (row: UserQueue) => {
   const startsAt = row.startsAt ?? row.createdAt;
@@ -152,56 +167,15 @@ export const toQueuedCraft = (row: UserQueue & { item: Item | null }): QueuedCra
 
 /** Waiting jutsu levels in queue order. */
 export const fetchJutsuTrainingQueue = async (client: DrizzleClient, userId: string) =>
-  (
-    await client.query.userQueue.findMany({
-      where: queueOf(userId, "JUTSU"),
-      orderBy: asc(userQueue.position),
-      with: { jutsu: true },
-    })
-  ).map(toQueuedJutsu);
+  (await listUserQueueForFetchJutsuTrainingQueue(client, userId)).map(toQueuedJutsu);
 
 /** Waiting crafts in queue order. */
 export const fetchCraftingQueue = async (client: DrizzleClient, userId: string) =>
-  (
-    await client.query.userQueue.findMany({
-      where: queueOf(userId, "CRAFT"),
-      orderBy: asc(userQueue.position),
-      with: { item: true },
-    })
-  ).map(toQueuedCraft);
-
-/**
- * Waiting jutsu levels for display, in queue order, each with the jutsu's name and the
- * level the user owns now, in one query.
- */
-export const fetchJutsuQueueSummary = (client: DrizzleClient, userId: string) =>
-  client
-    .select({
-      id: userQueue.id,
-      kind: userQueue.kind,
-      jutsuId: userQueue.jutsuId,
-      startsAt: userQueue.startsAt,
-      name: jutsu.name,
-      ownedLevel: userJutsu.level,
-    })
-    .from(userQueue)
-    .leftJoin(jutsu, eq(userQueue.jutsuId, jutsu.id))
-    .leftJoin(
-      userJutsu,
-      and(
-        eq(userJutsu.userId, userQueue.userId),
-        eq(userJutsu.jutsuId, userQueue.jutsuId),
-      ),
-    )
-    .where(queueOf(userId, "JUTSU"))
-    .orderBy(asc(userQueue.position));
+  (await listUserQueueForFetchCraftingQueue(client, userId)).map(toQueuedCraft);
 
 /** Jutsu ids with levels waiting in the user's queue. */
 export const fetchQueuedJutsuIds = async (client: DrizzleClient, userId: string) => {
-  const rows = await client
-    .select({ jutsuId: userQueue.jutsuId })
-    .from(userQueue)
-    .where(queueOf(userId, "JUTSU"));
+  const rows = await selectUserQueueForFetchQueuedJutsuIds(client, userId);
   return new Set(rows.flatMap((row) => (row.jutsuId ? [row.jutsuId] : [])));
 };
 
@@ -241,21 +215,10 @@ export const appendQueueEntries = async (
   if (entries.length === 0) return;
   let last = lastPosition;
   if (last === undefined) {
-    const [row] = await client
-      .select({ position: sql<number>`COALESCE(MAX(${userQueue.position}), 0)` })
-      .from(userQueue)
-      .where(queueOf(userId, kind));
+    const [row] = await selectUserQueueForAppendQueueEntries(client, userId, kind);
     last = Number(row?.position ?? 0);
   }
-  await client.insert(userQueue).values(
-    entries.map((entry, index) => ({
-      ...entry,
-      id: nanoid(),
-      userId,
-      kind,
-      position: last + index + 1,
-    })),
-  );
+  await insertUserQueueForAppendQueueEntries(client, entries, userId, kind, last);
 };
 
 /** The last position used by a queue among `rows`, or 0. */
@@ -295,17 +258,6 @@ const trainingQueueRows = (
     createdAt,
   }));
 };
-
-/** Delete MASTERY, ELEMENT or ENERGY rows at or below `head`: already consumed or replaced. */
-const deleteDeadRows = (
-  client: QueueClient,
-  userId: string,
-  kind: "MASTERY" | "ELEMENT" | "ENERGY",
-  head: number,
-) =>
-  client
-    .delete(userQueue)
-    .where(and(queueOf(userId, kind), sql`${userQueue.position} <= ${head}`));
 
 /**
  * Publish replacement rows and the head together. The snapshot guards the edit, while
@@ -354,8 +306,8 @@ export const claimAndReplaceTrainingQueue = async ({
         set: heads,
       });
       if (!claim.success) return null;
-      if (rows.length) await tx.insert(userQueue).values(rows);
-      if (existing.length) await deleteDeadRows(tx, user.userId, kind, head);
+      if (rows.length) await insertUserQueueRows(tx, rows);
+      if (existing.length) await deleteDeadQueueRows(tx, user.userId, kind, head);
       return {
         updatedAt: claim.claimedAt,
         ...heads,
@@ -482,10 +434,7 @@ export const enqueueJutsuLevels = async (
     return { success: false, message: "Your jutsu training queue is full" };
   }
   const cost = entries.reduce((sum, entry) => sum + entry.reservedRyo, 0);
-  const reserved = await client
-    .update(userData)
-    .set({ money: sql`${userData.money} - ${cost}` })
-    .where(and(eq(userData.userId, user.userId), gte(userData.money, cost)));
+  const reserved = await debitUserMoney(client, cost, user);
   if (reserved.rowsAffected !== 1) {
     return { success: false, message: "You don't have enough money" };
   }
@@ -530,10 +479,7 @@ const settleJutsus = async (
   const mayStart = !preloaded || hasDueTimedJob(preloaded, now);
   const [waiting, owned, students] = await Promise.all([
     preloaded ?? fetchJutsuTrainingQueue(client, userId),
-    client
-      .select({ finishTraining: userJutsu.finishTraining })
-      .from(userJutsu)
-      .where(and(eq(userJutsu.userId, userId), isNotNull(userJutsu.finishTraining))),
+    selectUserJutsuForSettleJutsus(client, userId),
     mayStart ? fetchStudents(client, userId) : undefined,
   ]);
   if (waiting.length === 0) return 0;
@@ -561,10 +507,7 @@ const settleCrafts = async (
 ) => {
   const [waiting, crafting, average] = await Promise.all([
     preloaded ?? fetchCraftingQueue(client, userId),
-    client
-      .select({ craftingFinishedAt: userItem.craftingFinishedAt })
-      .from(userItem)
-      .where(and(eq(userItem.userId, userId), isNotNull(userItem.craftingFinishedAt))),
+    selectUserItemForSettleCrafts(client, userId),
     // PlanetScale transaction sessions cannot execute concurrent reads.
     fetchPvpExperienceAverage(client),
   ]);
@@ -721,29 +664,11 @@ const settleWaitingJobs = async <
   // in one statement. A failed reward write must retain the prepaid receipt for retry.
   return retryOnDeadlock(() =>
     client.transaction(async (tx) => {
-      await tx
-        .update(userData)
-        .set({
-          updatedAt: sql`GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt}))`,
-        })
-        .where(eq(userData.userId, userId));
+      await updateUserDataForSettleWaitingJobs(tx, userId);
       const deadlines =
         kind === "JUTSU"
-          ? await tx
-              .select({ finish: userJutsu.finishTraining })
-              .from(userJutsu)
-              .where(
-                and(eq(userJutsu.userId, userId), isNotNull(userJutsu.finishTraining)),
-              )
-          : await tx
-              .select({ finish: userItem.craftingFinishedAt })
-              .from(userItem)
-              .where(
-                and(
-                  eq(userItem.userId, userId),
-                  isNotNull(userItem.craftingFinishedAt),
-                ),
-              );
+          ? await selectUserJutsuForSettleWaitingJobs(tx, userId)
+          : await selectUserItemForSettleWaitingJobs(tx, userId);
       const lastFinish = latestDate(deadlines.map((row) => row.finish));
       let chainedFinish: Date | null = null;
       let started = 0;
@@ -795,15 +720,7 @@ const rescheduleWaiting = async (
       ),
       sql` `,
     )} END`;
-  await client
-    .update(userQueue)
-    .set({ startsAt: scheduleCase("startsAt"), finishesAt: scheduleCase("finishesAt") })
-    .where(
-      inArray(
-        userQueue.id,
-        moved.map(({ entry }) => entry.id),
-      ),
-    );
+  await updateUserQueueForRescheduleWaiting(client, scheduleCase, moved);
 };
 
 /**
@@ -842,32 +759,20 @@ const startQueuedJutsu = async (
     startsAt.getTime() + calcJutsuTrainTime(info, level, user, startsAt),
   );
   const started = owned
-    ? (
-        await client
-          .update(userJutsu)
-          .set({
-            level: sql`${userJutsu.level} + 1`,
-            trainingStartedAt: startsAt,
-            finishTraining: finishesAt,
-          })
-          .where(and(eq(userJutsu.id, owned.id), eq(userJutsu.level, owned.level)))
-      ).rowsAffected === 1
-    : await client
-        .insert(userJutsu)
-        .values({
-          id: nanoid(),
-          userId: entry.userId,
-          jutsuId: entry.jutsuId,
-          trainingStartedAt: startsAt,
-          finishTraining: finishesAt,
-        })
-        .then(
-          () => true,
-          (error: unknown) => {
-            if (isMysqlDuplicateKeyError(error)) return false;
-            throw error;
-          },
-        );
+    ? (await updateUserJutsuForStartQueuedJutsu(client, startsAt, finishesAt, owned))
+        .rowsAffected === 1
+    : await insertUserJutsuForStartQueuedJutsu(
+        client,
+        entry,
+        startsAt,
+        finishesAt,
+      ).then(
+        () => true,
+        (error: unknown) => {
+          if (isMysqlDuplicateKeyError(error)) return false;
+          throw error;
+        },
+      );
   if (!started) {
     // The jutsu changed concurrently: put the job back for the next settlement.
     await restoreQueueRow(client, entry);
@@ -940,16 +845,18 @@ const startQueuedCraft = async (
     }
   }
   // Rollback retains the queue receipt and its reserved materials on insert failure.
-  await client.insert(userItem).values(outputs);
+  await insertUserItems(client, outputs);
   if (entry.item.itemType === "MEAL") {
-    await client.insert(userCookingJob).values({
-      id: nanoid(),
-      userId: entry.userId,
-      experience: Math.floor(
-        entry.item.cookingExperience * entry.quantity * (1 + territoryBoost),
-      ),
+    await insertUserCookingJobForStartQueuedCraft(
+      client,
+      {
+        userId: entry.userId,
+        item: { cookingExperience: entry.item.cookingExperience },
+        quantity: entry.quantity,
+      },
+      territoryBoost,
       finishesAt,
-    });
+    );
     return { finishesAt };
   }
   // Clan boosts apply to the experience as they do for a direct craft.
@@ -979,7 +886,7 @@ const startQueuedCraft = async (
 
 /** Deleting the row is the claim: only one settlement or cancellation can win it. */
 const claimQueueRow = async (client: QueueClient, id: string) => {
-  const result = await client.delete(userQueue).where(eq(userQueue.id, id));
+  const result = await deleteUserQueueForClaimQueueRow(client, id);
   return result.rowsAffected === 1;
 };
 
@@ -993,7 +900,7 @@ const restoreQueueRow = async (
 ) => {
   const { jutsu: _jutsu, item: _item, ...row } = entry as QueuedJutsu & QueuedCraft;
   try {
-    await client.insert(userQueue).values(row);
+    await insertUserQueueRows(client, [row]);
   } catch (error) {
     if (!isMysqlDuplicateKeyError(error)) throw error;
     if (entry.kind === "JUTSU")
@@ -1036,12 +943,13 @@ const updateQueueOwner = async (
       user,
       true,
     );
-    const written = await client
-      .update(userData)
-      .set({ ...amounts, questData, updatedAt: nextSnapshot })
-      .where(
-        and(eq(userData.userId, user.userId), eq(userData.updatedAt, user.updatedAt)),
-      );
+    const written = await updateUserDataForUpdateQueueOwner(
+      client,
+      amounts,
+      questData,
+      nextSnapshot,
+      user,
+    );
     if (written.rowsAffected === 1) return;
     user = await fetchQuestUser(client, user.userId);
   }
@@ -1052,18 +960,12 @@ const updateQueueOwner = async (
     });
   }
   if (Object.keys(amounts).length === 0) return;
-  await client
-    .update(userData)
-    .set({ ...amounts, updatedAt: nextSnapshot })
-    .where(eq(userData.userId, owner.userId));
+  await updateUserDataForUpdateQueueOwner2(client, amounts, nextSnapshot, owner);
 };
 
 const refundRyo = async (client: QueueClient, userId: string, amount: number) => {
   if (amount <= 0) return;
-  await client
-    .update(userData)
-    .set({ money: sql`${userData.money} + ${amount}` })
-    .where(eq(userData.userId, userId));
+  await incrementUserMoney(client, amount, userId);
 };
 
 /**
@@ -1083,21 +985,7 @@ const returnMaterials = async (
   const merge = (material: CraftingQueueMaterial) => {
     // The material's stack size, read in the same statement; 0 means unlimited.
     const stackSize = sql`(SELECT NULLIF(${item.stackSize}, 0) FROM ${item} WHERE ${item.id} = ${material.itemId})`;
-    return client
-      .update(userItem)
-      .set({ quantity: sql`${userItem.quantity} + ${material.quantity}` })
-      .where(
-        and(
-          eq(userItem.id, material.userItemId),
-          eq(userItem.userId, userId),
-          eq(userItem.itemId, material.itemId),
-          // Not mid-merge, not in an auction, not moved between home and carried.
-          gt(userItem.quantity, 0),
-          eq(userItem.isInAuction, false),
-          eq(userItem.storedAtHome, material.storedAtHome),
-          sql`${userItem.quantity} + ${material.quantity} <= COALESCE(${stackSize}, ${userItem.quantity} + ${material.quantity})`,
-        ),
-      );
+    return updateUserItemForMerge(client, material, userId, stackSize);
   };
   const merged: Awaited<ReturnType<typeof merge>>[] = [];
   if (inTransaction) {
@@ -1107,15 +995,7 @@ const returnMaterials = async (
   }
   const unmerged = materials.filter((_, index) => merged[index]?.rowsAffected !== 1);
   if (unmerged.length === 0) return;
-  await client.insert(userItem).values(
-    unmerged.map((material) => ({
-      id: nanoid(),
-      userId,
-      itemId: material.itemId,
-      quantity: material.quantity,
-      storedAtHome: material.storedAtHome,
-    })),
-  );
+  await insertUserItemForReturnMaterials(client, unmerged, userId);
 };
 
 /** Return materials taken for a craft that did not get queued. */
@@ -1132,25 +1012,7 @@ const fetchQuestUser = async (
   jutsuId?: string,
   startsAt?: Date,
 ) => {
-  const user = await client.query.userData.findFirst({
-    where: eq(userData.userId, userId),
-    extras: (table) => ({
-      territoryWarBoostWindows: territoryWarBoostWindowsSql(table, startsAt).as(
-        "territoryWarBoostWindows",
-      ),
-    }),
-    with: {
-      // The owned copy of the jutsu a queued level trains, in the same read.
-      jutsus: { where: eq(userJutsu.jutsuId, jutsuId ?? "") },
-      userQuests: userQuestHistoryRelation,
-      completedQuests: completedQuestHistoryRelation,
-      village: true,
-      clan: true,
-      items: {
-        with: { item: { columns: { id: true, itemType: true, maxDurability: true } } },
-      },
-    },
-  });
+  const user = await findUserDataForFetchQuestUser(client, userId, startsAt, jutsuId);
   if (!user) throw new Error(`Could not settle queue for missing user ${userId}`);
   // Tracker evaluation reads quests, village and items, all loaded above.
   return user as unknown as NonNullable<UserWithRelations> & {

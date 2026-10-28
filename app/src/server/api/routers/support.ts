@@ -1,39 +1,38 @@
 import type { SQL } from "drizzle-orm";
-import {
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gte,
-  inArray,
-  like,
-  lte,
-  or,
-  sql,
-} from "drizzle-orm";
+import { and, eq, gte, lte } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type {
-  SupportTicketActivityAction,
-  SupportTicketCategory,
-  SupportTicketPriority,
-} from "@/drizzle/constants";
+import type { SupportTicketCategory, SupportTicketPriority } from "@/drizzle/constants";
 import { GITHUB_API_ENDPOINT } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
+import { supportTicket } from "@/drizzle/schema";
+import { anonymizeStaffInfo, getTicketUpdateActivities } from "@/libs/support";
+import { fetchUser } from "@/queries/profile";
 import {
-  cannedResponse,
-  conversation,
-  conversationComment,
-  supportTicket,
-  supportTicketActivity,
-} from "@/drizzle/schema";
-import {
-  anonymizeStaffInfo,
-  getNextClosedAt,
-  getTicketUpdateActivities,
-} from "@/libs/support";
-import { fetchUser } from "@/routers/profile";
+  createSupportTicketActivity,
+  deleteCannedResponseForDeleteCannedResponse,
+  deleteConversationCommentForDeleteTicket,
+  deleteConversationForDeleteTicket,
+  deleteSupportTicketActivityForDeleteTicket,
+  deleteSupportTicketForDeleteTicket,
+  fetchCannedResponse,
+  findSupportTicketForGetSupportTicketWithRelations,
+  insertCannedResponseForCreateCannedResponse,
+  insertSupportTicketForCreateTicket,
+  listConversationCommentForEscalateToGithub,
+  listSupportTicketForCalculateSupportMetrics,
+  listSupportTicketForGetSupportTicketsWithRelations,
+  selectCannedResponseForGetCannedResponses,
+  selectSupportTicketForGetStatistics,
+  selectSupportTicketForGetStatistics2,
+  selectSupportTicketForGetStatistics3,
+  selectSupportTicketForGetStatistics4,
+  updateCannedResponseForUpdateCannedResponse,
+  updateConversationForUpdateTicket,
+  updateSupportTicketForEscalateToGithub,
+  updateSupportTicketForUpdateTicket,
+} from "@/queries/support";
+
 import { createConvo } from "@/server/api/routers/comments";
 import {
   baseServerResponse,
@@ -144,17 +143,14 @@ export const supportRouter = createTRPCRouter({
       const convoId = nanoid();
       const sanitizedDescription = sanitize(input.description);
       await Promise.all([
-        ctx.drizzle.insert(supportTicket).values({
-          id: ticketId,
-          title: input.title,
-          description: sanitizedDescription,
-          category: input.category,
-          priority: input.priority,
-          isPublic: input.isPublic,
-          tags: input.tags,
-          createdByUserId: ctx.userId,
-          conversationId: convoId,
-        }),
+        insertSupportTicketForCreateTicket(
+          ctx.drizzle,
+          ticketId,
+          input,
+          sanitizedDescription,
+          ctx,
+          convoId,
+        ),
         createConvo({
           client: ctx.drizzle,
           authorUserId: ctx.userId,
@@ -222,29 +218,23 @@ export const supportRouter = createTRPCRouter({
       // Update ticket
       const now = new Date();
       await Promise.all([
-        ctx.drizzle
-          .update(supportTicket)
-          .set({
-            ...ticketUpdate,
-            ...(cleanDescription !== undefined
-              ? { description: cleanDescription }
-              : {}),
-            updatedAt: now,
-            closedAt: getNextClosedAt(
-              ticket.status,
-              updateData.status,
-              ticket.closedAt,
-              now,
-            ),
-          })
-          .where(eq(supportTicket.id, ticketId)),
+        updateSupportTicketForUpdateTicket(
+          ctx.drizzle,
+          ticketUpdate,
+          cleanDescription,
+          now,
+          ticket,
+          updateData,
+          ticketId,
+        ),
         // Sync conversation isPublic flag when ticket isPublic changes
         ...(updateData.isPublic !== undefined && updateData.isPublic !== ticket.isPublic
           ? [
-              ctx.drizzle
-                .update(conversation)
-                .set({ isPublic: updateData.isPublic })
-                .where(eq(conversation.id, ticket.conversationId)),
+              updateConversationForUpdateTicket(
+                ctx.drizzle,
+                { isPublic: updateData.isPublic },
+                ticket,
+              ),
             ]
           : []),
         ...activities.map((activity) =>
@@ -285,16 +275,10 @@ export const supportRouter = createTRPCRouter({
       }
       // Mutate data
       await Promise.all([
-        ctx.drizzle
-          .delete(conversation)
-          .where(eq(conversation.id, ticket.conversationId)),
-        ctx.drizzle
-          .delete(conversationComment)
-          .where(eq(conversationComment.conversationId, ticket.conversationId)),
-        ctx.drizzle
-          .delete(supportTicketActivity)
-          .where(eq(supportTicketActivity.ticketId, input.ticketId)),
-        ctx.drizzle.delete(supportTicket).where(eq(supportTicket.id, input.ticketId)),
+        deleteConversationForDeleteTicket(ctx.drizzle, ticket),
+        deleteConversationCommentForDeleteTicket(ctx.drizzle, ticket),
+        deleteSupportTicketActivityForDeleteTicket(ctx.drizzle, input),
+        deleteSupportTicketForDeleteTicket(ctx.drizzle, input),
       ]);
       return {
         success: true,
@@ -332,32 +316,13 @@ export const supportRouter = createTRPCRouter({
       const [categoryResult, priorityResult, statusResult, assigneeResult, metrics] =
         await Promise.all([
           // Tickets by category
-          ctx.drizzle
-            .select({ category: supportTicket.category, count: count() })
-            .from(supportTicket)
-            .where(whereClause)
-            .groupBy(supportTicket.category),
+          selectSupportTicketForGetStatistics(ctx.drizzle, whereClause),
           // Tickets by priority
-          ctx.drizzle
-            .select({ priority: supportTicket.priority, count: count() })
-            .from(supportTicket)
-            .where(whereClause)
-            .groupBy(supportTicket.priority),
+          selectSupportTicketForGetStatistics2(ctx.drizzle, whereClause),
           // Tickets by status
-          ctx.drizzle
-            .select({ status: supportTicket.status, count: count() })
-            .from(supportTicket)
-            .where(whereClause)
-            .groupBy(supportTicket.status),
+          selectSupportTicketForGetStatistics3(ctx.drizzle, whereClause),
           // Tickets by assignee
-          ctx.drizzle
-            .select({
-              assignedToUserId: supportTicket.assignedToUserId,
-              count: count(),
-            })
-            .from(supportTicket)
-            .where(whereClause)
-            .groupBy(supportTicket.assignedToUserId),
+          selectSupportTicketForGetStatistics4(ctx.drizzle, whereClause),
           // Metrics (average response etc.)
           calculateSupportMetrics(ctx.drizzle, whereClause),
         ]);
@@ -390,10 +355,7 @@ export const supportRouter = createTRPCRouter({
 
   // Canned responses CRUD operations
   getCannedResponses: protectedProcedure.query(async ({ ctx }) => {
-    const responses = await ctx.drizzle
-      .select()
-      .from(cannedResponse)
-      .orderBy(desc(cannedResponse.createdAt));
+    const responses = await selectCannedResponseForGetCannedResponses(ctx.drizzle);
     return responses;
   }),
 
@@ -414,12 +376,7 @@ export const supportRouter = createTRPCRouter({
       }
 
       const id = nanoid();
-      await ctx.drizzle.insert(cannedResponse).values({
-        id,
-        title: input.title,
-        description: input.description,
-        createdByUserId: ctx.userId,
-      });
+      await insertCannedResponseForCreateCannedResponse(ctx.drizzle, id, input, ctx);
 
       return { success: true, message: "Canned response created successfully" };
     }),
@@ -446,14 +403,7 @@ export const supportRouter = createTRPCRouter({
         return errorResponse("Canned response not found");
       }
       // Update
-      await ctx.drizzle
-        .update(cannedResponse)
-        .set({
-          title: input.title,
-          description: input.description,
-          updatedAt: new Date(),
-        })
-        .where(eq(cannedResponse.id, input.id));
+      await updateCannedResponseForUpdateCannedResponse(ctx.drizzle, input);
 
       return { success: true, message: "Canned response updated successfully" };
     }),
@@ -474,7 +424,7 @@ export const supportRouter = createTRPCRouter({
         return errorResponse("Canned response not found");
       }
 
-      await ctx.drizzle.delete(cannedResponse).where(eq(cannedResponse.id, input.id));
+      await deleteCannedResponseForDeleteCannedResponse(ctx.drizzle, input);
 
       return { success: true, message: "Canned response deleted successfully" };
     }),
@@ -506,18 +456,10 @@ export const supportRouter = createTRPCRouter({
       }
       try {
         // Get all conversation comments to include in the GitHub issue
-        const comments = await ctx.drizzle.query.conversationComment.findMany({
-          where: eq(conversationComment.conversationId, ticket.conversationId),
-          with: {
-            user: {
-              columns: {
-                username: true,
-                role: true,
-              },
-            },
-          },
-          orderBy: asc(conversationComment.createdAt),
-        });
+        const comments = await listConversationCommentForEscalateToGithub(
+          ctx.drizzle,
+          ticket,
+        );
 
         // Build the GitHub issue body
         const ticketUrl = `${process.env.NEXT_PUBLIC_BASE_URL}/support/${ticket.id}`;
@@ -573,13 +515,7 @@ export const supportRouter = createTRPCRouter({
 
         // Update ticket with GitHub issue URL
         await Promise.all([
-          ctx.drizzle
-            .update(supportTicket)
-            .set({
-              githubIssueUrl,
-              updatedAt: new Date(),
-            })
-            .where(eq(supportTicket.id, ticket.id)),
+          updateSupportTicketForEscalateToGithub(ctx.drizzle, githubIssueUrl, ticket),
           createSupportTicketActivity(
             ctx.drizzle,
             ticket.id,
@@ -664,18 +600,6 @@ export const ticketPriorityToGithubLabel = (priority: SupportTicketPriority) => 
 };
 
 /**
- * Fetch a canned response
- * @param client - The database client
- * @param id - The ID of the canned response to fetch
- * @returns The canned response
- */
-export const fetchCannedResponse = async (client: DrizzleClient, id: string) => {
-  return await client.query.cannedResponse.findFirst({
-    where: eq(cannedResponse.id, id),
-  });
-};
-
-/**
  * Get a support ticket with relations
  * @param client - The database client
  * @param ticketId - The ID of the ticket to get
@@ -685,52 +609,10 @@ export const getSupportTicketWithRelations = async (
   client: DrizzleClient,
   ticketId: string,
 ) => {
-  const ticket = await client.query.supportTicket.findFirst({
-    where: eq(supportTicket.id, ticketId),
-    with: {
-      createdBy: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          level: true,
-          rank: true,
-          isOutlaw: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-      assignedTo: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          level: true,
-          rank: true,
-          isOutlaw: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-      activities: {
-        with: {
-          author: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-              level: true,
-              rank: true,
-              isOutlaw: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-        },
-        orderBy: desc(supportTicketActivity.createdAt),
-      },
-    },
-  });
+  const ticket = await findSupportTicketForGetSupportTicketWithRelations(
+    client,
+    ticketId,
+  );
 
   return ticket || null;
 };
@@ -757,140 +639,19 @@ export const getSupportTicketsWithRelations = async (info: {
   userId: string;
 }) => {
   const { client, skip, limit, filters, isStaff, userId } = info;
-  const tickets = await client.query.supportTicket.findMany({
-    where: (() => {
-      const conds = [
-        ...(filters.status && filters.status.length > 0
-          ? [inArray(supportTicket.status, filters.status)]
-          : []),
-        ...(filters.category && filters.category.length > 0
-          ? [inArray(supportTicket.category, filters.category)]
-          : []),
-        ...(filters.priority && filters.priority.length > 0
-          ? [inArray(supportTicket.priority, filters.priority)]
-          : []),
-        ...(filters.assignedToUserId
-          ? [eq(supportTicket.assignedToUserId, filters.assignedToUserId)]
-          : []),
-        ...(filters.createdByUserId
-          ? [eq(supportTicket.createdByUserId, filters.createdByUserId)]
-          : []),
-        ...(filters.isPublic !== undefined
-          ? [eq(supportTicket.isPublic, filters.isPublic)]
-          : []),
-        ...(filters.search
-          ? [
-              or(
-                like(supportTicket.title, `%${filters.search}%`),
-                like(supportTicket.description, `%${filters.search}%`),
-              ),
-            ]
-          : []),
-        ...(filters.dateFrom
-          ? [gte(supportTicket.createdAt, new Date(filters.dateFrom))]
-          : []),
-        ...(filters.dateTo
-          ? [lte(supportTicket.createdAt, new Date(filters.dateTo))]
-          : []),
-        ...(filters.tags && filters.tags.length > 0
-          ? [
-              or(
-                ...filters.tags.map(
-                  (tag) =>
-                    sql`JSON_CONTAINS(${supportTicket.tags}, ${JSON.stringify(tag)})`,
-                ),
-              ),
-            ]
-          : []),
-        ...(!isStaff
-          ? [
-              or(
-                eq(supportTicket.createdByUserId, userId),
-                eq(supportTicket.isPublic, true),
-              ),
-            ]
-          : []),
-      ];
-      return conds.length > 0 ? and(...conds) : undefined;
-    })(),
-    with: {
-      createdBy: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          level: true,
-          rank: true,
-          isOutlaw: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-      assignedTo: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          level: true,
-          rank: true,
-          isOutlaw: true,
-          role: true,
-          federalStatus: true,
-        },
-      },
-    },
-    orderBy: (() => {
-      const orderByField =
-        filters.orderBy === "createdAt"
-          ? supportTicket.createdAt
-          : filters.orderBy === "updatedAt"
-            ? supportTicket.updatedAt
-            : filters.orderBy === "priority"
-              ? supportTicket.priority
-              : filters.orderBy === "status"
-                ? supportTicket.status
-                : supportTicket.createdAt;
-
-      return filters.orderDirection === "asc" ? asc(orderByField) : desc(orderByField);
-    })(),
-    limit: limit,
-    offset: skip,
-  });
+  const tickets = await listSupportTicketForGetSupportTicketsWithRelations(
+    client,
+    filters,
+    isStaff,
+    userId,
+    limit,
+    skip,
+  );
   return tickets;
 };
 export type SupportTicketsWithRelations = Awaited<
   ReturnType<typeof getSupportTicketsWithRelations>
 >;
-
-/**
- * Create a support ticket activity
- * @param client - The database client
- * @param ticketId - The ID of the ticket
- * @param authorId - The ID of the author
- * @param action - The action to create
- * @param oldValue - The old value
- * @param newValue - The new value
- * @param metadata - The metadata
- */
-export const createSupportTicketActivity = async (
-  client: DrizzleClient,
-  ticketId: string,
-  authorId: string,
-  action: SupportTicketActivityAction,
-  oldValue?: string,
-  newValue?: string,
-  metadata?: Record<string, any>,
-) => {
-  await client.insert(supportTicketActivity).values({
-    id: nanoid(),
-    ticketId,
-    authorId,
-    action,
-    oldValue,
-    newValue,
-    metadata: metadata || {},
-  });
-};
 
 /**
  * Calculate support metrics
@@ -902,27 +663,10 @@ export const calculateSupportMetrics = async (
   client: DrizzleClient,
   whereClause: SQL | undefined,
 ) => {
-  const tickets = await client.query.supportTicket.findMany({
-    where: whereClause,
-    with: {
-      conversation: {
-        columns: { id: true },
-        with: {
-          comments: {
-            columns: { id: true, createdAt: true },
-            with: {
-              user: {
-                columns: {
-                  role: true,
-                },
-              },
-            },
-            orderBy: (table, { asc }) => asc(table.createdAt),
-          },
-        },
-      },
-    },
-  });
+  const tickets = await listSupportTicketForCalculateSupportMetrics(
+    client,
+    whereClause,
+  );
 
   let totalResponseTime = 0;
   let totalResolutionTime = 0;

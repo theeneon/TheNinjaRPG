@@ -1,17 +1,13 @@
-import { eq } from "drizzle-orm";
 import type { Metadata } from "next";
-import { forumBoard } from "@/drizzle/schema";
 import { buildMetadata, noindexMetadata } from "@/libs/seo";
+import { findForumBoardMetadata } from "@/queries/forum";
 import { drizzleDB } from "@/server/db";
 
 export async function generateMetadata(props: {
   params: Promise<{ boardid: string }>;
 }): Promise<Metadata> {
   const params = await props.params;
-  const board = await drizzleDB.query.forumBoard.findFirst({
-    columns: { name: true, summary: true, nThreads: true },
-    where: eq(forumBoard.id, params.boardid),
-  });
+  const board = await findForumBoardMetadata(drizzleDB, params.boardid);
   if (!board) return noindexMetadata("Board Not Found");
   return buildMetadata({
     title: `${board.name} Forum`,

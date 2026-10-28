@@ -1,13 +1,13 @@
 import { openai } from "@ai-sdk/openai";
 import { auth } from "@clerk/nextjs/server";
-import type { UIMessage } from "ai";
 import {
   convertToModelMessages,
   createUIMessageStreamResponse,
   streamText,
   toUIMessageStream,
+  type UIMessage,
 } from "ai";
-import { and, eq, lte, sql } from "drizzle-orm";
+
 import {
   ELITE_JONIN_JUTSU_ADVANCED_XP_TO_LEVEL,
   ELITE_JONIN_JUTSU_LEVEL_CAP,
@@ -17,11 +17,10 @@ import {
   JUTSU_TRAIN_LEVEL_CAP,
   JUTSU_TRANSFER_MAX_LEVEL,
   JUTSU_XP_TO_LEVEL,
-  MAX_DAILY_AI_CALLS,
   MAX_JUTSU_TRAIN_TIME_MS,
   OPENAI_CHAT_MODEL,
 } from "@/drizzle/constants";
-import { userData } from "@/drizzle/schema";
+import { updateUserDataForPOST } from "@/queries/support";
 import { drizzleDB } from "@/server/db";
 
 export async function POST(req: Request) {
@@ -32,12 +31,7 @@ export async function POST(req: Request) {
   }
 
   // User update & guard
-  const updateResult = await drizzleDB
-    .update(userData)
-    .set({
-      aiCalls: sql`${userData.aiCalls} + 1`,
-    })
-    .where(and(eq(userData.userId, userId), lte(userData.aiCalls, MAX_DAILY_AI_CALLS)));
+  const updateResult = await updateUserDataForPOST(drizzleDB, userId);
   if (updateResult.rowsAffected === 0) {
     return new Response(
       "You have reached the maximum number of AI calls for the day.",

@@ -1,3 +1,8 @@
+import {
+  deleteUserDeviceForPruneExpiredTokens,
+  selectUserDeviceForSendPushToUsers,
+  selectUserPushPreferenceForSendPushToUsers,
+} from "@/queries/push";
 /**
  * The only entry point for sending push notifications.
  *
@@ -8,22 +13,20 @@
  */
 
 import * as Sentry from "@sentry/node";
-import { and, eq, gte, inArray } from "drizzle-orm";
 import {
   PUSH_TOKEN_STALE_DAYS,
   type PushCategory,
   type PushPlatform,
 } from "@/drizzle/constants";
-import { userDevice, userPushPreference } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 import { secondsFromNow } from "@/utils/time";
 import * as apns from "./apns";
 import * as fcm from "./fcm";
-import type { PushSendSummary } from "./types";
 import {
   emptySummary,
   type PushMessage,
   type PushResult,
+  type PushSendSummary,
   shouldReportPushFailures,
   summarise,
 } from "./types";
@@ -52,29 +55,8 @@ export const sendPushToUsers = async (
     // skipping it keeps the fan-out small without needing a separate cleanup job.
     const freshSince = secondsFromNow(-PUSH_TOKEN_STALE_DAYS * 24 * 60 * 60);
     const [devices, optOuts] = await Promise.all([
-      client
-        .select({
-          userId: userDevice.userId,
-          token: userDevice.token,
-          platform: userDevice.platform,
-        })
-        .from(userDevice)
-        .where(
-          and(
-            inArray(userDevice.userId, recipients),
-            gte(userDevice.lastSeenAt, freshSince),
-          ),
-        ),
-      client
-        .select({ userId: userPushPreference.userId })
-        .from(userPushPreference)
-        .where(
-          and(
-            inArray(userPushPreference.userId, recipients),
-            eq(userPushPreference.category, message.category),
-            eq(userPushPreference.enabled, false),
-          ),
-        ),
+      selectUserDeviceForSendPushToUsers(client, recipients, freshSince),
+      selectUserPushPreferenceForSendPushToUsers(client, recipients, message),
     ]);
 
     const muted = new Set(optOuts.map((row) => row.userId));
@@ -109,7 +91,7 @@ export const pruneExpiredTokens = async (
   tokens: string[],
 ): Promise<void> => {
   if (tokens.length === 0) return;
-  await client.delete(userDevice).where(inArray(userDevice.token, tokens));
+  await deleteUserDeviceForPruneExpiredTokens(client, tokens);
 };
 
 const groupTokensByPlatform = (

@@ -1,3 +1,4 @@
+import { fetchBattleEssentials } from "@/queries/combat";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import type { BattleType } from "@/drizzle/constants";
@@ -8,7 +9,7 @@ import { refreshMasteries } from "@/libs/combat/util";
 import { effectiveMasteries } from "@/libs/mastery";
 import { Pusher } from "@/libs/pusher";
 import { battleJutsuGateFailure } from "@/libs/train";
-import { combatRouter, fetchBattleEssentials, processUsersForBattle } from "@/server/api/routers/combat";
+import { combatRouter, processUsersForBattle } from "@/server/api/routers/combat";
 import { fetchUserItemsWithVariants } from "@/server/api/routers/item";
 import { fetchUserJutsus, jutsuRouter } from "@/server/api/routers/jutsu";
 import { insertUsers } from "../../setup/factories";

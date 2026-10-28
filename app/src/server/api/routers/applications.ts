@@ -1,18 +1,33 @@
-import { and, desc, eq, inArray, like } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { StaffApplicationState, StaffApprovalGroup } from "@/drizzle/constants";
+import type { StaffApprovalGroup } from "@/drizzle/constants";
 import { StaffApplicationTargetRoles, StaffApprovalGroups } from "@/drizzle/constants";
-import { staffApplication, staffApplicationApproval, userData } from "@/drizzle/schema";
+import { staffApplication } from "@/drizzle/schema";
+import {
+  deleteStaffApplicationForDelete,
+  fetchApplication,
+  findStaffApplicationForDelete,
+  insertStaffApplicationApprovalForApprove,
+  insertStaffApplicationApprovalForReject,
+  insertStaffApplicationForCreate,
+  listStaffApplicationApprovalForApprove,
+  listStaffApplicationForList,
+  selectUserDataForList,
+  updateStaffApplicationForApprove,
+  updateStaffApplicationForApprove2,
+  updateStaffApplicationForReject,
+  updateUserDataForApprove,
+} from "@/queries/applications";
+import { fetchUser } from "@/queries/profile";
 import { createConvo } from "@/routers/comments";
-import { fetchUser } from "@/routers/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import {
   canApproveApplications,
   canDeleteStaffApplication,
@@ -64,14 +79,7 @@ export const applicationsRouter = createTRPCRouter({
           isStaffAvailable: true,
           convoId,
         }),
-        ctx.drizzle.insert(staffApplication).values({
-          id: appid,
-          applicantUserId: user.userId,
-          targetRole: input.targetRole,
-          state: "PENDING",
-          conversationId: convoId,
-          motivation: input.motivation,
-        }),
+        insertStaffApplicationForCreate(ctx.drizzle, appid, user, input, convoId),
       ]);
       return { success: true, message: "Application created", id: appid };
     }),
@@ -121,46 +129,20 @@ export const applicationsRouter = createTRPCRouter({
 
       // Resolve username -> userIds
       const usernameIds = input.username
-        ? (
-            await ctx.drizzle
-              .select({ userId: userData.userId })
-              .from(userData)
-              .where(like(userData.username, `%${input.username}%`))
-              .limit(10)
-          ).map((r) => r.userId)
+        ? (await selectUserDataForList(ctx.drizzle, { username: input.username })).map(
+            (r) => r.userId,
+          )
         : [];
 
       // Fetch with relation and username filter using inArray on applicantUserId
-      const results = await ctx.drizzle.query.staffApplication.findMany({
-        where: and(
-          ...baseConds,
-          ...(input.username && usernameIds.length > 0
-            ? [inArray(staffApplication.applicantUserId, usernameIds)]
-            : input.username
-              ? [eq(staffApplication.applicantUserId, "__none__")] // force no results
-              : []),
-        ),
-        with: {
-          applicant: {
-            columns: {
-              userId: true,
-              username: true,
-              avatar: true,
-              level: true,
-              rank: true,
-            },
-            with: { village: { columns: { name: true } } },
-          },
-          approvals: {
-            with: {
-              approver: { columns: { userId: true, username: true, avatar: true } },
-            },
-          },
-        },
-        orderBy: [desc(staffApplication.createdAt)],
+      const results = await listStaffApplicationForList(
+        ctx.drizzle,
+        baseConds,
+        input,
+        usernameIds,
         limit,
-        offset: skip,
-      });
+        skip,
+      );
 
       // Attach current user's vote (if any) to each application
       const enriched = results.map((app) => {
@@ -184,9 +166,7 @@ export const applicationsRouter = createTRPCRouter({
       // Query: fetch the user and the application in parallel for efficiency
       const [user, app] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.staffApplication.findFirst({
-          where: eq(staffApplication.id, input.id),
-        }),
+        findStaffApplicationForDelete(ctx.drizzle, input),
       ]);
 
       // Guards
@@ -197,9 +177,7 @@ export const applicationsRouter = createTRPCRouter({
         return errorResponse("Only pending applications can be deleted");
 
       // Mutation: perform deletion
-      await ctx.drizzle
-        .delete(staffApplication)
-        .where(eq(staffApplication.id, input.id));
+      await deleteStaffApplicationForDelete(ctx.drizzle, input);
       return { success: true, message: "Application deleted" };
     }),
 
@@ -225,27 +203,18 @@ export const applicationsRouter = createTRPCRouter({
       // Update: record approval (upsert)
       const approvalGroup = getApprovalGroup(user.role);
       if (!approvalGroup) return errorResponse("No approval group found for user role");
-      await ctx.drizzle
-        .insert(staffApplicationApproval)
-        .values({
-          id: nanoid(),
-          applicationId: app.id,
-          approverUserId: user.userId,
-          group: approvalGroup,
-          state: "APPROVED",
-        })
-        .onDuplicateKeyUpdate({
-          set: {
-            state: "APPROVED",
-            approverUserId: user.userId,
-            group: approvalGroup,
-          },
-        });
+      await insertStaffApplicationApprovalForApprove(
+        ctx.drizzle,
+        app,
+        user,
+        approvalGroup,
+      );
 
       // Query: approvals with APPROVED state
-      const decisions = await ctx.drizzle.query.staffApplicationApproval.findMany({
-        where: eq(staffApplicationApproval.applicationId, input.id),
-      });
+      const decisions = await listStaffApplicationApprovalForApprove(
+        ctx.drizzle,
+        input,
+      );
       const approvals = decisions.filter((d) => d.state === "APPROVED");
       const rejected = decisions.filter((d) => d.state === "REJECTED");
       const approvedGroups = new Set<StaffApprovalGroup>(approvals.map((a) => a.group));
@@ -255,22 +224,13 @@ export const applicationsRouter = createTRPCRouter({
       if (done) {
         // Update: promote user and approve application
         const [result] = await Promise.all([
-          ctx.drizzle
-            .update(userData)
-            .set({ role: app.targetRole })
-            .where(eq(userData.userId, app.applicantUserId)),
-          ctx.drizzle
-            .update(staffApplication)
-            .set({ state: "APPROVED", updatedAt: new Date() })
-            .where(eq(staffApplication.id, app.id)),
+          updateUserDataForApprove(ctx.drizzle, app),
+          updateStaffApplicationForApprove(ctx.drizzle, app),
         ]);
         if (result.rowsAffected === 0) return errorResponse("Promotion failed");
         return { success: true, message: "Application approved and user promoted" };
       } else if (rejected.length === 0 && app.state === "REJECTED") {
-        await ctx.drizzle
-          .update(staffApplication)
-          .set({ state: "PENDING", updatedAt: new Date() })
-          .where(eq(staffApplication.id, app.id));
+        await updateStaffApplicationForApprove2(ctx.drizzle, app);
         return {
           success: true,
           message: "Application approved. Reset to pending others.",
@@ -291,9 +251,7 @@ export const applicationsRouter = createTRPCRouter({
       // Query
       const [user, app] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.staffApplication.findFirst({
-          where: eq(staffApplication.id, input.id),
-        }),
+        findStaffApplicationForDelete(ctx.drizzle, input),
       ]);
       // Guards
       if (!app) return errorResponse("No application found");
@@ -304,69 +262,11 @@ export const applicationsRouter = createTRPCRouter({
       if (!rejectionGroup)
         return errorResponse("No approval group found for user role");
       await Promise.all([
-        ctx.drizzle
-          .insert(staffApplicationApproval)
-          .values({
-            id: nanoid(),
-            applicationId: app.id,
-            approverUserId: user.userId,
-            group: rejectionGroup,
-            state: "REJECTED",
-          })
-          .onDuplicateKeyUpdate({
-            set: {
-              state: "REJECTED",
-              approverUserId: user.userId,
-              group: rejectionGroup,
-            },
-          }),
-        ctx.drizzle
-          .update(staffApplication)
-          .set({ state: "REJECTED", updatedAt: new Date() })
-          .where(eq(staffApplication.id, app.id)),
+        insertStaffApplicationApprovalForReject(ctx.drizzle, app, user, rejectionGroup),
+        updateStaffApplicationForReject(ctx.drizzle, app),
       ]);
 
       // Update application state
       return { success: true, message: "Application rejected" };
     }),
 });
-
-/**
- * Fetch an application by user ID and status.
- * @param client - The DrizzleClient instance used for database operations.
- * @param userId - The ID of the user to fetch the application for.
- * @param status - The status of the application to fetch.
- * @returns The application if found, otherwise null.
- */
-export const fetchApplication = async (info: {
-  client: DrizzleClient;
-  userId?: string;
-  applicationId?: string;
-  status?: StaffApplicationState;
-}) => {
-  const { client, userId, applicationId, status } = info;
-  return await client.query.staffApplication.findFirst({
-    where: and(
-      ...(userId ? [eq(staffApplication.applicantUserId, userId)] : []),
-      ...(applicationId ? [eq(staffApplication.id, applicationId)] : []),
-      ...(status ? [eq(staffApplication.state, status)] : []),
-    ),
-    with: {
-      applicant: {
-        columns: {
-          userId: true,
-          username: true,
-          avatar: true,
-          level: true,
-          rank: true,
-        },
-        with: { village: { columns: { name: true } } },
-      },
-      approvals: {
-        with: {
-          approver: { columns: { userId: true, username: true, avatar: true } },
-        },
-      },
-    },
-  });
-};

@@ -1,17 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
-import { and, eq, lte, sql } from "drizzle-orm";
+import type { Item, UserData, UserItem, UserRaidBuff } from "@/drizzle/schema";
 import {
-  type Item,
-  type UserData,
-  type UserItem,
-  type UserRaidBuff,
-  userCookingJob,
-  userData,
-  userItem,
-  userRaidBuff,
-} from "@/drizzle/schema";
+  deleteEmptyUserItem,
+  deleteUserCookingJobForSettleCookingExperience,
+  executeConsumedForConsumeMeal,
+  executeRowsForSettleCookingExperience,
+  insertUserRaidBuffForConsumeMeal,
+} from "@/queries/item";
 import type { DrizzleClient } from "@/server/db";
-import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
 /**
@@ -36,19 +32,7 @@ export const settleCookingExperience = async (
       // Use the guarded literal XP because multi-table assignment order is unspecified;
       // reading receipt.experience while also zeroing it could otherwise award zero.
       await retryOnDeadlock(() =>
-        client.execute(sql`
-          UPDATE ${userData}
-          INNER JOIN ${userCookingJob} ON ${userCookingJob.userId} = ${userData.userId}
-          SET ${userData.cookingExperience} = ${userData.cookingExperience} + ${job.experience},
-              ${userData.updatedAt} = GREATEST(NOW(3), TIMESTAMPADD(MICROSECOND, 1000, ${userData.updatedAt})),
-              ${userCookingJob.experience} = 0
-          WHERE ${userData.userId} = ${userId}
-            AND ${userCookingJob.id} = ${job.id}
-            AND ${userCookingJob.userId} = ${userId}
-            AND ${userCookingJob.finishesAt} <= ${now}
-            AND ${userCookingJob.experience} = ${job.experience}
-            AND ${userCookingJob.experience} > 0
-        `),
+        executeRowsForSettleCookingExperience(client, job, userId, now),
       );
     } catch (error) {
       // Other receipts may already have committed. Keep this one retryable and finish
@@ -61,15 +45,7 @@ export const settleCookingExperience = async (
   }
   try {
     await retryOnDeadlock(() =>
-      client
-        .delete(userCookingJob)
-        .where(
-          and(
-            eq(userCookingJob.userId, userId),
-            lte(userCookingJob.finishesAt, now),
-            eq(userCookingJob.experience, 0),
-          ),
-        ),
+      deleteUserCookingJobForSettleCookingExperience(client, userId, now),
     );
   } catch (error) {
     // A zero marker cannot grant XP again; cleanup failure must not undo reconciliation.
@@ -133,50 +109,20 @@ export const consumeMeal = async ({
   );
   // A rejected same-account race may leave this expired, effect-free row. That
   // reversible residue costs no item or active effect; an existing buff is untouched.
-  await retryOnDeadlock(() =>
-    client
-      .insert(userRaidBuff)
-      .values({
-        id,
-        userId: user.userId,
-        itemId: null,
-        questId: null,
-        effects: [],
-        expiresAt: now,
-        createdAt: now,
-      })
-      .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
-  );
+  await retryOnDeadlock(() => insertUserRaidBuffForConsumeMeal(client, id, user, now));
   // Drizzle cannot express this joined UPDATE. Every guard is checked in the same
   // statement as both value changes, so a lost account/item race changes neither.
   const consumed = await retryOnDeadlock(() =>
-    client.execute(sql`
-      UPDATE ${userData}
-      INNER JOIN ${userItem} ON ${userItem.userId} = ${userData.userId}
-      INNER JOIN ${userRaidBuff} ON ${userRaidBuff.userId} = ${userData.userId}
-      SET ${userData.updatedAt} = ${getNextUserSnapshotAt(user.updatedAt, now)},
-          ${userItem.quantity} = ${expectedQuantity - 1},
-          ${userRaidBuff.itemId} = ${owned.itemId},
-          ${userRaidBuff.questId} = NULL,
-          ${userRaidBuff.effects} = ${JSON.stringify(owned.item.effects)},
-          ${userRaidBuff.expiresAt} = ${expiresAt},
-          ${userRaidBuff.createdAt} = ${extendsMeal ? previous.createdAt : now}
-      WHERE ${userData.userId} = ${user.userId}
-        AND ${userData.updatedAt} = ${user.updatedAt}
-        AND ${userData.status} = 'AWAKE'
-        AND ${userData.battleId} IS NULL
-        AND ${userItem.id} = ${owned.id}
-        AND ${userItem.userId} = ${user.userId}
-        AND ${userItem.itemId} = ${owned.itemId}
-        AND ${userItem.quantity} = ${expectedQuantity}
-        AND ${userItem.quantity} > 0
-        AND ${userItem.storedAtHome} = FALSE
-        AND ${userItem.isInAuction} = FALSE
-        AND ${userItem.equipped} = 'NONE'
-        AND (${userItem.craftingFinishedAt} IS NULL OR ${userItem.craftingFinishedAt} <= ${now})
-        AND ${userRaidBuff.id} = ${id}
-        AND ${userRaidBuff.userId} = ${user.userId}
-    `),
+    executeConsumedForConsumeMeal(
+      client,
+      user,
+      now,
+      expectedQuantity,
+      owned,
+      expiresAt,
+      extendsMeal ? previous.createdAt : now,
+      id,
+    ),
   );
   if (consumed.rowsAffected === 0)
     return {
@@ -185,17 +131,7 @@ export const consumeMeal = async ({
     };
   if (expectedQuantity === 1) {
     try {
-      await retryOnDeadlock(() =>
-        client
-          .delete(userItem)
-          .where(
-            and(
-              eq(userItem.id, owned.id),
-              eq(userItem.userId, user.userId),
-              eq(userItem.quantity, 0),
-            ),
-          ),
-      );
+      await retryOnDeadlock(() => deleteEmptyUserItem(client, owned.id, user.userId));
     } catch (error) {
       // Consumption already committed. Inventory reads hide zero stacks and reclaim
       // stale tombstones; report success so the player does not retry the same meal.

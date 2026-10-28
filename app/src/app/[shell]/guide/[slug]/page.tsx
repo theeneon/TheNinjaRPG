@@ -11,7 +11,8 @@ import {
   fetchFarmCatalog,
   fetchGuideBySlug,
   fetchNeighborGuides,
-} from "@/server/api/routers/guide";
+} from "@/queries/guide";
+
 import { drizzleDB } from "@/server/db";
 
 type Props = { params: Promise<{ slug: string }> };

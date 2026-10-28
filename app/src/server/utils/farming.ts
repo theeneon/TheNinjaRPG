@@ -1,7 +1,10 @@
-import { and, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import type { FarmCollectionLog, Item } from "@/drizzle/schema";
-import { farmCollectionLog, farmPlot, item } from "@/drizzle/schema";
+import {
+  insertFarmCollectionLogForRecordFirstFarmHarvests,
+  listFarmCollectionLogForGetFarmCollectionState,
+  listItemForGetFarmCollectionState,
+  listItemForGetFarmCollectionState2,
+} from "@/queries/farming";
 import type { DrizzleClient } from "@/server/db";
 
 type FarmCollectionSeed = Pick<
@@ -89,21 +92,7 @@ export const getFarmCollectionState = async (
   userId: string,
   inTransaction = false,
 ): Promise<FarmCollectionState> => {
-  const seeds = await client.query.item.findMany({
-    where: and(
-      eq(item.isFarmSeed, true),
-      eq(item.hidden, false),
-      isNotNull(item.farmYieldItemId),
-      gt(item.farmGrowTimeSeconds, 0),
-    ),
-    columns: {
-      isFarmSeed: true,
-      hidden: true,
-      farmYieldItemId: true,
-      farmMinLevel: true,
-      farmGrowTimeSeconds: true,
-    },
-  });
+  const seeds = await listItemForGetFarmCollectionState(client);
   const yieldItemIds = [
     ...new Set(
       seeds
@@ -116,17 +105,8 @@ export const getFarmCollectionState = async (
   }
 
   const queries = [
-    client.query.item.findMany({
-      where: and(inArray(item.id, yieldItemIds), eq(item.hidden, false)),
-      columns: { id: true, name: true, image: true, hidden: true },
-    }),
-    client.query.farmCollectionLog.findMany({
-      where: and(
-        eq(farmCollectionLog.userId, userId),
-        inArray(farmCollectionLog.itemId, yieldItemIds),
-      ),
-      columns: { itemId: true, firstHarvestedAt: true },
-    }),
+    listItemForGetFarmCollectionState2(client, yieldItemIds),
+    listFarmCollectionLogForGetFarmCollectionState(client, userId, yieldItemIds),
   ] as const;
   // Both builders stay lazy until awaited; a shared transaction session needs ordered queries.
   const [yieldItems, collectionRows] = inTransaction
@@ -158,36 +138,10 @@ export const recordFirstFarmHarvests = async (
 ) => {
   const distinctItemIds = [...new Set(itemIds)];
   if (distinctItemIds.length === 0) return;
-  await client
-    .insert(farmCollectionLog)
-    .values(
-      distinctItemIds.map((itemId) => ({
-        id: nanoid(),
-        userId,
-        itemId,
-        firstHarvestedAt,
-      })),
-    )
-    .onDuplicateKeyUpdate({ set: { id: sql`${farmCollectionLog.id}` } });
+  await insertFarmCollectionLogForRecordFirstFarmHarvests(
+    client,
+    distinctItemIds,
+    userId,
+    firstHarvestedAt,
+  );
 };
-
-export const reduceActiveFarmPlotTimers = (
-  client: DrizzleClient,
-  userId: string,
-  reductionSeconds: number,
-  now = new Date(),
-) =>
-  client
-    .update(farmPlot)
-    .set({
-      finishAt: sql`GREATEST(${now}, TIMESTAMPADD(SECOND, -${reductionSeconds}, ${farmPlot.finishAt}))`,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(farmPlot.userId, userId),
-        isNotNull(farmPlot.seedItemId),
-        isNotNull(farmPlot.finishAt),
-        gt(farmPlot.finishAt, now),
-      ),
-    );

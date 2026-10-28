@@ -1,50 +1,27 @@
 import { randomInt as secureRandomInt } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
-import {
-  and,
-  count,
-  desc,
-  eq,
-  exists,
-  gt,
-  gte,
-  inArray,
-  isNotNull,
-  isNull,
-  like,
-  lt,
-  lte,
-  ne,
-  notExists,
-  notInArray,
-  or,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { eq, inArray, ne, notInArray, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { after } from "next/server";
 import superjson from "superjson";
 import { z } from "zod";
 import * as mapData from "@/data/hexasphere.json";
-import type { BattleType, BattleUsageType } from "@/drizzle/constants";
 import {
   AdjustableBasicActions,
   AutoBattleTypes,
   AutoCombatBattleTypes,
   BATTLE_ARENA_DAILY_LIMIT,
   BATTLE_ARENA_HEAL_COST,
+  type BattleType,
   BattleTypes,
+  type BattleUsageType,
   COMBAT_BIOMES,
   type CombatBiome,
   CombatStatNames,
   DUNGEON_PARTY_SIZE,
   ELEMENTAL_MASTERY_BOOST,
   ELITE_JONIN_BRACKET,
-  HUNTING_REQUIRED_EXP,
   IMG_AVATAR_DEFAULT,
-  KAGE_DEFENSE_GRACE_MINUTES,
-  KAGE_MIN_DAYS_IN_VILLAGE,
-  KAGE_PRESTIGE_REQUIREMENT,
   MAP_RESERVED_SECTORS,
   MAP_WAKE_ISLAND_SECTOR,
   MAP_WAR_TORN_BATTLEGROUND_SECTOR,
@@ -57,58 +34,29 @@ import {
   QuestBattleTypes,
   RANKS_RESTRICTED_FROM_PVP,
   REGEN_SECONDS,
-  SAGE_MODE_ACTIVATION_JUTSU_ID,
   SECTOR_HEIGHT,
   SECTOR_WIDTH,
   TERRITORY_WAR_TEAM_SIZE,
   VILLAGE_SYNDICATE_ID,
   WAKE_ISLAND_PVP_PROTECTION,
 } from "@/drizzle/constants";
-import type {
-  AiProfile,
-  BattleAction,
-  GameSetting,
-  Jutsu,
-  RankedLoadout,
-  UserQuest,
-  Village,
-  VillageAlliance,
-} from "@/drizzle/schema";
+
 import {
-  battle,
+  type AiProfile,
+  type BattleAction,
   battleAction,
   battleHistory,
-  bounty,
-  dungeonRun,
-  gameAsset,
-  gameSetting,
-  huntingProgress,
-  huntingSession,
-  item,
-  jutsu,
-  kageDefendedChallenges,
-  mpvpBattleQueue,
-  mpvpBattleUser,
-  quest,
-  raidParticipation,
-  rankedPvpQueue,
-  sageMode,
-  sector,
-  territoryWar,
-  tournament,
-  tournamentMatch,
-  trainingLog,
+  type GameSetting,
+  type Jutsu,
+  type RankedLoadout,
+  type UserQuest,
   userData,
-  userItem,
-  userJutsu,
-  userPet,
-  village,
-  villageAlliance,
-  war,
+  type Village,
+  type VillageAlliance,
 } from "@/drizzle/schema";
+
 import { getActivityBonuses } from "@/libs/activityBonuses";
 import { getReskinnedBloodline } from "@/libs/bloodline";
-import { matchBloodrightSnapshot } from "@/libs/bloodright";
 import {
   availableUserActions,
   getDefaultBasicActions,
@@ -186,7 +134,6 @@ import {
 import type { CoopEncounter } from "@/libs/coop";
 import { dungeonBattleOutcome } from "@/libs/dungeon";
 import { activeTrainedElement } from "@/libs/elementalMastery";
-import { fetchDmgConfig } from "@/libs/gamesettings";
 import { computeJutsuLoadoutCapAssignments } from "@/libs/jutsu";
 import { resolveSelectableLoadout } from "@/libs/loadout";
 import { effectiveMasteries, isWornGear, isWornGearDisabled } from "@/libs/mastery";
@@ -195,7 +142,6 @@ import {
   getWarRelationship,
   getWarSide,
   isObjectiveWarActive,
-  withMercenaryParticipation,
 } from "@/libs/objectiveWar";
 import { petExperienceGainSql } from "@/libs/pets/experience";
 import {
@@ -222,7 +168,6 @@ import {
 } from "@/libs/quest";
 import { projectPartyTracker } from "@/libs/questParty";
 import { getIsolatedPyramid, isBetweenPyramidBattles } from "@/libs/questRun";
-import { SAGE_MODE_ACTIVATION_JUTSU } from "@/libs/sageMode";
 import { hasRequiredSkill } from "@/libs/skillRequirements";
 import { rollStealthKeep } from "@/libs/stealth";
 import { getTerritoryCompetitor } from "@/libs/territoryWar";
@@ -240,21 +185,66 @@ import {
   settleQueuedTraining,
 } from "@/libs/train";
 import { calcIsInVillage, getBiomeFromGlobalTile } from "@/libs/travel";
-import { fetchAiProfileById } from "@/routers/ai";
-import { fetchSectorVillage } from "@/routers/village";
-import { fetchActiveWars } from "@/routers/war";
 import {
-  fetchItemLoadouts,
-  fetchUserItemsWithVariants,
-  selectItemLoadout,
-} from "@/server/api/routers/item";
+  deleteBattleById,
+  deleteBattleHistoryByBattleId,
+  executeResultsForListOngoingBattles,
+  fetchBattle,
+  fetchBattleEssentials,
+  findBattleHistoryForGetBattleHistoryEntry,
+  findQuestForInitiateBattle,
+  findUserDataForStartArenaBattle,
+  insertBattleForCreateBattle,
+  insertBattleHistoryForCreateBattle,
+  insertTrainingLogForInitiateBattle,
+  listBattleActionForGetBattleEntries,
+  listBattleHistoryForGetBattleHistory,
+  listGameAssetForInitiateBattle,
+  listJutsuForInitiateBattle2,
+  listJutsuForInitiateBattle3,
+  listRaidParticipationForInitiateBattle,
+  listSageModeForInitiateBattle,
+  listTournamentForInitiateBattle,
+  listUserDataForInitiateBattle,
+  listUserDataForProcessUsersForBattle,
+  listUserDataForQueryBattleUsers,
+  listUserDataForStartShrineBattle,
+  listUserItemForInitiateBattle,
+  listUserPetForInitiateBattle,
+  selectBattleHistoryForGetGraph,
+  selectBattleHistoryForInitiateBattle,
+  selectDistinctBattleHistoryForGetGraph,
+  updateBattleForIAmHere,
+  updateBattleForToggleAutoCombat,
+  updateBattleForUpdateCombatLoadout,
+  updateHuntingSessionForInitiateBattle,
+  updateKageDefendedChallengesForInitiateBattle,
+  updateTournamentMatchForCreateBattle,
+  updateUserDataForBattleArenaHeal,
+  updateUserDataForCreateBattle,
+  updateUserDataForInitiateBattle,
+  updateUserDataForRememberPreference,
+  updateUserJutsuForUpdateCombatLoadout,
+  updateVillageForInitiateBattle,
+} from "@/queries/combat";
+import { fetchItemLoadouts, listItemsByIds } from "@/queries/item";
 import {
   fetchBloodlineJutsuReskins,
   fetchJutsuLoadouts,
-  fetchUserJutsus,
-  selectJutsuLoadout,
-} from "@/server/api/routers/jutsu";
-import { fetchUserSkills } from "@/server/api/routers/skillTree";
+  listJutsuByIds,
+} from "@/queries/jutsu";
+import { fetchAchievementCatalogue, fetchUser } from "@/queries/profile";
+import { fetchQuestEntryInventory, listVisibleRaidQuests } from "@/queries/quests";
+import { findSectorWithVillage } from "@/queries/shrine";
+import { fetchUserSkills } from "@/queries/skillTree";
+import { fetchActiveTerritoryWar } from "@/queries/territoryWar";
+import { fetchSectorVillage, findVillageBySector } from "@/queries/village";
+import { fetchActiveWars } from "@/routers/war";
+import {
+  fetchUserItemsWithVariants,
+  selectItemLoadout,
+} from "@/server/api/routers/item";
+import { fetchUserJutsus, selectJutsuLoadout } from "@/server/api/routers/jutsu";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -265,36 +255,16 @@ import {
   serverError,
 } from "@/server/api/trpc";
 import type { DrizzleClient } from "@/server/db";
-import {
-  activityCompletionExtras,
-  completedQuestHistoryRelation,
-  userQuestHistoryRelation,
-} from "@/server/utils/achievementObjectives";
-import { battleClaimRollbackStatus } from "@/server/utils/concurrency";
 import { settleCookingExperience } from "@/server/utils/cooking";
-import {
-  elementalSnapshotConditions,
-  masteryGainUpdates,
-} from "@/server/utils/masteryProgression";
+import { masteryGainUpdates } from "@/server/utils/masteryProgression";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { resumeBracketImmunitySql } from "@/server/utils/objectiveWar";
 import { notifyBattleDefenders } from "@/server/utils/push/combat";
-import { fetchPvpExperienceAverage } from "@/server/utils/pvpExperience";
 import {
   commitQuestEntryBattle,
-  fetchQuestEntryInventory,
   getQuestEntryCharges,
-  questAttemptIsActive,
 } from "@/server/utils/questEntry";
 import { fetchSanninRankedPlayers } from "@/server/utils/ranked";
-import {
-  fetchActiveTerritoryWar,
-  territoryWarBoostWindowsSql,
-} from "@/server/utils/territoryWar";
 import { hasDueTimedJob, settleDueTimedQueues } from "@/server/utils/userQueue";
-import { extendWarParticipantSql, liftBracketImmunitySql } from "@/server/utils/war";
-import { activeWarAllyWhere } from "@/server/utils/warAlly";
-import { activeWarMercenaryWhere } from "@/server/utils/warMercenary";
 import { findRelationship } from "@/utils/alliance";
 import { getRandomElement } from "@/utils/array";
 import { getKageEligibility } from "@/utils/kage";
@@ -302,23 +272,19 @@ import { fedItemLoadouts, fedJutsuLoadouts } from "@/utils/paypal";
 import { canChangeContent } from "@/utils/permissions";
 import { secondsFromDate, secondsFromNow, secondsPassed } from "@/utils/time";
 import { canAccessStructure } from "@/utils/village";
-import type { AssignableUserStats, ZodAllTags } from "@/validators/combat";
 import {
+  type AssignableUserStats,
   BarrierTag,
   IncreaseDamageGivenTag,
   isActivityBonus,
   performActionSchema,
   statSchema,
   toggleAutoCombatSchema,
+  type ZodAllTags,
 } from "@/validators/combat";
 import type { HuntingBattleState } from "@/validators/hunting";
 import { sectorIdSchema } from "@/validators/travel";
-import {
-  fetchAchievementCatalogue,
-  fetchUpdatedUser,
-  fetchUser,
-  type UserWithRelations,
-} from "./profile";
+import { fetchUpdatedUser, type UserWithRelations } from "./profile";
 
 // Debug flag when testing battle
 const debug = false;
@@ -557,107 +523,45 @@ export const combatRouter = createTRPCRouter({
         conditions.push(notInArray(battleAction.actionId, basicActionIds));
       }
 
-      const entries = await ctx.drizzle.query.battleAction.findMany({
-        limit: limit,
-        offset: input.offset ?? 0,
-        where: and(...conditions),
-        // Sort by round desc, then version desc for consistent ordering within rounds
-        orderBy: [desc(battleAction.battleRound), desc(battleAction.battleVersion)],
-      });
+      const entries = await listBattleActionForGetBattleEntries(
+        ctx.drizzle,
+        limit,
+        input,
+        conditions,
+      );
       return entries;
     }),
   getGraph: protectedProcedure
     .meta({ mcp: { description: "Get battle history graph data" } })
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const attacker = alias(userData, "attacker");
-      const defender = alias(userData, "defender");
       const isDirectFight = or(
         eq(battleHistory.attackedId, input.userId),
         eq(battleHistory.defenderId, input.userId),
       );
       // Every direct opponent can expose a top second-hop edge, even when their
       // own edge is below the display limit. Fetch the complete set as IDs only.
-      const neighbors = await ctx.drizzle
-        .selectDistinct({
-          userId: sql<string>`case when ${battleHistory.attackedId} = ${input.userId}
-            then ${battleHistory.defenderId} else ${battleHistory.attackedId} end`,
-        })
-        .from(battleHistory)
-        .innerJoin(attacker, eq(battleHistory.attackedId, attacker.userId))
-        .innerJoin(defender, eq(battleHistory.defenderId, defender.userId))
-        .where(and(eq(battleHistory.battleType, "COMBAT"), isDirectFight));
+      const neighbors = await selectDistinctBattleHistoryForGetGraph(
+        ctx.drizzle,
+        input,
+        isDirectFight,
+      );
       if (neighbors.length === 0) return [];
       // Constant ID ranges let MySQL use the participant indexes rather than
       // scanning unrelated history for membership in a subquery.
       const userIds = [
         ...new Set([input.userId, ...neighbors.map((row) => row.userId)]),
       ];
-      return await ctx.drizzle
-        .select({
-          attackerId: battleHistory.attackedId,
-          defenderId: battleHistory.defenderId,
-          attackerUsername: attacker.username,
-          defenderUsername: defender.username,
-          attackerAvatar: attacker.avatar,
-          defenderAvatar: defender.avatar,
-          total: count(),
-        })
-        .from(battleHistory)
-        .innerJoin(attacker, eq(battleHistory.attackedId, attacker.userId))
-        .innerJoin(defender, eq(battleHistory.defenderId, defender.userId))
-        .where(
-          and(
-            eq(battleHistory.battleType, "COMBAT"),
-            or(
-              inArray(battleHistory.attackedId, userIds),
-              inArray(battleHistory.defenderId, userIds),
-            ),
-          ),
-        )
-        .groupBy(battleHistory.attackedId, battleHistory.defenderId)
-        .orderBy(
-          desc(count()),
-          // Prefer direct fights when counts tie, then use stable endpoint ordering.
-          desc(sql`case when ${isDirectFight} then 1 else 0 end`),
-          battleHistory.attackedId,
-          battleHistory.defenderId,
-        )
-        .limit(100);
+      return await selectBattleHistoryForGetGraph(ctx.drizzle, userIds, isDirectFight);
     }),
   getBattleHistoryEntry: protectedProcedure
     .meta({ mcp: { description: "Get specific battle history entry" } })
     .input(z.object({ battleId: z.string() }))
     .query(async ({ ctx, input }) => {
-      const result = await ctx.drizzle.query.battleHistory.findFirst({
-        where: eq(battleHistory.battleId, input.battleId),
-        with: {
-          attacker: {
-            columns: {
-              username: true,
-              userId: true,
-              avatar: true,
-              level: true,
-              rank: true,
-              isOutlaw: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-          defender: {
-            columns: {
-              username: true,
-              userId: true,
-              avatar: true,
-              level: true,
-              rank: true,
-              isOutlaw: true,
-              role: true,
-              federalStatus: true,
-            },
-          },
-        },
-      });
+      const result = await findBattleHistoryForGetBattleHistoryEntry(
+        ctx.drizzle,
+        input,
+      );
       return result ?? null;
     }),
   getBattleHistory: protectedProcedure
@@ -675,35 +579,11 @@ export const combatRouter = createTRPCRouter({
     )
     .query(async ({ ctx, input }) => {
       const userId = input.userId || ctx.userId;
-      const results = await ctx.drizzle.query.battleHistory.findMany({
-        where: and(
-          or(
-            eq(battleHistory.attackedId, userId),
-            eq(battleHistory.defenderId, userId),
-          ),
-          input.secondsBack !== undefined
-            ? gt(battleHistory.createdAt, secondsFromNow(-input.secondsBack))
-            : undefined,
-          input.cursor
-            ? or(
-                lt(battleHistory.createdAt, input.cursor.createdAt),
-                and(
-                  eq(battleHistory.createdAt, input.cursor.createdAt),
-                  lt(battleHistory.id, input.cursor.id),
-                ),
-              )
-            : undefined,
-          ...(input.combatTypes
-            ? [inArray(battleHistory.battleType, input.combatTypes)]
-            : []),
-        ),
-        with: {
-          attacker: { columns: { username: true, userId: true, avatar: true } },
-          defender: { columns: { username: true, userId: true, avatar: true } },
-        },
-        orderBy: [desc(battleHistory.createdAt), desc(battleHistory.id)],
-        limit: input.limit + 1,
-      });
+      const results = await listBattleHistoryForGetBattleHistory(
+        ctx.drizzle,
+        userId,
+        input,
+      );
       const hasMore = results.length > input.limit;
       const data = results.slice(0, input.limit);
       const last = data.at(-1);
@@ -1063,21 +943,7 @@ export const combatRouter = createTRPCRouter({
       if (user.status !== "AWAKE")
         return errorResponse("You must be awake to heal in the Battle Arena");
       // Mutate with guard
-      const result = await ctx.drizzle
-        .update(userData)
-        .set({
-          money: sql`${userData.money} - ${BATTLE_ARENA_HEAL_COST}`,
-          curHealth: user.maxHealth,
-          curStamina: user.maxStamina,
-          curChakra: user.maxChakra,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            eq(userData.status, "AWAKE"),
-            gte(userData.money, BATTLE_ARENA_HEAL_COST),
-          ),
-        );
+      const result = await updateUserDataForBattleArenaHeal(ctx.drizzle, user, ctx);
       if (result.rowsAffected === 0) {
         return errorResponse("Error trying to heal and continue. Try again.");
       } else {
@@ -1105,14 +971,7 @@ export const combatRouter = createTRPCRouter({
           userId: ctx.userId,
           includeNotifications: false,
         }),
-        ctx.drizzle.query.userData.findFirst({
-          where: and(
-            eq(userData.userId, input.aiId),
-            eq(userData.isAi, true),
-            eq(userData.isSummon, false),
-            eq(userData.inArena, true),
-          ),
-        }),
+        findUserDataForStartArenaBattle(ctx.drizzle, input),
       ]);
       // Check that user was found
       if (!user) return errorResponse("Attacking user not found");
@@ -1366,15 +1225,11 @@ export const combatRouter = createTRPCRouter({
           .filter((owned) => owned.equipped && !!validateLobbyJutsu(owned.jutsu))
           .map((owned) => owned.jutsuId);
         if (invalidatedJutsuIds.length > 0) {
-          await ctx.drizzle
-            .update(userJutsu)
-            .set({ equipped: false })
-            .where(
-              and(
-                eq(userJutsu.userId, ctx.userId),
-                inArray(userJutsu.jutsuId, invalidatedJutsuIds),
-              ),
-            );
+          await updateUserJutsuForUpdateCombatLoadout(
+            ctx.drizzle,
+            ctx,
+            invalidatedJutsuIds,
+          );
         }
       }
 
@@ -1577,23 +1432,11 @@ export const combatRouter = createTRPCRouter({
       }
 
       // Mutate
-      const result = await ctx.drizzle
-        .update(battle)
-        .set({
-          usersState: userBattle.usersState,
-          usersEffects: userBattle.usersEffects,
-          extraState: userBattle.extraState,
-          version: userBattle.version,
-          createdAt: userBattle.createdAt,
-          updatedAt: userBattle.updatedAt,
-          roundStartAt: userBattle.roundStartAt,
-        })
-        .where(
-          and(
-            eq(battle.id, input.battleId),
-            eq(battle.version, userBattle.version - 1),
-          ),
-        );
+      const result = await updateBattleForUpdateCombatLoadout(
+        ctx.drizzle,
+        userBattle,
+        input,
+      );
 
       if (result.rowsAffected > 0) {
         void pusher.trigger(userBattle.id, "event", {
@@ -1655,21 +1498,7 @@ export const combatRouter = createTRPCRouter({
         }
 
         // Mutate
-        const result = await ctx.drizzle
-          .update(battle)
-          .set({
-            usersState: userBattle.usersState,
-            version: userBattle.version,
-            createdAt: userBattle.createdAt,
-            updatedAt: userBattle.updatedAt,
-            roundStartAt: userBattle.roundStartAt,
-          })
-          .where(
-            and(
-              eq(battle.id, input.battleId),
-              eq(battle.version, userBattle.version - 1),
-            ),
-          );
+        const result = await updateBattleForIAmHere(ctx.drizzle, userBattle, input);
 
         if (result.rowsAffected > 0) {
           void pusher.trigger(userBattle.id, "event", {
@@ -1715,10 +1544,7 @@ export const combatRouter = createTRPCRouter({
       // non-PvP default, after the battle change succeeds.
       const rememberPreference = async (battleType: BattleType) => {
         if (ManualStartBattleTypes.includes(battleType)) return;
-        await ctx.drizzle
-          .update(userData)
-          .set({ defaultAutoCombat: input.enabled })
-          .where(eq(userData.userId, ctx.userId));
+        await updateUserDataForRememberPreference(ctx.drizzle, input, ctx);
       };
 
       // Retry loop
@@ -1773,19 +1599,11 @@ export const combatRouter = createTRPCRouter({
         userBattle.version = userBattle.version + 1;
 
         // Mutate
-        const result = await ctx.drizzle
-          .update(battle)
-          .set({
-            usersState: userBattle.usersState,
-            version: userBattle.version,
-            updatedAt: userBattle.updatedAt,
-          })
-          .where(
-            and(
-              eq(battle.id, input.battleId),
-              eq(battle.version, userBattle.version - 1),
-            ),
-          );
+        const result = await updateBattleForToggleAutoCombat(
+          ctx.drizzle,
+          userBattle,
+          input,
+        );
 
         if (result.rowsAffected > 0) {
           await rememberPreference(userBattle.battleType);
@@ -1817,17 +1635,9 @@ export const combatRouter = createTRPCRouter({
           userId: ctx.userId,
         }),
         fetchActiveWars(ctx.drizzle),
-        ctx.drizzle.query.sector.findFirst({
-          where: eq(sector.sector, input.sector),
-          with: { village: true },
-        }),
-        ctx.drizzle.query.userData.findMany({
-          where: and(eq(userData.isAi, true), eq(userData.inShrines, true)),
-          columns: { userId: true },
-        }),
-        ctx.drizzle.query.village.findFirst({
-          where: eq(village.sector, input.sector),
-        }),
+        findSectorWithVillage(ctx.drizzle, input.sector),
+        listUserDataForStartShrineBattle(ctx.drizzle),
+        findVillageBySector(ctx.drizzle, input.sector),
       ]);
 
       // Find the war the user is involved with
@@ -1942,31 +1752,7 @@ export const combatRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       // Event launch tokens precede their battles. Use that link for visibility so
       // polling never reads the large extraState catalog, even on non-sparring tabs.
-      const results = await ctx.drizzle.execute(
-        sql`
-          SELECT 
-            Battle.id, Battle.battleType, Battle.createdAt, Battle.round, Battle.updatedAt,
-            JSON_EXTRACT(Battle.usersState, '$[*].userId') as userIds,
-            JSON_EXTRACT(Battle.usersState, '$[*].username') as usernames,
-            JSON_EXTRACT(Battle.usersState, '$[*].avatar') as avatars
-          FROM Battle
-          LEFT JOIN UserRequest ON Battle.id = UserRequest.relatedId
-            AND UserRequest.type = 'SPAR'
-            AND UserRequest.status = 'ACCEPTED'
-            AND UserRequest.relatedId IS NOT NULL
-          WHERE Battle.battleType = ${input.battleType}
-            AND (
-              Battle.battleType NOT IN ('SPARRING', 'RANKED_SPARRING') OR 
-              UserRequest.spectatable = true OR
-              EXISTS (
-                SELECT 1 FROM TournamentMatch
-                WHERE TournamentMatch.battleId = Battle.id
-              )
-            )
-          ORDER BY Battle.createdAt DESC
-          LIMIT ${input.limit} OFFSET ${input.offset}
-        `,
-      );
+      const results = await executeResultsForListOngoingBattles(ctx.drizzle, input);
 
       // Type the raw results from drizzle execute
       interface RawBattleRow {
@@ -2028,16 +1814,6 @@ const notifyBattleLogs = (
         ? update
         : { ...state, logEntries: null },
   );
-};
-
-export const fetchBattle = async (client: DrizzleClient, battleId: string) => {
-  const result = await client.query.battle.findFirst({
-    where: eq(battle.id, battleId),
-  });
-  if (!result) {
-    return null;
-  }
-  return result as CompleteBattle;
 };
 
 /**
@@ -2138,77 +1914,7 @@ export const initiateBattle = async (
   ];
 
   const queryBattleUsers = () =>
-    client.query.userData.findMany({
-      extras: (table) => ({
-        ...activityCompletionExtras(table.userId),
-        territoryWarBoostWindows: territoryWarBoostWindowsSql(table).as(
-          "territoryWarBoostWindows",
-        ),
-      }),
-      with: {
-        raidBuffs: true,
-        titles: true,
-        cookingJobs: true,
-        bloodline: { with: { bloodrightTiers: true } },
-        sageMode: true,
-        village: {
-          with: {
-            structures: true,
-            sectors: {
-              columns: { sector: true, boostLockedUntil: true, shrineLevel: true },
-            },
-          },
-        },
-        loadout: { columns: { jutsuIds: true } },
-        clan: true,
-        anbuSquad: true,
-        items: {
-          with: {
-            item: { with: { variants: true } },
-            imbuements: {
-              with: { item: true },
-              where: (imbuements) => lt(imbuements.craftingFinishedAt, new Date()),
-            },
-          },
-          where: (items) =>
-            and(
-              gt(items.quantity, 0),
-              ne(items.equipped, "NONE"),
-              eq(items.isInAuction, false),
-              or(
-                isNull(items.craftingFinishedAt),
-                lt(items.craftingFinishedAt, new Date()),
-              ),
-            ),
-          orderBy: (table, { desc }) => [desc(table.quantity)],
-        },
-        jutsus: {
-          with: {
-            jutsu: true,
-            activeReskin: true,
-          },
-          where: (jutsus) => eq(jutsus.equipped, true),
-          orderBy: (table, { desc }) => [desc(table.level)],
-        },
-        userSkills: {
-          with: { skill: true },
-          where: (userSkills) => eq(userSkills.activated, true),
-        },
-        userQuests: userQuestHistoryRelation,
-        completedQuests: completedQuestHistoryRelation,
-        aiProfile: true,
-        bounties: {
-          columns: { id: true, status: true, amountRyo: true },
-          where: eq(bounty.status, "OPEN"),
-        },
-        bountySignups: {
-          columns: { id: true, bountyId: true },
-        },
-        // Queue entries come with the user, so participants without queues cost nothing.
-        queue: { orderBy: (table, { asc }) => [asc(table.position)] },
-      },
-      where: inArray(userData.userId, [...userIds, ...allyAiIds, ...targetIds]),
-    });
+    listUserDataForQueryBattleUsers(client, userIds, allyAiIds, targetIds);
 
   // Use Promise.all to fetch all independent data in parallel
   const [
@@ -2238,111 +1944,37 @@ export const initiateBattle = async (
     // Essentials
     fetchBattleEssentials(client),
     // Fetch game assets (only battlefield ones to avoid row limit)
-    client.query.gameAsset.findMany({
-      where: and(eq(gameAsset.hidden, false), eq(gameAsset.onInitialBattleField, true)),
-    }),
+    listGameAssetForInitiateBattle(client),
     // Fetch achievements
     fetchAchievementCatalogue(client),
     // Fetch user data
     queryBattleUsers(),
     PvpBattleTypes.includes(battleType) || battleType === "SHRINE_WAR"
-      ? client
-          .select({ count: sql`count(*)`.mapWith(Number) })
-          .from(battleHistory)
-          .where(
-            and(
-              or(
-                and(
-                  inArray(battleHistory.attackedId, userIds),
-                  inArray(battleHistory.defenderId, targetIds),
-                ),
-                and(
-                  inArray(battleHistory.attackedId, targetIds),
-                  inArray(battleHistory.defenderId, userIds),
-                ),
-              ),
-              gt(battleHistory.createdAt, secondsFromDate(-60 * 60, new Date())),
-              // Exhibition history remains viewable without reducing ordinary PvP rewards.
-              notExists(
-                client
-                  .select({ id: tournamentMatch.id })
-                  .from(tournamentMatch)
-                  .innerJoin(
-                    tournament,
-                    eq(tournament.id, tournamentMatch.tournamentId),
-                  )
-                  .where(
-                    and(
-                      eq(tournamentMatch.userId1, battleHistory.attackedId),
-                      eq(tournamentMatch.battleId, battleHistory.battleId),
-                      eq(tournament.type, "EVENT"),
-                    ),
-                  ),
-              ),
-            ),
-          )
+      ? selectBattleHistoryForInitiateBattle(client, userIds, targetIds)
       : null,
-    jutsusIds.length > 0
-      ? client.query.jutsu.findMany({ where: inArray(jutsu.id, jutsusIds) })
-      : [],
-    itemIds.length > 0
-      ? client.query.item.findMany({ where: inArray(item.id, itemIds) })
-      : [],
+    jutsusIds.length > 0 ? listJutsuByIds(client, jutsusIds) : [],
+    itemIds.length > 0 ? listItemsByIds(client, itemIds) : [],
     // Ownership progression for forced loadouts (includes unequipped copies).
     // Kept separate from user.items so unequipped rows are not treated as usable battle items.
     info.forceLoadouts && itemIds.length > 0
-      ? client.query.userItem.findMany({
-          where: and(
-            or(inArray(userItem.userId, userIds), inArray(userItem.userId, targetIds)),
-            inArray(userItem.itemId, itemIds),
-            gt(userItem.quantity, 0),
-            eq(userItem.isInAuction, false),
-            or(
-              isNull(userItem.craftingFinishedAt),
-              lt(userItem.craftingFinishedAt, new Date()),
-            ),
-          ),
-          columns: {
-            id: true,
-            userId: true,
-            itemId: true,
-            level: true,
-            experience: true,
-            activeVariantId: true,
-            equipped: true,
-          },
-          with: {
-            item: {
-              columns: { id: true },
-              with: { variants: true },
-            },
-          },
-        })
+      ? listUserItemForInitiateBattle(client, userIds, targetIds, itemIds)
       : [],
     // Fetch all jutsus that can be injected in battle
-    client.query.jutsu.findMany({ where: eq(jutsu.injectableInBattle, true) }),
+    listJutsuForInitiateBattle2(client),
     // Fetch raid quest data for boss HP (if applicable)
     battleType === "RAID" && info.raidQuestId
-      ? client.query.quest.findFirst({
-          where: eq(quest.id, info.raidQuestId),
-          columns: { raidBossCurrentHealth: true, raidBossMaxHealth: true },
-        })
+      ? findQuestForInitiateBattle(client, { raidQuestId: info.raidQuestId })
       : null,
     // Fetch exclusive raids for SHRINE_WAR battles (needed for raid activation when shrine is defeated)
-    battleType === "SHRINE_WAR"
-      ? client.query.quest.findMany({
-          where: and(eq(quest.questType, "raid"), eq(quest.hidden, false)),
-        })
-      : [],
+    battleType === "SHRINE_WAR" ? listVisibleRaidQuests(client) : [],
     // Preload these participants' battleCount guards for settlement.
     battleType === "RAID" && info.raidQuestId
-      ? client.query.raidParticipation.findMany({
-          where: and(
-            eq(raidParticipation.questId, info.raidQuestId),
-            inArray(raidParticipation.userId, [...new Set([...userIds, ...targetIds])]),
-          ),
-          columns: { userId: true, battleCount: true },
-        })
+      ? listRaidParticipationForInitiateBattle(
+          client,
+          { raidQuestId: info.raidQuestId },
+          userIds,
+          targetIds,
+        )
       : [],
     battleType === "RANKED_PVP"
       ? (info.topPlayersLP ?? fetchSanninRankedPlayers(client))
@@ -2353,42 +1985,13 @@ export const initiateBattle = async (
       ? fetchQuestEntryInventory(client, info.questAttempt.userId)
       : [],
     // Open-world attacks must not pull waiting event entrants out of their ready checks
-    battleType === "COMBAT"
-      ? client.query.tournament.findMany({
-          where: and(
-            eq(tournament.type, "EVENT"),
-            inArray(tournament.status, ["OPEN", "IN_PROGRESS"]),
-          ),
-          columns: { eventData: true },
-          limit: 100,
-        })
-      : [],
+    battleType === "COMBAT" ? listTournamentForInitiateBattle(client) : [],
     // Preload the bounded collection so parallel reads remain complete across selection swaps.
     petsAllowedInBattle(battleType)
-      ? client.query.userPet.findMany({
-          where: inArray(userPet.userId, [...userIds, ...targetIds]),
-          with: { species: true },
-        })
+      ? listUserPetForInitiateBattle(client, userIds, targetIds)
       : [],
     petsAllowedInBattle(battleType)
-      ? client.query.jutsu.findMany({
-          where: (table) =>
-            and(
-              eq(table.jutsuType, "PETS"),
-              eq(table.hidden, false),
-              exists(
-                client
-                  .select({ one: sql`1` })
-                  .from(userPet)
-                  .where(
-                    and(
-                      inArray(userPet.userId, [...userIds, ...targetIds]),
-                      sql`JSON_CONTAINS(${userPet.jutsuIds}, JSON_QUOTE(${table.id}))`,
-                    ),
-                  ),
-              ),
-            ),
-        })
+      ? listJutsuForInitiateBattle3(client, userIds, targetIds)
       : [],
   ]);
 
@@ -2869,9 +2472,7 @@ export const initiateBattle = async (
     ),
   ];
   if (missingSageIds.length > 0) {
-    const sageRows = await client.query.sageMode.findMany({
-      where: inArray(sageMode.id, missingSageIds),
-    });
+    const sageRows = await listSageModeForInitiateBattle(client, missingSageIds);
     const byId = Object.fromEntries(sageRows.map((m) => [m.id, m]));
     for (const u of users) {
       if (!u.sageModeId || u.sageMode) continue;
@@ -3674,426 +3275,68 @@ export const initiateBattle = async (
    */
   const createBattle = async (client: DrizzleClient) => {
     const writes = [
-      client.insert(battle).values({
-        id: battleId,
-        battleType: battleType,
-        background: background,
-        usersState: usersState,
-        usersEffects: userEffects,
-        groundEffects: groundEffects,
-        width: gridSize.width,
-        height: gridSize.height,
-        extraState: {
-          ...extraState,
-          profileCacheSnapshots,
-          pvpExperienceScaling,
-          energyRewardEligible: (previousBattleResults?.[0]?.count ?? 0) === 0,
-          energyRegeneration,
-          energyRegenerationPeriods,
-          energyCapacity,
-          jutsus: {
-            ...extraState.jutsus,
-            ...Object.fromEntries(injectableJutsus.map((j) => [j.id, j])),
-            [SAGE_MODE_ACTIVATION_JUTSU_ID]: SAGE_MODE_ACTIVATION_JUTSU,
-          },
-          dmgConfig: dmgConfig,
-          settings: settings,
-          initialDurability: initialDurability,
-          hunting: info.hunting,
-          questBattleSource: info.questBattleSource,
-          warCamp: info.warCamp,
-          territoryWar: territoryWarEvent
-            ? {
-                id: territoryWarEvent.id,
-                competitors: territoryCompetitors,
-              }
-            : undefined,
-          raidQuestId: info.raidQuestId,
-          raidInitialBossHp: raidInitialBossHp,
-          raidStartBattleCount: Object.fromEntries(
-            raidParticipations.map((p) => [p.userId, p.battleCount]),
-          ),
-          sectorExclusiveRaids: sectorExclusiveRaids,
-          topPlayersLP: rankedTopPlayersLP,
-        },
-        rewardScaling: rewardScaling,
-        createdAt: startTime,
-        updatedAt: startTime,
-        roundStartAt: startTime,
-        activeUserId: activeUserId,
-        forceKeepPools: info.forceKeepPools ?? false,
-      }),
-      client.insert(battleHistory).values(
-        userIds.flatMap((i) =>
-          targetIds.map((t) => ({
-            battleId,
-            battleType: battleType,
-            attackedId: i,
-            defenderId: t,
-            createdAt: new Date(),
-          })),
-        ),
+      insertBattleForCreateBattle(
+        client,
+        battleId,
+        battleType,
+        background,
+        usersState,
+        userEffects,
+        groundEffects,
+        gridSize,
+        extraState,
+        profileCacheSnapshots,
+        pvpExperienceScaling,
+        previousBattleResults,
+        energyRegeneration,
+        energyRegenerationPeriods,
+        energyCapacity,
+        injectableJutsus,
+        dmgConfig,
+        settings,
+        initialDurability,
+        info,
+        territoryWarEvent,
+        territoryCompetitors,
+        raidInitialBossHp,
+        raidParticipations,
+        sectorExclusiveRaids,
+        rankedTopPlayersLP,
+        rewardScaling,
+        startTime,
+        activeUserId,
       ),
-      client
-        .update(userData)
-        .set({
-          ...queueUpdate,
-          status: "BATTLE",
-          battleId: battleId,
-          pvpFights:
-            !info.tournamentGame && ["SPARRING", "COMBAT"].includes(battleType)
-              ? sql`${userData.pvpFights} + 1`
-              : sql`${userData.pvpFights}`,
-          pveFights:
-            !info.tournamentGame && !["SPARRING", "COMBAT"].includes(battleType)
-              ? sql`${userData.pveFights} + 1`
-              : sql`${userData.pveFights}`,
-          immunityUntil:
-            !info.tournamentGame &&
-            ["SPARRING", "COMBAT", "SHRINE_WAR"].includes(battleType)
-              ? sql`CASE WHEN ${inArray(userData.userId, userIds)} THEN NOW() ELSE ${userData.immunityUntil} END`
-              : sql`immunityUntil`,
-          // Break stealth when entering combat
-          // Defenders (being attacked) always lose stealth
-          // Attackers roll to keep stealth based on their stealth stat
-          stealthActive:
-            stealthBreakUserIds.length > 0
-              ? sql`CASE WHEN ${inArray(userData.userId, stealthBreakUserIds)} THEN false ELSE ${userData.stealthActive} END`
-              : sql`stealthActive`,
-          stealthActivatedAt:
-            stealthBreakUserIds.length > 0
-              ? sql`CASE WHEN ${inArray(userData.userId, stealthBreakUserIds)} THEN NULL ELSE ${userData.stealthActivatedAt} END`
-              : sql`stealthActivatedAt`,
-          // Stamp war aggressors AND bracket-immunity aggressors in the same update so the WHERE guard
-          // (status/sector match) gates both the battle entry and these timers atomically. GREATEST never
-          // shortens an existing longer stamp; any leak on the rollback path is bounded (war ~2h, bracket
-          // immunity ~30m) and fail-safe — a lingering bracket lift only makes the aggressor more attackable.
-          ...(warAggressorIds.length > 0
-            ? {
-                warParticipantUntil: sql`CASE WHEN ${inArray(userData.userId, warAggressorIds)} THEN ${extendWarParticipantSql()} ELSE ${userData.warParticipantUntil} END`,
-              }
-            : {}),
-          ...(bracketImmunityAggressorIds.length > 0
-            ? {
-                bracketImmunityLiftedUntil: sql`CASE WHEN ${inArray(userData.userId, bracketImmunityAggressorIds)} THEN ${liftBracketImmunitySql()} ELSE ${userData.bracketImmunityLiftedUntil} END`,
-              }
-            : {}),
-          bracketImmunityPausedAt: sql`CASE WHEN ${userData.bracketImmunityLiftedUntil} > NOW(3) THEN NOW(3) ELSE NULL END`,
-        })
-        .where(
-          and(
-            // Exactly the rows the CAS guard counts (expectedRows), so the
-            // predicate and the expected count derive from one source and cannot
-            // drift apart. The list already excludes AI rows, so the shared AI
-            // row is never even examined (or locked) by this update. Drizzle
-            // compiles an empty list to FALSE, matching expectedRows === 0.
-            inArray(userData.userId, allParticipantIds),
-            // A companion swap during preload must not claim a battle with a stale active pet.
-            ...(petsAllowedInBattle(battleType)
-              ? fetchedUsers
-                  .filter((user) => allParticipantIds.includes(user.userId))
-                  .map((user) =>
-                    or(
-                      ne(userData.userId, user.userId),
-                      and(
-                        user.activePetId
-                          ? eq(userData.activePetId, user.activePetId)
-                          : isNull(userData.activePetId),
-                        user.petTask
-                          ? sql`JSON_CONTAINS(${userData.petTask}, ${JSON.stringify(user.petTask)})`
-                          : isNull(userData.petTask),
-                      ),
-                    ),
-                  )
-              : []),
-            ...(info.hunting
-              ? [
-                  eq(userData.status, "AWAKE"),
-                  isNull(userData.battleId),
-                  eq(userData.occupation, "HUNTER"),
-                  eq(userData.sector, sector ?? -1),
-                  gte(
-                    userData.huntingExperience,
-                    HUNTING_REQUIRED_EXP[info.hunting.contract.rank],
-                  ),
-                  ...huntingEquipment.map((snapshot) =>
-                    exists(
-                      client
-                        .select({ one: sql`1` })
-                        .from(userItem)
-                        .where(
-                          and(
-                            eq(userItem.id, snapshot.id),
-                            eq(userItem.userId, userData.userId),
-                            eq(userItem.isInAuction, false),
-                            eq(userItem.equipped, snapshot.equipped),
-                            eq(userItem.quantity, snapshot.quantity),
-                            eq(userItem.durability, snapshot.durability),
-                          ),
-                        ),
-                    ),
-                  ),
-                  // A merge can hide equipment during the positive-only preload. Reject
-                  // unpreloaded rows even if the merge has published before admission.
-                  notExists(
-                    client
-                      .select({ one: sql`1` })
-                      .from(userItem)
-                      .where(
-                        and(
-                          eq(userItem.userId, userData.userId),
-                          ne(userItem.equipped, "NONE"),
-                          ne(userItem.quantity, 0),
-                          eq(userItem.isInAuction, false),
-                          or(
-                            isNull(userItem.craftingFinishedAt),
-                            lt(userItem.craftingFinishedAt, new Date()),
-                          ),
-                          notInArray(
-                            userItem.id,
-                            huntingEquipment.map((snapshot) => snapshot.id),
-                          ),
-                        ),
-                      ),
-                  ),
-                ]
-              : []),
-            ...(info.tournamentGame
-              ? [
-                  eq(userData.status, "AWAKE"),
-                  isNull(userData.battleId),
-                  eq(userData.sector, MAP_WAKE_ISLAND_SECTOR),
-                  exists(
-                    client
-                      .select({ one: sql`1` })
-                      .from(tournamentMatch)
-                      .where(
-                        and(
-                          eq(tournamentMatch.id, info.tournamentGame.id),
-                          eq(tournamentMatch.battleId, battleId),
-                          eq(tournamentMatch.state, "WAITING"),
-                        ),
-                      ),
-                  ),
-                ]
-              : []),
-            ...partyQuestSnapshots.map((snapshot) =>
-              or(
-                ne(userData.userId, snapshot.userId),
-                eq(userData.updatedAt, snapshot.updatedAt),
-              ),
-            ),
-            info.questAttempt
-              ? questAttemptIsActive(
-                  client,
-                  info.questAttempt,
-                  users.find((u) => u.userId === info.questAttempt?.userId)?.role ??
-                    "USER",
-                )
-              : undefined,
-            // Queue spending must match its preload even if movement or another claim raced us.
-            ...queuedParticipants.map(({ original }) =>
-              or(
-                ne(userData.userId, original.userId),
-                and(
-                  eq(userData.updatedAt, original.updatedAt),
-                  eq(userData.status, original.status),
-                  eq(userData.sector, original.sector),
-                  eq(userData.longitude, original.longitude),
-                  eq(userData.latitude, original.latitude),
-                  eq(userData.rank, original.rank),
-                  ...MasteryNames.map((stat) => eq(userData[stat], original[stat])),
-                  ...elementalSnapshotConditions(original),
-                  sql`${userData.masteryRanks} = CAST(${JSON.stringify(original.masteryRanks)} AS JSON)`,
-                  eq(userData.isBanned, original.isBanned),
-                  eq(userData.isOutlaw, original.isOutlaw),
-                  original.villageId
-                    ? eq(userData.villageId, original.villageId)
-                    : isNull(userData.villageId),
-                ),
-              ),
-            ),
-            // A refund or swap may finish after preload but before the participant status claim.
-            or(
-              ...users
-                .filter((user) => allParticipantIds.includes(user.userId))
-                .map(matchBloodrightSnapshot),
-            ),
-            // Never move an AI into a battle: its row is shared by everyone
-            // fighting it, and the battle state clones it under a fresh id anyway.
-            // Redundant with the claim list above, but kept so a drifting AI
-            // classification fails the CAS guard instead of claiming a shared row.
-            eq(userData.isAi, false),
-            // The team roster and awake status must survive preload until the atomic claim.
-            ...(questEncounter
-              ? [
-                  eq(userData.questPartyId, questEncounter.id),
-                  eq(userData.status, "AWAKE"),
-                ]
-              : []),
-            ...(info.kageMatch
-              ? [
-                  eq(userData.status, "AWAKE"),
-                  eq(userData.villageId, info.kageMatch.villageId),
-                  ...users
-                    .filter((u) => userIds.includes(u.userId))
-                    .map((u) =>
-                      or(
-                        ne(userData.userId, u.userId),
-                        and(
-                          isNull(userData.anbuId),
-                          gte(userData.villagePrestige, KAGE_PRESTIGE_REQUIREMENT),
-                          eq(userData.rank, u.rank),
-                          eq(userData.isBanned, false),
-                          eq(userData.isOutlaw, false),
-                          lt(
-                            userData.joinedVillageAt,
-                            secondsFromNow(-KAGE_MIN_DAYS_IN_VILLAGE * 86400 + 1),
-                          ),
-                        ),
-                      ),
-                    ),
-                ]
-              : []),
-            ...(info.territoryWar
-              ? [
-                  eq(userData.sector, info.territoryWar.sector),
-                  eq(userData.isBanned, false),
-                  exists(
-                    client
-                      .select({ one: sql`1` })
-                      .from(territoryWar)
-                      .where(
-                        and(
-                          eq(territoryWar.id, info.territoryWar.id),
-                          isNull(territoryWar.resolvedAt),
-                          gt(territoryWar.endsAt, new Date()),
-                        ),
-                      ),
-                  ),
-                  ...users
-                    .filter((user) => !user.isAi)
-                    .map((user) =>
-                      or(
-                        ne(userData.userId, user.userId),
-                        and(
-                          eq(userData.isOutlaw, user.isOutlaw),
-                          user.clanId
-                            ? eq(userData.clanId, user.clanId)
-                            : isNull(userData.clanId),
-                          user.villageId
-                            ? eq(userData.villageId, user.villageId)
-                            : isNull(userData.villageId),
-                        ),
-                      ),
-                    ),
-                ]
-              : []),
-            // Ranked participants are claimed straight from the queue, so require
-            // QUEUED specifically: a player who just left the queue (now AWAKE)
-            // must not be pulled into a ranked battle by a poll whose snapshot
-            // predated their leave.
-            ["CLAN_BATTLE", "TERRITORY_WAR"].includes(battleType) && info.clanBattle
-              ? and(
-                  eq(userData.status, "QUEUED"),
-                  exists(
-                    client
-                      .select({ one: sql`1` })
-                      .from(mpvpBattleUser)
-                      .innerJoin(
-                        mpvpBattleQueue,
-                        eq(mpvpBattleUser.clanBattleId, mpvpBattleQueue.id),
-                      )
-                      .where(
-                        and(
-                          eq(mpvpBattleUser.userId, userData.userId),
-                          eq(mpvpBattleQueue.id, info.clanBattle.queueId),
-                          eq(mpvpBattleQueue.battleId, battleId),
-                        ),
-                      ),
-                  ),
-                )
-              : battleType === "RANKED_PVP"
-                ? and(
-                    eq(userData.status, "QUEUED"),
-                    exists(
-                      client
-                        .select({ one: sql`1` })
-                        .from(rankedPvpQueue)
-                        .where(
-                          and(
-                            eq(rankedPvpQueue.userId, userData.userId),
-                            eq(rankedPvpQueue.hasClaimed, true),
-                          ),
-                        ),
-                    ),
-                  )
-                : or(
-                    eq(userData.status, "AWAKE"),
-                    eq(userData.status, "QUEUED"),
-                    info.questAttempt?.isolated &&
-                      battleType === "QUEST" &&
-                      info.questBattleSource?.questId === info.questAttempt.questId
-                      ? and(
-                          eq(userData.userId, info.questAttempt.userId),
-                          eq(userData.status, "BATTLE"),
-                          isNull(userData.battleId),
-                        )
-                      : undefined,
-                  ),
-            ...(dungeonEncounter
-              ? [
-                  eq(userData.status, "AWAKE"),
-                  exists(
-                    client
-                      .select({ one: sql`1` })
-                      .from(dungeonRun)
-                      .where(
-                        and(
-                          eq(dungeonRun.id, dungeonEncounter.runId),
-                          eq(dungeonRun.version, dungeonEncounter.runVersion),
-                          eq(dungeonRun.battleId, battleId),
-                          eq(dungeonRun.status, "FIGHTING"),
-                          gt(dungeonRun.expiresAt, new Date()),
-                        ),
-                      ),
-                  ),
-                ]
-              : []),
-            // Team members must still occupy the original launch tile after combat preload.
-            ...(battleType === "COMBAT" || questEncounter
-              ? [
-                  and(
-                    ...(sector !== undefined ? [eq(userData.sector, sector)] : []),
-                    ...(longitude !== undefined
-                      ? [eq(userData.longitude, longitude)]
-                      : []),
-                    ...(latitude !== undefined
-                      ? [eq(userData.latitude, latitude)]
-                      : []),
-                  ),
-                ]
-              : []),
-          ),
-        ),
+      insertBattleHistoryForCreateBattle(
+        client,
+        userIds,
+        targetIds,
+        battleId,
+        battleType,
+      ),
+      updateUserDataForCreateBattle(
+        client,
+        queueUpdate,
+        battleId,
+        info,
+        battleType,
+        userIds,
+        stealthBreakUserIds,
+        warAggressorIds,
+        bracketImmunityAggressorIds,
+        allParticipantIds,
+        fetchedUsers,
+        sector,
+        huntingEquipment,
+        partyQuestSnapshots,
+        users,
+        queuedParticipants,
+        questEncounter,
+        dungeonEncounter,
+        longitude,
+        latitude,
+      ),
       ...(battleType === "TOURNAMENT"
-        ? [
-            client
-              .update(tournamentMatch)
-              .set({ battleId })
-              .where(
-                or(
-                  and(
-                    inArray(tournamentMatch.userId1, userIds),
-                    inArray(tournamentMatch.userId2, targetIds),
-                  ),
-                  and(
-                    inArray(tournamentMatch.userId2, userIds),
-                    inArray(tournamentMatch.userId1, targetIds),
-                  ),
-                ),
-              ),
-          ]
+        ? [updateTournamentMatchForCreateBattle(client, battleId, userIds, targetIds)]
         : []),
     ] as const;
     if (hasEntryCharges || info.tournamentGame || info.kageMatch || info.hunting) {
@@ -4143,81 +3386,14 @@ export const initiateBattle = async (
           const launchAt = new Date();
           // Consume consent with the receipt and participant claims so a rejected
           // launch restores the invitation rather than publishing half a fight.
-          const leader = await tx
-            .update(village)
-            .set({
-              kageScheduleVersion: sql`${village.kageScheduleVersion} + 1`,
-              ...(m.instantRequest?.id && {
-                kageSchedule: sql`JSON_REMOVE(${village.kageSchedule}, '$.instantChallenge')`,
-              }),
-            })
-            .where(
-              and(
-                eq(village.id, m.villageId),
-                eq(village.kageId, m.kageId),
-                eq(village.leaderUpdatedAt, new Date(m.tenure)),
-                ...(m.instantRequest?.id
-                  ? [
-                      sql`JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.id')) = ${m.instantRequest?.id}`,
-                      sql`JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.matchId')) = ${m.id}`,
-                      sql`JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.expiresAt')) > ${launchAt.toISOString()}`,
-                      sql`JSON_UNQUOTE(JSON_EXTRACT(${village.kageSchedule}, '$.instantChallenge.ai')) = ${String(m.ai)}`,
-                    ]
-                  : []),
-                notExists(
-                  tx
-                    .select({ id: war.id })
-                    .from(war)
-                    .where(
-                      and(
-                        eq(war.type, "VILLAGE_WAR"),
-                        eq(war.status, "ACTIVE"),
-                        or(
-                          eq(war.attackerVillageId, m.villageId),
-                          eq(war.defenderVillageId, m.villageId),
-                        ),
-                      ),
-                    ),
-                ),
-              ),
-            );
+          const leader = await updateVillageForInitiateBattle(tx, m, launchAt);
           if (leader.rowsAffected !== 1) throw rejected;
-          const receipt = await tx
-            .update(kageDefendedChallenges)
-            .set({ status: "BATTLE", battleId, startedAt: launchAt })
-            .where(
-              and(
-                eq(kageDefendedChallenges.id, m.id),
-                eq(kageDefendedChallenges.status, "SCHEDULED"),
-                eq(kageDefendedChallenges.kageId, m.kageId),
-                eq(kageDefendedChallenges.tenure, new Date(m.tenure)),
-                eq(kageDefendedChallenges.hospitalDeferred, false),
-                ...(m.instantRequest?.id
-                  ? [
-                      eq(
-                        kageDefendedChallenges.scheduledAt,
-                        new Date(m.instantRequest.scheduledAt),
-                      ),
-                    ]
-                  : [
-                      isNotNull(kageDefendedChallenges.checkedInAt),
-                      lte(kageDefendedChallenges.scheduledAt, launchAt),
-                      gte(
-                        kageDefendedChallenges.scheduledAt,
-                        secondsFromDate(-KAGE_DEFENSE_GRACE_MINUTES * 60, launchAt),
-                      ),
-                    ]),
-                m.ai
-                  ? and(
-                      eq(kageDefendedChallenges.aiRequested, true),
-                      eq(kageDefendedChallenges.aiAccepted, true),
-                    )
-                  : or(
-                      eq(kageDefendedChallenges.aiRequested, false),
-                      eq(kageDefendedChallenges.aiAccepted, false),
-                    ),
-              ),
-            );
+          const receipt = await updateKageDefendedChallengesForInitiateBattle(
+            tx,
+            battleId,
+            launchAt,
+            m,
+          );
           if (receipt.rowsAffected !== 1) throw rejected;
           const created = await createBattle(tx);
           if (created.claimedUsers?.rowsAffected !== expectedRows) throw rejected;
@@ -4242,21 +3418,12 @@ export const initiateBattle = async (
       result = await retryOnDeadlock(() =>
         client.transaction(async (tx) => {
           // Reserve only while the accepted session and allowance remain unchanged.
-          const session = await tx
-            .update(huntingSession)
-            .set({ battleId, version: sql`${huntingSession.version} + 1` })
-            .where(
-              and(
-                eq(huntingSession.userId, meta.userId),
-                eq(huntingSession.id, meta.sessionId),
-                eq(huntingSession.version, meta.sessionVersion),
-                isNull(huntingSession.battleId),
-                eq(huntingSession.contractId, meta.contract.id),
-                eq(huntingSession.sector, sector ?? -1),
-                eq(huntingSession.habitatId, meta.habitatId),
-                sql`EXISTS (SELECT 1 FROM ${huntingProgress} WHERE ${huntingProgress.userId} = ${meta.userId} AND ${huntingProgress.contractId} = ${meta.contract.id} AND ${huntingProgress.version} = ${meta.progressVersion})`,
-              ),
-            );
+          const session = await updateHuntingSessionForInitiateBattle(
+            tx,
+            battleId,
+            meta,
+            sector,
+          );
           if (session.rowsAffected !== 1) throw rejected;
           const created = await createBattle(tx as unknown as DrizzleClient);
           if (created.claimedUsers?.rowsAffected !== expectedRows) throw rejected;
@@ -4302,12 +3469,9 @@ export const initiateBattle = async (
     const claimedIds =
       result.claimedUsers?.rowsAffected === expectedRows
         ? allParticipantIds
-        : (
-            await client.query.userData.findMany({
-              columns: { userId: true },
-              where: eq(userData.battleId, battleId),
-            })
-          ).map((row) => row.userId);
+        : (await listUserDataForInitiateBattle(client, battleId)).map(
+            (row) => row.userId,
+          );
     const claimed = queuedParticipants.filter((entry) =>
       claimedIds.includes(entry.user.userId),
     );
@@ -4329,7 +3493,7 @@ export const initiateBattle = async (
     ]);
     if (logs.length) {
       try {
-        await client.insert(trainingLog).values(logs);
+        await insertTrainingLogForInitiateBattle(client, logs);
       } catch (error) {
         Sentry.captureException(error, { tags: { source: "energyTrainingQueueLog" } });
       }
@@ -4339,19 +3503,9 @@ export const initiateBattle = async (
   // Undo only this battle's claims and rows, including successful siblings of a failed write.
   if (result.failed || result.claimedUsers?.rowsAffected !== expectedRows) {
     await Promise.all([
-      client
-        .update(userData)
-        .set({
-          status: info.questAttempt?.isolated
-            ? sql`CASE WHEN ${userData.userId} = ${info.questAttempt.userId} THEN 'BATTLE' ELSE ${battleClaimRollbackStatus(client, battleType, info.clanBattle)} END`
-            : battleClaimRollbackStatus(client, battleType, info.clanBattle),
-          bracketImmunityLiftedUntil: resumeBracketImmunitySql(),
-          bracketImmunityPausedAt: null,
-          battleId: null,
-        })
-        .where(eq(userData.battleId, battleId)),
-      client.delete(battle).where(eq(battle.id, battleId)),
-      client.delete(battleHistory).where(eq(battleHistory.battleId, battleId)),
+      updateUserDataForInitiateBattle(client, info, battleType, battleId),
+      deleteBattleById(client, battleId),
+      deleteBattleHistoryByBattleId(client, battleId),
     ]);
     if (result.failed) throw result.failed.reason;
     return { success: false, message: "Attack failed, did the target move?" };
@@ -5198,32 +4352,10 @@ export const processUsersForBattle = async (
     if (missingSummonIds.length > 0) {
       // Cache a real promise: awaiting a Drizzle thenable again would execute another query.
       const pending = (async () => {
-        const rows = await client.query.userData.findMany({
-          with: {
-            bloodline: { with: { bloodrightTiers: true } },
-            sageMode: true,
-            village: true,
-            items: {
-              with: {
-                item: { with: { variants: true } },
-                imbuements: {
-                  with: { item: true },
-                  where: (imbuements) => lt(imbuements.craftingFinishedAt, new Date()),
-                },
-              },
-              where: (items) => and(gt(items.quantity, 0), isNotNull(items.equipped)),
-            },
-            jutsus: {
-              with: { jutsu: true },
-              where: (jutsus) => eq(jutsus.equipped, true),
-            },
-            userSkills: {
-              with: { skill: true },
-            },
-            aiProfile: true,
-          },
-          where: inArray(userData.userId, missingSummonIds),
-        });
+        const rows = await listUserDataForProcessUsersForBattle(
+          client,
+          missingSummonIds,
+        );
         return rows;
       })();
       for (const id of missingSummonIds) {
@@ -5572,67 +4704,5 @@ export const processUsersForBattle = async (
     usersState: convertedUsersState,
     extraState,
     initialDurability,
-  };
-};
-
-/**
- * Fetch the essentials for a battle
- * @param client - The drizzle client
- * @returns The essentials for a battle
- */
-export const fetchBattleEssentials = async (client: DrizzleClient) => {
-  const [
-    defaultProfile,
-    activeWars,
-    settings,
-    villages,
-    relations,
-    dmgConfig,
-    pvpAverage,
-  ] = await Promise.all([
-    // Fetch default AI profile
-    fetchAiProfileById(client, "Default"),
-    // Fetch active wars
-    client.query.war.findMany({
-      where: eq(war.status, "ACTIVE"),
-      with: {
-        warMercenaries: { where: activeWarMercenaryWhere() },
-        warAllies: { where: activeWarAllyWhere() },
-        attackerVillage: { columns: { name: true, sector: true } },
-        defenderVillage: { columns: { name: true, sector: true } },
-      },
-    }),
-    // Fetch game settings
-    client
-      .select()
-      .from(gameSetting)
-      .where(
-        or(
-          inArray(gameSetting.name, [
-            "battleExpMultiplier",
-            "jutsuExpMultiplier",
-            "itemExpMultiplier",
-            "regenGainMultiplier",
-            "trainingGainMultiplier",
-          ]),
-          like(gameSetting.name, "war-%-train"),
-          like(gameSetting.name, "war-%-regen"),
-        ),
-      ),
-    // Fetch villages
-    client.select().from(village),
-    // Fetch village alliances
-    client.select().from(villageAlliance),
-    // Fetch damage formula config
-    fetchDmgConfig(client),
-    fetchPvpExperienceAverage(client),
-  ]);
-  return {
-    defaultProfile,
-    activeWars: withMercenaryParticipation(activeWars),
-    settings: [...settings, pvpAverage],
-    villages,
-    relations,
-    dmgConfig,
   };
 };

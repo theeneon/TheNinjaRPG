@@ -1,3 +1,7 @@
+import {
+  deleteUserLiveActivityForPushActivityUpdate,
+  selectUserLiveActivityForPushActivityUpdate,
+} from "@/queries/push";
 /**
  * Server-driven Live Activity updates.
  *
@@ -8,9 +12,7 @@
  */
 
 import * as Sentry from "@sentry/node";
-import { and, eq, inArray } from "drizzle-orm";
 import type { LiveActivityKind } from "@/drizzle/constants";
-import { userLiveActivity } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
 import * as apns from "./apns";
 import type { PushResult } from "./types";
@@ -83,15 +85,11 @@ export const pushActivityUpdate = async (
   if (recipients.length === 0 || !apns.isConfigured()) return;
 
   try {
-    const activities = await client
-      .select({ token: userLiveActivity.pushToken })
-      .from(userLiveActivity)
-      .where(
-        and(
-          inArray(userLiveActivity.userId, recipients),
-          eq(userLiveActivity.kind, kind),
-        ),
-      );
+    const activities = await selectUserLiveActivityForPushActivityUpdate(
+      client,
+      recipients,
+      kind,
+    );
     if (activities.length === 0) return;
 
     const results = await apns.sendBatch(
@@ -105,9 +103,7 @@ export const pushActivityUpdate = async (
 
     const gone = activityTokensToPrune(results, event);
     if (gone.length > 0) {
-      await client
-        .delete(userLiveActivity)
-        .where(inArray(userLiveActivity.pushToken, gone));
+      await deleteUserLiveActivityForPushActivityUpdate(client, gone);
     }
   } catch (error) {
     Sentry.captureException(error, {

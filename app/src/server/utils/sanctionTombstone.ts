@@ -1,43 +1,39 @@
 import { createHash, createHmac } from "node:crypto";
 import { isIP } from "node:net";
 import { clerkClient } from "@clerk/nextjs/server";
-import {
-  and,
-  eq,
-  getTableColumns,
-  gt,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  ne,
-  not,
-  or,
-  sql,
-} from "drizzle-orm";
-import { alias } from "drizzle-orm/mysql-core";
+import { and, eq, gt, inArray, isNull, lte, not, or, sql } from "drizzle-orm";
 import {
   type BanState,
   type SanctionTombstoneType,
   TERR_BOT_ID,
 } from "@/drizzle/constants";
 import {
-  accountDeletion,
   actionLog,
-  discordLink,
-  historicalIp,
   type SanctionTombstone,
   sanctionTombstone,
-  storeUserIdAlias,
   type UserReport,
   userData,
   userReport,
   userReportComment,
 } from "@/drizzle/schema";
+import { findDiscordAccountIdForUser } from "@/queries/discord";
+import {
+  deleteSanctionTombstoneForRemoveExpiredSanctionTombstones,
+  executeResultForUpdateSanctionReport,
+  executeRowsForDiscardUnpublishedSanctions,
+  executeRowsForInsertRecord,
+  executeRowsForRemoveExpiredSanctionTombstones,
+  findUserDataForRecordSanctionTombstone,
+  findUserReportForRecordSanctionTombstone,
+  insertSanctionTombstoneForRecordSanctionTombstone,
+  listHistoricalIpForRecordSanctionTombstone,
+  updateSanctionTombstoneForDiscardUnpublishedSanctions,
+  updateSanctionTombstoneForReapplySanctions,
+  updateSanctionTombstoneForRetainSanctionIps,
+} from "@/queries/reports";
 import type { DrizzleClient } from "@/server/db";
 import { getIpHashSecret } from "@/server/utils/ipHash";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
-import { DELETED_STORE_USER_PREFIX } from "@/server/utils/purchases/grant";
 
 /**
  * Sanction tombstones let a banned or silenced player delete their account (GDPR Art. 17,
@@ -189,18 +185,6 @@ export const isClerkNotFound = (error: unknown) =>
   "status" in error &&
   error.status === 404;
 
-/** Current bans and silences, including timeouts, at both preflight and persistence. */
-const activeSanctionReportsWhere = (userId: string) =>
-  and(
-    eq(userReport.reportedUserId, userId),
-    inArray(userReport.status, [
-      "BAN_ACTIVATED",
-      "SILENCE_ACTIVATED",
-      "TIMEOUT_ACTIVATED",
-    ]),
-    gt(userReport.banEnd, new Date()),
-  );
-
 /**
  * Store a tombstone for every sanction still running on this account. Call it before the
  * account's reports or its Clerk user are removed.
@@ -217,18 +201,13 @@ export const recordSanctionTombstone = async (
   identity?: SanctionIdentity | null,
 ) => {
   const [activeReport, user, linkedDiscord] = await Promise.all([
-    client.query.userReport.findFirst({
-      columns: { id: true },
-      where: activeSanctionReportsWhere(userId),
-    }),
-    client.query.userData.findFirst({
-      columns: { lastIp: true },
-      where: eq(userData.userId, userId),
-    }),
-    client.query.discordLink.findFirst({
-      columns: { discordId: true },
-      where: eq(discordLink.userId, userId),
-    }),
+    findUserReportForRecordSanctionTombstone(
+      client,
+
+      userId,
+    ),
+    findUserDataForRecordSanctionTombstone(client, userId),
+    findDiscordAccountIdForUser(client, userId),
   ]);
   const clerkUser = activeReport
     ? identity === undefined
@@ -254,43 +233,18 @@ export const recordSanctionTombstone = async (
     // Select eligibility and the decision in the same write, so a completed staff revision
     // cannot be replaced by a snapshot from before the Clerk lookup.
     await retryOnDeadlock(() =>
-      client
-        .insert(sanctionTombstone)
-        .select(
-          client
-            .select({
-              userId: sql`${userId}`.as("userId"),
-              sourceId: userReport.id,
-              sanction: sanction.as("sanction"),
-              sanctionEndsAt: userReport.banEnd,
-              emailHash: sql`${hashes.emailHash}`.as("emailHash"),
-              // INSERT SELECT bypasses column encoders; produce SQL JSON for arrays.
-              accountHashes:
-                sql`CAST(${JSON.stringify(hashes.accountHashes)} AS JSON)`.as(
-                  "accountHashes",
-                ),
-              ipHashes: sql`JSON_ARRAY()`.as("ipHashes"),
-              carryoverReportIds: sql`JSON_ARRAY()`.as("carryoverReportIds"),
-              createdAt: sql`CURRENT_TIMESTAMP(3)`.as("createdAt"),
-            })
-            .from(userReport)
-            .where(activeSanctionReportsWhere(userId)),
-        )
-        .onDuplicateKeyUpdate({
-          set: {
-            emailHash: hashes.emailHash,
-            accountHashes: hashes.accountHashes,
-          },
-        }),
+      insertSanctionTombstoneForRecordSanctionTombstone(
+        client,
+        userId,
+        sanction,
+        hashes,
+      ),
     );
   }
   // Keep the preflight lastIp, and read history only after creating sources. Profile
   // writes append after persisting history: either this read sees the new address,
   // or the profile append sees the retained source.
-  const ips = await client.query.historicalIp.findMany({
-    columns: { ip: true },
-    where: eq(historicalIp.userId, userId),
-  });
+  const ips = await listHistoricalIpForRecordSanctionTombstone(client, userId);
   await retainSanctionIps(client, userId, [user?.lastIp, ...ips.map(({ ip }) => ip)]);
 };
 
@@ -310,31 +264,9 @@ export const retainSanctionIps = async (
   if (!hashes.length) return;
   // Merge against the current SQL row so concurrent capture/profile appends keep both IPs.
   await retryOnDeadlock(() =>
-    client
-      .update(sanctionTombstone)
-      .set({
-        ipHashes: sql`JSON_MERGE_PRESERVE(${sanctionTombstone.ipHashes}, ${sql.join(
-          hashes.map(
-            (hash) =>
-              sql`IF(JSON_CONTAINS(${sanctionTombstone.ipHashes}, JSON_QUOTE(${hash})), JSON_ARRAY(), JSON_ARRAY(${hash}))`,
-          ),
-          sql`, `,
-        )})`,
-      })
-      .where(
-        and(
-          eq(sanctionTombstone.userId, userId),
-          gt(sanctionTombstone.sanctionEndsAt, sql`CURRENT_TIMESTAMP(3)`),
-        ),
-      ),
+    updateSanctionTombstoneForRetainSanctionIps(client, hashes, userId),
   );
 };
-
-/** Unexpired tombstones; registration matches them in memory. */
-export const fetchActiveSanctionTombstones = (client: DrizzleClient) =>
-  client.query.sanctionTombstone.findMany({
-    where: gt(sanctionTombstone.sanctionEndsAt, new Date()),
-  });
 
 /**
  * The sanctions a registering account inherits, one per type with the latest end date.
@@ -461,27 +393,17 @@ export const discardUnpublishedSanctions = async (
   if (!reportIds.length) return;
   for (const reportId of reportIds) {
     await retryOnDeadlock(() =>
-      client
-        .update(sanctionTombstone)
-        .set({
-          carryoverReportIds: sql`JSON_REMOVE(${sanctionTombstone.carryoverReportIds}, JSON_UNQUOTE(JSON_SEARCH(${sanctionTombstone.carryoverReportIds}, 'one', ${reportId})))`,
-        })
-        .where(
-          and(
-            accountAbsent(userId),
-            sql`JSON_CONTAINS(${sanctionTombstone.carryoverReportIds}, JSON_QUOTE(${reportId}))`,
-          ),
-        ),
+      updateSanctionTombstoneForDiscardUnpublishedSanctions(
+        client,
+        reportId,
+        accountAbsent,
+        userId,
+      ),
     );
   }
   // One delete keeps each case and its supporting records together during retries.
   await retryOnDeadlock(() =>
-    client.execute(sql`
-    DELETE ${userReport}, ${userReportComment}, ${actionLog} FROM ${userReport}
-    LEFT JOIN ${userReportComment} ON ${eq(userReportComment.reportId, userReport.id)}
-    LEFT JOIN ${actionLog} ON ${and(eq(actionLog.relatedId, userReport.id), eq(actionLog.tableName, "userReport"), eq(actionLog.userId, userId))}
-    WHERE ${and(eq(userReport.reportedUserId, userId), eq(userReport.system, "sanction_carryover"), inArray(userReport.id, reportIds), accountAbsent(userId))}
-  `),
+    executeRowsForDiscardUnpublishedSanctions(client, userId, reportIds, accountAbsent),
   );
 };
 
@@ -520,21 +442,8 @@ export const reapplySanctions = async (
     values: Record<string, unknown>,
     guard: ReturnType<typeof and>,
   ) => {
-    const columns = getTableColumns(table);
-    const keys = Object.keys(values) as (keyof typeof columns)[];
     return retryOnDeadlock(() =>
-      client.execute(sql`
-      INSERT INTO ${table} (${sql.join(
-        keys.map((key) => sql.identifier(columns[key].name)),
-        sql`, `,
-      )})
-      SELECT ${sql.join(
-        keys.map((key) => sql.param(values[key], columns[key])),
-        sql`, `,
-      )}
-      WHERE ${guard}
-      ON DUPLICATE KEY UPDATE id = id
-    `),
+      executeRowsForInsertRecord(client, table, values, guard),
     );
   };
   try {
@@ -594,19 +503,15 @@ export const reapplySanctions = async (
         if (result.status === "rejected") throw result.reason;
       }
       await retryOnDeadlock(() =>
-        client
-          .update(sanctionTombstone)
-          .set({
-            carryoverReportIds: sql`JSON_ARRAY_APPEND(${sanctionTombstone.carryoverReportIds}, '$', ${reportId})`,
-          })
-          .where(
-            and(
-              accountAbsent(userId),
-              reportExists,
-              or(...match.tombstones.map(unchangedSource)),
-              sql`NOT JSON_CONTAINS(${sanctionTombstone.carryoverReportIds}, JSON_QUOTE(${reportId}))`,
-            ),
-          ),
+        updateSanctionTombstoneForReapplySanctions(
+          client,
+          reportId,
+          accountAbsent,
+          userId,
+          reportExists,
+          match,
+          unchangedSource,
+        ),
       );
     }
   } catch (error) {
@@ -695,7 +600,7 @@ export const updateSanctionReport = async (
     ? decision.banEnd
     : null;
   const endsAt = activeEnd ?? new Date();
-  const capturedSource = alias(sanctionTombstone, "capturedSource");
+
   const sources = or(
     report.reportedUserId
       ? and(
@@ -712,20 +617,15 @@ export const updateSanctionReport = async (
   // may hold different identity hashes, so only this account's exact source can retain it.
   // Web deletion uses the exact store marker; rename aliases do not retire the account.
   const result = await retryOnDeadlock(() =>
-    client.execute(sql`
-    UPDATE ${userReport}
-    LEFT JOIN ${sanctionTombstone} ON ${sources}
-    LEFT JOIN ${accountDeletion} ON ${and(eq(accountDeletion.userId, userReport.reportedUserId), ne(accountDeletion.phase, "COMPLETE"))}
-    LEFT JOIN ${storeUserIdAlias} ON ${and(eq(storeUserIdAlias.oldUserId, userReport.reportedUserId), sql`LEFT(${storeUserIdAlias.newUserId}, ${DELETED_STORE_USER_PREFIX.length}) = BINARY ${DELETED_STORE_USER_PREFIX}`)}
-    LEFT JOIN ${sanctionTombstone} capturedSource ON ${and(eq(capturedSource.userId, userReport.reportedUserId), eq(capturedSource.sourceId, userReport.id))}
-    SET ${userReport.status} = ${decision.status},
-        ${userReport.adminResolved} = ${decision.adminResolved},
-        ${userReport.updatedAt} = CURRENT_TIMESTAMP(3),
-        ${decision.banEnd !== undefined ? sql`${userReport.banEnd} = ${sql.param(decision.banEnd, userReport.banEnd)},` : sql``}
-        ${sanctionTombstone.sanction} = ${activeEnd ? sql`${sanction}` : sanctionTombstone.sanction},
-        ${sanctionTombstone.sanctionEndsAt} = ${sql.param(endsAt, sanctionTombstone.sanctionEndsAt)}
-    WHERE ${and(eq(userReport.id, report.id), ne(userReport.status, "REPORT_CLEARED"), activeEnd ? or(and(isNull(accountDeletion.userId), isNull(storeUserIdAlias.oldUserId)), isNotNull(capturedSource.sourceId)) : undefined)}
-  `),
+    executeResultForUpdateSanctionReport(
+      client,
+      sources,
+      decision,
+      activeEnd,
+      sanction,
+      endsAt,
+      report,
+    ),
   );
   if (result.rowsAffected === 0) return false;
   // Expiry retires sources in the decision write. Prune only still-expired rows so a
@@ -748,12 +648,9 @@ export const removeExpiredSanctionTombstones = async (
   // Capture never changes existing decisions, so the source remains expired until this
   // durable report closure completes; pruning is safe only after it succeeds.
   await retryOnDeadlock(() =>
-    client.execute(sql`
-      UPDATE ${userReport}
-      INNER JOIN ${sanctionTombstone} ON ${and(eq(userReport.id, sanctionTombstone.sourceId), eq(userReport.reportedUserId, sanctionTombstone.userId))}
-      SET ${userReport.status} = 'REPORT_CLEARED', ${userReport.adminResolved} = TRUE, ${userReport.updatedAt} = CURRENT_TIMESTAMP(3)
-      WHERE ${and(expired, inArray(userReport.status, ["BAN_ACTIVATED", "SILENCE_ACTIVATED", "TIMEOUT_ACTIVATED"]), gt(userReport.banEnd, sql`CURRENT_TIMESTAMP(3)`))}
-    `),
+    executeRowsForRemoveExpiredSanctionTombstones(client, expired),
   );
-  return retryOnDeadlock(() => client.delete(sanctionTombstone).where(expired));
+  return retryOnDeadlock(() =>
+    deleteSanctionTombstoneForRemoveExpiredSanctionTombstones(client, expired),
+  );
 };

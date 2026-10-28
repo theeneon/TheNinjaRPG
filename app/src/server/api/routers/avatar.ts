@@ -1,14 +1,21 @@
-import { and, desc, eq, gt, isNotNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ContentTypes } from "@/drizzle/constants";
 import type { UserData } from "@/drizzle/schema";
-import { historicalAvatar, userData } from "@/drizzle/schema";
 import {
   createThumbnail,
   fastTxt2imgReplicate,
   getAvatarPrompt,
 } from "@/libs/replicate";
-import { fetchUser } from "@/routers/profile";
+import {
+  deleteHistoricalAvatarForDeleteAvatar,
+  fetchAvatar,
+  insertHistoricalAvatarForCreateAvatar,
+  listHistoricalAvatarForGetHistoricalAvatars,
+  updateHistoricalAvatarForUpdateAvatar,
+  updateUserAvatar,
+  updateUserDataForCreateAvatar,
+} from "@/queries/avatar";
+import { fetchUser, findUserById } from "@/queries/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -28,9 +35,7 @@ export const avatarRouter = createTRPCRouter({
       // Fetch user directly with a query that returns null if not found
       // This handles the case where the user was just created and the record
       // may not be immediately available due to database replication lag
-      const user = await ctx.drizzle.query.userData.findFirst({
-        where: eq(userData.userId, ctx.userId),
-      });
+      const user = await findUserById(ctx.drizzle, ctx.userId);
       // Guard
       if (!user) {
         return errorResponse("User not found. Please try again in a moment.");
@@ -50,21 +55,8 @@ export const avatarRouter = createTRPCRouter({
 
       // Mutate
       const [result] = await Promise.all([
-        ctx.drizzle
-          .update(userData)
-          .set({
-            ...userPatch,
-            reputationPoints: sql`${userData.reputationPoints} - 1`,
-          })
-          .where(
-            and(eq(userData.userId, ctx.userId), gt(userData.reputationPoints, 0)),
-          ),
-        ctx.drizzle.insert(historicalAvatar).values({
-          userId: ctx.userId,
-          ...userPatch,
-          status: "success",
-          done: true,
-        }),
+        updateUserDataForCreateAvatar(ctx.drizzle, userPatch, ctx),
+        insertHistoricalAvatarForCreateAvatar(ctx.drizzle, ctx, userPatch),
       ]);
       if (result.rowsAffected === 1) {
         return {
@@ -84,16 +76,12 @@ export const avatarRouter = createTRPCRouter({
       const relationId = input.relationId ?? ctx.userId;
       const limit = input.limit ?? 50;
       const { cursor } = input;
-      const avatars = await ctx.drizzle.query.historicalAvatar.findMany({
-        where: and(
-          eq(historicalAvatar.userId, relationId),
-          eq(historicalAvatar.done, true),
-          isNotNull(historicalAvatar.avatar),
-          cursor != null ? lte(historicalAvatar.id, cursor) : undefined,
-        ),
-        limit: limit + 1,
-        orderBy: [desc(historicalAvatar.id)],
-      });
+      const avatars = await listHistoricalAvatarForGetHistoricalAvatars(
+        ctx.drizzle,
+        relationId,
+        cursor,
+        limit,
+      );
       let nextCursor: number | undefined;
       if (avatars.length > limit) {
         const nextItem = avatars.pop();
@@ -127,10 +115,7 @@ export const avatarRouter = createTRPCRouter({
       let thumbnailUrl = avatar.avatarLight;
       if (!thumbnailUrl && avatar.avatar) {
         thumbnailUrl = await createThumbnail(avatar.avatar);
-        await ctx.drizzle
-          .update(historicalAvatar)
-          .set({ avatarLight: thumbnailUrl })
-          .where(eq(historicalAvatar.id, input.avatar));
+        await updateHistoricalAvatarForUpdateAvatar(ctx.drizzle, thumbnailUrl, input);
       }
       const data =
         input.type === "user"
@@ -140,10 +125,7 @@ export const avatarRouter = createTRPCRouter({
         data &&
         (user.avatar !== data.avatar || user.avatarLight !== data.avatarLight)
       ) {
-        const result = await ctx.drizzle
-          .update(userData)
-          .set(data)
-          .where(eq(userData.userId, ctx.userId));
+        const result = await updateUserAvatar(ctx.drizzle, data, ctx.userId);
         if (result.rowsAffected === 0) {
           return errorResponse("Could not update avatar. Please try again");
         }
@@ -176,25 +158,10 @@ export const avatarRouter = createTRPCRouter({
         return errorResponse("Not your avatar");
       }
       // Mutation
-      await ctx.drizzle
-        .delete(historicalAvatar)
-        .where(eq(historicalAvatar.id, input.avatar));
+      await deleteHistoricalAvatarForDeleteAvatar(ctx.drizzle, input);
       return { success: true, message: "Avatar deleted" };
     }),
 });
-
-/**
- * Fetches the avatar with the specified ID from the database.
- *
- * @param client - The DrizzleClient instance used to query the database.
- * @param id - The ID of the avatar to fetch.
- * @returns A promise that resolves to the fetched avatar.
- */
-export const fetchAvatar = async (client: DrizzleClient, id: number) => {
-  return await client.query.historicalAvatar.findFirst({
-    where: eq(historicalAvatar.id, id),
-  });
-};
 
 /**
  * Create a user avatar

@@ -1,9 +1,9 @@
+import { fetchBloodlineCollectionRolls } from "@/queries/quests";
 import { describe, expect, it, mock } from "bun:test";
 import type { DrizzleClient } from "@/server/db";
 import { withRequestScope } from "@/server/requestScope";
 import {
   fetchBloodlineCollectionCatalogue,
-  fetchBloodlineCollectionRolls,
   hydrateQuestCollections,
 } from "@/server/utils/questCollections";
 

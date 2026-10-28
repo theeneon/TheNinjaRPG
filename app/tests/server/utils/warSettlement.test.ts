@@ -1,3 +1,4 @@
+import { fetchActiveWar, fetchEndedWars } from "@/queries/war";
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, spyOn, vi } from "bun:test";
 import { eq, type SQL } from "drizzle-orm";
@@ -35,12 +36,7 @@ import {
 import { Pusher } from "@/libs/pusher";
 import { villageRouter } from "@/server/api/routers/village";
 import { shrineRouter } from "@/server/api/routers/shrine";
-import {
-  fetchActiveWar,
-  fetchActiveWars,
-  fetchEndedWars,
-  warRouter,
-} from "@/server/api/routers/war";
+import { fetchActiveWars, warRouter } from "@/server/api/routers/war";
 import type { DrizzleClient } from "@/server/db";
 import { defaultWarRules } from "@/validators/war";
 import { handleWarEnd, startDeclaredWar, startSectorWar } from "@/server/utils/war";

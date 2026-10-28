@@ -1,9 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
-import type { NextRequest } from "next/server";
-import { NextResponse } from "next/server";
-import { supportTicket } from "@/drizzle/schema";
-import { createSupportTicketActivity } from "@/server/api/routers/support";
+import { type NextRequest, NextResponse } from "next/server";
+
+import {
+  createSupportTicketActivity,
+  findSupportTicketForHandleIssueClosed,
+  updateSupportTicketForHandleIssueClosed,
+} from "@/queries/support";
+
 import { drizzleDB } from "@/server/db";
 
 // GitHub webhook payload types
@@ -104,9 +107,7 @@ async function handleIssueClosed(data: GitHubWebhookPayload) {
 
   try {
     // Find the support ticket with this GitHub issue URL
-    const ticket = await drizzleDB.query.supportTicket.findFirst({
-      where: eq(supportTicket.githubIssueUrl, issueUrl),
-    });
+    const ticket = await findSupportTicketForHandleIssueClosed(drizzleDB, issueUrl);
 
     if (!ticket) {
       console.log(`No support ticket found for GitHub issue: ${issueUrl}`);
@@ -121,14 +122,7 @@ async function handleIssueClosed(data: GitHubWebhookPayload) {
 
     // Update the support ticket status to resolved
     await Promise.all([
-      drizzleDB
-        .update(supportTicket)
-        .set({
-          status: "RESOLVED",
-          closedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(supportTicket.id, ticket.id)),
+      updateSupportTicketForHandleIssueClosed(drizzleDB, ticket),
 
       // Create activity log for the closure
       // Use the ticket creator as the author since we don't have a system user

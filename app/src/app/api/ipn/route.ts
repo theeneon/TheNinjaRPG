@@ -1,21 +1,9 @@
-import { nanoid } from "nanoid";
 import { headers } from "next/headers";
-import { paypalWebhookMessage } from "@/drizzle/schema";
 import { handleEndpointError } from "@/libs/gamesettings";
+import { type IBody, insertPaypalWebhookMessageForGET } from "@/queries/paypal";
+
 import { getPaypalAccessToken } from "@/routers/paypal";
 import { drizzleDB } from "@/server/db";
-
-type IBody = {
-  event_type: string;
-  resource: {
-    id: string;
-    state: string;
-    amount: {
-      total: string;
-      currency: string;
-    };
-  };
-};
 
 export async function GET(req: Request) {
   // Create context
@@ -50,12 +38,7 @@ export async function GET(req: Request) {
       default:
         break;
     }
-    await drizzleDB.insert(paypalWebhookMessage).values({
-      id: nanoid(),
-      rawData: body,
-      eventType: body.event_type,
-      handled: false,
-    });
+    await insertPaypalWebhookMessageForGET(drizzleDB, body);
     return Response.json(`OK`);
   } catch (cause) {
     return handleEndpointError(cause, { endpoint: "/api/ipn" });

@@ -1,9 +1,20 @@
-import { and, asc, desc, eq, inArray, like, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { DISCORD_UNLINK_COOLDOWN_DAYS } from "@/drizzle/constants";
-import { discordLink, discordLinkHistory, userData } from "@/drizzle/schema";
 import { needsDiscordRelink } from "@/libs/discordLink";
-import { fetchUser } from "@/routers/profile";
+import {
+  fetchDiscordActionLog,
+  findDiscordLinkForGetStatus,
+  findDiscordLinkForSetPrimary,
+  findDiscordLinkForUnlink,
+  listDiscordLinkForGetStatus,
+  logDiscordAction,
+  selectDiscordLinkForSearchLinks,
+  selectDiscordLinkHistoryForSearchLinks,
+  selectDistinctDiscordLinkForSearchLinks,
+  setDiscordPrimary,
+} from "@/queries/discord";
+import { fetchUser } from "@/queries/profile";
+
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -14,12 +25,7 @@ import {
 } from "@/server/api/trpc";
 import { isDiscordLinkingEnabled } from "@/server/utils/discord/config";
 import { describeScopes, removeDiscordLink } from "@/server/utils/discord/linking";
-import {
-  fetchDiscordActionLog,
-  fetchIndefiniteSanction,
-  logDiscordAction,
-  setDiscordPrimary,
-} from "@/server/utils/discord/links";
+import { fetchIndefiniteSanction } from "@/server/utils/discord/links";
 import { scheduleDiscordSync, syncDiscordMember } from "@/server/utils/discord/sync";
 import { canManageDiscordLinks, canViewDiscordLinks } from "@/utils/permissions";
 
@@ -31,25 +37,10 @@ export const discordRouter = createTRPCRouter({
   getStatus: publicProcedure.query(async ({ ctx }) => {
     if (!isDiscordLinkingEnabled() || !ctx.userId)
       return { enabled: isDiscordLinkingEnabled(), link: null };
-    const link = await ctx.drizzle.query.discordLink.findFirst({
-      columns: {
-        discordId: true,
-        discordUsername: true,
-        linkedAt: true,
-        tokenSource: true,
-        isPrimary: true,
-        syncError: true,
-      },
-      where: eq(discordLink.userId, ctx.userId),
-    });
+    const link = await findDiscordLinkForGetStatus(ctx.drizzle, { userId: ctx.userId });
     if (!link) return { enabled: true, link: null };
     // Depends on the link's Discord id; ordered like the sync, which picks the first.
-    const links = await ctx.drizzle.query.discordLink.findMany({
-      columns: { userId: true },
-      with: { user: { columns: { username: true } } },
-      where: eq(discordLink.discordId, link.discordId),
-      orderBy: [desc(discordLink.isPrimary), asc(discordLink.slot)],
-    });
+    const links = await listDiscordLinkForGetStatus(ctx.drizzle, link);
     const { syncError, discordId: _discordId, isPrimary: _isPrimary, ...rest } = link;
     const sibling = links.find((entry) => entry.userId !== ctx.userId);
     return {
@@ -71,10 +62,7 @@ export const discordRouter = createTRPCRouter({
     .mutation(async ({ ctx }) => {
       if (!isDiscordLinkingEnabled())
         return errorResponse("Discord linking is disabled");
-      const link = await ctx.drizzle.query.discordLink.findFirst({
-        columns: { id: true, discordId: true, discordUsername: true, isPrimary: true },
-        where: eq(discordLink.userId, ctx.userId),
-      });
+      const link = await findDiscordLinkForSetPrimary(ctx.drizzle, ctx);
       if (!link) return errorResponse("No Discord account is linked");
       if (link.isPrimary) return errorResponse("This character is already primary");
       await setDiscordPrimary(ctx.drizzle, link);
@@ -94,10 +82,7 @@ export const discordRouter = createTRPCRouter({
   unlink: protectedProcedure.output(baseServerResponse).mutation(async ({ ctx }) => {
     if (!isDiscordLinkingEnabled()) return errorResponse("Discord linking is disabled");
     const [link, sanction] = await Promise.all([
-      ctx.drizzle.query.discordLink.findFirst({
-        columns: { id: true },
-        where: eq(discordLink.userId, ctx.userId),
-      }),
+      findDiscordLinkForUnlink(ctx.drizzle, ctx),
       fetchIndefiniteSanction(ctx.drizzle, ctx.userId),
     ]);
     if (!link) return errorResponse("No Discord account is linked");
@@ -129,74 +114,12 @@ export const discordRouter = createTRPCRouter({
         throw serverError("FORBIDDEN", "You cannot view Discord links");
       const pattern = `%${input.query.replace(/[%_\\]/g, "\\$&")}%`;
       const [matches, history] = await Promise.all([
-        ctx.drizzle
-          .selectDistinct({ discordId: discordLink.discordId })
-          .from(discordLink)
-          .leftJoin(userData, eq(userData.userId, discordLink.userId))
-          .where(
-            or(
-              like(userData.username, pattern),
-              eq(discordLink.discordId, input.query),
-              like(discordLink.discordUsername, pattern),
-            ),
-          )
-          .limit(25),
-        ctx.drizzle
-          .select({
-            id: discordLinkHistory.id,
-            userId: discordLinkHistory.userId,
-            username: userData.username,
-            discordId: discordLinkHistory.discordId,
-            discordUsername: discordLinkHistory.discordUsername,
-            linkedAt: discordLinkHistory.linkedAt,
-            unlinkedAt: discordLinkHistory.unlinkedAt,
-            reason: discordLinkHistory.reason,
-            cooldownWaived: discordLinkHistory.cooldownWaived,
-          })
-          .from(discordLinkHistory)
-          .leftJoin(userData, eq(userData.userId, discordLinkHistory.userId))
-          .where(
-            or(
-              like(userData.username, pattern),
-              eq(discordLinkHistory.discordId, input.query),
-              like(discordLinkHistory.discordUsername, pattern),
-            ),
-          )
-          .orderBy(desc(discordLinkHistory.unlinkedAt))
-          .limit(50),
+        selectDistinctDiscordLinkForSearchLinks(ctx.drizzle, pattern, input),
+        selectDiscordLinkHistoryForSearchLinks(ctx.drizzle, pattern, input),
       ]);
       // Depends on the matched Discord ids.
       const links = matches.length
-        ? await ctx.drizzle
-            .select({
-              userId: discordLink.userId,
-              username: userData.username,
-              avatar: userData.avatarLight,
-              discordId: discordLink.discordId,
-              discordUsername: discordLink.discordUsername,
-              discordCreatedAt: discordLink.discordCreatedAt,
-              clerkDiscordId: discordLink.clerkDiscordId,
-              linkedAt: discordLink.linkedAt,
-              slot: discordLink.slot,
-              scopes: discordLink.scopes,
-              tokenSource: discordLink.tokenSource,
-              syncedAt: discordLink.syncedAt,
-              syncedBanned: discordLink.syncedBanned,
-              syncError: discordLink.syncError,
-            })
-            .from(discordLink)
-            .leftJoin(userData, eq(userData.userId, discordLink.userId))
-            .where(
-              inArray(
-                discordLink.discordId,
-                matches.map((match) => match.discordId),
-              ),
-            )
-            .orderBy(
-              asc(discordLink.discordId),
-              desc(discordLink.isPrimary),
-              asc(discordLink.slot),
-            )
+        ? await selectDiscordLinkForSearchLinks(ctx.drizzle, matches)
         : [];
       const logs = await Promise.all(
         links.map((link) => fetchDiscordActionLog(ctx.drizzle, link.userId)),

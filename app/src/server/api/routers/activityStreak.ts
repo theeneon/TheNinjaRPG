@@ -1,14 +1,8 @@
-import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { COST_STREAK_CATCHUP_DAY } from "@/drizzle/constants";
-import {
-  actionLog,
-  activityStreakConfig,
-  activityStreakReward,
-  userData,
-  userStreakProgress,
-} from "@/drizzle/schema";
+import { activityStreakConfig } from "@/drizzle/schema";
 import {
   getEventPassCompletionDate,
   isEventPassCompletion,
@@ -18,7 +12,41 @@ import {
 import { getRewardPreview } from "@/libs/objectives";
 import { postProcessRewards } from "@/libs/quest";
 import { hasEnergyQueue } from "@/libs/queue";
-import { fetchUser } from "@/routers/profile";
+import {
+  createRewardsForConfig,
+  deleteActivityStreakConfigForDeleteConfig,
+  deleteActivityStreakRewardForUpdateConfig,
+  deleteUserStreakProgressForDeleteConfig,
+  findActivityStreakConfigById,
+  findActivityStreakConfigForClaimStreakDay,
+  findActivityStreakConfigForGetConfig,
+  findActivityStreakConfigForGetUserStreaks,
+  findUserStreakProgress,
+  insertActionLogForClaimStreakDay,
+  insertActivityStreakConfigForCreateConfig,
+  insertUserStreakProgressForClaimStreakDay,
+  insertUserStreakProgressForPurchaseEventPass,
+  listActionLogForClaimStreakDay,
+  listActionLogForGetAvailablePasses,
+  listActionLogForGetUserStreaks,
+  listActionLogForPurchaseEventPass,
+  listActivityStreakConfigForGetAvailablePasses,
+  listActivityStreakConfigForGetConfigs,
+  listUserStreakProgressForGetAvailablePasses,
+  listUserStreakProgressForGetUserStreaks,
+  updateActivityStreakConfigForToggleConfigActive,
+  updateActivityStreakConfigForToggleConfigActive2,
+  updateActivityStreakConfigForToggleConfigActive3,
+  updateActivityStreakConfigForUpdateConfig,
+  updateUserDataForClaimStreakDay,
+  updateUserDataForPurchaseEventPass,
+  updateUserDataForPurchaseEventPass2,
+  updateUserStreakProgressForClaimStreakDay,
+  updateUserStreakProgressForClaimStreakDay2,
+  updateUserStreakProgressForClaimStreakDay3,
+} from "@/queries/activityStreak";
+import { fetchUser } from "@/queries/profile";
+
 import { getRewardUserDelta, updateRewards } from "@/server/api/routers/quests";
 import {
   baseServerResponse,
@@ -26,7 +54,6 @@ import {
   errorResponse,
   protectedProcedure,
 } from "@/server/api/trpc";
-import type { DrizzleClient } from "@/server/db";
 import { isMysqlDuplicateKeyError } from "@/server/utils/mysqlErrors";
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
 import { canChangeContent } from "@/utils/permissions";
@@ -38,7 +65,7 @@ import {
   purchaseEventPassSchema,
 } from "@/validators/activityStreak";
 import { idSchema } from "@/validators/misc";
-import { ObjectiveReward, type ObjectiveRewardType } from "@/validators/rewards";
+import { ObjectiveReward } from "@/validators/rewards";
 import { userDeltaResponseSchema } from "@/validators/userCache";
 
 export const activityStreakRouter = createTRPCRouter({
@@ -50,32 +77,9 @@ export const activityStreakRouter = createTRPCRouter({
     .query(async ({ ctx }) => {
       // Get user's progress entries and active RECURRING config in parallel
       const [progressEntries, activeRecurring, completionLogs] = await Promise.all([
-        ctx.drizzle.query.userStreakProgress.findMany({
-          where: eq(userStreakProgress.userId, ctx.userId),
-          with: {
-            config: {
-              with: {
-                rewards: true,
-              },
-            },
-          },
-        }),
-        ctx.drizzle.query.activityStreakConfig.findFirst({
-          where: and(
-            eq(activityStreakConfig.streakType, "RECURRING"),
-            eq(activityStreakConfig.isActive, true),
-          ),
-          with: {
-            rewards: true,
-          },
-        }),
-        ctx.drizzle.query.actionLog.findMany({
-          where: and(
-            eq(actionLog.userId, ctx.userId),
-            eq(actionLog.tableName, "activityStreak"),
-          ),
-          columns: { relatedId: true, changes: true, createdAt: true },
-        }),
+        listUserStreakProgressForGetUserStreaks(ctx.drizzle, ctx),
+        findActivityStreakConfigForGetUserStreaks(ctx.drizzle),
+        listActionLogForGetUserStreaks(ctx.drizzle, ctx),
       ]);
 
       const now = new Date();
@@ -199,26 +203,9 @@ export const activityStreakRouter = createTRPCRouter({
       // Historical completion logs cover passes completed before progress rows
       // became permanent purchase records.
       const [eventPasses, userProgress, completionLogs] = await Promise.all([
-        ctx.drizzle.query.activityStreakConfig.findMany({
-          where: and(
-            eq(activityStreakConfig.streakType, "EVENT_PASS"),
-            eq(activityStreakConfig.isActive, true),
-          ),
-          with: {
-            rewards: true,
-          },
-        }),
-        ctx.drizzle.query.userStreakProgress.findMany({
-          where: eq(userStreakProgress.userId, ctx.userId),
-          columns: { configId: true },
-        }),
-        ctx.drizzle.query.actionLog.findMany({
-          where: and(
-            eq(actionLog.userId, ctx.userId),
-            eq(actionLog.tableName, "activityStreak"),
-          ),
-          columns: { relatedId: true, changes: true },
-        }),
+        listActivityStreakConfigForGetAvailablePasses(ctx.drizzle),
+        listUserStreakProgressForGetAvailablePasses(ctx.drizzle, ctx),
+        listActionLogForGetAvailablePasses(ctx.drizzle, ctx),
       ]);
 
       const purchasedConfigIds = new Set(userProgress.map((p) => p.configId));
@@ -265,23 +252,9 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch purchase requirements and both current and historical ownership in parallel.
       const [user, config, existingProgress, completionLogs] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.activityStreakConfig.findFirst({
-          where: eq(activityStreakConfig.id, input.configId),
-        }),
-        ctx.drizzle.query.userStreakProgress.findFirst({
-          where: and(
-            eq(userStreakProgress.userId, ctx.userId),
-            eq(userStreakProgress.configId, input.configId),
-          ),
-        }),
-        ctx.drizzle.query.actionLog.findMany({
-          where: and(
-            eq(actionLog.userId, ctx.userId),
-            eq(actionLog.relatedId, input.configId),
-            eq(actionLog.tableName, "activityStreak"),
-          ),
-          columns: { changes: true },
-        }),
+        findActivityStreakConfigById(ctx.drizzle, input.configId),
+        findUserStreakProgress(ctx.drizzle, ctx.userId, input.configId),
+        listActionLogForPurchaseEventPass(ctx.drizzle, ctx, input),
       ]);
 
       // Guard: config exists
@@ -331,21 +304,11 @@ export const activityStreakRouter = createTRPCRouter({
       }
 
       // Deduct currency atomically using DB-side arithmetic to prevent lost updates
-      const updateResult = await ctx.drizzle
-        .update(userData)
-        .set({
-          money: sql`${userData.money} - ${config.ryoCost}`,
-          reputationPoints: sql`${userData.reputationPoints} - ${config.repsCost}`,
-          seichiSilver: sql`${userData.seichiSilver} - ${config.seichiSilverCost}`,
-        })
-        .where(
-          and(
-            eq(userData.userId, ctx.userId),
-            gte(userData.money, config.ryoCost),
-            gte(userData.reputationPoints, config.repsCost),
-            gte(userData.seichiSilver, config.seichiSilverCost),
-          ),
-        );
+      const updateResult = await updateUserDataForPurchaseEventPass(
+        ctx.drizzle,
+        config,
+        ctx,
+      );
 
       if (updateResult.rowsAffected === 0) {
         return errorResponse("Not enough currency to purchase this event pass");
@@ -354,27 +317,14 @@ export const activityStreakRouter = createTRPCRouter({
       // Create progress entry. A concurrent purchase may have won the unique-index
       // race after the currency was deducted, so refund rather than charging for a
       // pass this caller never received.
-      const insertResult = await ctx.drizzle
-        .insert(userStreakProgress)
-        .values({
-          id: nanoid(),
-          userId: ctx.userId,
-          configId: config.id,
-          currentDay: 0,
-          lastClaimDate: null,
-          startedAt: new Date(),
-        })
-        .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+      const insertResult = await insertUserStreakProgressForPurchaseEventPass(
+        ctx.drizzle,
+        ctx,
+        config,
+      );
 
       if (insertResult.rowsAffected === 0) {
-        await ctx.drizzle
-          .update(userData)
-          .set({
-            money: sql`${userData.money} + ${config.ryoCost}`,
-            reputationPoints: sql`${userData.reputationPoints} + ${config.repsCost}`,
-            seichiSilver: sql`${userData.seichiSilver} + ${config.seichiSilverCost}`,
-          })
-          .where(eq(userData.userId, ctx.userId));
+        await updateUserDataForPurchaseEventPass2(ctx.drizzle, config, ctx);
         return errorResponse("You have already purchased this event pass");
       }
 
@@ -410,24 +360,9 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch user, config, and progress in parallel
       const [user, config, existingProgress, completionLogs] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.activityStreakConfig.findFirst({
-          where: eq(activityStreakConfig.id, input.configId),
-          with: { rewards: true },
-        }),
-        ctx.drizzle.query.userStreakProgress.findFirst({
-          where: and(
-            eq(userStreakProgress.userId, ctx.userId),
-            eq(userStreakProgress.configId, input.configId),
-          ),
-        }),
-        ctx.drizzle.query.actionLog.findMany({
-          where: and(
-            eq(actionLog.userId, ctx.userId),
-            eq(actionLog.relatedId, input.configId),
-            eq(actionLog.tableName, "activityStreak"),
-          ),
-          columns: { changes: true, createdAt: true },
-        }),
+        findActivityStreakConfigForClaimStreakDay(ctx.drizzle, input),
+        findUserStreakProgress(ctx.drizzle, ctx.userId, input.configId),
+        listActionLogForClaimStreakDay(ctx.drizzle, ctx, input),
       ]);
 
       // Guard: config exists
@@ -473,16 +408,11 @@ export const activityStreakRouter = createTRPCRouter({
           startedAt: now,
         };
         try {
-          await ctx.drizzle.insert(userStreakProgress).values(createdProgress);
+          await insertUserStreakProgressForClaimStreakDay(ctx.drizzle, createdProgress);
           progress = createdProgress;
         } catch (error) {
           if (!isMysqlDuplicateKeyError(error)) throw error;
-          progress = await ctx.drizzle.query.userStreakProgress.findFirst({
-            where: and(
-              eq(userStreakProgress.userId, ctx.userId),
-              eq(userStreakProgress.configId, config.id),
-            ),
-          });
+          progress = await findUserStreakProgress(ctx.drizzle, ctx.userId, config.id);
         }
       }
 
@@ -593,27 +523,15 @@ export const activityStreakRouter = createTRPCRouter({
       // Optimistic concurrency guard: Update progress with lastClaimDate check to prevent double-claims
       // IMPORTANT: This must happen BEFORE the reputation deduction to prevent losing rep
       // without claiming the streak day in case of concurrent requests
-      const progressUpdateResult = await ctx.drizzle
-        .update(userStreakProgress)
-        .set({
-          currentDay: newCurrentDay,
-          lastClaimDate: now,
-          // A recurring cycle starts with its first claim, not the previous
-          // cycle's completion; otherwise day one immediately appears behind.
-          ...((streakReset ||
-            normalizedCompletion ||
-            (config.streakType === "RECURRING" && progress.currentDay === 0)) && {
-            startedAt: now,
-          }),
-        })
-        .where(
-          and(
-            eq(userStreakProgress.id, progress.id),
-            progress.lastClaimDate === null
-              ? isNull(userStreakProgress.lastClaimDate)
-              : eq(userStreakProgress.lastClaimDate, progress.lastClaimDate),
-          ),
-        );
+      const progressUpdateResult = await updateUserStreakProgressForClaimStreakDay(
+        ctx.drizzle,
+        newCurrentDay,
+        now,
+        streakReset,
+        normalizedCompletion,
+        config,
+        progress,
+      );
 
       if (progressUpdateResult.rowsAffected === 0) {
         return errorResponse("You have already claimed this streak today");
@@ -621,28 +539,15 @@ export const activityStreakRouter = createTRPCRouter({
 
       // If paying for catchup, deduct reputation points after successful progress update
       if (paidCatchUp) {
-        const repUpdateResult = await ctx.drizzle
-          .update(userData)
-          .set({
-            reputationPoints: sql`${userData.reputationPoints} - ${COST_STREAK_CATCHUP_DAY}`,
-          })
-          .where(
-            and(
-              eq(userData.userId, ctx.userId),
-              gte(userData.reputationPoints, COST_STREAK_CATCHUP_DAY),
-            ),
-          );
+        const repUpdateResult = await updateUserDataForClaimStreakDay(ctx.drizzle, ctx);
 
         if (repUpdateResult.rowsAffected === 0) {
           // Rollback the progress update since we couldn't deduct reputation
-          await ctx.drizzle
-            .update(userStreakProgress)
-            .set({
-              currentDay: progress.currentDay,
-              lastClaimDate: progress.lastClaimDate,
-              ...(streakReset && { startedAt: progress.startedAt }),
-            })
-            .where(eq(userStreakProgress.id, progress.id));
+          await updateUserStreakProgressForClaimStreakDay2(
+            ctx.drizzle,
+            progress,
+            streakReset,
+          );
           return errorResponse("Not enough reputation points");
         }
       }
@@ -661,26 +566,13 @@ export const activityStreakRouter = createTRPCRouter({
 
       if (isComplete) {
         // Streak complete - log to actionLog
-        updatePromises.push(
-          ctx.drizzle.insert(actionLog).values({
-            id: nanoid(),
-            userId: ctx.userId,
-            tableName: "activityStreak",
-            changes: [`Completed ${config.name} (${config.streakType})`],
-            relatedId: config.id,
-            relatedMsg: `Streak completed: ${config.name}`,
-            relatedImage: config.image,
-          }),
-        );
+        updatePromises.push(insertActionLogForClaimStreakDay(ctx.drizzle, ctx, config));
 
         // EVENT_PASS progress stays on its final day as the permanent purchase record.
         if (config.streakType === "RECURRING") {
           // RECURRING: reset progress but preserve lastClaimDate to prevent same-day re-claim
           updatePromises.push(
-            ctx.drizzle
-              .update(userStreakProgress)
-              .set({ currentDay: 0, startedAt: now })
-              .where(eq(userStreakProgress.id, progress.id)),
+            updateUserStreakProgressForClaimStreakDay3(ctx.drizzle, now, progress),
           );
         }
       }
@@ -729,26 +621,16 @@ export const activityStreakRouter = createTRPCRouter({
         ? eq(activityStreakConfig.streakType, input.streakType)
         : undefined;
 
-      const configs = await ctx.drizzle.query.activityStreakConfig.findMany({
-        where: whereClause,
-        orderBy: [desc(activityStreakConfig.createdAt)],
-        with: {
-          rewards: true,
-        },
-      });
+      const configs = await listActivityStreakConfigForGetConfigs(
+        ctx.drizzle,
+        whereClause,
+      );
       return configs;
     }),
 
   // Get single config with rewards
   getConfig: protectedProcedure.input(idSchema).query(async ({ ctx, input }) => {
-    const config = await ctx.drizzle.query.activityStreakConfig.findFirst({
-      where: eq(activityStreakConfig.id, input.id),
-      with: {
-        rewards: {
-          orderBy: [activityStreakReward.dayNumber],
-        },
-      },
-    });
+    const config = await findActivityStreakConfigForGetConfig(ctx.drizzle, input);
     return config;
   }),
 
@@ -773,21 +655,12 @@ export const activityStreakRouter = createTRPCRouter({
       if (titleError) return errorResponse(titleError);
       // Create config first (insert before deactivation to prevent race condition)
       const configId = nanoid();
-      await ctx.drizzle.insert(activityStreakConfig).values({
-        id: configId,
-        name: input.name,
-        description: input.description ?? null,
-        image: input.image ?? null,
-        totalDays: input.totalDays,
-        streakType: input.streakType,
-        isActive: input.isActive,
-        ryoCost: input.ryoCost,
-        repsCost: input.repsCost,
-        seichiSilverCost: input.seichiSilverCost,
-        startDate: input.startDate ?? null,
-        endDate: input.endDate ?? null,
-        createdByUserId: ctx.userId,
-      });
+      await insertActivityStreakConfigForCreateConfig(
+        ctx.drizzle,
+        configId,
+        input,
+        ctx,
+      );
 
       // Create rewards for each day
       if (input.rewards.length > 0) {
@@ -805,9 +678,7 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch user and existing config
       const [user, existingConfig, titleError] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.activityStreakConfig.findFirst({
-          where: eq(activityStreakConfig.id, input.id),
-        }),
+        findActivityStreakConfigById(ctx.drizzle, input.id),
         validateTitleRewardIds(ctx.drizzle, input),
       ]);
 
@@ -826,26 +697,8 @@ export const activityStreakRouter = createTRPCRouter({
       if (titleError) return errorResponse(titleError);
       // Update config and delete existing rewards in parallel
       await Promise.all([
-        ctx.drizzle
-          .update(activityStreakConfig)
-          .set({
-            name: input.name,
-            description: input.description ?? null,
-            image: input.image ?? null,
-            totalDays: input.totalDays,
-            streakType: input.streakType,
-            isActive: input.isActive,
-            ryoCost: input.ryoCost,
-            repsCost: input.repsCost,
-            seichiSilverCost: input.seichiSilverCost,
-            startDate: input.startDate ?? null,
-            endDate: input.endDate ?? null,
-            updatedAt: new Date(),
-          })
-          .where(eq(activityStreakConfig.id, input.id)),
-        ctx.drizzle
-          .delete(activityStreakReward)
-          .where(eq(activityStreakReward.configId, input.id)),
+        updateActivityStreakConfigForUpdateConfig(ctx.drizzle, input),
+        deleteActivityStreakRewardForUpdateConfig(ctx.drizzle, input),
       ]);
 
       // Recreate rewards
@@ -873,16 +726,10 @@ export const activityStreakRouter = createTRPCRouter({
 
       // Delete rewards and progress first, then config
       await Promise.all([
-        ctx.drizzle
-          .delete(activityStreakReward)
-          .where(eq(activityStreakReward.configId, input.id)),
-        ctx.drizzle
-          .delete(userStreakProgress)
-          .where(eq(userStreakProgress.configId, input.id)),
+        deleteActivityStreakRewardForUpdateConfig(ctx.drizzle, input),
+        deleteUserStreakProgressForDeleteConfig(ctx.drizzle, input),
       ]);
-      await ctx.drizzle
-        .delete(activityStreakConfig)
-        .where(eq(activityStreakConfig.id, input.id));
+      await deleteActivityStreakConfigForDeleteConfig(ctx.drizzle, input);
 
       return { success: true, message: "Configuration deleted successfully" };
     }),
@@ -895,9 +742,7 @@ export const activityStreakRouter = createTRPCRouter({
       // Fetch user and config
       const [user, config] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
-        ctx.drizzle.query.activityStreakConfig.findFirst({
-          where: eq(activityStreakConfig.id, input.id),
-        }),
+        findActivityStreakConfigById(ctx.drizzle, input.id),
       ]);
 
       // Guard: permission check
@@ -914,16 +759,13 @@ export const activityStreakRouter = createTRPCRouter({
       // If activating a RECURRING config, deactivate ALL RECURRING configs first
       // to ensure only one can be active (reduces race condition window)
       if (!config.isActive && config.streakType === "RECURRING") {
-        await ctx.drizzle
-          .update(activityStreakConfig)
-          .set({ isActive: false, updatedAt: new Date() })
-          .where(eq(activityStreakConfig.streakType, "RECURRING"));
+        await updateActivityStreakConfigForToggleConfigActive(ctx.drizzle);
 
         // Activate only this config with guard to ensure it exists
-        const result = await ctx.drizzle
-          .update(activityStreakConfig)
-          .set({ isActive: true, updatedAt: new Date() })
-          .where(eq(activityStreakConfig.id, input.id));
+        const result = await updateActivityStreakConfigForToggleConfigActive2(
+          ctx.drizzle,
+          input,
+        );
 
         if (result.rowsAffected === 0) {
           return errorResponse("Failed to activate configuration");
@@ -936,10 +778,11 @@ export const activityStreakRouter = createTRPCRouter({
       }
 
       // For deactivation or non-RECURRING types, just toggle
-      await ctx.drizzle
-        .update(activityStreakConfig)
-        .set({ isActive: !config.isActive, updatedAt: new Date() })
-        .where(eq(activityStreakConfig.id, input.id));
+      await updateActivityStreakConfigForToggleConfigActive3(
+        ctx.drizzle,
+        config,
+        input,
+      );
 
       return {
         success: true,
@@ -949,22 +792,3 @@ export const activityStreakRouter = createTRPCRouter({
 });
 
 // Helper function to create rewards for a config
-const createRewardsForConfig = async (
-  client: DrizzleClient,
-  configId: string,
-  rewards: Array<{
-    dayNumber: number;
-    rewards: ObjectiveRewardType;
-    image?: string | null;
-  }>,
-) => {
-  await client.insert(activityStreakReward).values(
-    rewards.map((reward) => ({
-      id: nanoid(),
-      configId,
-      dayNumber: reward.dayNumber,
-      rewards: reward.rewards,
-      image: reward.image ?? null,
-    })),
-  );
-};
