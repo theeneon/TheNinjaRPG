@@ -816,21 +816,19 @@ export const forumRouter = createTRPCRouter({
                 })),
               );
           } else {
+            const postIds = selected.map((p) => p.id);
             const moved = await q.updateForumPosts(
               tx,
-              selected.map((p) => p.id),
+              postIds,
               { threadId: id },
               source.id,
             );
             if (moved.rowsAffected !== selected.length)
               throw new Error("Post membership changed during restructuring");
+            await q.moveForumAlerts(tx, postIds, id);
             // A source topic's resume link must not follow a post into its split destination.
             if (input.action === "SPLIT")
-              await q.clearSplitForumReads(
-                tx,
-                source.id,
-                selected.map((p) => p.id),
-              );
+              await q.clearSplitForumReads(tx, source.id, postIds);
             if (input.action === "MERGE") {
               const first = selected.find((p) => !p.deletedAt && p.isApproved);
               if (first) {
@@ -1548,16 +1546,15 @@ async function moderateForumThreads(
       }
       const currentRows = [];
       for (const thread of [...selected].sort((a, b) => a.id.localeCompare(b.id))) {
-        const [current] = await q.lockForumThread(tx, thread.id);
-        if (!current || current.boardId !== thread.boardId)
-          return errorResponse("Topic moved. Refresh before moderating it.");
-        if (
+        const [current] = await q.lockForumThread(
+          tx,
+          thread.id,
           input.action === "APPROVE" &&
-          current.deletedAt &&
-          !context.boards.find((b) => b.id === current.boardId)?.permissions.moderate
-        )
+            !context.boards.find((b) => b.id === thread.boardId)?.permissions.moderate,
+        );
+        if (!current || current.boardId !== thread.boardId)
           return errorResponse(
-            "A selected topic is no longer available for approval. Refresh the review queue.",
+            "A selected topic moved or is no longer available. Refresh before moderating it.",
           );
         currentRows.push(current);
       }

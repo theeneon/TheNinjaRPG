@@ -12,6 +12,7 @@ import {
   isNull,
   like,
   ne,
+  notExists,
   notInArray,
   or,
   type SQL,
@@ -374,8 +375,32 @@ export const claimForumPublications = (
       ),
     );
 /** Existing parent rows serialize posting with lock/archive/slow-mode changes; no missing-row locks. */
-export const lockForumThread = (db: Client, id: string) =>
-  db.select().from(forumThread).where(eq(forumThread.id, id)).for("update");
+export const lockForumThread = (db: Client, id: string, approvalOnly = false) =>
+  db
+    .select()
+    .from(forumThread)
+    .where(
+      and(
+        eq(forumThread.id, id),
+        approvalOnly ? isNull(forumThread.deletedAt) : undefined,
+        approvalOnly
+          ? notExists(
+              db
+                .select({ id: forumPost.id })
+                .from(forumPost)
+                .where(
+                  and(
+                    eq(forumPost.threadId, id),
+                    isNotNull(forumPost.deletedAt),
+                    sql`JSON_UNQUOTE(JSON_EXTRACT(${forumPost.publicationIntent}, '$.threadId')) = ${id}`,
+                    sql`JSON_EXTRACT(${forumPost.publicationIntent}, '$.opening') = true`,
+                  ),
+                ),
+            )
+          : undefined,
+      ),
+    )
+    .for("update");
 export const lockForumBoard = (db: Client, id: string) =>
   db
     .select({
@@ -572,6 +597,8 @@ export const insertForumAlerts = (
     .insert(forumAlert)
     .values(values)
     .onDuplicateKeyUpdate({ set: { postId: sql`${forumAlert.postId}` } });
+export const moveForumAlerts = (db: Client, postIds: string[], threadId: string) =>
+  db.update(forumAlert).set({ threadId }).where(inArray(forumAlert.postId, postIds));
 export const listForumAlerts = (db: Client, id: string) =>
   db
     .select({

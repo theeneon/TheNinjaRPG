@@ -148,6 +148,37 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await api.restructureTopic({ threadId: id, action: "MERGE", targetThreadId: copy.threadId, reason: "Merge duplicate guide", postIds: [] })).success).toBe(true);
     expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }))?.deletedAt).toBeInstanceOf(Date);
   });
+  it.each(["SPLIT", "MERGE"] as const)("keeps existing alerts and read state with their posts after %s", async (action) => {
+    const db = await getTestDatabase(); const source = await create(); const target = await create("other");
+    const reader = await client(moderatorId); const admin = await client(adminId); const author = await comments();
+    await reader.watch({ scope: "THREAD", scopeId: source, active: true, push: false });
+    await author.createForumComment(commentInput(source));
+    const first = (await reader.alerts())[0]!; await reader.markRead({ postId: first.postId });
+    await author.createForumComment(commentInput(source, "A second useful answer for the reader."));
+    const before = await db.query.forumAlert.findMany(); const postIds = before.map(a => a.postId);
+    expect(before.filter(a => a.readAt)).toHaveLength(1);
+    expect((await admin.restructureTopic({ threadId: source, action: "COPY", boardId: "other", title: "Copied answers", reason: "Share the useful answers", postIds: [] })).success).toBe(true);
+    expect(await db.query.forumAlert.findMany()).toEqual(before);
+    const moved = await admin.restructureTopic({ threadId: source, action, boardId: "other", targetThreadId: target, title: "Related answers", reason: "Group related answers", postIds });
+    expect(moved.success).toBe(true); const threadId = moved.threadId; if (!threadId) throw new Error("Expected a destination topic");
+    expect(await db.query.forumAlert.findMany()).toEqual(before.map(a => ({ ...a, threadId })));
+    expect(await reader.alerts()).toHaveLength(2);
+    for (const alert of await reader.alerts()) {
+      expect(alert).toMatchObject({ threadId, boardId: "other" });
+      expect((await reader.resolvePost({ postId: alert.postId }))?.threadId).toBe(threadId);
+    }
+    await db.update(forumBoard).set({ sectionId: "private" }).where(eq(forumBoard.id, "other"));
+    expect(await reader.alerts()).toEqual([]);
+    await db.update(forumBoard).set({ sectionId: "public" }).where(eq(forumBoard.id, "other"));
+    const unread = (await reader.alerts()).find(a => !a.readAt)!;
+    expect((await reader.markRead({ postId: unread.postId })).success).toBe(true);
+    expect((await reader.alerts()).every(a => a.readAt instanceof Date)).toBe(true);
+    expect((await db.query.forumAlert.findFirst({ where: eq(forumAlert.id, first.id) }))?.readAt).toEqual(before.find(a => a.id === first.id)!.readAt);
+    await admin.moderatePost({ postId: unread.postId, action: "REMOVE", reason: "Retain this answer for review" });
+    expect(await reader.alerts()).toHaveLength(1);
+    await admin.moderatePost({ postId: unread.postId, action: "RESTORE", reason: "Restore this reviewed answer" });
+    expect(await reader.alerts()).toHaveLength(2);
+  });
   it.each([1000, 2500, 3000, 4000])("keeps merged contributions discoverable at timestamp %d", async (sourceTime) => {
     const db = await getTestDatabase(); const source = await create(); const target = await create(); const other = await create("other");
     const sourcePost = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, source) }))[0]!;
@@ -542,12 +573,17 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await db.query.forumPost.findFirst())?.isApproved).toBe(true);
     expect((await db.query.forumAudit.findMany()).some(a => a.action === (target === "topic" ? "topic.approve" : "post.approve"))).toBe(true);
   });
-  it.each([false, true])("rejects an entire approval batch containing a removed topic, removed first %s", async (removedFirst) => {
-    const db = await getTestDatabase(); const live = await create(); const removed = await create();
+  it.each([["topic", false], ["topic", true], ["opening", false], ["opening", true]] as const)("rejects an entire approval batch containing a removed %s, removed first %s", async (target, removedFirst) => {
+    const db = await getTestDatabase();
+    await db.update(forumBoard).set({ requireApproval: true }).where(eq(forumBoard.id, "general"));
+    const author = await client();
+    for (let i = 0; i < 2; i++) expect((await author.createThread(topicInput())).success).toBe(true);
+    const pending = await db.query.forumThread.findMany(); const live = pending[0]!.id; const removed = pending[1]!.id;
     await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
-    await db.update(forumThread).set({ isApproved: false }); await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: live, opening: true } }).where(eq(forumPost.threadId, live)); await db.update(forumPost).set({ isApproved: false, publicationIntent: { threadId: removed, opening: true } }).where(eq(forumPost.threadId, removed));
     const admin = await client(adminId); const approver = await client(moderatorId);
-    await admin.moderateThreads({ ids: [removed], action: "REMOVE", reason: "Decline the second pending topic" });
+    const opening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, removed) }))[0]!;
+    if (target === "topic") await admin.moderateThreads({ ids: [removed], action: "REMOVE", reason: "Decline the second pending topic" });
+    else await admin.moderatePost({ postId: opening.id, action: "REMOVE", reason: "Decline the second pending opening" });
     const snapshot = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumBoard.findMany(), db.query.forumAudit.findMany(), db.query.forumAlert.findMany()]);
     const before = await snapshot();
     const result = await approver.moderateThreads({ ids: removedFirst ? [removed, live] : [live, removed], action: "APPROVE", reason: "Review selected pending topics" });
@@ -556,6 +592,24 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await approver.moderateThreads({ ids: [live], action: "APPROVE", reason: "Publish the available topic" })).success).toBe(true);
     expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, live) }))?.isApproved).toBe(true);
     expect((await admin.moderateThreads({ ids: [removed], action: "APPROVE", reason: "Review retained moderator evidence" })).success).toBe(true);
+  });
+  it.each([false, true])("checks the originating opening after an older removed opening is merged, own removed %s", async (removed) => {
+    const db = await getTestDatabase(); const admin = await client(adminId); const approver = await client(moderatorId);
+    await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
+    await db.update(forumBoard).set({ requireApproval: true }).where(eq(forumBoard.id, "general"));
+    const author = await client();
+    for (let i = 0; i < 2; i++) expect((await author.createThread(topicInput())).success).toBe(true);
+    const pending = await db.query.forumThread.findMany(); const source = pending[0]!.id; const target = pending[1]!.id;
+    const sourceOpening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, source) }))[0]!;
+    const targetOpening = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, target) }))[0]!;
+    await db.update(forumPost).set({ createdAt: new Date(1000) }).where(eq(forumPost.id, sourceOpening.id));
+    await admin.moderatePost({ postId: sourceOpening.id, action: "REMOVE", reason: "Retain the foreign opening" });
+    if (removed) await admin.moderatePost({ postId: targetOpening.id, action: "REMOVE", reason: "Retain the originating opening" });
+    await admin.moderateThreads({ ids: [source, target], action: "APPROVE", reason: "Moderators may approve retained openings" });
+    expect((await admin.restructureTopic({ threadId: source, action: "MERGE", targetThreadId: target, reason: "Combine related retained discussions", postIds: [] })).success).toBe(true);
+    const result = await approver.moderateThreads({ ids: [target], action: "APPROVE", reason: "Review the originating discussion" });
+    expect(result.success).toBe(!removed);
+    expect((await approver.moderateThreads({ ids: [target], action: "APPROVE", reason: "Repeat the same review" })).success).toBe(!removed);
   });
   it.each([false, true])("rewinds only readers past a newly approved reply, including timestamp ties (%s)", async (sameTime) => {
     const db = await getTestDatabase(); const id = await create(); const other = await create("other");
