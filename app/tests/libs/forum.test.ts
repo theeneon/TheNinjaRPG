@@ -1,12 +1,12 @@
 import { beforeEach, expect, it } from "bun:test";
-import { forumSection, forumBoard, forumPost, forumThread, userData } from "@/drizzle/schema";
-import { fetchForumPageData, getInfiniteThreads } from "@/libs/forum";
+import { forumSection, forumBoard, forumPost, forumRead, forumThread, userData } from "@/drizzle/schema";
+import { fetchForumPageData, getForumContext, getInfiniteThreads } from "@/libs/forum";
 import { insertUsers } from "../setup/factories";
 import { describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../setup/testDatabase";
 
 describeWithDatabase("forum page snapshots", () => {
   beforeEach(async () => {
-    await resetTables(forumPost, forumThread, forumBoard, forumSection, userData);
+    await resetTables(forumRead, forumPost, forumThread, forumBoard, forumSection, userData);
     const db = await getTestDatabase();
     await insertUsers([{ userId: "author", username: "Author", role: "CODER", unreadNews: 3 }]);
     await db.insert(forumSection).values({ id: "public", name: "Public", summary: "", policy: {} });
@@ -38,5 +38,25 @@ describeWithDatabase("forum page snapshots", () => {
     expect(measured.statements.length).toBeLessThanOrEqual(5);
     expect((await fetchForumPageData(client, "News", null)).canPost).toBeNull();
     expect((await fetchForumPageData(client, "News", "unregistered")).userData).toBeNull();
+  });
+
+  it("loads only the current reader's listed topic positions in one statement", async () => {
+    const client = await getTestDatabase();
+    await client.insert(forumRead).values([
+      { userId: "author", threadId: "new", readAt: new Date(2000), postId: "new-last" },
+      { userId: "author", threadId: "history", readAt: new Date(), postId: "unrelated-last" },
+      { userId: "another-reader", threadId: "old", readAt: new Date(), postId: "someone-elses-position" },
+    ]);
+    const context = await getForumContext(client, "author");
+    const measured = await recordQueries(() => getInfiniteThreads({ client, context, boardId: "news", limit: 1 }));
+    expect(measured.statements).toHaveLength(1);
+    expect(measured.result.threads[0]?.resumePostId).toBe("new-last");
+    expect(measured.result.threads[0]?.unread).toBe(false);
+    expect(measured.result.threads[0]).not.toHaveProperty("readPositions");
+    const older = await getInfiniteThreads({ client, context, boardId: "news", cursor: 1, limit: 1 });
+    expect(older.threads[0]?.resumePostId).toBeNull();
+    expect(older.threads[0]?.unread).toBe(true);
+    const guest = await getInfiniteThreads({ client, boardId: "news", limit: 1 });
+    expect(guest.threads[0]?.resumePostId).toBeNull();
   });
 });

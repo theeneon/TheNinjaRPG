@@ -1414,6 +1414,7 @@ export const forumThreadRelations = relations(forumThread, ({ one, many }) => ({
   user: one(userData, { fields: [forumThread.userId], references: [userData.userId] }),
   board: one(forumBoard, { fields: [forumThread.boardId], references: [forumBoard.id] }),
   posts: many(forumPost),
+  readPositions: many(forumRead),
 }));
 export const forumGrant = mysqlTable("ForumGrant", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
@@ -1436,6 +1437,9 @@ export const forumRead = mysqlTable("ForumRead", {
   readAt: datetime("readAt", { mode: "date", fsp: 3 }).notNull(),
   postId: varchar("postId", { length: 191 }).notNull(),
 }, t => ({ pk: primaryKey({ columns: [t.userId, t.threadId] }) }));
+export const forumReadRelations = relations(forumRead, ({ one }) => ({
+  thread: one(forumThread, { fields: [forumRead.threadId], references: [forumThread.id] }),
+}));
 export const forumWatch = mysqlTable("ForumWatch", {
   userId: varchar("userId", { length: 191 }).notNull(),
   scope: mysqlEnum("scope", ["BOARD", "THREAD"]).notNull(),

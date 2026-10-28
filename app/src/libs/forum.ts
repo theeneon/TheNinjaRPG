@@ -130,26 +130,23 @@ export const getInfiniteThreads = async (props: {
     (["mine", "unread", "watched"].includes(props.view ?? "") && !context.actor)
   )
     return { board: board ?? null, threads: [], nextCursor: null };
-  const [threads, reads] = await Promise.all([
-    listForumThreads(props.client, {
-      boards: allowed.map((b) => b.id),
-      offset: (props.cursor ?? 0) * props.limit,
-      limit: props.limit + 1,
-      query: props.query,
-      author: props.author,
-      since: props.since,
-      until: props.until,
-      tag: props.tag,
-      view: props.view,
-      userId: context.actor?.userId,
-      pinned: props.highlightPinned,
-    }),
-    context.actor ? listForumReads(props.client, context.actor.userId) : [],
-  ]);
+  const threads = await listForumThreads(props.client, {
+    boards: allowed.map((b) => b.id),
+    offset: (props.cursor ?? 0) * props.limit,
+    limit: props.limit + 1,
+    query: props.query,
+    author: props.author,
+    since: props.since,
+    until: props.until,
+    tag: props.tag,
+    view: props.view,
+    userId: context.actor?.userId,
+    pinned: props.highlightPinned,
+  });
   return {
     board: board ?? null,
-    threads: threads.slice(0, props.limit).map((thread) => {
-      const read = reads.find((r) => r.threadId === thread.id);
+    threads: threads.slice(0, props.limit).map(({ readPositions, ...thread }) => {
+      const read = readPositions[0];
       return {
         ...thread,
         boardName: allowed.find((b) => b.id === thread.boardId)?.name ?? "Forum",

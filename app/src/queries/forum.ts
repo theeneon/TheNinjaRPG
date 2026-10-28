@@ -216,6 +216,11 @@ export const listForumThreads = (
     limit: input.limit,
     with: {
       user: { columns: { username: true } },
+      readPositions: {
+        where: input.userId ? eq(forumRead.userId, input.userId) : sql`false`,
+        columns: { readAt: true, postId: true },
+        limit: 1,
+      },
       posts: {
         where: and(isNull(forumPost.deletedAt), eq(forumPost.isApproved, true)),
         orderBy: [asc(forumPost.createdAt), asc(forumPost.id)],
