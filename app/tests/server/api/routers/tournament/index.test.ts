@@ -4,18 +4,6 @@ import { tournament, tournamentMatch, tournamentRecord } from "@/drizzle/schema"
 import { resetServerModuleStubs, stubProfile } from "../../../../setup/serverModules";
 import { syncTournamentState } from "@/routers/tournament";
 
-type TournamentTestGlobals = {
-  pusherTrigger: ReturnType<typeof vi.fn>;
-  fetchUserMock: ReturnType<typeof vi.fn>;
-  updateRewardsMock: ReturnType<typeof vi.fn>;
-};
-
-const suiteMocks: TournamentTestGlobals = {
-  pusherTrigger: vi.fn(),
-  fetchUserMock: vi.fn(),
-  updateRewardsMock: vi.fn(),
-};
-
 const FINALIZATION_INCOMPLETE =
   "Tournament finalization incomplete. Staff recovery required.";
 
@@ -118,30 +106,25 @@ const createClient = ({
 };
 
 describe("syncTournamentState", () => {
-  afterEach(resetServerModuleStubs);
+  const pusherTrigger = vi.fn();
+  const fetchUserMock = vi.fn();
+  const updateRewardsMock = vi.fn();
 
-  let pusherTrigger: ReturnType<typeof vi.fn>;
-  let fetchUserMock: ReturnType<typeof vi.fn>;
-  let updateRewardsMock: ReturnType<typeof vi.fn>;
-  let rewardWinner: typeof import("@/routers/quests").updateRewards;
+  afterEach(() => {
+    resetServerModuleStubs();
+    vi.restoreAllMocks();
+  });
 
   /** Runs synchronization with the isolated reward writer configured by each test. */
   const syncTournament = (client: unknown) =>
-    syncTournamentState(client as never, "tournament-1", rewardWinner);
+    syncTournamentState(client as never, "tournament-1", updateRewardsMock);
 
   beforeEach(() => {
-    const mocks = suiteMocks;
-    mocks.pusherTrigger.mockClear();
-    mocks.fetchUserMock.mockClear();
-    mocks.updateRewardsMock.mockClear();
-    pusherTrigger = mocks.pusherTrigger;
-    fetchUserMock = mocks.fetchUserMock;
-    updateRewardsMock = mocks.updateRewardsMock;
-    rewardWinner = updateRewardsMock as unknown as typeof rewardWinner;
-
-    stubProfile("fetchUser", (...args: never[]) =>
-      (fetchUserMock as unknown as (...a: never[]) => unknown)(...args),
-    );
+    pusherTrigger.mockClear();
+    fetchUserMock.mockClear();
+    updateRewardsMock.mockClear();
+    vi.spyOn(Pusher.prototype, "trigger").mockImplementation(pusherTrigger);
+    stubProfile("fetchUser", fetchUserMock);
     fetchUserMock.mockResolvedValue({
       userId: "winner-1",
       username: "Winner",
@@ -274,11 +257,3 @@ describe("syncTournamentState", () => {
     expect(client.delete).toHaveBeenCalledWith(tournament);
   });
 });
-
-// Notification transport belongs to the current test, including nested suites.
-beforeEach(() => {
-  vi.spyOn(Pusher.prototype, "trigger").mockImplementation(
-    suiteMocks.pusherTrigger as never,
-  );
-});
-afterEach(() => vi.restoreAllMocks());
