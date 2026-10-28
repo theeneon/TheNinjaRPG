@@ -64,8 +64,8 @@ export const useAssetEditForm = (asset: GameAsset, refetch: () => Promise<unknow
         try {
           await updateAsset({ id: asset.id, data: newAsset });
         } catch {
-          // Mutation errors are surfaced by the shared tRPC error handler. Keep the
-          // current form values in place so the editor can retry without retyping.
+          // onError provides inline feedback. Retain the current form values so
+          // the editor can retry without retyping.
         }
       }
     },
