@@ -596,12 +596,12 @@ export const activityStreakRouter = createTRPCRouter({
       return {
         success: true,
         message: `Day ${newCurrentDay} claimed! ${resetMsg}${catchUpMsg}${rewardText}${completeMsg}`,
-        userDelta: hasEnergyQueue(user)
-          ? undefined
-          : getRewardUserDelta(
-              processedRewards,
-              paidCatchUp ? COST_STREAK_CATCHUP_DAY : 0,
-            ),
+        // Scalar reward increments leave queued training and its recovery clock alone.
+        // The shared cache revision guard reconciles any concurrently completed queue read.
+        userDelta: getRewardUserDelta(
+          processedRewards,
+          paidCatchUp ? COST_STREAK_CATCHUP_DAY : 0,
+        ),
       };
     }),
 

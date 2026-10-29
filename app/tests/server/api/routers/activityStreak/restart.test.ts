@@ -138,14 +138,16 @@ describeWithDatabase("recurring streak cycle timing", () => {
     expect(second.userDelta).toBeUndefined();
   });
 
-  it("keeps reconciliation for a claim that can advance queued training", async () => {
+  it("returns scalar payouts without advancing queued training", async () => {
     const database = await getTestDatabase();
     await queueEnergy("streak-user", [{ stat: "offence", energy: 10 }]);
+    const queueBefore = await database.query.userQueue.findMany();
     const result = await (
       await callerFor(activityStreakRouter, "streak-user")
     ).claimStreakDay({ configId: "recurring" });
     expect(result.success).toBe(true);
-    expect(result.userDelta).toBeUndefined();
+    expect(result.userDelta?.money).toBe(200);
+    expect(await database.query.userQueue.findMany()).toEqual(queueBefore);
   });
 
   it("applies current defaults to legacy stored rewards before returning a payout delta", async () => {
