@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { createTRPCReact } from "@trpc/react-query";
 import { observable } from "@trpc/server/observable";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
@@ -25,16 +25,21 @@ beforeEach(() => {
   params = new URLSearchParams("view=latest&tag=guide&board=board&author=reader&since=2026-01-01&until=2026-12-31");
   requests = [];
   window.history.replaceState(null, "", `/forum?${params}`);
-  const replace = window.history.replaceState.bind(window.history);
-  vi.spyOn(window.history, "replaceState").mockImplementation((data, unused, url) => {
-    replace(data, unused, url);
-    params = new URLSearchParams(window.location.search);
-  });
+  for (const method of ["replaceState", "pushState"] as const) {
+    const update = window.history[method].bind(window.history);
+    vi.spyOn(window.history, method).mockImplementation((data, unused, url) => {
+      update(data, unused, url);
+      params = new URLSearchParams(window.location.search);
+    });
+  }
   vi.spyOn(navigation, "useSearchParams").mockImplementation(() => params as never);
   Object.assign(vi.spyOn(client, "api" as never), { forum: testApi.forum, useUtils: testApi.useUtils });
   vi.spyOn(UserContext, "useUserData").mockReturnValue({ data: { userId: "reader", role: "USER" } } as never);
   vi.spyOn(ContentBox, "default").mockImplementation(({ children }) => <div>{children}</div>);
-  vi.spyOn(Link, "default").mockImplementation(({ children, href }) => <a href={String(href)}>{children}</a>);
+  vi.spyOn(Link, "default").mockImplementation(({ children, href, onNavigate, prefetch: _prefetch, ...props }) => <a {...props} href={String(href)} onClick={onNavigate ? (event) => {
+    event.preventDefault();
+    onNavigate({ preventDefault: () => event.preventDefault() });
+  } : undefined}>{children}</a>);
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 });
 
@@ -48,7 +53,7 @@ afterEach(() => {
 function renderForum() {
   const trpcClient = testApi.createClient({ links: [() => ({ op }) => observable((observer) => {
     let data: unknown = [];
-    if (op.path === "forum.getAll") data = [{ id: "board", name: "Strategy", permissions: { read: true } }];
+    if (op.path === "forum.getAll") data = [{ id: "board", name: "Strategy", sectionId: "section", section: { name: "Community" }, nThreads: 1, nPosts: 1, permissions: { read: true } }];
     if (op.path === "forum.getContext") data = {};
     if (op.path === "forum.getThreads") {
       const input = op.input as RouterInputs["forum"]["getThreads"];
@@ -61,6 +66,37 @@ function renderForum() {
   const page = () => <testApi.Provider client={trpcClient} queryClient={queryClient}><QueryClientProvider client={queryClient}><Forum /></QueryClientProvider></testApi.Provider>;
   return { ...render(page()), page };
 }
+
+it("switches discussion views in place, preserving controls, filters and distinct history entries", async () => {
+  const view = renderForum();
+  await waitFor(() => expect(requests.length).toBe(1));
+  const search = view.getByRole("textbox", { name: "Search forum" }) as HTMLInputElement;
+  const author = view.getByLabelText("Post author");
+  const tabs = view.getByRole("navigation", { name: "Discussion views" });
+  fireEvent.change(search, { target: { value: "unfinished search" } });
+  const initialHistory = window.history.length;
+  const views = [["unanswered", "Unanswered"], ["unread", "Unread"], ["watched", "Watching"], ["mine", "My discussions"], ["alerts", "Alerts"], ["boards", "Boards"], ["latest", "Latest"]] as const;
+  for (const [index, [key, label]] of views.entries()) {
+    const tab = within(tabs).getByRole("link", { name: label });
+    tab.focus();
+    fireEvent.click(tab);
+    await waitFor(() => expect(tab.getAttribute("aria-current")).toBe("page"));
+    expect(params.get("view")).toBe(key === "boards" ? null : key);
+    expect(window.history.length).toBe(initialHistory + index + 1);
+    expect(document.activeElement).toBe(tab);
+    expect(view.getByRole("textbox", { name: "Search forum" })).toBe(search);
+    expect(search.value).toBe("unfinished search");
+    expect(params.get("board")).toBe("board");
+    expect(params.get("author")).toBe("reader");
+    expect(params.get("tag")).toBe("guide");
+    if (key !== "boards" && key !== "alerts") {
+      if (index < 4) expect(view.getByLabelText("Post author")).toBe(author);
+      await waitFor(() => expect(requests.some(request => request.view === key)).toBe(true));
+    }
+    fireEvent.click(tab);
+    expect(window.history.length).toBe(initialHistory + index + 1);
+  }
+});
 
 it("restores all URL filter defaults on same-view and same-tag navigation and return", async () => {
   const view = renderForum();

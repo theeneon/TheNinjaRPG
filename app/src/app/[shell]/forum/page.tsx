@@ -38,17 +38,22 @@ function ForumHome() {
   const [navigation, setNavigation] = useState({ search, key: 0 });
   // Navigation restores URL defaults; applying filters keeps pending typing and focus.
   if (navigation.search !== search) setNavigation({ search, key: navigation.key + 1 });
-  const replaceUrl = useCallback((url: URL) => {
+  const updateUrl = useCallback((url: URL, mode: "push" | "replace" = "replace") => {
+    if (url.href === window.location.href) return;
     startTransition(() => {
       setNavigation((current) => ({ ...current, search: url.searchParams.toString() }));
-      window.history.replaceState(null, "", url);
+      window.history[mode === "push" ? "pushState" : "replaceState"](null, "", url);
     });
   }, []);
-  return <ForumBrowse key={navigation.key} replaceUrl={replaceUrl} />;
+  return <ForumBrowse key={navigation.key} updateUrl={updateUrl} />;
 }
 
 /** Browse authorized boards or filtered topics, restoring URL state on browser navigation. */
-function ForumBrowse({ replaceUrl }: { replaceUrl: (url: URL) => void }) {
+function ForumBrowse({
+  updateUrl,
+}: {
+  updateUrl: (url: URL, mode?: "push" | "replace") => void;
+}) {
   const fieldPrefix = useId();
   const { data: user } = useUserData();
   const params = useSearchParams();
@@ -87,8 +92,8 @@ function ForumBrowse({ replaceUrl }: { replaceUrl: (url: URL) => void }) {
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
     }
-    if (url.href !== window.location.href) replaceUrl(url);
-  }, [boardId, appliedAuthor, appliedSince, appliedUntil, replaceUrl]);
+    if (url.href !== window.location.href) updateUrl(url);
+  }, [boardId, appliedAuthor, appliedSince, appliedUntil, updateUrl]);
   const { data: boards, isPending, error, refetch } = api.forum.getAll.useQuery();
   const topics = api.forum.getThreads.useInfiniteQuery(
     {
@@ -146,7 +151,7 @@ function ForumBrowse({ replaceUrl }: { replaceUrl: (url: URL) => void }) {
             else url.searchParams.delete("q");
             if (view === "boards" || view === "alerts")
               url.searchParams.set("view", "latest");
-            replaceUrl(url);
+            updateUrl(url);
           }}
         />
       </div>
@@ -169,21 +174,28 @@ function ForumBrowse({ replaceUrl }: { replaceUrl: (url: URL) => void }) {
                 ],
               ]
             : []),
-        ].map(([key, label]) => (
-          <Link
-            key={key}
-            href={(() => {
-              const next = new URLSearchParams(params);
-              if (key === "boards") next.delete("view");
-              else if (key) next.set("view", key);
-              return `/forum${next.size ? `?${next}` : ""}`;
-            })()}
-            aria-current={view === key ? "page" : undefined}
-            className={`rounded-md px-3 py-2 text-sm ${view === key ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}
-          >
-            {label}
-          </Link>
-        ))}
+        ].map(([key, label]) => {
+          const next = new URLSearchParams(params);
+          if (key === "boards") next.delete("view");
+          else if (key) next.set("view", key);
+          const href = `/forum${next.size ? `?${next}` : ""}`;
+          return (
+            <Link
+              key={key}
+              href={href}
+              prefetch={false}
+              onNavigate={(event) => {
+                // Views only change query state; preserve the shell, focus and scroll.
+                event.preventDefault();
+                updateUrl(new URL(href, window.location.href), "push");
+              }}
+              aria-current={view === key ? "page" : undefined}
+              className={`rounded-md px-3 py-2 text-sm ${view === key ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}
+            >
+              {label}
+            </Link>
+          );
+        })}
       </nav>
       {error && (
         <p role="alert">
