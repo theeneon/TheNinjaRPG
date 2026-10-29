@@ -961,6 +961,7 @@ export const updateItemVariantForUpsertItemVariant = (
     variant: {
       name: string;
       image: string;
+      requiredItemId: string | null;
       costType: VariantCostType;
       cost: number;
       order: number;
@@ -977,6 +978,7 @@ export const updateItemVariantForUpsertItemVariant = (
     .set({
       name: input.variant.name,
       image: input.variant.image,
+      requiredItemId: input.variant.requiredItemId,
       costType: input.variant.costType,
       cost: input.variant.cost,
       order: input.variant.order,
@@ -998,6 +1000,7 @@ export const insertItemVariantForUpsertItemVariant = (
     variant: {
       name: string;
       image: string;
+      requiredItemId: string | null;
       costType: VariantCostType;
       cost: number;
       order: number;
@@ -1014,6 +1017,7 @@ export const insertItemVariantForUpsertItemVariant = (
       itemId: input.itemId,
       name: input.variant.name,
       image: input.variant.image,
+      requiredItemId: input.variant.requiredItemId,
       costType: input.variant.costType,
       cost: input.variant.cost,
       order: input.variant.order,
@@ -2295,3 +2299,13 @@ const mergeStackRowGuard = (
     eq(userItem.equipped, item.equipped),
     eq(userItem.storedAtHome, item.storedAtHome),
   );
+
+/** List variant choices with parent item names for content authoring. */
+export const listVariantNames = (client: Pick<DrizzleClient, "select">) =>
+  client
+    .select({
+      id: itemVariant.id,
+      name: sql<string>`concat(${item.name}, ": ", ${itemVariant.name})`,
+    })
+    .from(itemVariant)
+    .innerJoin(item, eq(item.id, itemVariant.itemId));

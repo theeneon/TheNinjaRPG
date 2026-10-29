@@ -1700,6 +1700,10 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
     enabled: Object.keys(shownTag).includes("aiId"),
   });
 
+  const { data: variantData } = api.item.getVariantNames.useQuery(undefined, {
+    enabled: fields.includes("variantId"),
+  });
+
   const { data: questData } = api.quests.getAllNames.useQuery(undefined, {
     enabled: fields.includes("questId"),
   });
@@ -2030,6 +2034,14 @@ export const EffectFormWrapper: React.FC<EffectFormWrapperProps> = (props) => {
           values: jutsuData.filter((j) => j.injectableInBattle),
           multiple: true,
           label: FORM_LABEL_MAP[value] ?? value,
+          type: "db_values",
+        };
+      } else if ((value as string) === "variantId") {
+        return {
+          id: value,
+          values: [{ id: "", name: "Any variant" }, ...(variantData ?? [])],
+          multiple: false,
+          label: "Variant",
           type: "db_values",
         };
       } else if ((value as string) === "questId") {

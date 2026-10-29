@@ -196,6 +196,7 @@ import {
   listUserItemForFetchUserItemsWithVariants,
   listUserItemForMergeAllStacks,
   listUserPetForConsume,
+  listVariantNames,
   restoreUserItemDurability,
   selectEvoSiblingCountForUpdate,
   selectItemForDelete,
@@ -1137,6 +1138,8 @@ export const itemRouter = createTRPCRouter({
       await insertActionLogForAdjustUserItem(ctx.drizzle, ctx, owned, input);
       return { success: true, message: "Item updated" };
     }),
+  getVariantNames: protectedProcedure.query(({ ctx }) => listVariantNames(ctx.drizzle)),
+
   // Get all variants for an item
   getItemVariants: protectedProcedure
     .input(z.object({ itemId: z.string() }))
@@ -1156,14 +1159,23 @@ export const itemRouter = createTRPCRouter({
     .input(upsertItemVariantInputSchema)
     .output(baseServerResponse)
     .mutation(async ({ ctx, input }) => {
-      const [user, existing, parentItem] = await Promise.all([
+      const [user, existing, parentItem, requiredItem] = await Promise.all([
         fetchUser(ctx.drizzle, ctx.userId),
         listItemVariantForUpsertItemVariant(ctx.drizzle, input),
         findItemForUpsertItemVariant(ctx.drizzle, input),
+        input.variant.requiredItemId
+          ? findItemForUpsertItemVariant(ctx.drizzle, {
+              itemId: input.variant.requiredItemId,
+            })
+          : undefined,
       ]);
       if (user.isBanned) return errorResponse("You are banned");
       if (!canChangeContent(user.role)) return errorResponse("Not allowed");
       if (!parentItem) return errorResponse("Item not found");
+      if (input.variant.requiredItemId && !requiredItem)
+        return errorResponse("Required unlock item not found");
+      if (input.variant.requiredItemId && input.variant.costType !== "VARIANT_TOKEN")
+        return errorResponse("Only token variants can require an unlock item");
       if (parentItem.itemType !== "FURNITURE" && input.variant.furnitureData) {
         return errorResponse("Only furniture variants can define orientation images");
       }
@@ -1194,6 +1206,7 @@ export const itemRouter = createTRPCRouter({
             variant: {
               name: input.variant.name,
               image: input.variant.image,
+              requiredItemId: input.variant.requiredItemId,
               costType: input.variant.costType,
               cost: input.variant.cost,
               order: input.variant.order,
@@ -1460,15 +1473,16 @@ export const itemRouter = createTRPCRouter({
       if (variant.costType !== "VARIANT_TOKEN") {
         return errorResponse("This variant does not require a Variant Token");
       }
-      // Variant Tokens are intentionally generic: any item carrying the
-      // `unlockitemvariant` effect can unlock any token-gated variant on any item
-      // the user owns. This mirrors the jutsu Reskin Token model — there is
-      // deliberately no per-item or per-variant binding stored on the token.
       const hasVariantTokenEffect = tokenItem.item.effects.some(
-        (e) => e.type === "unlockitemvariant",
+        (e) =>
+          e.type === "unlockitemvariant" &&
+          (!e.variantId || e.variantId === variant.id),
       );
+      if (variant.requiredItemId && variant.requiredItemId !== tokenItem.item.id) {
+        return errorResponse("This variant requires a different unlock item");
+      }
       if (!hasVariantTokenEffect) {
-        return errorResponse("This item is not a Variant Token");
+        return errorResponse("This item cannot unlock this variant");
       }
       if (!ownershipRows.length) return errorResponse("You don't own this item");
       if (existingUnlock) return errorResponse("Variant already unlocked");

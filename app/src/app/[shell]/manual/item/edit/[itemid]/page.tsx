@@ -310,6 +310,7 @@ type VariantFormInput = {
   id?: string;
   name: string;
   image: string;
+  requiredItemId?: string | null;
   costType: ZodItemVariantType["costType"];
   cost: number | string;
   order: number | string;
@@ -348,6 +349,7 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
   };
 
   const { data: variants } = api.item.getItemVariants.useQuery({ itemId });
+  const { data: unlockItems } = api.item.getAllNames.useQuery();
 
   useEffect(() => {
     if (
@@ -416,6 +418,7 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
     defaultValues: {
       name: "",
       image: "",
+      requiredItemId: null,
       costType: "MONEY",
       cost: 0,
       order: 1,
@@ -430,6 +433,7 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
       form.reset({
         name: "",
         image: "",
+        requiredItemId: null,
         costType: "MONEY",
         cost: 0,
         order: (variants?.length ?? 0) + 1,
@@ -443,6 +447,7 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
     // re-computes when the blank editor opens with the latest variants count.
   }, [editingVariant, form, showForm]);
 
+  const variantCostType = useWatch({ control: form.control, name: "costType" });
   const imageValue = useWatch({ control: form.control, name: "image" });
   const variantName = useWatch({ control: form.control, name: "name" });
   const variantDescription = useWatch({ control: form.control, name: "description" });
@@ -456,7 +461,12 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
       try {
         upsert.mutate({
           itemId,
-          variant: { ...data, furnitureData: isFurniture ? data.furnitureData : null },
+          variant: {
+            ...data,
+            requiredItemId:
+              data.costType === "VARIANT_TOKEN" ? data.requiredItemId : null,
+            furnitureData: isFurniture ? data.furnitureData : null,
+          },
         });
       } catch (error) {
         variantOperationInFlightRef.current = false;
@@ -651,6 +661,40 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
                 )}
               </div>
             </div>
+            {variantCostType === "VARIANT_TOKEN" && (
+              <Controller
+                control={form.control}
+                name="requiredItemId"
+                render={({ field }) => (
+                  <div>
+                    <label
+                      htmlFor="variant-required-item"
+                      className="font-medium text-sm"
+                    >
+                      Required unlock item (token variants)
+                    </label>
+                    <Select
+                      value={field.value ?? "any"}
+                      onValueChange={(value) =>
+                        field.onChange(value === "any" ? null : value)
+                      }
+                    >
+                      <SelectTrigger id="variant-required-item">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="any">Any compatible token</SelectItem>
+                        {(unlockItems ?? []).map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {entry.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              />
+            )}
             <div>
               {isFurniture ? (
                 <Controller
