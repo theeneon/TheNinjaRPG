@@ -23,11 +23,20 @@
   line-height: 1.55;
 }
 .theme-frame {
+  /* Classic's 1280px frame reserves 500px for sidebars, 6rem for scroll art
+     and 1.5rem for content padding. Keep the same usable content width. */
+  --theme-content-width: calc(1280px - 500px - 7.5rem);
+  --theme-main-padding: clamp(1rem, 1.8vw, 1.75rem);
+  --theme-main-border-width: 2px;
+  --theme-main-width: calc(
+    var(--theme-content-width) + 2 * var(--theme-main-padding) +
+      var(--theme-main-border-width)
+  );
   display: grid;
   grid-template-areas: "brand" "nav" "main" "footer";
   grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
-  width: min(100% - 3rem, 1540px);
+  width: min(100% - 3rem, var(--theme-main-width));
   margin-inline: auto;
   padding-block: 1rem 2rem;
 }
@@ -164,7 +173,7 @@
   min-width: 0;
   min-height: 100svh;
   overflow-x: auto;
-  padding: clamp(1rem, 1.8vw, 1.75rem);
+  padding: var(--theme-main-padding);
   border: 1px solid var(--theme-line);
   border-radius: var(--theme-radius, 12px);
   background: hsl(var(--background));
@@ -276,7 +285,9 @@ html[data-game-frame="panel"] img:is([alt="signup-decor-left"], [alt="signup-dec
 
 @media (width >= 1100px) {
   .theme-frame {
-    grid-template-columns: 220px minmax(0, 1fr) 240px;
+    width: fit-content;
+    max-width: calc(100% - 3rem);
+    grid-template-columns: 220px minmax(0, var(--theme-main-width)) 240px;
     grid-template-rows: max-content max-content minmax(0, 1fr) max-content;
     grid-template-areas: "brand brand brand" "nav nav nav" "player main world" "footer footer footer";
     align-items: start;
@@ -300,23 +311,24 @@ html[data-game-frame="panel"] img:is([alt="signup-decor-left"], [alt="signup-dec
     border-left: 3px solid var(--theme-accent);
   }
   html[data-game-layout="3-sakura-courtyard"] .theme-frame {
-    grid-template-columns: 210px minmax(0, 1fr) 226px;
+    grid-template-columns: 210px minmax(0, var(--theme-main-width)) 226px;
     grid-template-areas: "brand brand brand" "nav nav nav" "player main world" "footer footer footer";
     --theme-radius: 18px;
   }
   html[data-game-layout="17-obsidian-council"] .theme-frame {
-    grid-template-columns: 248px minmax(0, 1fr) 220px;
+    grid-template-columns: 248px minmax(0, var(--theme-main-width)) 220px;
     grid-template-areas: "brand brand brand" "world nav player" "world main player" "footer footer footer";
     --theme-radius: 5px;
   }
   html[data-game-layout="20-eclipse-observatory"] .theme-frame {
-    grid-template-columns: 220px minmax(0, 1fr) 240px;
+    grid-template-columns: 220px minmax(0, var(--theme-main-width)) 240px;
     grid-template-areas: "brand brand world" "player nav world" "player main world" "footer footer footer";
     --theme-radius: 8px;
   }
 }
 @media (width < 1100px) {
   .theme-frame {
+    --theme-main-padding: 1rem;
     padding-bottom: calc(6rem + env(safe-area-inset-bottom));
   }
   .theme-logo {
@@ -344,18 +356,15 @@ html[data-game-frame="panel"] img:is([alt="signup-decor-left"], [alt="signup-dec
     padding-inline: 0.65rem;
     font-size: 0.8rem;
   }
-  .theme-main {
-    padding: 1rem;
-  }
 }
 @media (width < 600px) {
   .theme-frame {
+    --theme-main-padding: 0.75rem;
     width: calc(100% - 1rem);
     gap: 0.65rem;
     padding-top: 0.4rem;
   }
   .theme-main {
-    padding: 0.75rem;
     border-radius: 8px;
   }
   .theme-primary-nav {
