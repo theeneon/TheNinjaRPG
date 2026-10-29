@@ -1,4 +1,5 @@
 import type React from "react";
+import { clamp } from "@/utils/math";
 
 export const isClerkElement = (target: EventTarget | null) => {
   return (
@@ -122,10 +123,7 @@ export const forwardVerticalWheelToDocumentScroll: React.WheelEventHandler<
   if (!scrollingElement) return;
 
   const clampScrollTop = (top: number) =>
-    Math.min(
-      scrollingElement.scrollHeight - scrollingElement.clientHeight,
-      Math.max(0, top),
-    );
+    clamp(top, 0, scrollingElement.scrollHeight - scrollingElement.clientHeight);
   if (pendingWheelForward) {
     pendingWheelForward.targetTop = clampScrollTop(
       pendingWheelForward.targetTop + deltaY,
