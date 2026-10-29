@@ -64,7 +64,7 @@ describeWithDatabase("moderation report evidence and dashboard", () => {
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, "target-post") }))?.isReported).toBe(true);
   });
 
-  it("links automated and human forum reports within the reviewer's board scope", async () => {
+  it("keeps automated and human forum reports in Reports rather than approvals and recovery", async () => {
     const db = await getTestDatabase(); const gate = unflaggedModeration(); gate.results[0]!.flagged = true;
     vi.spyOn(Moderations.prototype, "create").mockResolvedValue(gate);
     vi.spyOn(moderator, "generateModerationDecision").mockResolvedValue({ decision: { createReport: "OFFICIAL_WARNING", reasoning: "Review this flagged message" }, aiInterpretation: "Flagged forum message" });
@@ -73,11 +73,10 @@ describeWithDatabase("moderation report evidence and dashboard", () => {
     const reports = await db.query.userReport.findMany(); expect(reports.map(r => r.system).sort()).toEqual(["forumPost", "forum_comment"]);
     await db.insert(forumGrant).values({ id: "scoped-reviewer", userId: "reporter", scope: "BOARD", scopeId: "board", permissions: ["moderate"], denies: [] });
     const reviewer = callerForDatabase(forumRouter, "reporter", db);
-    expect((await reviewer.administration({ query: "" }))?.linkedReports.map(r => r.id).sort()).toEqual(reports.map(r => r.id).sort());
-    await db.insert(forumBoard).values({ id: "other-board", name: "Other discussion", summary: "", sectionId: "section" });
-    await db.update(forumThread).set({ boardId: "other-board" }).where(eq(forumThread.id, "thread"));
-    expect((await reviewer.administration({ query: "" }))?.linkedReports).toEqual([]);
-    expect((await callerForDatabase(forumRouter, "staff", db).administration({ query: "" }))?.linkedReports).toHaveLength(2);
+    expect((await reviewer.administration({ query: "" }))?.posts).toEqual([]);
+    expect((await callerForDatabase(forumRouter, "staff", db).administration({ query: "" }))?.posts).toEqual([]);
+    const staff = callerForDatabase(reportsRouter, "staff", db);
+    for (const report of reports) expect((await staff.get({ id: report.id }))?.report.id).toBe(report.id);
     expect(await db.query.userReport.findMany()).toEqual(reports);
   });
 

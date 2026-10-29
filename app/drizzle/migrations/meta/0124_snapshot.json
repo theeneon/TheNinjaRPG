@@ -5607,60 +5607,6 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "ForumCase": {
-      "name": "ForumCase",
-      "columns": {
-        "postId": {
-          "name": "postId",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "assigneeId": {
-          "name": "assigneeId",
-          "type": "varchar(191)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum('OPEN','IN_REVIEW','RESOLVED')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'OPEN'"
-        },
-        "decision": {
-          "name": "decision",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updatedAt": {
-          "name": "updatedAt",
-          "type": "datetime(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "(CURRENT_TIMESTAMP(3))"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "ForumCase_postId": {
-          "name": "ForumCase_postId",
-          "columns": [
-            "postId"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
     "ForumGrant": {
       "name": "ForumGrant",
       "columns": {

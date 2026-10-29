@@ -544,14 +544,7 @@ export const forumRouter = createTRPCRouter({
     .input(
       z.object({
         postId: z.string(),
-        action: z.enum([
-          "REMOVE",
-          "RESTORE",
-          "LOCK",
-          "UNLOCK",
-          "APPROVE",
-          "DISMISS_REPORT",
-        ]),
+        action: z.enum(["REMOVE", "RESTORE", "LOCK", "UNLOCK", "APPROVE"]),
         reason: z.string().trim().min(3).max(500),
       }),
     )
@@ -595,7 +588,7 @@ export const forumRouter = createTRPCRouter({
             (current.deletedAt || currentPost.deletedAt)
           )
             return errorResponse(
-              "This post is no longer available for approval. Refresh the review queue.",
+              "This post is no longer available for approval. Refresh approvals and recovery.",
             );
           if (input.action === "APPROVE" && !current.isApproved)
             return errorResponse("Approve the topic to publish its opening post");
@@ -608,9 +601,7 @@ export const forumRouter = createTRPCRouter({
               ? { deletedAt: null, removedBy: null, removalReason: null }
               : input.action === "APPROVE"
                 ? { isApproved: true }
-                : input.action === "DISMISS_REPORT"
-                  ? { isReported: false }
-                  : { isLocked: input.action === "LOCK" };
+                : { isLocked: input.action === "LOCK" };
           const updated = await q.updateForumPost(
             tx,
             post.id,
@@ -952,7 +943,6 @@ export const forumRouter = createTRPCRouter({
           await Promise.all([
             q.purgeForumPostRevisions(tx, thread.id),
             q.purgeForumPostReactions(tx, thread.id),
-            q.purgeForumPostCases(tx, thread.id),
             q.purgeForumThreadReads(tx, thread.id),
             q.purgeForumThreadWatches(tx, thread.id),
             q.purgeForumThreadAlerts(tx, thread.id),
@@ -975,71 +965,6 @@ export const forumRouter = createTRPCRouter({
         }),
       );
     }),
-  /** Assign a board moderator and record a review decision, clearing the report flag on resolution. */
-  reviewCase: protectedProcedure
-    .input(
-      z.object({
-        postId: z.string(),
-        assigneeId: z.string().nullable(),
-        status: z.enum(["OPEN", "IN_REVIEW", "RESOLVED"]),
-        reason: z.string().trim().min(3).max(500),
-      }),
-    )
-    .output(baseServerResponse)
-    .mutation(async ({ ctx, input }) => {
-      const [context, post] = await Promise.all([
-        getForumContext(ctx.drizzle, ctx.userId),
-        q.findForumPost(ctx.drizzle, input.postId),
-      ]);
-      const thread = post ? await q.fetchThread(ctx.drizzle, post.threadId) : null;
-      const board = context.boards.find((b) => b.id === thread?.boardId);
-      if (!post || !thread || !board?.permissions.moderate)
-        return errorResponse("You cannot review this post");
-      if (input.assigneeId) {
-        const assignee =
-          input.assigneeId === ctx.userId
-            ? context
-            : await getForumContext(ctx.drizzle, input.assigneeId);
-        if (!assignee.boards.find((b) => b.id === thread.boardId)?.permissions.moderate)
-          return errorResponse("The assignee must moderate this board");
-      }
-      // Case upsert and audit INSERT have different MySQL targets; resolution also UPDATEs the report flag.
-      const result = await retryOnDeadlock(() =>
-        ctx.drizzle.transaction(async (tx) => {
-          await q.lockForumSection(tx, board.sectionId);
-          await q.lockForumBoard(tx, thread.boardId);
-          const [current] = await q.lockForumThread(tx, thread.id);
-          if (
-            !(await forumWriteSnapshotMatches(tx, context, board.id)) ||
-            !current ||
-            current.boardId !== thread.boardId
-          )
-            return errorResponse("This topic moved. Refresh and try again.");
-          const currentPost = await q.findForumPost(tx, post.id);
-          if (currentPost?.threadId !== thread.id)
-            return errorResponse("This post moved. Refresh before reviewing it.");
-          await q.saveForumCase(tx, {
-            postId: post.id,
-            assigneeId: input.assigneeId,
-            status: input.status,
-            decision: input.reason,
-            updatedAt: new Date(),
-          });
-          if (input.status === "RESOLVED")
-            await q.updateForumPost(tx, post.id, { isReported: false });
-          await q.insertForumAudit(tx, {
-            actorId: ctx.userId,
-            boardId: thread.boardId,
-            action: "review.decision",
-            targetId: post.id,
-            reason: input.reason,
-            after: { assigneeId: input.assigneeId, status: input.status },
-          });
-          return { success: true, message: "Forum review saved" };
-        }),
-      );
-      return result;
-    }),
   /** Let forum managers inspect an existing account's effective board capabilities, or return null. */
   effectivePermissions: protectedProcedure
     .input(z.object({ userId: z.string() }))
@@ -1058,7 +983,7 @@ export const forumRouter = createTRPCRouter({
         })),
       };
     }),
-  /** Return scoped review pages and audit evidence; grants and structure remain manager-only. */
+  /** Return scoped pending/recoverable content and audit evidence; grants and structure remain manager-only. */
   administration: protectedProcedure
     .input(
       z.object({
@@ -1080,7 +1005,7 @@ export const forumRouter = createTRPCRouter({
         offset: input.reviewPage * 100,
         limit: 101,
       };
-      const [grants, restrictions, reviewThreads, reviewPosts, logs, linkedReports] =
+      const [grants, restrictions, reviewThreads, reviewPosts, logs] =
         await Promise.all([
           context.canManage ? q.listForumGrants(ctx.drizzle) : [],
           q.listForumRestrictions(ctx.drizzle),
@@ -1092,7 +1017,6 @@ export const forumRouter = createTRPCRouter({
             input.query,
             { actorId: ctx.userId, boardIds: ids },
           ),
-          q.listForumLinkedReports(ctx.drizzle),
         ]);
       const threads = reviewThreads.slice(0, 100);
       const posts = reviewPosts.slice(0, 100);
@@ -1104,15 +1028,6 @@ export const forumRouter = createTRPCRouter({
         canManage: context.canManage,
         grants,
         hasMoreReviews: reviewThreads.length > 100 || reviewPosts.length > 100,
-        linkedReports: linkedReports.filter((r) =>
-          posts.some(
-            (p) =>
-              p.post.id === r.postId &&
-              (context.boards.find((b) => b.id === p.thread.boardId)?.permissions
-                .moderate ||
-                (!p.post.isApproved && !p.post.deletedAt && !p.thread.deletedAt)),
-          ),
-        ),
         restrictions: restrictions.filter(
           (r) =>
             context.canManage ||

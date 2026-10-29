@@ -27,7 +27,6 @@ import {
   forumAlert,
   forumAudit,
   forumBoard,
-  forumCase,
   forumGrant,
   forumPost,
   forumReaction,
@@ -40,7 +39,6 @@ import {
   userBlackList,
   userData,
   userDevice,
-  userReport,
   userUpload,
 } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
@@ -753,7 +751,7 @@ export const listForumReviewThreads = (
     offset: input.offset,
     limit: input.limit,
   });
-/** Page review evidence with assignment identity; approval-only staff cannot inspect removed/reported-only posts. */
+/** Page pending and recoverable posts; approval-only staff cannot inspect removed content. */
 export const listForumReviewPosts = (
   db: Client,
   input: {
@@ -767,21 +765,13 @@ export const listForumReviewPosts = (
     .select({
       post: forumPost,
       thread: forumThread,
-      review: forumCase,
-      assigneeName: userData.username,
     })
     .from(forumPost)
     .innerJoin(forumThread, eq(forumThread.id, forumPost.threadId))
-    .leftJoin(forumCase, eq(forumCase.postId, forumPost.id))
-    .leftJoin(userData, eq(userData.userId, forumCase.assigneeId))
     .where(
       and(
         inArray(forumThread.boardId, input.boardIds),
-        or(
-          sql`${forumPost.deletedAt} IS NOT NULL`,
-          eq(forumPost.isApproved, false),
-          eq(forumPost.isReported, true),
-        ),
+        or(sql`${forumPost.deletedAt} IS NOT NULL`, eq(forumPost.isApproved, false)),
         or(
           inArray(forumThread.boardId, input.moderatedBoardIds),
           and(
@@ -867,22 +857,6 @@ export const insertForumPosts = (
   values: (typeof forumPost.$inferInsert)[],
 ) => db.insert(forumPost).values(values);
 
-/** Upsert one review decision per post; resolution and audit writes share the caller's transaction. */
-export const saveForumCase = (db: Client, values: typeof forumCase.$inferInsert) =>
-  db.insert(forumCase).values(values).onDuplicateKeyUpdate({ set: values });
-/** Load recent forum report links; callers restrict evidence to the authorized review page. */
-export const listForumLinkedReports = (db: Client) =>
-  db
-    .select({
-      id: userReport.id,
-      status: userReport.status,
-      postId: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${userReport.infraction}, '$.id'))`,
-    })
-    .from(userReport)
-    .where(inArray(userReport.system, ["forum_comment", "forumPost"]))
-    .orderBy(desc(userReport.createdAt))
-    .limit(1000);
-
 /** Count all topics, including removed/pending ones, before deleting their container. */
 export const countForumBoardThreads = (db: Client, boardId: string) =>
   db
@@ -963,19 +937,6 @@ export const purgeForumPostReactions = (db: Client, threadId: string) =>
     .where(
       inArray(
         forumReaction.postId,
-        db
-          .select({ id: forumPost.id })
-          .from(forumPost)
-          .where(eq(forumPost.threadId, threadId)),
-      ),
-    );
-/** Delete review cases while their post-to-topic membership is still available during purge. */
-export const purgeForumPostCases = (db: Client, threadId: string) =>
-  db
-    .delete(forumCase)
-    .where(
-      inArray(
-        forumCase.postId,
         db
           .select({ id: forumPost.id })
           .from(forumPost)

@@ -140,15 +140,6 @@ ALTER TABLE `ForumBoard` DROP COLUMN `group`;
 ALTER TABLE `ForumThread` ADD `lastPostId` varchar(191);
 UPDATE ForumThread SET lastPostId = (SELECT id FROM ForumPost WHERE ForumPost.threadId = ForumThread.id AND ForumPost.deletedAt IS NULL AND ForumPost.isApproved = true ORDER BY ForumPost.createdAt DESC, ForumPost.id DESC LIMIT 1);
 
-CREATE TABLE `ForumCase` (
-	`postId` varchar(191) NOT NULL,
-	`assigneeId` varchar(191),
-	`status` enum('OPEN','IN_REVIEW','RESOLVED') NOT NULL DEFAULT 'OPEN',
-	`decision` text NOT NULL,
-	`updatedAt` datetime(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP(3)),
-	CONSTRAINT `ForumCase_postId` PRIMARY KEY(`postId`)
-);
-
 ALTER TABLE `ForumThread` ADD `pollId` varchar(191);
 ALTER TABLE `ForumThread` ADD `summary` text;
 ALTER TABLE `ForumThread` ADD `summaryUpdatedAt` datetime(3);

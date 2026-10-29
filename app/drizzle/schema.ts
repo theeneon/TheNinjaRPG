@@ -7241,12 +7241,3 @@ export const forumGrantRelations = relations(forumGrant, ({ one }) => ({ user: o
 export const forumRestrictionRelations = relations(forumRestriction, ({ one }) => ({ user: one(userData, { fields: [forumRestriction.userId], references: [userData.userId] }) }));
 
 export const forumReactionRelations = relations(forumReaction, ({ one }) => ({ post: one(forumPost, { fields: [forumReaction.postId], references: [forumPost.id] }) }));
-
-/** Forum review decisions complement the existing report's evidence and game enforcement. */
-export const forumCase = mysqlTable("ForumCase", {
-  postId: varchar("postId", { length: 191 }).primaryKey().notNull(),
-  assigneeId: varchar("assigneeId", { length: 191 }),
-  status: mysqlEnum("status", ["OPEN", "IN_REVIEW", "RESOLVED"]).default("OPEN").notNull(),
-  decision: text("decision").notNull(),
-  updatedAt: datetime("updatedAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
-});

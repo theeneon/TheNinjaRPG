@@ -16,7 +16,7 @@ it("loads the complete forum upgrade through the migration journal", () => {
 describeWithDatabase("forum structure migration", () => {
   it("preserves grouped and multilingual boards, counts, activity and news policy", async () => {
     const connection = await mysql.createConnection({ uri: process.env.TEST_MYSQL_URL, multipleStatements: true });
-    const tables = ["UserData", "ForumBoard", "ForumThread", "ForumPost", "ForumAlert", "ForumAudit", "ForumGrant", "ForumReaction", "ForumRead", "ForumRestriction", "ForumRevision", "ForumSection", "ForumWatch", "ForumCase"];
+    const tables = ["UserData", "ForumBoard", "ForumThread", "ForumPost", "ForumAlert", "ForumAudit", "ForumGrant", "ForumReaction", "ForumRead", "ForumRestriction", "ForumRevision", "ForumSection", "ForumWatch"];
     const prefix = `ForumMigration_${randomBytes(4).toString("hex")}_`;
     const rename = (sql: string) => sql.replace(new RegExp(`\\b(${tables.join("|")})\\b`, "g"), table => `${prefix}${table}`);
     try {
@@ -44,8 +44,6 @@ describeWithDatabase("forum structure migration", () => {
       expect(topics[0]).toMatchObject({ nPosts: 2, kind: "QUESTION", lastPostId: "answer", pollId: null, summary: null, summaryUpdatedAt: null });
       const [posts] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT publicationIntent FROM ForumPost"));
       expect(posts.map(p => p.publicationIntent)).toEqual([null, null]);
-      const [caseColumns] = await connection.query<mysql.RowDataPacket[]>(rename("SHOW COLUMNS FROM ForumCase"));
-      expect(caseColumns.map(c => c.Field)).toEqual(["postId", "assigneeId", "status", "decision", "updatedAt"]);
       const [alertIndexes] = await connection.query<mysql.RowDataPacket[]>(rename("SHOW INDEX FROM ForumAlert"));
       expect(alertIndexes.map(i => [i.Key_name, i.Column_name])).toEqual(expect.arrayContaining([["ForumAlert_postId_idx", "postId"], ["ForumAlert_threadId_idx", "threadId"]]));
       const [readIndex] = await connection.query<mysql.RowDataPacket[]>(rename("SHOW INDEX FROM ForumRead WHERE Key_name = 'ForumRead_thread_read_idx'"));

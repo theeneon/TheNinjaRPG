@@ -2,7 +2,7 @@ import * as socials from "@/libs/socials";
 import { reportsRouter } from "@/routers/reports";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
-import { forumAlert, forumAudit, forumBoard, forumGrant, forumPost, forumReaction, forumRead, forumRestriction, forumRevision, forumSection, forumThread, forumWatch, userData, userReport, poll, pollOption, userPollVote, userUpload, forumCase } from "@/drizzle/schema";
+import { forumAlert, forumAudit, forumBoard, forumGrant, forumPost, forumReaction, forumRead, forumRestriction, forumRevision, forumSection, forumThread, forumWatch, userData, userReport, poll, pollOption, userPollVote, userUpload } from "@/drizzle/schema";
 import { fetchForumPageData, fetchForumThreadPage, getForumContext, getInfiniteThreads } from "@/libs/forum";
 import * as moderation from "@/libs/moderation/defer";
 import { getVoteCountsForPolls } from "@/libs/poll";
@@ -28,7 +28,7 @@ const create = async (boardId = "general", id = playerId) => {
 describeWithDatabase("forum authorization, administration and discussion lifecycle", () => {
   beforeEach(async () => {
     const db = await getTestDatabase();
-    await resetTables(userPollVote, pollOption, poll, userUpload, forumCase, userReport, forumAlert, forumAudit, forumGrant, forumReaction, forumRead, forumRestriction, forumRevision, forumWatch, forumPost, forumThread, forumBoard, forumSection, userData);
+    await resetTables(userPollVote, pollOption, poll, userUpload, userReport, forumAlert, forumAudit, forumGrant, forumReaction, forumRead, forumRestriction, forumRevision, forumWatch, forumPost, forumThread, forumBoard, forumSection, userData);
     await insertUsers([{ userId: playerId, username: "ForumPlayer", level: 50 }, { userId: adminId, username: "ForumAdmin", level: 50, role: "MODERATOR-ADMIN" }, { userId: moderatorId, username: "ForumModerator", level: 50 }]);
     await db.insert(forumSection).values([{ id: "public", name: "Community", summary: "", policy: {} }, { id: "private", name: "Staff", summary: "", policy: { view: "STAFF", read: "STAFF", create: "STAFF" } }]);
     await db.insert(forumBoard).values([{ id: "general", name: "General discussion", summary: "", sectionId: "public" }, { id: "other", name: "Other board", summary: "", sectionId: "public" }, { id: "private-board", name: "Private discussions", summary: "", sectionId: "private" }, { id: "news", name: "News", summary: "", sectionId: "public", policy: { create: "STAFF" } }]);
@@ -85,7 +85,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await db.query.forumThread.findFirst())?.nPosts).toBe(5);
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) }))?.deletedAt).toBeNull();
   });
-  it.each(["LOCK", "UNLOCK", "DISMISS_REPORT"] as const)("audits post %s without recounting unchanged visibility", async (action) => {
+  it.each(["LOCK", "UNLOCK"] as const)("audits post %s without recounting unchanged visibility", async (action) => {
     const id = await create(); const db = await getTestDatabase();
     await (await comments()).createForumComment(commentInput(id));
     const post = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) })).at(-1)!;
@@ -100,7 +100,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     const { result, statements } = await recordQueries(() => api.moderatePost({ postId: post.id, action, reason }));
     expect(result.success).toBe(true);
     expect(statements.filter(s => /^update `Forum(?:Thread|Board)` /i.test(s))).toEqual([]);
-    const values = action === "DISMISS_REPORT" ? { isReported: false } : { isLocked: action === "LOCK" };
+    const values = { isLocked: action === "LOCK" };
     expect(await db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) })).toEqual({ ...before!, ...values });
     expect(await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) })).toEqual(thread);
     expect(await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") })).toEqual(board);
@@ -407,13 +407,9 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     await (await comments()).createForumComment(commentInput(id, "Thanks @ForumModerator for the useful explanation."));
     expect(await (await client(moderatorId)).alerts()).toHaveLength(1);
   });
-  it("records assigned review decisions and requires an explicit purge grant", async () => {
+  it("requires an explicit purge grant", async () => {
     const id = await create(); const db = await getTestDatabase(); const post = (await db.query.forumPost.findMany())[0]!;
     await db.update(forumPost).set({ isReported: true }).where(eq(forumPost.id, post.id)); const moderator = await client(moderatorId);
-    expect((await moderator.reviewCase({ postId: post.id, assigneeId: moderatorId, status: "IN_REVIEW", reason: "Review the reported context" })).success).toBe(true);
-    expect((await db.query.forumCase.findFirst())?.assigneeId).toBe(moderatorId);
-    await moderator.reviewCase({ postId: post.id, assigneeId: moderatorId, status: "RESOLVED", reason: "Discussion follows forum rules" });
-    expect((await db.query.forumPost.findFirst())?.isReported).toBe(false);
     await moderator.deleteThread({ thread_id: id }); const admin = await client(adminId);
     expect((await admin.purgeTopic({ threadId: id, confirmTitle: topicInput().title, reason: "Purge disposable fixture" })).success).toBe(false);
     await db.insert(forumGrant).values({ id: "purge-grant", userId: adminId, scope: "GLOBAL", scopeId: "*", permissions: ["purge"], denies: [] });
@@ -843,6 +839,22 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     await admin.moderateThreads({ ids: [id], action: "APPROVE", reason: "Approve a removed topic" });
     expect(await db.query.forumRead.findMany()).toEqual(before);
   });
+  it("lists only pending and removed posts, leaving reported-only content to Reports", async () => {
+    const id = await create(); const db = await getTestDatabase();
+    const opening = (await db.query.forumPost.findFirst())!;
+    await db.update(forumPost).set({ isReported: true }).where(eq(forumPost.id, opening.id));
+    await db.insert(forumPost).values([
+      { id: "pending-reported", threadId: id, userId: playerId, authorId: playerId, content: "Pending publication", isApproved: false, isReported: true },
+      { id: "removed-reported", threadId: id, userId: playerId, authorId: playerId, content: "Recoverable content", deletedAt: new Date(), isReported: true },
+    ]);
+    const administration = await (await client(adminId)).administration({ query: "" });
+    expect(administration?.threads).toEqual([]);
+    expect(administration?.posts.map(p => p.post.id).sort()).toEqual(["pending-reported", "removed-reported"]);
+    expect(administration?.hasMoreReviews).toBe(false);
+    expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, opening.id) }))?.isReported).toBe(true);
+    await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
+    expect((await (await client(moderatorId)).administration({ query: "" }))?.posts.map(p => p.post.id)).toEqual(["pending-reported"]);
+  });
   it("keeps older pending reviews reachable without exposing recovery records to approvers", async () => {
     const db = await getTestDatabase();
     await db.update(forumGrant).set({ permissions: ["approve"] }).where(eq(forumGrant.id, "scoped"));
@@ -889,14 +901,13 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await (await comments(playerId, locked)).deleteForumComment({ id: post.id })).success).toBe(false);
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) }))?.deletedAt).toBeNull();
   });
-  it.each(["author removal", "moderator removal", "review"] as const)("rejects stale board permissions for %s without changing discussion state", async (action) => {
+  it.each(["author removal", "moderator removal"] as const)("rejects stale board permissions for %s without changing discussion state", async (action) => {
     const id = await create(); const db = await getTestDatabase();
     const post = (await db.query.forumPost.findFirst())!;
     await db.update(forumPost).set({ isReported: true }).where(eq(forumPost.id, post.id));
     await db.update(forumThread).set({ acceptedPostId: post.id }).where(eq(forumThread.id, id));
     await db.insert(forumRead).values({ userId: moderatorId, threadId: id, postId: post.id, readAt: post.createdAt });
-    await db.insert(forumCase).values({ postId: post.id, assigneeId: moderatorId, status: "IN_REVIEW", decision: "Keep the evidence available" });
-    const discussionState = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumRead.findMany(), db.query.forumCase.findMany()]);
+    const discussionState = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumRead.findMany()]);
     const [before, board, audit] = await Promise.all([discussionState(), db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") }), db.query.forumAudit.findMany()]);
     const actorId = action === "author removal" ? playerId : moderatorId;
     const policy = action === "author removal" ? { deleteOwn: false } : { read: "STAFF" as const };
@@ -907,9 +918,7 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
       };
       return Reflect.get(target, key, receiver);
     } });
-    const result = action === "review"
-      ? await (await client(actorId, stale)).reviewCase({ postId: post.id, assigneeId: moderatorId, status: "RESOLVED", reason: "Resolve the reported discussion" })
-      : await (await comments(actorId, stale)).deleteForumComment({ id: post.id });
+    const result = await (await comments(actorId, stale)).deleteForumComment({ id: post.id });
     const permissions = (await getForumContext(db, actorId)).boards.find(b => b.id === "general")!.permissions;
     expect(action === "author removal" ? permissions.remove : permissions.moderate).toBe(false);
     expect(result.success).toBe(false);

@@ -30,7 +30,7 @@ import {
 } from "@/validators/forum";
 import { getSearchValidator } from "@/validators/register";
 
-/** Load one scoped staff workspace and retain independent review, structure, access and audit views. */
+/** Load one scoped staff workspace and retain scoped approvals, recovery, structure, access and audit views. */
 export default function ForumManagement() {
   const fieldPrefix = useId();
   const { data: user } = useUserData();
@@ -80,7 +80,7 @@ export default function ForumManagement() {
             className="mb-4 flex flex-wrap gap-2 border-b pb-3"
           >
             {[
-              ["review", "Review queue"],
+              ["review", "Approvals & recovery"],
               ...(data.data.canManage
                 ? [
                     ["structure", "Boards"],
@@ -116,13 +116,13 @@ export default function ForumManagement() {
           {tab === "review" && (
             <>
               {data.isPlaceholderData ? (
-                <Loader explanation="Loading review page…" />
+                <Loader explanation="Loading approvals and recovery…" />
               ) : (
-                <ForumReview key={reviewPage} data={data.data} refresh={refresh} />
+                <ForumApprovals key={reviewPage} data={data.data} refresh={refresh} />
               )}
               {(reviewPage > 0 || data.data.hasMoreReviews) && (
                 <nav
-                  aria-label="Review pages"
+                  aria-label="Approvals and recovery pages"
                   className="mt-4 flex items-center justify-end gap-3"
                 >
                   <Button
@@ -1242,8 +1242,8 @@ function ForumRestrictions({
     </div>
   );
 }
-/** Keep the scoped queue compact; topic tools and post decisions open only for the selected content. */
-function ForumReview({
+/** Keep approvals and recovery compact; reported-content decisions belong in Player reports. */
+function ForumApprovals({
   data,
   refresh,
 }: {
@@ -1256,7 +1256,7 @@ function ForumReview({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto">
-          <h2 className="font-semibold">Review queue</h2>
+          <h2 className="font-semibold">Approvals & recovery</h2>
           <p className="text-muted-foreground text-xs">
             {itemCount} {itemCount === 1 ? "item" : "items"} on this page
           </p>
@@ -1266,11 +1266,14 @@ function ForumReview({
         </Button>
       </div>
       <p className="text-muted-foreground text-xs">
-        Open a post to review it, or select topics for a bulk action. Game reports are
+        Approve unpublished content or restore removed content here. Reported content is
         handled in Player reports.
       </p>
       {data.threads.length > 0 && (
-        <section className="space-y-2" aria-label="Topics to review">
+        <section
+          className="space-y-2"
+          aria-label="Topics awaiting approval or recovery"
+        >
           <h3 className="text-sm font-semibold">Topics ({data.threads.length})</h3>
           {selected.length > 0 && (
             <ForumTopicTools
@@ -1320,10 +1323,10 @@ function ForumReview({
         </section>
       )}
       {data.posts.length > 0 && (
-        <section className="space-y-2" aria-label="Posts to review">
+        <section className="space-y-2" aria-label="Posts awaiting approval or recovery">
           <h3 className="text-sm font-semibold">Posts ({data.posts.length})</h3>
           {data.posts.map((entry) => (
-            <ForumPostReview
+            <ForumPostApproval
               key={entry.post.id}
               entry={entry}
               data={data}
@@ -1334,16 +1337,16 @@ function ForumReview({
       )}
       {!data.threads.length && !data.posts.length && (
         <p className="rounded-md border p-6 text-sm">
-          No topics or posts to review on this page.
+          No content awaiting approval or recovery on this page.
         </p>
       )}
     </div>
   );
 }
 
-/** Keep evidence, assignment and audit reasons beside the post; retain rejected decisions for retry. */
-function ForumPostReview({
-  entry: { post, thread, review, assigneeName },
+/** Keep publication and recovery actions beside the post, preserving rejected edits for retry. */
+function ForumPostApproval({
+  entry: { post, thread },
   data,
   refresh,
 }: {
@@ -1352,12 +1355,9 @@ function ForumPostReview({
   refresh: () => Promise<void>;
 }) {
   const fieldPrefix = useId();
-  const { data: user } = useUserData();
   const [action, setAction] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
-  const reviewCase = api.forum.reviewCase.useMutation();
   const moderate = api.forum.moderatePost.useMutation();
   const board = data.boards.find((b) => b.id === thread.boardId);
   const actions = [
@@ -1365,16 +1365,6 @@ function ForumPostReview({
       ? (["APPROVE"] as const)
       : []),
     ...(post.deletedAt && board?.permissions.moderate ? (["RESTORE"] as const) : []),
-    ...(board?.permissions.moderate
-      ? ([
-          "CLAIM",
-          "ASSIGN",
-          review?.status === "RESOLVED" ? "REOPEN" : "RESOLVE",
-        ] as const)
-      : []),
-    ...(post.isReported && board?.permissions.moderate
-      ? (["DISMISS_REPORT"] as const)
-      : []),
     ...(!post.deletedAt && board?.permissions.removeOthers
       ? (["REMOVE"] as const)
       : []),
@@ -1382,21 +1372,12 @@ function ForumPostReview({
   const labels = {
     APPROVE: "Approve post",
     RESTORE: "Restore post",
-    CLAIM: "Claim review",
-    ASSIGN: "Assign reviewer",
-    REOPEN: "Reopen review",
-    RESOLVE: "Resolve review",
-    DISMISS_REPORT: "Clear forum flag",
     REMOVE: "Remove post",
   };
   const selectedAction = actions.find((value) => value === action) ?? actions[0];
-  const isPending = reviewCase.isPending || moderate.isPending;
+  const isPending = moderate.isPending;
   const disabledReason =
-    selectedAction === "ASSIGN" && !assigneeId
-      ? "Select a reviewer to continue."
-      : reason.trim().length < 3
-        ? "Enter an audit reason with at least 3 characters."
-        : "";
+    reason.trim().length < 3 ? "Enter an audit reason with at least 3 characters." : "";
   return (
     <details className="group overflow-hidden rounded-md border">
       <summary className="flex cursor-pointer list-none items-center gap-3 p-3 [&::-webkit-details-marker]:hidden">
@@ -1406,21 +1387,10 @@ function ForumPostReview({
         />
         <span className="min-w-0 flex-1 text-sm">
           <span className="block font-semibold break-words">{thread.title}</span>
-          <span className="text-muted-foreground block text-xs">
-            {board?.name} · {assigneeName ?? "Unassigned"}
-            {review?.status === "IN_REVIEW"
-              ? " · In review"
-              : review?.status === "RESOLVED"
-                ? " · Resolved"
-                : ""}
-          </span>
+          <span className="text-muted-foreground block text-xs">{board?.name}</span>
         </span>
         <span className="bg-muted shrink-0 rounded px-2 py-1 text-xs">
-          {post.deletedAt
-            ? "Removed"
-            : !post.isApproved
-              ? "Needs approval"
-              : "Reported"}
+          {post.deletedAt ? "Removed" : "Needs approval"}
         </span>
       </summary>
       <div className="space-y-3 border-t p-3">
@@ -1431,17 +1401,6 @@ function ForumPostReview({
           >
             View discussion
           </Link>
-          {data.linkedReports
-            .filter((r) => r.postId === post.id)
-            .map((report) => (
-              <Link
-                key={report.id}
-                href={`/reports/${report.id}`}
-                className="underline"
-              >
-                Player report ({report.status})
-              </Link>
-            ))}
         </div>
         <details className="group/post text-sm">
           <summary aria-label="Read full post" className="cursor-pointer">
@@ -1452,11 +1411,9 @@ function ForumPostReview({
           </summary>
           <div className="mt-2 break-words">{parseHtml(post.content)}</div>
         </details>
-        {(post.removalReason || review?.decision) && (
+        {post.removalReason && (
           <p className="text-muted-foreground text-xs break-words">
-            {post.removalReason
-              ? `Removal reason: ${post.removalReason}`
-              : `Last decision: ${review?.decision}`}
+            Removal reason: {post.removalReason}
           </p>
         )}
         {selectedAction && (
@@ -1467,31 +1424,11 @@ function ForumPostReview({
               if (isPending || disabledReason) return;
               setError("");
               try {
-                const result = await (selectedAction === "CLAIM" ||
-                selectedAction === "ASSIGN" ||
-                selectedAction === "RESOLVE" ||
-                selectedAction === "REOPEN"
-                  ? reviewCase.mutateAsync({
-                      postId: post.id,
-                      assigneeId:
-                        selectedAction === "ASSIGN"
-                          ? assigneeId
-                          : selectedAction === "CLAIM"
-                            ? (user?.userId ?? null)
-                            : (review?.assigneeId ?? user?.userId ?? null),
-                      status:
-                        selectedAction === "RESOLVE"
-                          ? "RESOLVED"
-                          : selectedAction === "REOPEN"
-                            ? "OPEN"
-                            : "IN_REVIEW",
-                      reason,
-                    })
-                  : moderate.mutateAsync({
-                      postId: post.id,
-                      action: selectedAction,
-                      reason,
-                    }));
+                const result = await moderate.mutateAsync({
+                  postId: post.id,
+                  action: selectedAction,
+                  reason,
+                });
                 showMutationToast(result);
                 if (result.success) {
                   setReason("");
@@ -1499,7 +1436,7 @@ function ForumPostReview({
                 } else setError(result.message);
               } catch (e) {
                 setError(
-                  e instanceof Error ? e.message : "The review could not be saved.",
+                  e instanceof Error ? e.message : "The change could not be saved.",
                 );
               }
             }}
@@ -1526,15 +1463,6 @@ function ForumPostReview({
               </label>
               <Reason value={reason} setValue={setReason} />
             </div>
-            {selectedAction === "ASSIGN" && (
-              <div className="space-y-1">
-                <p className="text-sm font-medium">Reviewer</p>
-                <p className="text-muted-foreground text-xs">
-                  Choose a player who moderates this board.
-                </p>
-                <ForumPlayerSelect onSelect={setAssigneeId} />
-              </div>
-            )}
             {error && (
               <p role="alert" className="text-destructive text-sm">
                 {error}
@@ -1561,12 +1489,6 @@ function ForumPostReview({
                 </p>
               )}
             </div>
-            {selectedAction === "RESOLVE" && (
-              <p className="text-muted-foreground text-xs">
-                Closes the forum review and clears its flag. Player reports are handled
-                separately.
-              </p>
-            )}
           </form>
         )}
       </div>

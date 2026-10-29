@@ -61,10 +61,10 @@ async function renderManagement(tab = "Staff") {
       canManage: true,
       boards: hasLocations ? [{ id: "board", name: "Strategy", permissions: { moderate: canModerate, approve: true, removeOthers: canModerate } }] : [],
       sections: hasLocations ? [{ id: "section", name: "Community" }] : [],
-      grants: [], restrictions: [], threads: [], posts: reviewPosts, linkedReports: [], logs: [], hasMoreReviews,
+      grants: [], restrictions: [], threads: [], posts: reviewPosts, logs: [], hasMoreReviews,
     };
     if (op.path === "forum.effectivePermissions") data = { username: "Player", boards: [] };
-    if (op.path === "forum.saveGrant" || op.path === "forum.reviewCase" || op.path === "forum.moderatePost") {
+    if (op.path === "forum.saveGrant" || op.path === "forum.moderatePost") {
       if (op.path === "forum.saveGrant") requests.push(op.input as RouterInputs["forum"]["saveGrant"]);
       else reviewRequests.push({ path: op.path, input: op.input });
       const complete = () => { observer.next({ result: { data: response } }); observer.complete(); };
@@ -77,7 +77,7 @@ async function renderManagement(tab = "Staff") {
   })] });
   const view = render(<testApi.Provider client={trpcClient} queryClient={queryClient}><QueryClientProvider client={queryClient}><ForumManagement /></QueryClientProvider></testApi.Provider>);
   const target = await view.findByRole("button", { name: tab });
-  if (tab !== "Review queue") fireEvent.click(target);
+  if (tab !== "Approvals & recovery") fireEvent.click(target);
   return view;
 }
 
@@ -150,68 +150,43 @@ it("retains rejected edits, explains a pending save and prevents duplicate submi
 /** Supply only the post state that determines the application's moderation choices. */
 function queuedPost(id = "post", overrides: Partial<(typeof reviewPosts)[number]["post"]> = {}): (typeof reviewPosts)[number] {
   return {
-    post: { id, content: `<p>Evidence for ${id}</p>`, isApproved: true, isReported: true, deletedAt: null, ...overrides },
+    post: { id, content: `<p>Evidence for ${id}</p>`, isApproved: false, isReported: false, deletedAt: null, ...overrides },
     thread: { id: "topic", title: `Review ${id}`, boardId: "board", isApproved: true },
-    review: null, assigneeName: null,
   } as (typeof reviewPosts)[number];
 }
 
 it("shows a compact queue without empty sections, global decision fields or unnecessary pagination", async () => {
   reviewPosts = [queuedPost()];
-  const view = await renderManagement("Review queue");
-  expect(view.queryByRole("navigation", { name: "Review pages" })).toBeNull();
-  expect(view.queryByRole("region", { name: "Topics to review" })).toBeNull();
-  expect(view.getByRole("region", { name: "Posts to review" })).toBeTruthy();
+  const view = await renderManagement("Approvals & recovery");
+  expect(view.queryByRole("navigation", { name: "Approvals and recovery pages" })).toBeNull();
+  expect(view.queryByRole("region", { name: "Topics awaiting approval or recovery" })).toBeNull();
+  expect(view.getByRole("region", { name: "Posts awaiting approval or recovery" })).toBeTruthy();
   expect(view.getByLabelText("Reason for the audit log").closest("details")?.open).toBe(false);
-  expect(view.queryByText("Choose a reviewer")).toBeNull();
+  expect(view.queryByRole("option", { name: /review/i })).toBeNull();
+  expect(view.queryByRole("button", { name: "Select player" })).toBeNull();
+  expect(view.getByText(/Reported content is handled in Player reports/)).toBeTruthy();
   expect(view.getByRole("link", { name: "Player reports" }).getAttribute("href")).toBe("/reports");
-  expect(view.getByRole("button", { name: "Review queue" }).getAttribute("aria-pressed")).toBe("true");
+  expect(view.getByRole("button", { name: "Approvals & recovery" }).getAttribute("aria-pressed")).toBe("true");
 });
 
 it("keeps decision fields and feedback local to the opened post", async () => {
   reviewPosts = [queuedPost("first"), queuedPost("second")];
-  const view = await renderManagement("Review queue");
+  const view = await renderManagement("Approvals & recovery");
   const first = view.getByText("Review first").closest("details")!;
   const second = view.getByText("Review second").closest("details")!;
   fireEvent.click(first.querySelector("summary")!);
   fireEvent.click(second.querySelector("summary")!);
-  fireEvent.change(within(first).getByLabelText("Reason for the audit log"), { target: { value: "Investigating flag" } });
-  expect((within(first).getByRole("button", { name: "Claim review" }) as HTMLButtonElement).disabled).toBe(false);
-  expect((within(second).getByRole("button", { name: "Claim review" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.change(within(first).getByLabelText("Reason for the audit log"), { target: { value: "Publication checked" } });
+  expect((within(first).getByRole("button", { name: "Approve post" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((within(second).getByRole("button", { name: "Approve post" }) as HTMLButtonElement).disabled).toBe(true);
   expect((within(second).getByLabelText("Reason for the audit log") as HTMLInputElement).value).toBe("");
-  const disabled = within(second).getByRole("button", { name: "Claim review" });
+  const disabled = within(second).getByRole("button", { name: "Approve post" });
   expect(disabled.getAttribute("aria-describedby")).toBe(within(second).getByRole("status").id);
 });
 
-it.each([
-  ["CLAIM", "IN_REVIEW", "staff"],
-  ["ASSIGN", "IN_REVIEW", "player"],
-  ["RESOLVE", "RESOLVED", "staff"],
-  ["REOPEN", "OPEN", "owner"],
-])("submits the scoped %s review decision with its own reason and assignee", async (action, status, assigneeId) => {
-  const entry = queuedPost();
-  if (action === "REOPEN") entry.review = { status: "RESOLVED", assigneeId: "owner" } as NonNullable<typeof entry.review>;
-  reviewPosts = [entry];
-  const view = await renderManagement("Review queue");
-  fireEvent.click(view.getByText("Review post").closest("summary")!);
-  fireEvent.change(view.getByLabelText("Action"), { target: { value: action } });
-  fireEvent.change(view.getByLabelText("Reason for the audit log"), { target: { value: "Investigating flag" } });
-  if (action === "ASSIGN") {
-    expect(view.getByText("Select a reviewer to continue.")).toBeTruthy();
-    fireEvent.click(view.getByRole("button", { name: "Select player" }));
-    await waitFor(() => expect(view.queryByText("Select a reviewer to continue.")).toBeNull());
-    fireEvent.click(view.getByRole("button", { name: "Clear player" }));
-    await waitFor(() => expect(view.getByText("Select a reviewer to continue.")).toBeTruthy());
-    fireEvent.click(view.getByRole("button", { name: "Select player" }));
-    await waitFor(() => expect(view.queryByText("Select a reviewer to continue.")).toBeNull());
-  } else expect(view.queryByRole("button", { name: "Select player" })).toBeNull();
-  fireEvent.submit(view.getByLabelText("Action").closest("form")!);
-  await waitFor(() => expect(reviewRequests).toEqual([{ path: "forum.reviewCase", input: { postId: "post", assigneeId, status, reason: "Investigating flag" } }]));
-});
-
-it.each(["APPROVE", "RESTORE", "DISMISS_REPORT", "REMOVE"])("retains the %s content action and its existing tRPC contract", async (action) => {
+it.each(["APPROVE", "RESTORE", "REMOVE"])("retains the %s content action and its existing tRPC contract", async (action) => {
   reviewPosts = [queuedPost("post", action === "APPROVE" ? { isApproved: false } : action === "RESTORE" ? { deletedAt: new Date() } : {})];
-  const view = await renderManagement("Review queue");
+  const view = await renderManagement("Approvals & recovery");
   fireEvent.click(view.getByText("Review post").closest("summary")!);
   fireEvent.change(view.getByLabelText("Action"), { target: { value: action } });
   fireEvent.change(view.getByLabelText("Reason for the audit log"), { target: { value: "Forum policy decision" } });
@@ -222,29 +197,29 @@ it.each(["APPROVE", "RESTORE", "DISMISS_REPORT", "REMOVE"])("retains the %s cont
 it("limits approval staff to permitted actions and explains an empty queue", async () => {
   canModerate = false;
   reviewPosts = [queuedPost("post", { isApproved: false })];
-  const view = await renderManagement("Review queue");
+  const view = await renderManagement("Approvals & recovery");
   fireEvent.click(view.getByText("Review post").closest("summary")!);
   expect(view.getAllByRole("option").map((option) => option.textContent)).toEqual(["Approve post"]);
   reviewPosts = [];
   await act(async () => { await queryClient.invalidateQueries(); });
-  expect(await view.findByText("No topics or posts to review on this page.")).toBeTruthy();
-  expect(view.queryByRole("region", { name: "Posts to review" })).toBeNull();
+  expect(await view.findByText("No content awaiting approval or recovery on this page.")).toBeTruthy();
+  expect(view.queryByRole("region", { name: "Posts awaiting approval or recovery" })).toBeNull();
 });
 
 it("retains rejected decisions for retry, shows pending state and guards duplicate submissions", async () => {
   reviewPosts = [queuedPost()];
-  const view = await renderManagement("Review queue");
+  const view = await renderManagement("Approvals & recovery");
   fireEvent.click(view.getByText("Review post").closest("summary")!);
   const reason = view.getByLabelText("Reason for the audit log") as HTMLInputElement;
   const form = reason.closest("form")!;
   fireEvent.change(reason, { target: { value: "   " } });
   fireEvent.submit(form);
   expect(reviewRequests).toHaveLength(0);
-  fireEvent.change(reason, { target: { value: "Investigating flag" } });
+  fireEvent.change(reason, { target: { value: "Publication checked" } });
   response = { success: false, message: "Access changed. Try again." };
   fireEvent.submit(form);
   expect((await view.findByRole("alert")).textContent).toBe("Access changed. Try again.");
-  expect(reason.value).toBe("Investigating flag");
+  expect(reason.value).toBe("Publication checked");
   holdSave = true;
   response = { success: true, message: "Review saved" };
   fireEvent.submit(form);
@@ -259,7 +234,7 @@ it("retains rejected decisions for retry, shows pending state and guards duplica
 
 it("keeps paging available when there is another page or a previous page", async () => {
   hasMoreReviews = true;
-  const view = await renderManagement("Review queue");
+  const view = await renderManagement("Approvals & recovery");
   const next = view.getByRole("button", { name: "Next" });
   hasMoreReviews = false;
   fireEvent.click(next);
@@ -267,5 +242,5 @@ it("keeps paging available when there is another page or a previous page", async
   await waitFor(() => expect((view.getByRole("button", { name: "Previous" }) as HTMLButtonElement).disabled).toBe(false));
   expect((view.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(view.getByRole("button", { name: "Previous" }));
-  await waitFor(() => expect(view.queryByRole("navigation", { name: "Review pages" }) === null).toBe(true));
+  await waitFor(() => expect(view.queryByRole("navigation", { name: "Approvals and recovery pages" }) === null).toBe(true));
 });
