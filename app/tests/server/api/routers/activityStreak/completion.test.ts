@@ -1,3 +1,6 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
+import { queueEnergy } from "../../../../setup/queues";
 import { eq } from "drizzle-orm";
 import { beforeEach, expect, it } from "bun:test";
 import {
@@ -5,6 +8,7 @@ import {
   activityStreakConfig,
   activityStreakReward,
   userData,
+  userQueue,
   userStreakProgress,
 } from "@/drizzle/schema";
 import { activityStreakRouter } from "@/server/api/routers/activityStreak";
@@ -22,7 +26,7 @@ const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000
 describeWithDatabase("completed event pass configuration changes", () => {
   beforeEach(async () => {
     await resetTables(
-      actionLog,
+      userQueue,      actionLog,
       userStreakProgress,
       activityStreakReward,
       activityStreakConfig,
@@ -52,6 +56,34 @@ describeWithDatabase("completed event pass configuration changes", () => {
       startedAt: hoursAgo(72),
       lastClaimDate: hoursAgo(24),
     });
+  });
+
+  it("applies scalar streak rewards while preserving queued training without a profile refetch", async () => {
+    const db = await getTestDatabase();
+    await queueEnergy("pass-user", [{ stat: "offence", energy: 10 }]);
+    const user = (await db.query.userData.findFirst({ where: eq(userData.userId, "pass-user") }))!;
+    const queue = await db.query.userQueue.findMany();
+    const profile = { userData: { ...user, queue } };
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, profile);
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return profile; } });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await (await callerFor(activityStreakRouter, "pass-user")).claimStreakDay({ configId: "pass" });
+      expect(result.success).toBe(true);
+      expect(result.userDelta?.money).toBe(200);
+      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta });
+      const cached = client.getQueryData<typeof profile>(key)!.userData;
+      const stored = (await db.query.userData.findFirst({ where: eq(userData.userId, "pass-user") }))!;
+      expect(cached.money).toBe(stored.money);
+      expect(cached.queue).toEqual(queue);
+      expect(cached.curEnergy).toBe(stored.curEnergy);
+      expect(reads).toBe(0);
+      expect((await (await callerFor(activityStreakRouter, "pass-user")).claimStreakDay({ configId: "pass" })).success).toBe(false);
+    } finally { stop(); client.clear(); }
   });
 
   it("keeps an extended completed pass hidden and rejects normal, reset, and catch-up claims", async () => {
