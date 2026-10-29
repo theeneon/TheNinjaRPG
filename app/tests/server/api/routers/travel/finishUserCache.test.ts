@@ -27,6 +27,22 @@ describeWithDatabase("confirmed arrival profile updates", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
+  it.each(["daily", "delivery"] as const)("retains progression reconciliation for %s objectives", async (scenario) => {
+    const db = await getTestDatabase();
+    const questType = scenario === "daily" ? "daily" : "story";
+    const objective = AllObjectives.parse({ id: "target", task: scenario === "daily" ? "move_to_location" : "deliver_item", sector: 2, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true, deliverItemIds: ["parcel"], item_name: "Parcel" });
+    await db.update(quest).set({ questType, content: { objectives: [objective], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }).where(eq(quest.id, "hidden-2"));
+    await db.update(questHistory).set({ questType }).where(eq(questHistory.questId, "hidden-2"));
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
+    expect(result).toMatchObject({ success: true, message: "OK" });
+    expect(result.userPatch).toBeUndefined();
+    expect(result.userDelta).toBeUndefined();
+    const stored = (await db.query.userData.findFirst({ where: eq(userData.userId, userId) }))!;
+    expect(stored.status).toBe("AWAKE");
+    expect(stored.questData?.find((tracker) => tracker.id === "hidden-2")?.goals[0]?.done).toBe(false);
+  });
+
   it("reveals only arrival targets, persists progress and avoids a full profile read or cache refetch", async () => {
     const db = await getTestDatabase();
     const profile = await (await callerFor(profileRouter, userId)).getUser();

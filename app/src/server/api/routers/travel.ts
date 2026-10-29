@@ -705,11 +705,43 @@ export const travelRouter = createTRPCRouter({
         userQuests: visible,
         questData: (user.questData ?? []).filter((tracker) => knownIds.has(tracker.id)),
       };
-      const progress = wasTravelling
-        ? getNewTrackers(arrival, [{ task: "any" }])
-        : { trackers: arrival.questData, consequences: [], notifications: [] };
+      // Team synchronization, war targets and delivery inventory belong to the
+      // authoritative progression flow, beyond this arrival-only snapshot.
+      const canEvaluate =
+        !user.questPartyId &&
+        !visible.some(
+          (entry) =>
+            entry.questType === "war" ||
+            entry.quest.content.objectives.some(
+              (objective) => objective.task === "deliver_item",
+            ),
+        );
+      canProject &&= canEvaluate;
+      const previouslyDoneGoals = new Set(
+        arrival.questData.flatMap((tracker) =>
+          tracker.goals
+            .filter((goal) => goal.done)
+            .map((goal) => `${tracker.id}:${goal.id}`),
+        ),
+      );
+      const progress =
+        wasTravelling && canEvaluate
+          ? getNewTrackers(arrival, [{ task: "any" }])
+          : { trackers: arrival.questData, consequences: [], notifications: [] };
       canProject &&= progress.consequences.every(
         (entry) => entry.type === "update_user",
+      );
+      // Completing passive objectives can pay rewards on the next profile read.
+      canProject &&= !progress.trackers.some(
+        (tracker) =>
+          visible.some(
+            (entry) =>
+              entry.questId === tracker.id &&
+              ["tier", "daily", "achievement"].includes(entry.questType),
+          ) &&
+          tracker.goals.some(
+            (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
+          ),
       );
       if (canProject && wasTravelling) {
         const sectors = getQuestTargetSectorsToCheck(arrival, progress.trackers, true);
