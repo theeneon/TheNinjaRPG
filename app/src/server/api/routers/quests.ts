@@ -3850,7 +3850,7 @@ export const commitQuestObjectiveRewards = async (info: {
     user.villagePrestige += rewards.reward_prestige;
     user.skillPoints = Math.min(
       MAX_SKILL_POINTS,
-      user.skillPoints + (userDelta.skillPoints ?? 0),
+      user.skillPoints + rewards.reward_skillpoints,
     );
   }
   if (resolved && userQuest && completedEndAt) {
@@ -3928,16 +3928,6 @@ export const commitQuestObjectiveRewards = async (info: {
     userDelta,
     userCacheEligible:
       userCacheEligible &&
-      // Carried grants do not change equipped passives. Collection goals need the
-      // inventory-aware profile hydration before their progress can be projected.
-      !(
-        items.length > 0 &&
-        user.userQuests.some((entry) =>
-          entry.quest.content.objectives.some(
-            (objective) => objective.task === "collect_item",
-          ),
-        )
-      ) &&
       !changedQuestAssignments &&
       !(farmRewardResult && farmRewardResult.rowsAffected > 0),
   };
@@ -4583,9 +4573,6 @@ export const getRewardUserDelta = (
     reputationPoints: rewards.reward_reputation - reputationCost,
     reputationPointsTotal: rewards.reward_reputation,
     villagePrestige: rewards.reward_prestige,
-    ...(hasQuestSnapshot && rewards.reward_skillpoints !== 0
-      ? { skillPoints: rewards.reward_skillpoints }
-      : {}),
   };
 };
 

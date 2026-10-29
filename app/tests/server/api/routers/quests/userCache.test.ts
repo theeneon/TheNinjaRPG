@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
-import { SECTOR_MAP_VERSION } from "@/drizzle/constants";
+import { MAX_SKILL_POINTS, SECTOR_MAP_VERSION } from "@/drizzle/constants";
 import { item, quest, questHistory, sectorMap, userCookingJob, userData, userItem, userQueue, userVote } from "@/drizzle/schema";
 import { questsRouter } from "@/server/api/routers/quests";
 import { profileRouter } from "@/server/api/routers/profile";
@@ -271,15 +271,20 @@ describeWithDatabase("confirmed quest cache responses", () => {
     }
   });
 
-  it("applies claimed inventory and skill-point rewards without refetching getUser", async () => {
+  it.each([
+    { initial: 2, amount: 3, expected: 5 },
+    { initial: MAX_SKILL_POINTS - 1, amount: 3, expected: MAX_SKILL_POINTS },
+    { initial: 5, amount: -3, expected: 2 },
+  ])("applies claimed inventory and $amount skill points from the accepted balance $initial without refetching getUser", async ({ initial, amount, expected }) => {
     const db = await getTestDatabase();
     await insertItems([{ id: "cache-gift", name: "Gift" }]);
-    await db.update(quest).set({ content: { ...content(10), reward: ObjectiveReward.parse({ reward_money: 100, reward_skillpoints: 3, reward_items: [{ ids: ["cache-gift"], number: 100 }] }) } }).where(eq(quest.id, missionId));
+    await db.update(quest).set({ content: { ...content(10), reward: ObjectiveReward.parse({ reward_money: 100, reward_skillpoints: amount, reward_items: [{ ids: ["cache-gift"], number: 100 }] }) } }).where(eq(quest.id, missionId));
     const api = await callerFor(questsRouter, playerId);
     expect((await api.startQuest({ questId: missionId, userSector: 0 })).success).toBe(true);
     await db.update(userData).set({ questData: [{ id: missionId, startAt: new Date().toISOString(), goals: [{ id: "train", value: 10, done: true, collected: false, recentlyDied: false }] }] }).where(eq(userData.userId, playerId));
     await db.insert(userCookingJob).values({ id: "completed-cooking", userId: playerId, experience: 23, finishesAt: new Date(Date.now() + 60000) });
     const profile = await (await callerFor(profileRouter, playerId)).getUser();
+    await db.update(userData).set({ skillPoints: initial }).where(eq(userData.userId, playerId));
     await db.update(userCookingJob).set({ finishesAt: new Date(Date.now() - 1000) }).where(eq(userCookingJob.id, "completed-cooking"));
     const key = [["profile", "getUser"], { type: "query" }];
     const client = new QueryClient();
@@ -291,15 +296,177 @@ describeWithDatabase("confirmed quest cache responses", () => {
       const revision = prepareUserUpdate(client, key);
       const result = await api.checkRewards({ questId: missionId });
       expect(result.success).toBe(true);
-      expect(result.userDelta?.skillPoints).toBe(3);
+      expect(result.userPatch?.skillPoints).toBe(expected);
       expect(await db.query.userItem.findMany()).toHaveLength(1);
       await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
       const saved = await readPlayer();
+      expect(saved?.skillPoints).toBe(expected);
       expect(saved?.cookingExperience).toBe(23);
       expect(client.getQueryData<typeof profile>(key)?.userData).toMatchObject({ skillPoints: saved?.skillPoints, money: saved?.money, cookingExperience: saved?.cookingExperience, cookingJobs: await db.query.userCookingJob.findMany() });
       expect(reads).toBe(0);
     } finally { stop(); client.clear(); }
   });
+
+  it.each(["away", "waiting", "future", "completed", "ready"] as const)(
+    "reconciles an item payout only when collection effects run (%s)",
+    async (state) => {
+      const db = await getTestDatabase();
+      await insertItems([{ id: "cache-gift", name: "Gift" }]);
+      await db
+        .update(quest)
+        .set({
+          content: {
+            ...content(10),
+            reward: ObjectiveReward.parse({
+              reward_items: [{ ids: ["cache-gift"], number: 100 }],
+            }),
+          },
+        })
+        .where(eq(quest.id, missionId));
+      const collectionId = "cache-collection";
+      const objective = CollectItem.parse({
+        id: "collect",
+        task: "collect_item",
+        sector: 0,
+        longitude: state === "away" ? 11 : 10,
+        latitude: 7,
+        collectItemIds: ["cache-gift"],
+        collect_time_minutes: 1,
+      });
+      await insertQuests([
+        {
+          id: collectionId,
+          questType: "story",
+          consecutiveObjectives: state === "future",
+          content: {
+            ...content(10),
+            objectives:
+              state === "future"
+                ? [
+                    SimpleObjective.parse({
+                      id: "first",
+                      task: "stats_trained",
+                      value: 10000,
+                    }),
+                    objective,
+                  ]
+                : [objective],
+          },
+        },
+      ]);
+      await insertQuestHistory([
+        { userId: playerId, questId: collectionId, questType: "story" },
+      ]);
+      const api = await callerFor(questsRouter, playerId);
+      expect(
+        (await api.startQuest({ questId: missionId, userSector: 0 })).success,
+      ).toBe(true);
+      const missionTracker = {
+        id: missionId,
+        startAt: new Date().toISOString(),
+        goals: [
+          { id: "train", value: 10, done: true, collected: false, recentlyDied: false },
+        ],
+      };
+      const collectionGoal = {
+        id: "collect",
+        value: 0,
+        sector: 0,
+        longitude: objective.longitude,
+        latitude: objective.latitude,
+        locationChecked: true,
+        done: state === "completed",
+        collected: state === "completed",
+        recentlyDied: false,
+        ...(state === "waiting" || state === "ready"
+          ? {
+              timestamp: new Date().toISOString(),
+              collectDeadline: new Date(Date.now() + 60000).toISOString(),
+            }
+          : {}),
+      };
+      await db
+        .update(userData)
+        .set({
+          questData: [
+            missionTracker,
+            {
+              id: collectionId,
+              startAt: new Date().toISOString(),
+              goals:
+                state === "future"
+                  ? [
+                      {
+                        id: "first",
+                        value: 0,
+                        done: false,
+                        collected: false,
+                        recentlyDied: false,
+                      },
+                      collectionGoal,
+                    ]
+                  : [collectionGoal],
+            },
+          ],
+        })
+        .where(eq(userData.userId, playerId));
+      const profileApi = await callerFor(profileRouter, playerId);
+      const profile = await profileApi.getUser();
+      if (state === "ready") {
+        const questData =
+          profile.userData?.questData?.map((tracker) =>
+            tracker.id === collectionId
+              ? {
+                  ...tracker,
+                  goals: tracker.goals.map((goal) => ({
+                    ...goal,
+                    collectDeadline: new Date(Date.now() - 1000).toISOString(),
+                  })),
+                }
+              : tracker,
+          ) ?? [];
+        await db
+          .update(userData)
+          .set({ questData })
+          .where(eq(userData.userId, playerId));
+      }
+      const key = ["collection-profile"];
+      const client = new QueryClient();
+      client.setQueryData(key, profile);
+      let reads = 0;
+      const stop = new QueryObserver(client, {
+        queryKey: key,
+        staleTime: Infinity,
+        queryFn: async () => {
+          reads++;
+          return profileApi.getUser();
+        },
+      }).subscribe(() => {});
+      try {
+        const revision = prepareUserUpdate(client, key);
+        const result = await api.checkRewards({ questId: missionId });
+        expect(result).toMatchObject({ success: true, resolved: true });
+        expect(result.userPatch !== undefined).toBe(state !== "ready");
+        await updateUserCache(client, key, result.userPatch, {
+          revision,
+          delta: result.userDelta,
+          achievementProgress: result.achievementProgress,
+        });
+        expect(reads).toBe(state === "ready" ? 1 : 0);
+        const goal = client
+          .getQueryData<typeof profile>(key)
+          ?.userData?.questData?.find((tracker) => tracker.id === collectionId)
+          ?.goals.find((entry) => entry.id === "collect");
+        expect(goal?.done ?? false).toBe(state === "completed" || state === "ready");
+        expect(await db.query.userItem.findMany()).toHaveLength(
+          state === "ready" ? 2 : 1,
+        );
+      } finally {
+        stop();
+        client.clear();
+      }
+    },
+  );
 
   it("returns a completed repeatable mission without exposing it as active or recreating its tracker", async () => {
     const api = await callerFor(questsRouter, playerId);

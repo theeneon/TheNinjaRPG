@@ -27,7 +27,7 @@ describe("confirmed reward cache deltas", () => {
     expect(getRewardUserDelta(reward({ reward_reputation: 3 }))).toBeUndefined();
   });
 
-  it.each(["reward_money", "reward_seichi_silver", "reward_exp"])(
+  it.each(["reward_money", "reward_seichi_silver", "reward_exp", "reward_skillpoints"])(
     "reconciles fractional %s because its atomic payout targets an integer column",
     (field) => {
       expect(getRewardUserDelta(reward({ [field]: 0.6 }), 0, true)).toBeUndefined();
@@ -64,6 +64,8 @@ describe("confirmed reward cache deltas", () => {
 });
 
 
-it("includes skill points and unequipped inventory grants with a hydrated quest snapshot", () => {
-  expect(getRewardUserDelta(reward({ reward_items: ["gift"], reward_jutsus: ["jutsu"], reward_badges: ["badge"], reward_skillpoints: 3 }), 0, true)).toMatchObject({ skillPoints: 3, money: 0 });
+it("accepts unequipped inventory and skill point grants with a hydrated quest snapshot", () => {
+  const delta = getRewardUserDelta(reward({ reward_items: ["gift"], reward_jutsus: ["jutsu"], reward_badges: ["badge"], reward_skillpoints: 3 }), 0, true);
+  expect(delta).toMatchObject({ money: 0 });
+  expect(delta).not.toHaveProperty("skillPoints");
 });
