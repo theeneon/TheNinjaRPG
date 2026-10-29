@@ -4,6 +4,7 @@ import { eq, inArray } from "drizzle-orm";
 import { actionLog, battleHistory, battle, dungeon, dungeonRun, dungeonMember, userData, village, userRewards, item, jutsu, userItem, userJutsu, rewardPackage } from "@/drizzle/schema";
 import { ObjectiveReward } from "@/validators/rewards";
 import { dungeonRouter } from "@/server/api/routers/dungeon";
+import { jutsuRouter } from "@/server/api/routers/jutsu";
 import type { DrizzleClient } from "@/server/db";
 import { settleDungeonBattle, expireDungeonRun, rollbackDungeonStart } from "@/server/utils/dungeon";
 import { dungeonContent, dungeonBattleState } from "../../../setup/dungeon";
@@ -27,6 +28,58 @@ describeWithDatabase("Dungeon parties and settlement", () => {
     if (!result.success || !("id" in result)) throw Error("Lobby creation failed");
     return {a, id: result.id};
   };
+
+  /** Capture rewards in a fully cleared run for completion-delivery regressions. */
+  const completedLobby = async (content: ReturnType<typeof dungeonContent>) => {
+    const db = await getTestDatabase();
+    const party = await lobby();
+    await db.update(dungeonRun).set({content, status: "COMPLETED", state: {...dungeonBattleState().runState, memberIds: ["a"], floor: 5, clearedFloors: [0,1,2,3,4]}}).where(eq(dungeonRun.id, party.id));
+    return party;
+  };
+
+  it("keeps missing direct rewards eligible until their catalog entries can be delivered", async () => {
+    const db = await getTestDatabase();
+    const content = dungeonContent();
+    content.rewards.drops = [
+      {type: "item", id: "missing-item", chance: 100, quantity: 2, onlyOnce: true},
+      {type: "cache", id: "missing-cache", chance: 100, quantity: 1, onlyOnce: true},
+      {type: "jutsu", id: "missing-jutsu", chance: 100, quantity: 1, onlyOnce: true},
+    ];
+    const first = await completedLobby(content);
+    expect(await first.a.claim({id: first.id})).toMatchObject({success: true, reward: {items: [], jutsus: [], rewards: {reward_items: [], reward_jutsus: []}, grantedDrops: []}});
+    await insertItems([{id: "missing-item", canStack: false}, {id: "missing-cache", canStack: false}]);
+    await db.insert(jutsu).values({id: "missing-jutsu", name: "Technique", description: "Technique", battleDescription: "Technique", image: "/jutsu.png", effects: [], target: "SELF", range: 0, requiredRank: "STUDENT", jutsuType: "NORMAL"});
+    const second = await completedLobby(content);
+    expect(await second.a.claim({id: second.id})).toMatchObject({success: true, reward: {items: ["missing-item", "missing-item", "missing-cache"], jutsus: ["missing-jutsu"], grantedDrops: content.rewards.drops.map((drop) => JSON.stringify([drop.type, drop.id]))}});
+    expect(await db.query.userItem.findMany({where: eq(userItem.userId, "a")})).toHaveLength(3);
+    const third = await completedLobby(content);
+    expect(await third.a.claim({id: third.id})).toMatchObject({success: true, reward: {items: [], jutsus: [], grantedDrops: []}});
+    expect(await db.query.userItem.findMany({where: eq(userItem.userId, "a")})).toHaveLength(3);
+  });
+
+  it("grants a one-time package once across concurrent runs and independently per player and dungeon", async () => {
+    const db = await getTestDatabase();
+    const content = dungeonContent();
+    content.rewards.drops = [{type: "package", id: "once", chance: 100, quantity: 1, onlyOnce: true, package: {name: "Once", description: "", rewards: ObjectiveReward.parse({reward_money: 7})}}];
+    const completed = async (id: string, userId: string, dungeonId = "definition") => {
+      await db.insert(dungeonRun).values({id, dungeonId, leaderId: userId, content, status: "COMPLETED", createdAt: new Date(), state: {...dungeonBattleState().runState, memberIds: [userId], floor: 5, clearedFloors: [0,1,2,3,4]}});
+      await db.insert(dungeonMember).values({runId: id, userId});
+    };
+    await completed("first", "a");
+    await completed("second", "a");
+    const a = await callerFor(dungeonRouter, "a");
+    const results = await Promise.all([a.claim({id: "first"}), a.claim({id: "second"})]);
+    expect(results.every((result) => result.success)).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "a")}))?.money).toBe(207);
+    expect((await a.claim({id: "first"})).success).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "a")}))?.money).toBe(207);
+    await completed("other-player", "b");
+    expect((await (await callerFor(dungeonRouter, "b")).claim({id: "other-player"})).success).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "b")}))?.money).toBe(107);
+    await completed("other-dungeon", "a", "another-definition");
+    expect((await a.claim({id: "other-dungeon"})).success).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "a")}))?.money).toBe(314);
+  });
 
   it("skips the unchanged run refresh while preserving membership and invitation guards", async () => {
     const db = await getTestDatabase();
@@ -277,6 +330,33 @@ describeWithDatabase("Dungeon parties and settlement", () => {
     expect(await db.query.userJutsu.findMany({where:eq(userJutsu.userId,"a")})).toHaveLength(1);
     expect((await db.query.dungeonMember.findFirst())?.reward).toMatchObject({items:["drop"], jutsus:["technique"]});
     expect((await db.query.userData.findFirst({where:eq(userData.userId,"a")}))?.money).toBe(100);
+  });
+  it("keeps owned jutsu eligible until delivered after forgetting", async () => {
+    const db = await getTestDatabase();
+    await db.insert(jutsu).values({id: "technique", name: "Technique", description: "Technique", battleDescription: "Technique", image: "/jutsu.png", effects: [], target: "SELF", range: 0, requiredRank: "STUDENT", jutsuType: "NORMAL"});
+    await db.insert(userJutsu).values({id: "owned", userId: "a", jutsuId: "technique"});
+    const content = dungeonContent();
+    content.rewards.drops = [{type: "jutsu", id: "technique", chance: 100, quantity: 1, onlyOnce: true}];
+    /** Record cleared runs independently of current jutsu ownership. */
+    const completed = async (id: string) => {
+      await db.insert(dungeonRun).values({id, dungeonId: "definition", leaderId: "a", content, status: "COMPLETED", createdAt: new Date(), state: {...dungeonBattleState().runState, memberIds: ["a"], floor: 5, clearedFloors: [0,1,2,3,4]}});
+      await db.insert(dungeonMember).values({runId: id, userId: "a"});
+    };
+    const a = await callerFor(dungeonRouter, "a");
+    await completed("owned");
+    const skipped = await a.claim({id: "owned"});
+    expect(skipped).toMatchObject({success: true, reward: {jutsus: [], grantedDrops: [], rewards: {reward_jutsus: []}}});
+    expect(await a.claim({id: "owned"})).toEqual({...skipped, message: "Rewards already delivered."});
+    const techniques = await callerFor(jutsuRouter, "a");
+    expect((await techniques.forget({id: "owned"})).success).toBe(true);
+    await completed("forgotten");
+    expect(await a.claim({id: "forgotten"})).toMatchObject({success: true, reward: {jutsus: ["technique"], grantedDrops: [JSON.stringify(["jutsu", "technique"])], rewards: {reward_jutsus: ["technique"]}}});
+    const learned = await db.query.userJutsu.findFirst({where: eq(userJutsu.userId, "a")});
+    if (!learned) throw Error("Missing delivered jutsu");
+    expect((await techniques.forget({id: learned.id})).success).toBe(true);
+    await completed("delivered-before");
+    expect(await a.claim({id: "delivered-before"})).toMatchObject({success: true, reward: {jutsus: [], grantedDrops: []}});
+    expect(await db.query.userJutsu.findMany()).toHaveLength(0);
   });
   it("settles a party floor once, revives everyone and preserves incomplete reward gates", async () => {
     const db = await getTestDatabase();

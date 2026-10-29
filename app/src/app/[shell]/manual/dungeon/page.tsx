@@ -584,9 +584,11 @@ export default function DungeonEditor() {
                 </div>
                 <p className="text-muted-foreground text-sm">
                   Each drop rolls once per player; a successful roll grants the full
-                  quantity. Jutsu can only be learned once. Caches are delivered
-                  unopened to inventory. Reward packages copy their current catalog
-                  contents when the dungeon is saved.
+                  quantity. Only once per player stops a reward after its first
+                  successful drop in this dungeon, even if consumed or sold. Jutsu can
+                  only be learned once. Caches are delivered unopened to inventory.
+                  Reward packages copy their current catalog contents when the dungeon
+                  is saved.
                 </p>
                 {content.rewards.drops.map((drop, i) => (
                   <div
@@ -691,6 +693,18 @@ export default function DungeonEditor() {
                     >
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </Button>
+                    <Label className="col-span-full flex items-center gap-2">
+                      <Switch
+                        aria-label={`Drop ${i + 1} only once per player`}
+                        checked={drop.onlyOnce ?? false}
+                        onCheckedChange={(onlyOnce) => {
+                          const drops = [...content.rewards.drops];
+                          drops[i] = { ...drop, onlyOnce };
+                          patch({ rewards: { ...content.rewards, drops } });
+                        }}
+                      />
+                      Only once per player
+                    </Label>
                     {drop.type === "package" && drop.id && (
                       <p className="col-span-full text-muted-foreground text-xs">
                         Per package:{" "}

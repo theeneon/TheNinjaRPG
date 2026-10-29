@@ -2,7 +2,11 @@ import { nanoid } from "nanoid";
 import { DUNGEON_RUN_SECONDS } from "@/drizzle/constants";
 import { transitionCoopParty } from "@/libs/coop";
 import { dungeonFloorAt } from "@/libs/dungeon";
-import { dungeonRewardError, rollDungeonRewards } from "@/libs/dungeonRewards";
+import {
+  dungeonDropKey,
+  dungeonRewardError,
+  rollDungeonRewards,
+} from "@/libs/dungeonRewards";
 import { listAiUserIds } from "@/queries/ai";
 import {
   clearDungeonActiveUsers,
@@ -22,14 +26,17 @@ import {
   listDungeonForGetAvailable,
   listDungeonMemberForAct,
   listDungeonMemberForGetState,
+  listDungeonRewardHistory,
   listDungeonRunForGetState,
   listItemForSave,
   listJutsuForSave,
   listRewardPackageForSave,
   listUserDataForGetState,
+  lockDungeonRewardUser,
   selectCandidatesForGetState,
   selectDungeonMemberForGetState,
   updateDungeonMemberForClaim,
+  updateDungeonRewardReceipt,
   updateDungeonRunForReserve,
   updateDungeonRunForUpdateParty,
 } from "@/queries/dungeon";
@@ -431,25 +438,32 @@ export const dungeonRouter = createTRPCRouter({
       const rewards = run.content.rewards;
       const rewardError = dungeonRewardError(rewards);
       if (rewardError) return errorResponse(rewardError);
-      const rolled = rollDungeonRewards(rewards);
-      const receipt = {
-        money: rolled.reward_money,
-        experience: rolled.reward_exp,
-        tokens: rolled.reward_tokens,
-        prestige: rolled.reward_prestige,
-        items: rolled.reward_items,
-        jutsus: rolled.reward_jutsus,
-        rewards: rolled,
-      };
-      // A single guarded update cannot include item/jutsu inserts and village token grants.
-      // Keep them atomic with the personal receipt: recording it first can lose rewards,
-      // while granting first can duplicate them. Failed grants leave the receipt unclaimed.
-      const paid = await retryOnDeadlock(() =>
+      // Item/jutsu inserts and village grants cannot share one guarded statement with
+      // the receipt. The transaction also serializes cross-run drop history per player.
+      const receipt = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
+          await lockDungeonRewardUser(tx, ctx.userId);
+          const history = rewards.drops.some((drop) => drop.onlyOnce)
+            ? await listDungeonRewardHistory(tx, ctx.userId, run.dungeonId)
+            : [];
+          const claimedDrops = new Set(
+            history.flatMap(({ reward }) => reward?.grantedDrops ?? []),
+          );
+          const { grantedDrops, ...rolled } = rollDungeonRewards(rewards, claimedDrops);
+          const receipt = {
+            money: rolled.reward_money,
+            experience: rolled.reward_exp,
+            tokens: rolled.reward_tokens,
+            prestige: rolled.reward_prestige,
+            items: rolled.reward_items,
+            jutsus: rolled.reward_jutsus,
+            rewards: rolled,
+            grantedDrops,
+          };
           const claim = await updateDungeonMemberForClaim(tx, receipt, run, ctx);
-          if (claim.rowsAffected === 0) return false;
+          if (claim.rowsAffected === 0) return null;
           // Reward tasks execute serially inside the driver's rotating transaction session.
-          await updateRewards({
+          const delivered = await updateRewards({
             client: tx as unknown as DrizzleClient,
             user,
             rewards: rolled,
@@ -458,10 +472,36 @@ export const dungeonRouter = createTRPCRouter({
             persistQuestData: false,
             pvpBoostApplied: true,
           });
-          return true;
+          const deliveredItems = new Set(delivered.items.map(({ id }) => id));
+          const deliveredJutsus = new Set(delivered.jutsus.map(({ id }) => id));
+          const items = receipt.items.filter((id) => deliveredItems.has(id));
+          const jutsus = receipt.jutsus.filter((id) => deliveredJutsus.has(id));
+          if (
+            items.length !== receipt.items.length ||
+            jutsus.length !== receipt.jutsus.length
+          ) {
+            // Owned jutsu and missing catalog entries are skipped by the reward pipeline.
+            // Only delivered direct drops consume eligibility; packages retain their roll identity.
+            const skippedDrops = new Set(
+              rewards.drops
+                .filter((drop) =>
+                  drop.type === "jutsu"
+                    ? !deliveredJutsus.has(drop.id)
+                    : drop.type !== "package" && !deliveredItems.has(drop.id),
+                )
+                .map(dungeonDropKey),
+            );
+            receipt.items = items;
+            receipt.jutsus = jutsus;
+            receipt.rewards.reward_items = items;
+            receipt.rewards.reward_jutsus = jutsus;
+            receipt.grantedDrops = grantedDrops.filter((key) => !skippedDrops.has(key));
+            await updateDungeonRewardReceipt(tx, run.id, ctx.userId, receipt);
+          }
+          return receipt;
         }),
       );
-      return paid
+      return receipt
         ? { success: true, message: "Completion rewards delivered.", reward: receipt }
         : errorResponse("Rewards were already claimed. Refresh to view your receipt.");
     }),
