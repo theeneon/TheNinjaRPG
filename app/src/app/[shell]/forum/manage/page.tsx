@@ -876,6 +876,7 @@ function ForumStaff({
         className="space-y-3 rounded-lg border p-4"
         onSubmit={async (e) => {
           e.preventDefault();
+          setError("");
           try {
             const result = await save.mutateAsync({
               userId,
@@ -1111,6 +1112,7 @@ function ForumRestrictions({
         className="space-y-3 rounded-lg border p-4"
         onSubmit={async (e) => {
           e.preventDefault();
+          setError("");
           try {
             const r = await save.mutateAsync({
               userId,
@@ -1359,6 +1361,7 @@ function ForumReview({
                 variant="outline"
                 disabled={reason.trim().length < 3 || reviewCase.isPending}
                 onClick={async () => {
+                  setError("");
                   try {
                     const result = await reviewCase.mutateAsync({
                       postId: post.id,
@@ -1420,6 +1423,7 @@ function ForumReview({
                 size="sm"
                 disabled={reason.trim().length < 3 || moderate.isPending}
                 onClick={async () => {
+                  setError("");
                   try {
                     const r = await moderate.mutateAsync({
                       postId: post.id,
