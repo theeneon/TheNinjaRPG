@@ -136,3 +136,25 @@ UPDATE ForumBoard SET nThreads = (SELECT COUNT(*) FROM ForumThread WHERE ForumTh
  updatedAt = COALESCE((SELECT MAX(updatedAt) FROM ForumThread WHERE ForumThread.boardId = ForumBoard.id), createdAt);
 
 ALTER TABLE `ForumBoard` DROP COLUMN `group`;
+
+ALTER TABLE `ForumThread` ADD `lastPostId` varchar(191);
+UPDATE ForumThread SET lastPostId = (SELECT id FROM ForumPost WHERE ForumPost.threadId = ForumThread.id AND ForumPost.deletedAt IS NULL AND ForumPost.isApproved = true ORDER BY ForumPost.createdAt DESC, ForumPost.id DESC LIMIT 1);
+
+CREATE TABLE `ForumCase` (
+	`postId` varchar(191) NOT NULL,
+	`assigneeId` varchar(191),
+	`status` enum('OPEN','IN_REVIEW','RESOLVED') NOT NULL DEFAULT 'OPEN',
+	`decision` text NOT NULL,
+	`updatedAt` datetime(3) NOT NULL DEFAULT (CURRENT_TIMESTAMP(3)),
+	CONSTRAINT `ForumCase_postId` PRIMARY KEY(`postId`)
+);
+
+ALTER TABLE `ForumThread` ADD `pollId` varchar(191);
+ALTER TABLE `ForumThread` ADD `summary` text;
+ALTER TABLE `ForumThread` ADD `summaryUpdatedAt` datetime(3);
+
+ALTER TABLE `ForumPost` ADD `publicationIntent` json;
+
+CREATE INDEX `ForumAlert_postId_idx` ON `ForumAlert` (`postId`);
+CREATE INDEX `ForumAlert_threadId_idx` ON `ForumAlert` (`threadId`);
+CREATE INDEX `ForumRead_thread_read_idx` ON `ForumRead` (`threadId`,`readAt`);
