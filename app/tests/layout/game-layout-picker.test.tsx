@@ -45,7 +45,7 @@ const openPicker = async (layout: GameLayoutId = "default") => {
 };
 
 describe("game layout picker", () => {
-  it("changes layouts in place without refreshing or navigating the authentication shell", async () => {
+  it("changes layouts in place and refreshes the router cache without navigating", async () => {
     const router = { refresh: vi.fn(), push: vi.fn(), replace: vi.fn() };
     function ConnectedPicker() {
       const selectLayout = useSelectGameLayout();
@@ -65,7 +65,7 @@ describe("game layout picker", () => {
     const view = render(<LayoutFrame />);
     fireEvent.keyDown(view.getByRole("combobox", { name: "Game layout" }), { key: "ArrowDown" });
     await act(async () => fireEvent.keyDown(await view.findByRole("option", { name: "Eclipse Observatory" }), { key: "Enter" }));
-    expect(router.refresh).not.toHaveBeenCalled();
+    expect(router.refresh).toHaveBeenCalledTimes(1);
     expect(view.getByRole("combobox", { name: "Game layout" }).textContent).toContain("Eclipse Observatory");
     expect(document.cookie).toContain(`${LAYOUT_PREFERENCE_COOKIE}=20-eclipse-observatory`);
     expect(localStorage.getItem(LAYOUT_PREFERENCE_COOKIE)).toBe('"20-eclipse-observatory"');
@@ -73,7 +73,7 @@ describe("game layout picker", () => {
     expect(router.replace).not.toHaveBeenCalled();
     fireEvent.keyDown(view.getByRole("combobox", { name: "Game layout" }), { key: "ArrowDown" });
     await act(async () => fireEvent.keyDown(await view.findByRole("option", { name: "Sakura Courtyard" }), { key: "Enter" }));
-    expect(router.refresh).not.toHaveBeenCalled();
+    expect(router.refresh).toHaveBeenCalledTimes(2);
     expect(localStorage.getItem(LAYOUT_PREFERENCE_COOKIE)).toBe('"3-sakura-courtyard"');
   });
 
