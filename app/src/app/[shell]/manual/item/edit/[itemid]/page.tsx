@@ -366,7 +366,10 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
     onSuccess: async (result) => {
       showMutationToast(result);
       if (result.success) {
-        await utils.item.getItemVariants.invalidate({ itemId });
+        await Promise.all([
+          utils.item.getItemVariants.invalidate({ itemId }),
+          utils.item.getVariantNames.invalidate(),
+        ]);
         setShowForm(false);
         setEditingVariant(null);
       }
@@ -381,7 +384,10 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
     onSuccess: async (result) => {
       showMutationToast(result);
       if (result.success) {
-        await utils.item.getItemVariants.invalidate({ itemId });
+        await Promise.all([
+          utils.item.getItemVariants.invalidate({ itemId }),
+          utils.item.getVariantNames.invalidate(),
+        ]);
       }
     },
     onSettled: (_result, _error, variables) => {
