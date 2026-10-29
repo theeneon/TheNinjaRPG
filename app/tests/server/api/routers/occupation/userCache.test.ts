@@ -55,4 +55,48 @@ describeWithDatabase("crafting user cache quest progress", () => {
       expect(reads).toBe(0);
     } finally { stop(); client.clear(); }
   });
+
+  it.each(["mission", "achievement"] as const)("evaluates total crafting XP after the committed grant (%s)", async (questType) => {
+    const db = await getTestDatabase();
+    await insertQuests([{ id: "craft-total", questType, consecutiveObjectives: false, maxAttempts: 100, maxCompletes: 100, content: { objectives: [
+      AllObjectives.parse({ id: "total-xp", task: "crafting_experience", value: 100 }),
+      AllObjectives.parse({ id: "made-items", task: "items_crafted", value: 2 }),
+      AllObjectives.parse({ id: "earned-xp", task: "crafting_experience_gained", value: 10 }),
+    ], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }]);
+    await insertQuestHistory([{ userId: "crafter", questId: "craft-total", questType }]);
+    await db.update(userData).set({ craftingExperience: 95, questData: [QuestTracker.parse({ id: "craft-total", goals: [{ id: "total-xp", value: 95, done: false }, { id: "made-items", value: 0, done: false }, { id: "earned-xp", value: 0, done: false }] })] }).where(eq(userData.userId, "crafter"));
+    const initial = await fetchUpdatedUser({ client: db, userId: "crafter" });
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, { userData: initial.user });
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => {
+      reads++;
+      return { userData: (await fetchUpdatedUser({ client: db, userId: "crafter" })).user };
+    } });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await (await callerFor(occupationRouter, "crafter")).craftItem({ itemId: "crafted", quantity: 1 });
+      expect(result.success).toBe(true);
+      const saved = (await db.query.userData.findFirst({ where: eq(userData.userId, "crafter") }))!;
+      const goals = saved.questData?.find((tracker) => tracker.id === "craft-total")?.goals;
+      expect(saved.craftingExperience).toBe(100);
+      expect(goals?.find((goal) => goal.id === "total-xp")).toMatchObject({ value: 100, done: true });
+      expect(goals?.find((goal) => goal.id === "made-items")).toMatchObject({ value: 1, done: false });
+      expect(goals?.find((goal) => goal.id === "earned-xp")).toMatchObject({ value: 5, done: false });
+      if (questType === "achievement") {
+        expect(result.userPatch).toBeUndefined();
+        expect(result.userDelta).toBeUndefined();
+      } else {
+        expect(result.userPatch?.questData).toEqual(saved.questData);
+        expect(result.userDelta).toEqual({});
+      }
+      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
+      expect(cached.craftingExperience).toBe(saved.craftingExperience);
+      expect(cached.questData).toEqual(saved.questData);
+      expect(reads).toBe(questType === "achievement" ? 1 : 0);
+    } finally { stop(); client.clear(); }
+  });
 });

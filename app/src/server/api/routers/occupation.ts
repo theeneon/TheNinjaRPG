@@ -372,7 +372,7 @@ export const occupationRouter = createTRPCRouter({
       const { trackers, consequences } = isQueued
         ? { trackers: user.questData ?? [], consequences: [] }
         : getNewTrackers(
-            user,
+            { ...user, craftingExperience: user.craftingExperience + expGain },
             isMeal
               ? []
               : [
@@ -436,7 +436,6 @@ export const occupationRouter = createTRPCRouter({
           ...progression,
           userPatch: {
             ...progression.userPatch,
-            cookingJobs: user.cookingJobs,
             craftingExperience: user.craftingExperience,
           },
           userDelta: {},

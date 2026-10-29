@@ -80,6 +80,39 @@ describeWithDatabase("Cooking production and consumption", () => {
     } finally { unsubscribe(); client.clear(); }
   });
 
+  it("publishes cooking XP settled while starting another batch without a getUser refetch", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ primaryElement: "Fire", secondaryElement: "Water" }).where(eq(userData.userId, userId));
+    await db.insert(userCookingJob).values({ id: "completed-batch", userId, experience: 30, finishesAt: new Date(Date.now() + 60000) });
+    const initial = await fetchUpdatedUser({ client: db, userId });
+    expect(initial.user?.cookingExperience).toBe(0);
+    await db.update(userCookingJob).set({ finishesAt: past() }).where(eq(userCookingJob.id, "completed-batch"));
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, { userData: initial.user });
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return { userData: initial.user }; } });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await (await callerFor(occupationRouter, userId)).craftItem({ itemId: "meal", quantity: 1 });
+      const saved = (await readUser())!;
+      const jobs = await db.query.userCookingJob.findMany();
+      expect(result.success).toBe(true);
+      expect(saved.cookingExperience).toBe(30);
+      expect(result.userDelta).toEqual({});
+      expect(result.userPatch?.cookingExperience).toBe(saved.cookingExperience);
+      expect(result.userPatch?.cookingJobs).toEqual(jobs);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.id).not.toBe("completed-batch");
+      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
+      expect(cached.cookingExperience).toBe(saved.cookingExperience);
+      expect(cached.cookingJobs).toEqual(jobs);
+      expect(reads).toBe(0);
+    } finally { unsubscribe(); client.clear(); }
+  });
+
   it("captures the cooking bonus once per queued batch and retains it after equipment changes", async () => {
     const db = await getTestDatabase();
     await insertItems([
