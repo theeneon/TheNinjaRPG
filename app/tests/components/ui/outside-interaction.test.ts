@@ -1,5 +1,5 @@
 import { ensureDom } from "../../setup/dom.mjs";
-import { beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { ignoreToastInteractions } from "@/components/ui/outside-interaction";
 
 const outsideEvent = (target: EventTarget | null) => ({
@@ -13,6 +13,10 @@ describe("ignoreToastInteractions", () => {
     document.body.innerHTML = `
       <section data-sonner-toaster="true"><li data-sonner-toast><button id="dismiss">OK</button></li></section>
       <main><button id="page">Page</button></main>`;
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = "";
   });
 
   it("keeps the dialog open for presses inside a toast", () => {
