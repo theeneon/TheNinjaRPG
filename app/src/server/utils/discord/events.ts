@@ -22,7 +22,7 @@ const ROLE_ENV = {
   territory: "DISCORD_TERRITORY_WARS_ROLE_ID",
 } as const;
 
-/** Only explicitly configured, opt-in roles may be mentioned. */
+/** Validate the webhook and collect only explicitly configured opt-in category roles. */
 export const discordEventConfig = () => {
   const webhook = process.env.DISCORD_EVENT_UPDATES;
   if (!webhook || !isValidDiscordWebhook(webhook)) return null;
@@ -38,6 +38,7 @@ export const discordEventConfig = () => {
   return Object.keys(roles).length ? { webhook, roles } : null;
 };
 
+/** Cap message length and allow only the selected category's role mention. */
 export const discordEventPayload = (roleId: string, message: string) => ({
   content: `<@&${roleId}> ${message}`.slice(0, 2000),
   allowed_mentions: { parse: [], roles: [roleId], users: [], replied_user: false },

@@ -21,10 +21,13 @@ import {
 import type { DiscordEvent, DiscordEventCategory } from "@/libs/discordEvents";
 import type { DrizzleClient } from "@/server/db";
 
+/** Namespace category activation markers separately from other game settings. */
 export const DISCORD_EVENT_PREFIX = "discord-event:";
+/** Read the category's first activation in the same snapshot as the event query. */
 const since = (category: DiscordEventCategory) =>
   sql`(SELECT time FROM GameSetting WHERE GameSetting.id = ${`${DISCORD_EVENT_PREFIX}${category}:enabled`})`;
 
+/** Preserve each category's first activation so enabling alerts never replays completed history. */
 export const initializeDiscordEvents = (
   client: DrizzleClient,
   categories: DiscordEventCategory[],
@@ -42,13 +45,14 @@ export const initializeDiscordEvents = (
       })),
     );
 
+/** Load persisted activation times for the event builder's completed-history guards. */
 export const listDiscordEventMarkers = (client: DrizzleClient) =>
   client
     .select()
     .from(gameSetting)
     .where(like(gameSetting.id, `${DISCORD_EVENT_PREFIX}%:enabled`));
 
-/** Retain pending and live-event starts; terminal history stays out of minute polling. */
+/** Retain pending/recent receipts and live starts without polling all terminal history. */
 export const listDiscordEventReceipts = (client: DrizzleClient, now: Date) =>
   client
     .select({ id: discordEventDelivery.id, delivered: discordEventDelivery.delivered })
@@ -64,9 +68,11 @@ export const listDiscordEventReceipts = (client: DrizzleClient, now: Date) =>
       ),
     );
 
+/** Exclude delivered ends using the same SHA-256 identity as discordEventKey. */
 const undeliveredEnd = (category: DiscordEventCategory, identity: SQL) =>
   sql`NOT EXISTS (SELECT 1 FROM DiscordEventDelivery finished WHERE finished.id = CONCAT(${`${category}:`}, SHA2(${identity}, 256), ':end') AND finished.delivered = true)`;
 
+/** Select visible raid activations without delivered ends, projecting only the needed objective flag. */
 export const listDiscordRaids = (client: DrizzleClient) =>
   client.query.quest.findMany({
     columns: {
@@ -95,6 +101,7 @@ export const listDiscordRaids = (client: DrizzleClient) =>
     ),
   });
 
+/** Read eligible conflicts and participant names together without reloading delivered results. */
 export const listDiscordWars = (client: DrizzleClient) =>
   client.query.war.findMany({
     columns: {
@@ -116,7 +123,7 @@ export const listDiscordWars = (client: DrizzleClient) =>
     },
   });
 
-/** Resolution and rewarded names must share one SQL snapshot, including a scoring transaction's commit. */
+/** Read resolution and rewarded names in one SQL snapshot so results cannot mix settlement states. */
 export const listDiscordTerritoryWars = (client: DrizzleClient) =>
   client
     .select({
@@ -140,7 +147,7 @@ export const listDiscordTerritoryWars = (client: DrizzleClient) =>
       ),
     );
 
-/** INSERT IGNORE preserves the first committed message for each activation. */
+/** INSERT IGNORE preserves each lifecycle phase's first committed message across retries. */
 export const initializeDiscordEventDeliveries = (
   client: DrizzleClient,
   events: DiscordEvent[],
@@ -151,6 +158,7 @@ export const initializeDiscordEventDeliveries = (
     .ignore()
     .values(events.map((event) => ({ ...event, createdAt: now })));
 
+/** Read a bounded, ordered batch for sequential claims; starts precede ends staged in the same tick. */
 export const listPendingDiscordEvents = (
   client: DrizzleClient,
   categories: DiscordEventCategory[],
@@ -172,6 +180,7 @@ export const listPendingDiscordEvents = (
     )
     .limit(20);
 
+/** Atomically lease an unclaimed/expired message; only rowsAffected permits the caller to post. */
 export const claimDiscordEventDelivery = (
   client: DrizzleClient,
   id: string,
@@ -192,6 +201,7 @@ export const claimDiscordEventDelivery = (
       ),
     );
 
+/** Finish or release only the matching lease so stale workers cannot overwrite a reclaimed delivery. */
 export const finishDiscordEventDelivery = (
   client: DrizzleClient,
   id: string,

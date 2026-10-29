@@ -5,6 +5,7 @@ import { planetScaleFixture } from "../setup/planetscale";
 
 const now = new Date("2026-10-29T12:00:00Z");
 
+// Relational SQL extras can decode as numeric strings; verify our emitted phases through the production adapter.
 it.each([
   ["open", "0", "100", null, ["start"]],
   ["defeated open", "0", "0", null, ["start", "end"]],

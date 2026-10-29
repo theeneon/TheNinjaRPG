@@ -598,7 +598,7 @@ export const executeDefinitionWriteForUpdate = (
                   AND ${quest.updatedAt} = ${entry.updatedAt}
               `);
 
-/** Build the `quest` update for `update`, setting `updatedAt`, using predicates on `id` and `updatedAt`. */
+/** Update a content revision; restoring a defeated open raid advances its server-owned activation time. */
 export const updateQuestForUpdate = (
   client: Pick<DrizzleClient, "update">,
   input: { data: import("@/validators/objectives").ZodQuestType },

@@ -5,7 +5,9 @@ import {
 } from "@/drizzle/constants";
 import type { DiscordEventDelivery, Quest, TerritoryWar, War } from "@/drizzle/schema";
 
+/** Independently configured Discord opt-in alert categories. */
 export type DiscordEventCategory = DiscordEventDelivery["category"];
+/** Immutable message identity and content staged before attempting webhook delivery. */
 export type DiscordEvent = Pick<DiscordEventDelivery, "id" | "category" | "message">;
 type Raid = { isExclusive: number | string } & Pick<
   Quest,
@@ -25,7 +27,10 @@ type Conflict = Pick<
   defenderVillage: { name: string };
 };
 
-/** Build alerts from committed snapshots. No database or network work belongs here. */
+/**
+ * Build lifecycle alerts from committed snapshots without database or network work.
+ * Activation times suppress completed history; observed starts allow their ends to finish.
+ */
 export const buildDiscordEvents = ({
   raids,
   wars,
