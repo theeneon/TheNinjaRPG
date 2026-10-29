@@ -18,10 +18,7 @@ import LowerRightHelpBtn from "@/layout/LowerRightHelpBtn";
 import { isTutorialActive } from "@/libs/tutorial";
 import { MobileNotificationsPopover } from "./shared/LayoutNotifications";
 import type { GameLayoutRenderProps } from "./shared/layoutTypes";
-import {
-  forwardVerticalWheelToDocumentScroll,
-  isClerkElement,
-} from "./shared/layoutUtils";
+import { isClerkElement } from "./shared/layoutUtils";
 import { MobileGameNav } from "./shared/MobileGameNav";
 
 export function PanelGameLayout(props: GameLayoutRenderProps) {
@@ -192,7 +189,6 @@ export function PanelGameLayout(props: GameLayoutRenderProps) {
           className="theme-main"
           data-reading-surface
           data-compact-content
-          onWheel={forwardVerticalWheelToDocumentScroll}
         >
           {children}
         </main>

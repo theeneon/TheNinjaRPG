@@ -22,10 +22,20 @@ const setup = () => {
     Object.defineProperties(pointer, { pointerId: { value: id }, pointerType: { value: "touch" } });
     canvas.dispatchEvent(pointer);
   };
-  return { event, taps, camera, controls, dispose: () => { listeners.abort(); for (const cleanup of cleanups) cleanup(); } };
+  return { canvas, event, taps, camera, controls, dispose: () => { listeners.abort(); for (const cleanup of cleanups) cleanup(); } };
 };
 
 describe("globe gesture ownership", () => {
+  it.each([-100, 100])("owns wheel zoom for delta %s", (deltaY) => {
+    const scene = setup();
+    try {
+      const wheel = new window.WheelEvent("wheel", { deltaY, cancelable: true });
+      scene.canvas.dispatchEvent(wheel);
+      expect(wheel.defaultPrevented).toBe(true);
+      if (deltaY > 0) expect(scene.camera.distance).toBeGreaterThan(100);
+      else expect(scene.camera.distance).toBeLessThan(100);
+    } finally { scene.dispose(); }
+  });
   it("selects a tap and preserves orbit gestures that return to their starting point", () => {
     const scene = setup();
     try {
