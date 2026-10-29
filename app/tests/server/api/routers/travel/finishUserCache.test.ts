@@ -1,5 +1,5 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import { afterEach, beforeEach, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, expect, it, setSystemTime, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { bloodline, item, quest, questHistory, skillTree, userCookingJob, userData, userItem, userQueue, userSkill, userTitle, userVote, village, war, warAlly, warMercenary } from "@/drizzle/schema";
 import { globalTravelFinishPatch } from "@/libs/travel";
@@ -27,7 +27,7 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     await insertQuestHistory([2, 3].map((sector) => ({ userId, questId: `hidden-${sector}`, questType: "story" })));
     await (await getTestDatabase()).update(userData).set({ questData: [2, 3].map((sector) => QuestTracker.parse({ id: `hidden-${sector}`, goals: [{ id: "target", sector, longitude: 4, latitude: 5, locationChecked: true }] })) }).where(eq(userData.userId, userId));
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); setSystemTime(); });
 
   it.each(["move_to_location", "collect_item"] as const)("reconciles %s progress when the cleaner finishes before the client", async (task) => {
     const db = await getTestDatabase();
@@ -138,6 +138,25 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     expect(notifications?.filter((notice) => notice.color !== "toast")).toEqual((await (await callerFor(profileRouter, userId)).getUser()).notifications.filter((notice) => notice.color !== "toast"));
     expect(notifications?.some((notice) => notice.href === "/questteams")).toBe(false);
     expect(notifications?.some((notice) => notice.name === "Quest rewards waiting: open your Logbook")).toBe(true);
+    expect(reads).toBe(1);
+  });
+
+  it.each(["story", "event"] as const)("reconciles team navigation when a solo %s quest expires during travel", async (questType) => {
+    const db = await getTestDatabase();
+    setSystemTime(new Date("2030-01-01T23:59:30Z"));
+    await db.update(quest).set({ questType, teamEnabled: true, endsAt: "2030-01-02" }).where(eq(quest.id, "hidden-2"));
+    await db.update(questHistory).set({ questType }).where(eq(questHistory.questId, "hidden-2"));
+    await db.update(userData).set({ regenAt: new Date(), travelFinishAt: new Date(Date.now() + 60000) }).where(eq(userData.userId, userId));
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    expect(profile.notifications.some((notice) => notice.href === "/questteams")).toBe(true);
+    setSystemTime(new Date("2030-01-02T00:00:31Z"));
+    await db.update(userData).set({ sector: 2 }).where(eq(userData.userId, userId));
+    const { cached, notifications, reads } = await finishAndReconcile(profile);
+    const fresh = await (await callerFor(profileRouter, userId)).getUser();
+    expect(cached?.userQuests.some((entry) => entry.questId === "hidden-2")).toBe(false);
+    expect(cached?.questData?.some((tracker) => tracker.id === "hidden-2")).toBe(false);
+    expect(notifications?.filter((notice) => notice.color !== "toast")).toEqual(fresh.notifications.filter((notice) => notice.color !== "toast"));
+    expect(notifications?.some((notice) => notice.href === "/questteams")).toBe(false);
     expect(reads).toBe(1);
   });
 

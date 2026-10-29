@@ -135,11 +135,15 @@ export const globalTravelFinishPatch = (
   projectedQuestIds: readonly string[] = [],
 ) => {
   const projected = new Set(projectedQuestIds);
+  const visible = new Set(patch.userQuests?.map((entry) => entry.questId));
   // Synthetic overworld achievements have no history row in the sparse arrival read.
   // Reconcile their locations and passive progress through the full profile flow.
+  // Removing a team quest also requires authoritative navigation reconciliation.
   if (
     current.userQuests.some(
-      (entry) => entry.questType === "achievement" && !projected.has(entry.questId),
+      (entry) =>
+        (entry.questType === "achievement" && !projected.has(entry.questId)) ||
+        (entry.quest.teamEnabled && !visible.has(entry.questId)),
     )
   )
     return undefined;
