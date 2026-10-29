@@ -4,6 +4,7 @@ import {
   MAP_WAKE_ISLAND_SECTOR,
 } from "@/drizzle/constants";
 import { COMBAT_LOBBY_SECONDS, COMBAT_SECONDS } from "@/libs/combat/constants";
+import { isQuestComplete } from "@/libs/objectives";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { getSectorTile } from "@/libs/sector-map/validation";
 import type {
@@ -135,16 +136,33 @@ export const globalTravelFinishPatch = (
   projectedQuestIds: readonly string[] = [],
 ) => {
   const projected = new Set(projectedQuestIds);
-  const visible = new Set(patch.userQuests?.map((entry) => entry.questId));
+  const teamQuestStates = ({ userQuests, questData }: typeof current) =>
+    new Map(
+      userQuests.flatMap((entry) => {
+        const tracker = questData?.find((tracker) => tracker.id === entry.questId);
+        return entry.quest.teamEnabled &&
+          !entry.endAt &&
+          !entry.completed &&
+          tracker &&
+          !tracker.failed
+          ? [[entry.questId, isQuestComplete(entry.quest, tracker)] as const]
+          : [];
+      }),
+    );
+  const previousTeams = teamQuestStates(current);
+  const arrivedTeams = teamQuestStates({
+    userQuests: patch.userQuests ?? [],
+    questData: patch.questData ?? [],
+  });
   // Synthetic overworld achievements have no history row in the sparse arrival read.
   // Reconcile their locations and passive progress through the full profile flow.
-  // Removing a team quest also requires authoritative navigation reconciliation.
+  // Team eligibility and completion changes require authoritative navigation reconciliation.
   if (
     current.userQuests.some(
-      (entry) =>
-        (entry.questType === "achievement" && !projected.has(entry.questId)) ||
-        (entry.quest.teamEnabled && !visible.has(entry.questId)),
-    )
+      (entry) => entry.questType === "achievement" && !projected.has(entry.questId),
+    ) ||
+    previousTeams.size !== arrivedTeams.size ||
+    [...previousTeams].some(([id, complete]) => arrivedTeams.get(id) !== complete)
   )
     return undefined;
   const replaced = new Set([

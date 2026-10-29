@@ -160,6 +160,67 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     expect(reads).toBe(1);
   });
 
+  it.each([true, false])("reconciles team navigation when teamEnabled changes from %s during travel", async (teamEnabled) => {
+    const db = await getTestDatabase();
+    const definition = (await db.query.quest.findFirst({ where: eq(quest.id, "hidden-2") }))!;
+    await db.update(quest).set({ teamEnabled, content: { ...definition.content, objectives: [
+      AllObjectives.parse({ ...definition.content.objectives[0]!, nextObjectiveId: "wait" }),
+      AllObjectives.parse({ id: "wait", task: "stats_trained", value: 100 }),
+    ] } }).where(eq(quest.id, definition.id));
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    expect(profile.notifications.some((notice) => notice.href === "/questteams")).toBe(teamEnabled);
+    await db.update(quest).set({ teamEnabled: !teamEnabled }).where(eq(quest.id, definition.id));
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const { result, cached, notifications, reads } = await finishAndReconcile(profile);
+    expect(result.userPatch?.userQuests?.find((entry) => entry.questId === definition.id)?.quest.teamEnabled).toBe(!teamEnabled);
+    expect(cached?.userQuests.find((entry) => entry.questId === definition.id)?.quest.teamEnabled).toBe(!teamEnabled);
+    const fresh = await (await callerFor(profileRouter, userId)).getUser();
+    expect(notifications?.filter((notice) => notice.color !== "toast")).toEqual(fresh.notifications.filter((notice) => notice.color !== "toast"));
+    expect(notifications?.some((notice) => notice.href === "/questteams")).toBe(!teamEnabled);
+    expect(reads).toBe(1);
+  });
+
+  it("reconciles navigation when a team quest becomes available during travel", async () => {
+    const db = await getTestDatabase();
+    setSystemTime(new Date("2030-01-01T23:59:30Z"));
+    await db.update(quest).set({ teamEnabled: true, startsAt: "2030-01-02" }).where(eq(quest.id, "hidden-3"));
+    await db.update(userData).set({ regenAt: new Date(), travelFinishAt: new Date(Date.now() + 60000) }).where(eq(userData.userId, userId));
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    expect(profile.userData?.userQuests.some((entry) => entry.questId === "hidden-3")).toBe(false);
+    expect(profile.notifications.some((notice) => notice.href === "/questteams")).toBe(false);
+    setSystemTime(new Date("2030-01-02T00:00:31Z"));
+    await db.update(userData).set({ sector: 2 }).where(eq(userData.userId, userId));
+    const { cached, notifications, reads } = await finishAndReconcile(profile);
+    expect(cached?.userQuests.some((entry) => entry.questId === "hidden-3")).toBe(true);
+    const fresh = await (await callerFor(profileRouter, userId)).getUser();
+    expect(notifications?.filter((notice) => notice.color !== "toast")).toEqual(fresh.notifications.filter((notice) => notice.color !== "toast"));
+    expect(notifications?.some((notice) => notice.href === "/questteams")).toBe(true);
+    expect(reads).toBe(1);
+  });
+
+  it("reconciles team rewards navigation when an objective edit completes a quest during travel", async () => {
+    const db = await getTestDatabase();
+    const definition = (await db.query.quest.findFirst({ where: eq(quest.id, "hidden-3") }))!;
+    await db.update(quest).set({ teamEnabled: true, consecutiveObjectives: false, content: { ...definition.content, objectives: [
+      ...definition.content.objectives,
+      AllObjectives.parse({ id: "wait", task: "stats_trained", value: 100 }),
+    ] } }).where(eq(quest.id, definition.id));
+    const raw = (await db.query.userData.findFirst({ where: eq(userData.userId, userId) }))!;
+    await db.update(userData).set({ questData: raw.questData?.map((tracker) => tracker.id === definition.id
+      ? QuestTracker.parse({ ...tracker, goals: [{ ...tracker.goals[0], done: true }, { id: "wait" }] })
+      : tracker) }).where(eq(userData.userId, userId));
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    expect(profile.notifications.some((notice) => notice.href === "/questteams")).toBe(true);
+    await db.update(quest).set({ content: definition.content }).where(eq(quest.id, definition.id));
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const { result, notifications, reads } = await finishAndReconcile(profile);
+    expect(result.userPatch).toBeDefined();
+    const fresh = await (await callerFor(profileRouter, userId)).getUser();
+    expect(notifications?.filter((notice) => notice.color !== "toast")).toEqual(fresh.notifications.filter((notice) => notice.color !== "toast"));
+    expect(notifications?.some((notice) => notice.name === "Quest rewards waiting: open your Logbook")).toBe(true);
+    expect(reads).toBe(1);
+  });
+
   it("projects an unfinished solo team quest without refetching the profile", async () => {
     const db = await getTestDatabase();
     const definition = (await db.query.quest.findFirst({ where: eq(quest.id, "hidden-2") }))!;
