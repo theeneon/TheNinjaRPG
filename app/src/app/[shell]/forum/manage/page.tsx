@@ -830,30 +830,16 @@ function RemoveStructure({
     </form>
   );
 }
-/** Adapt the existing player picker to the staff forms without exposing raw account identifiers. */
+/** Keep staff-form targets synchronized when the existing player picker selects or clears a player. */
 function ForumPlayerSelect({ onSelect }: { onSelect: (id: string) => void }) {
   const schema = getSearchValidator({ max: 1 });
   const form = useForm<z.infer<typeof schema>>({
     defaultValues: { username: "", users: [] },
   });
   const selected = useWatch({ control: form.control, name: "users" });
-  return (
-    <div className="space-y-2">
-      <UserSearchSelect useFormMethods={form} showYourself showAi maxUsers={1} />
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={!selected?.[0]}
-        onClick={() => {
-          const id = selected?.[0]?.userId;
-          if (id) onSelect(id);
-        }}
-      >
-        Use selected player
-      </Button>
-    </div>
-  );
+  const selectedId = selected?.[0]?.userId ?? "";
+  useEffect(() => onSelect(selectedId), [onSelect, selectedId]);
+  return <UserSearchSelect useFormMethods={form} showYourself showAi maxUsers={1} />;
 }
 /** Manage scoped grants/denies and inspect the resulting effective permissions for a selected player. */
 function ForumStaff({
@@ -863,6 +849,7 @@ function ForumStaff({
   data: Administration;
   refresh: () => Promise<void>;
 }) {
+  const fieldPrefix = useId();
   const [userId, setUserId] = useState("");
   const [scope, setScope] = useState<"GLOBAL" | "SECTION" | "BOARD">("BOARD");
   const [scopeId, setScopeId] = useState(data.boards[0]?.id ?? "");
@@ -878,6 +865,13 @@ function ForumStaff({
     { userId },
     { enabled: !!userId },
   );
+  const saveDisabledReason = !userId
+    ? "Select a player before saving capabilities."
+    : scope !== "GLOBAL" && !scopeId
+      ? `Select a ${scope === "BOARD" ? "board" : "section"} before saving capabilities.`
+      : reason.trim().length < 3
+        ? "Enter an audit reason with at least 3 characters."
+        : undefined;
   return (
     <div className="space-y-4">
       <form
@@ -885,6 +879,7 @@ function ForumStaff({
         onSubmit={async (e) => {
           e.preventDefault();
           setError("");
+          if (saveDisabledReason || save.isPending) return;
           try {
             const result = await save.mutateAsync({
               userId,
@@ -1005,8 +1000,22 @@ function ForumStaff({
             {error}
           </p>
         )}
-        <Button disabled={!userId || save.isPending || reason.trim().length < 3}>
-          Save capabilities
+        {saveDisabledReason && (
+          <p
+            id={`${fieldPrefix}-save-help`}
+            role="status"
+            className="text-muted-foreground text-sm"
+          >
+            {saveDisabledReason}
+          </p>
+        )}
+        <Button
+          type="submit"
+          disabled={!!saveDisabledReason || save.isPending}
+          aria-describedby={saveDisabledReason ? `${fieldPrefix}-save-help` : undefined}
+          aria-busy={save.isPending}
+        >
+          {save.isPending ? "Saving…" : "Save capabilities"}
         </Button>
       </form>
       {effective.data && (
