@@ -3,6 +3,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { X } from "lucide-react";
 import type * as React from "react";
 
+import { ignoreToastInteractions } from "@/components/ui/outside-interaction";
 import { cn } from "@/libs/shadui";
 
 const Sheet = SheetPrimitive.Root;
@@ -59,6 +60,7 @@ const SheetContent = ({
   side = "right",
   className,
   children,
+  onInteractOutside,
   ...props
 }: SheetContentProps) => (
   <SheetPortal>
@@ -71,6 +73,7 @@ const SheetContent = ({
         "overflow-y-auto overscroll-contain contain-strict",
       )}
       {...props}
+      onInteractOutside={ignoreToastInteractions(onInteractOutside)}
     >
       <div>
         <SheetPrimitive.Close className="relative z-10 ml-auto flex size-[48px] items-center justify-center rounded-sm opacity-75 ring-offset-background hover:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none sm:absolute sm:top-4 sm:right-4 sm:size-auto">

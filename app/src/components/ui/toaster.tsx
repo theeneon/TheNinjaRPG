@@ -41,6 +41,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }
       toastOptions={{
         classNames: {
+          // An open modal dialog sets `pointer-events: none` on <body>, where toasts
+          // render; they must stay clickable above it. Sonner's own rule for hidden
+          // toasts is unlayered, so it still wins over this utility.
+          toast: "pointer-events-auto",
           title: "md:block hidden",
         },
       }}
