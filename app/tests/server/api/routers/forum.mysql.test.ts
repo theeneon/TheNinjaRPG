@@ -778,6 +778,37 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await (await comments(playerId, locked)).deleteForumComment({ id: post.id })).success).toBe(false);
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) }))?.deletedAt).toBeNull();
   });
+  it.each(["author removal", "moderator removal", "review"] as const)("rejects stale board permissions for %s without changing discussion state", async (action) => {
+    const id = await create(); const db = await getTestDatabase();
+    const post = (await db.query.forumPost.findFirst())!;
+    await db.update(forumPost).set({ isReported: true }).where(eq(forumPost.id, post.id));
+    await db.update(forumThread).set({ acceptedPostId: post.id }).where(eq(forumThread.id, id));
+    await db.insert(forumRead).values({ userId: moderatorId, threadId: id, postId: post.id, readAt: post.createdAt });
+    await db.insert(forumCase).values({ postId: post.id, assigneeId: moderatorId, status: "IN_REVIEW", decision: "Keep the evidence available" });
+    const discussionState = () => Promise.all([db.query.forumPost.findMany(), db.query.forumThread.findMany(), db.query.forumRead.findMany(), db.query.forumCase.findMany()]);
+    const [before, board, audit] = await Promise.all([discussionState(), db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") }), db.query.forumAudit.findMany()]);
+    const actorId = action === "author removal" ? playerId : moderatorId;
+    const policy = action === "author removal" ? { deleteOwn: false } : { read: "STAFF" as const };
+    const stale = new Proxy(db, { get(target, key, receiver) {
+      if (key === "transaction") return async (work: Parameters<DrizzleClient["transaction"]>[0]) => {
+        expect((await (await client(adminId)).saveBoard({ ...board!, policy, reason: "Restrict access to this discussion" })).success).toBe(true);
+        return target.transaction(work);
+      };
+      return Reflect.get(target, key, receiver);
+    } });
+    const result = action === "review"
+      ? await (await client(actorId, stale)).reviewCase({ postId: post.id, assigneeId: moderatorId, status: "RESOLVED", reason: "Resolve the reported discussion" })
+      : await (await comments(actorId, stale)).deleteForumComment({ id: post.id });
+    const permissions = (await getForumContext(db, actorId)).boards.find(b => b.id === "general")!.permissions;
+    expect(action === "author removal" ? permissions.remove : permissions.moderate).toBe(false);
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("Refresh");
+    expect(await discussionState()).toEqual(before);
+    expect(await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") })).toEqual({ ...board!, policy });
+    const afterAudit = await db.query.forumAudit.findMany();
+    expect(afterAudit.filter(a => a.action !== "board.save")).toEqual(audit);
+    expect(afterAudit.filter(a => a.action === "board.save")).toHaveLength(1);
+  });
   it("preserves type, tags and accepted answers when moving a topic without metadata edits", async () => {
     const player = await client(); const result = await player.createThread({ ...topicInput(), kind: "QUESTION", tags: ["healing"] }); const id = result.threadId!;
     await (await comments(moderatorId)).createForumComment(commentInput(id)); const db = await getTestDatabase(); const reply = (await db.query.forumPost.findMany()).find(p => p.authorId === moderatorId)!;

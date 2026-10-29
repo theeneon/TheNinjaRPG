@@ -975,7 +975,11 @@ export const forumRouter = createTRPCRouter({
           await q.lockForumSection(tx, board.sectionId);
           await q.lockForumBoard(tx, thread.boardId);
           const [current] = await q.lockForumThread(tx, thread.id);
-          if (!current || current.boardId !== thread.boardId)
+          if (
+            !(await forumWriteSnapshotMatches(tx, context, board.id)) ||
+            !current ||
+            current.boardId !== thread.boardId
+          )
             return errorResponse("This topic moved. Refresh and try again.");
           const currentPost = await q.findForumPost(tx, post.id);
           if (currentPost?.threadId !== thread.id)

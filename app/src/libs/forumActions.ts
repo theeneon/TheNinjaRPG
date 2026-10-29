@@ -282,6 +282,7 @@ export const removeForumPost = async (
       await lockForumBoard(tx, board.id);
       const [currentThread] = await lockForumThread(tx, thread.id);
       if (
+        !(await forumWriteSnapshotMatches(tx, context, board.id)) ||
         !currentThread ||
         currentThread.boardId !== board.id ||
         currentThread.deletedAt ||
