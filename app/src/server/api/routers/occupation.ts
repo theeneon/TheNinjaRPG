@@ -361,20 +361,30 @@ export const occupationRouter = createTRPCRouter({
       // craft-this-specific-item objectives. Emitted here (behind the transaction's
       // craft CAS below) — NOT from the quest-reward EXP path
       // (quest.ts:367-377), which must stay experience-only to avoid double-counting.
-      const { trackers } = getNewTrackers(
-        user,
-        isMeal
-          ? []
-          : [
-              { task: "crafting_experience_gained", increment: expGain },
-              { task: "items_crafted", increment: input.quantity },
-              {
-                task: "craft_specific_item",
-                increment: input.quantity,
-                contentId: input.itemId,
-              },
-            ],
+      const previouslyDoneGoals = new Set(
+        user.questData.flatMap((tracker) =>
+          tracker.goals
+            .filter((goal) => goal.done)
+            .map((goal) => `${tracker.id}:${goal.id}`),
+        ),
       );
+      // Waiting crafts have not earned their production progress yet.
+      const { trackers, consequences } = isQueued
+        ? { trackers: user.questData, consequences: [] }
+        : getNewTrackers(
+            user,
+            isMeal
+              ? []
+              : [
+                  { task: "crafting_experience_gained", increment: expGain },
+                  { task: "items_crafted", increment: input.quantity },
+                  {
+                    task: "craft_specific_item",
+                    increment: input.quantity,
+                    contentId: input.itemId,
+                  },
+                ],
+          );
       const questDataForDb = filterQuestTrackersForDbPersist(trackers, user);
       const materials: CraftingQueueMaterial[] = allConsumptions.flatMap(
         (consumption) => {
@@ -395,6 +405,24 @@ export const occupationRouter = createTRPCRouter({
       const profileUpdate = () => {
         if (
           updatedUser.requiresProgressionRefresh ||
+          consequences.some(
+            (consequence) =>
+              consequence.type !== "update_user" ||
+              consequence.ids.some((id) => id !== "activity_completion"),
+          ) ||
+          // Passive rewards are settled by the authoritative profile flow.
+          trackers.some(
+            (tracker) =>
+              user.userQuests.some(
+                (entry) =>
+                  entry.questId === tracker.id &&
+                  ["tier", "daily", "achievement"].includes(entry.quest.questType),
+              ) &&
+              tracker.goals.some(
+                (goal) =>
+                  goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
+              ),
+          ) ||
           allConsumptions.some((consumption) =>
             user.items.some((entry) => entry.id === consumption.userItemId),
           )

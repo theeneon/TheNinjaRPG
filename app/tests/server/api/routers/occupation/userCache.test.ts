@@ -1,0 +1,58 @@
+import { beforeEach, expect, it } from "bun:test";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { eq } from "drizzle-orm";
+import { craftingRequirement, item, quest, questHistory, userCookingJob, userData, userItem, userQueue, userVote } from "@/drizzle/schema";
+import { occupationRouter } from "@/server/api/routers/occupation";
+import { fetchUpdatedUser } from "@/server/api/routers/profile";
+import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
+import { AllObjectives, QuestTracker } from "@/validators/objectives";
+import { ObjectiveReward } from "@/validators/rewards";
+import { insertItems, insertQuestHistory, insertQuests, insertUserItems, insertUsers } from "../../../../setup/factories";
+import { callerFor, describeWithDatabase, getTestDatabase, resetTables } from "../../../../setup/testDatabase";
+
+describeWithDatabase("crafting user cache quest progress", () => {
+  beforeEach(async () => {
+    await resetTables(userCookingJob, userQueue, userItem, craftingRequirement, item, questHistory, quest, userVote, userData);
+    await insertUsers([{ userId: "crafter", username: "Crafter", status: "AWAKE", level: 50, rank: "JONIN", primaryElement: "Fire", secondaryElement: "Water", occupation: "CRAFTING", isOutlaw: true, federalStatus: "GOLD", regenAt: new Date(), updatedAt: new Date() }]);
+    await insertItems([{ id: "material", stackSize: 100 }, { id: "crafted", canBeCrafted: true, craftingExperience: 5, rarity: "COMMON", stackSize: 1 }]);
+    await insertUserItems([{ id: "material-stack", userId: "crafter", itemId: "material", quantity: 20 }]);
+    const db = await getTestDatabase();
+    await db.insert(craftingRequirement).values({ id: "recipe", craftItemId: "crafted", requirementItemId: "material", quantity: 1 });
+    await db.insert(userVote).values({ id: "vote", userId: "crafter", secret: "secret01", lastVoteAt: new Date() });
+  });
+
+  it.each(["mission", "achievement", "queued"] as const)("publishes only committed production progress (%s)", async (scenario) => {
+    const db = await getTestDatabase();
+    const questType = scenario === "achievement" ? "achievement" : "mission";
+    await insertQuests([{ id: "craft-goal", questType, maxAttempts: 100, maxCompletes: 100, content: { objectives: [AllObjectives.parse({ id: "make-one", task: "items_crafted", value: 1 })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }]);
+    await insertQuestHistory([{ userId: "crafter", questId: "craft-goal", questType }]);
+    await db.update(userData).set({ questData: [QuestTracker.parse({ id: "craft-goal", goals: [{ id: "make-one", value: 0, done: false }] })] }).where(eq(userData.userId, "crafter"));
+    if (scenario === "queued") await insertUserItems([{ id: "active-craft", userId: "crafter", itemId: "crafted", craftingFinishedAt: new Date(Date.now() + 60000) }]);
+    const initial = await fetchUpdatedUser({ client: db, userId: "crafter" });
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, { userData: initial.user });
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return { userData: initial.user }; } });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await (await callerFor(occupationRouter, "crafter")).craftItem({ itemId: "crafted", quantity: 1 });
+      expect(result.success).toBe(true);
+      const saved = (await db.query.userData.findFirst({ where: eq(userData.userId, "crafter") }))!;
+      expect(saved.craftingExperience).toBe(scenario === "queued" ? 0 : 5);
+      if (scenario === "achievement") {
+        expect(result.userPatch).toBeUndefined();
+        expect(result.userDelta).toBeUndefined();
+        return;
+      }
+      expect(result.userDelta).toEqual({});
+      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
+      expect(cached.questData).toEqual(saved.questData);
+      expect(cached.questData.find((tracker) => tracker.id === "craft-goal")?.goals[0]).toMatchObject({ value: scenario === "queued" ? 0 : 1, done: scenario !== "queued" });
+      expect(cached.craftingExperience).toBe(saved.craftingExperience);
+      expect(reads).toBe(0);
+    } finally { stop(); client.clear(); }
+  });
+});
