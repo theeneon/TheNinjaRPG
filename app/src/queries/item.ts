@@ -2319,7 +2319,7 @@ const mergeStackRowGuard = (
     eq(userItem.storedAtHome, item.storedAtHome),
   );
 
-/** List variant choices with parent item names for content authoring. */
+/** List token-unlockable variant choices with parent item names for content authoring. */
 export const listVariantNames = (client: Pick<DrizzleClient, "select">) =>
   client
     .select({
@@ -2327,4 +2327,5 @@ export const listVariantNames = (client: Pick<DrizzleClient, "select">) =>
       name: sql<string>`concat(${item.name}, ": ", ${itemVariant.name})`,
     })
     .from(itemVariant)
-    .innerJoin(item, eq(item.id, itemVariant.itemId));
+    .innerJoin(item, eq(item.id, itemVariant.itemId))
+    .where(eq(itemVariant.costType, "VARIANT_TOKEN"));

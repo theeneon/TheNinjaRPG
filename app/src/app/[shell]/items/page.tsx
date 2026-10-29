@@ -1976,6 +1976,9 @@ const ItemVariantModal: React.FC<ItemVariantModalProps> = ({
                   (!effect.variantId || effect.variantId === v.id),
               ),
           );
+          const tokenActionLabel = matchingToken
+            ? `Use ${matchingToken.item.name}`
+            : `Need ${itemNames?.find((entry) => entry.id === v.requiredItemId)?.name ?? "compatible token"}`;
           // Preview the same discounted prestige amount guarded and charged by the server.
           const purchaseCost =
             v.costType === "VILLAGE_PRESTIGE" && userData
@@ -2039,9 +2042,9 @@ const ItemVariantModal: React.FC<ItemVariantModalProps> = ({
                     }
                   }}
                 >
-                  {matchingToken
-                    ? `Use ${matchingToken.item.name}`
-                    : `Need ${itemNames?.find((entry) => entry.id === v.requiredItemId)?.name ?? "compatible token"}`}
+                  <span className="min-w-0 truncate" title={tokenActionLabel}>
+                    {tokenActionLabel}
+                  </span>
                 </Button>
               ) : (
                 <Button

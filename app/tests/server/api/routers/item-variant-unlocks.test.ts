@@ -24,6 +24,13 @@ describeWithDatabase("item variant unlock requirements", () => {
 
   afterEach(() => vi.restoreAllMocks());
 
+  it("lists only token-gated variants for unlock-effect authoring", async () => {
+    const db = await getTestDatabase();
+    await db.insert(itemVariant).values({ id: "currency-variant", itemId: "weapon", name: "Blue", image: "/blue.png", costType: "MONEY", cost: 100, order: 2 });
+    const api = await callerFor(itemRouter, "staff");
+    expect(await api.getVariantNames()).toEqual([{ id: "variant", name: "Sword: Red" }]);
+  });
+
   it("rejects unusable required items and accepts generic or specifically matching tokens", async () => {
     const db = await getTestDatabase();
     const api = await callerFor(itemRouter, "staff");
