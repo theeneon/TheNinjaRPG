@@ -217,8 +217,30 @@ export const appendQueueEntries = async (
     const [row] = await selectUserQueueForAppendQueueEntries(client, userId, kind);
     last = Number(row?.position ?? 0);
   }
+  const rows = queueRows(userId, kind, last, entries);
+  await insertUserQueueRows(client, rows);
+  return rows;
+};
+
+/** The last position used by a queue among `rows`, or 0. */
+export const lastQueuePosition = (
+  rows: readonly Pick<UserQueue, "kind" | "position">[],
+  kind: QueueKind,
+) =>
+  rows.reduce(
+    (last, row) => (row.kind === kind ? Math.max(last, row.position) : last),
+    0,
+  );
+
+/** New queue rows for `entries`, at positions after `after`. */
+const queueRows = (
+  userId: string,
+  kind: QueueKind,
+  after: number,
+  entries: readonly QueueEntryInsert[],
+): UserQueue[] => {
   const createdAt = new Date();
-  const rows: UserQueue[] = entries.map((entry, index) => ({
+  return entries.map((entry, index) => ({
     jutsuId: null,
     itemId: null,
     stat: null,
@@ -235,47 +257,7 @@ export const appendQueueEntries = async (
     id: nanoid(),
     userId,
     kind,
-    position: last + index + 1,
-  }));
-  await insertUserQueueRows(client, rows);
-  return rows;
-};
-
-/** The last position used by a queue among `rows`, or 0. */
-export const lastQueuePosition = (
-  rows: readonly Pick<UserQueue, "kind" | "position">[],
-  kind: QueueKind,
-) =>
-  rows.reduce(
-    (last, row) => (row.kind === kind ? Math.max(last, row.position) : last),
-    0,
-  );
-
-/** New MASTERY, ELEMENT or ENERGY rows for `entries`, at positions after `after`. */
-const trainingQueueRows = (
-  userId: string,
-  kind: "MASTERY" | "ELEMENT" | "ENERGY",
-  after: number,
-  entries: readonly (EnergyTrainingQueueEntry | MasteryTrainingQueueEntry)[],
-): UserQueue[] => {
-  const createdAt = new Date();
-  return entries.map((entry, index) => ({
-    id: nanoid(),
-    userId,
-    kind,
     position: after + index + 1,
-    jutsuId: null,
-    itemId: null,
-    stat: entry.stat,
-    speed: "speed" in entry ? entry.speed : null,
-    energy: "energy" in entry ? entry.energy : null,
-    reservedRyo: null,
-    quantity: null,
-    materials: null,
-    durationSeconds: null,
-    startsAt: null,
-    finishesAt: null,
-    createdAt,
   }));
 };
 
@@ -315,7 +297,7 @@ export const claimAndReplaceTrainingQueue = async ({
     kind === "ENERGY"
       ? { energyQueueHead: head, energyQueueTail: head + entries.length }
       : { [masteryTrainingFields[kind].head]: head };
-  const rows = trainingQueueRows(user.userId, kind, head, entries);
+  const rows = queueRows(user.userId, kind, head, entries);
   return retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       const claim = await claimUserSnapshot({

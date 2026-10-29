@@ -361,16 +361,9 @@ export const occupationRouter = createTRPCRouter({
       // craft-this-specific-item objectives. Emitted here (behind the transaction's
       // craft CAS below) — NOT from the quest-reward EXP path
       // (quest.ts:367-377), which must stay experience-only to avoid double-counting.
-      const previouslyDoneGoals = new Set(
-        (user.questData ?? []).flatMap((tracker) =>
-          tracker.goals
-            .filter((goal) => goal.done)
-            .map((goal) => `${tracker.id}:${goal.id}`),
-        ),
-      );
       // Waiting crafts have not earned their production progress yet.
-      const { trackers, consequences } = isQueued
-        ? { trackers: user.questData ?? [], consequences: [] }
+      const { trackers, consequences, questIdsUpdated } = isQueued
+        ? { trackers: user.questData ?? [], consequences: [], questIdsUpdated: [] }
         : getNewTrackers(
             { ...user, craftingExperience: user.craftingExperience + expGain },
             isMeal
@@ -411,17 +404,10 @@ export const occupationRouter = createTRPCRouter({
               consequence.ids.some((id) => id !== "activity_completion"),
           ) ||
           // Passive rewards are settled by the authoritative profile flow.
-          trackers.some(
-            (tracker) =>
-              user.userQuests.some(
-                (entry) =>
-                  entry.questId === tracker.id &&
-                  ["tier", "daily", "achievement"].includes(entry.quest.questType),
-              ) &&
-              tracker.goals.some(
-                (goal) =>
-                  goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
-              ),
+          user.userQuests.some(
+            (entry) =>
+              questIdsUpdated.some((id) => id === entry.questId) &&
+              ["tier", "daily", "achievement"].includes(entry.quest.questType),
           ) ||
           allConsumptions.some((consumption) =>
             user.items.some((entry) => entry.id === consumption.userItemId),

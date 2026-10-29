@@ -105,7 +105,7 @@ export const deleteDeadQueueRows = (
     .delete(userQueue)
     .where(and(queueOf(userId, kind), sql`${userQueue.position} <= ${head}`));
 
-/** Build insertion of caller-prepared training queue rows. */
+/** Build insertion of caller-prepared queue rows. */
 export const insertUserQueueRows = (
   client: Pick<DrizzleClient, "insert">,
   rows: import("@/drizzle/schema").UserQueue[],
