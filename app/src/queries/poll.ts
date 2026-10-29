@@ -366,7 +366,7 @@ export const insertActionLogForDeletePollOption = (
     relatedMsg: `Deleted poll option: ${input.optionId}`,
   });
 
-/** Build the `userPollVote` selection for `getVoteCountsForPolls`, using predicates on `pollId`. */
+/** Count all vote rows by poll and option, retaining missing-option votes in poll totals. */
 export const selectUserPollVoteForGetVoteCountsForPolls = (
   client: Pick<DrizzleClient, "select">,
   pollIds: string[],
@@ -380,17 +380,3 @@ export const selectUserPollVoteForGetVoteCountsForPolls = (
     .from(userPollVote)
     .where(inArray(userPollVote.pollId, pollIds))
     .groupBy(userPollVote.pollId, userPollVote.optionId);
-
-/** Build the `userPollVote` selection for `getVoteCountsForPolls`, using predicates on `pollId`. */
-export const selectUserPollVoteForGetVoteCountsForPolls2 = (
-  client: Pick<DrizzleClient, "select">,
-  pollIds: string[],
-) =>
-  client
-    .select({
-      pollId: userPollVote.pollId,
-      count: count(),
-    })
-    .from(userPollVote)
-    .where(inArray(userPollVote.pollId, pollIds))
-    .groupBy(userPollVote.pollId);

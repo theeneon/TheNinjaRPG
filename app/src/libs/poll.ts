@@ -1,8 +1,5 @@
 import type { Poll, PollOption } from "@/drizzle/schema";
-import {
-  selectUserPollVoteForGetVoteCountsForPolls,
-  selectUserPollVoteForGetVoteCountsForPolls2,
-} from "@/queries/poll";
+import { selectUserPollVoteForGetVoteCountsForPolls } from "@/queries/poll";
 import type { DrizzleClient } from "@/server/db";
 
 interface PollWithOptions extends Poll {
@@ -26,33 +23,26 @@ interface PollWithOptions extends Poll {
 }
 
 /**
- * Helper function to get vote counts for polls
+ * Aggregate option and poll vote counts from one snapshot, including votes for missing options.
  * @param client - The database client
  * @param pollIds - Array of poll IDs to get vote counts for
- * @returns Object containing vote maps and processed polls
+ * @returns Option and total vote maps; polls without votes have no entries.
  */
 export async function getVoteCountsForPolls(client: DrizzleClient, pollIds: string[]) {
-  // Run both queries in parallel for better performance
-  const [optionVoteCounts, totalVoteCounts] = await Promise.all([
-    // Get vote counts for all options in all polls
-    selectUserPollVoteForGetVoteCountsForPolls(client, pollIds),
-
-    // Get total votes for all polls
-    selectUserPollVoteForGetVoteCountsForPolls2(client, pollIds),
-  ]);
+  const optionVoteCounts = await selectUserPollVoteForGetVoteCountsForPolls(
+    client,
+    pollIds,
+  );
 
   // Create maps for quick lookup
   const optionVoteMap = new Map<string, Map<string, number>>();
+  const totalVoteMap = new Map<string, number>();
   optionVoteCounts.forEach(({ pollId, optionId, count }) => {
     if (!optionVoteMap.has(pollId)) {
       optionVoteMap.set(pollId, new Map<string, number>());
     }
     optionVoteMap.get(pollId)?.set(optionId, count);
-  });
-
-  const totalVoteMap = new Map<string, number>();
-  totalVoteCounts.forEach(({ pollId, count }) => {
-    totalVoteMap.set(pollId, count);
+    totalVoteMap.set(pollId, (totalVoteMap.get(pollId) ?? 0) + count);
   });
 
   return { optionVoteMap, totalVoteMap };

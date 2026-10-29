@@ -879,11 +879,14 @@ export const forumRouter = createTRPCRouter({
               }
               await q.updateForumThread(tx, source.id, { deletedAt: new Date() });
             }
+            await q.repairForumThread(tx, source.id);
           }
-          await q.repairForumThread(tx, source.id);
           await q.repairForumThread(tx, id);
-          for (const boardId of [...new Set([source.boardId, destination.id])])
-            await q.repairForumBoard(tx, boardId);
+          const affectedBoards =
+            input.action === "COPY"
+              ? [destination.id]
+              : [...new Set([source.boardId, destination.id])];
+          for (const boardId of affectedBoards) await q.repairForumBoard(tx, boardId);
           await q.insertForumAudit(tx, {
             actorId: ctx.userId,
             boardId: source.boardId,

@@ -5,8 +5,10 @@ import { eq } from "drizzle-orm";
 import { forumAlert, forumAudit, forumBoard, forumGrant, forumPost, forumReaction, forumRead, forumRestriction, forumRevision, forumSection, forumThread, forumWatch, userData, userReport, poll, pollOption, userPollVote, userUpload, forumCase } from "@/drizzle/schema";
 import { fetchForumPageData, fetchForumThreadPage, getForumContext, getInfiniteThreads } from "@/libs/forum";
 import * as moderation from "@/libs/moderation/defer";
+import { getVoteCountsForPolls } from "@/libs/poll";
 import { commentsRouter } from "@/routers/comments";
 import { forumRouter } from "@/routers/forum";
+import { pollRouter } from "@/routers/poll";
 import { listForumAudit } from "@/queries/forum";
 import type { DrizzleClient } from "@/server/db";
 import { insertUsers } from "../../../setup/factories";
@@ -194,6 +196,39 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "other") }))?.nPosts).toBe(3);
     expect((await api.restructureTopic({ threadId: id, action: "MERGE", targetThreadId: copy.threadId, reason: "Merge duplicate guide", postIds: [] })).success).toBe(true);
     expect((await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }))?.deletedAt).toBeInstanceOf(Date);
+  });
+  it.each(["general", "other"])("copies visible content into %s without recounting unchanged source state", async (boardId) => {
+    const id = await create(); const db = await getTestDatabase(); const admin = await client(adminId);
+    await (await comments(moderatorId)).createForumComment(commentInput(id));
+    const visible = await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id), orderBy: [forumPost.createdAt, forumPost.id] });
+    const answer = visible.find(p => p.authorId === moderatorId)!;
+    await db.update(forumThread).set({ kind: "QUESTION", acceptedPostId: answer.id, tags: ["strategy"], summary: "Reviewed guidance" }).where(eq(forumThread.id, id));
+    await db.insert(forumPost).values([
+      { id: "copy-removed", threadId: id, userId: playerId, authorId: playerId, content: "Removed evidence", deletedAt: new Date() },
+      { id: "copy-pending", threadId: id, userId: playerId, authorId: playerId, content: "Pending advice", isApproved: false, publicationIntent: { threadId: id, opening: false } },
+    ]);
+    await admin.markRead({ postId: answer.id }); await admin.react({ postId: answer.id, reaction: "helpful", active: true });
+    const [source, posts, reads, reactions, sourceBoard] = await Promise.all([
+      db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }), db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) }),
+      db.query.forumRead.findMany(), db.query.forumReaction.findMany(), db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") }),
+    ]);
+    const { result, statements } = await recordQueries(() => admin.restructureTopic({ threadId: id, action: "COPY", boardId, title: "Copied guidance", reason: "Share reviewed guidance", postIds: [] }));
+    expect(result.success).toBe(true);
+    expect(await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) })).toEqual(source);
+    expect(await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) })).toEqual(posts);
+    expect(await db.query.forumRead.findMany()).toEqual(reads); expect(await db.query.forumReaction.findMany()).toEqual(reactions);
+    const copied = await db.query.forumThread.findFirst({ where: eq(forumThread.id, result.threadId!) });
+    expect(copied).toMatchObject({ boardId, nPosts: 2, kind: "QUESTION", tags: ["strategy"], acceptedPostId: null, updatedAt: source!.updatedAt });
+    const copiedPosts = await db.query.forumPost.findMany({ where: eq(forumPost.threadId, result.threadId!), orderBy: [forumPost.createdAt, forumPost.id] });
+    expect(copied?.lastPostId).toBe(copiedPosts.at(-1)?.id);
+    expect(copiedPosts.map(p => [p.userId, p.authorId, p.content, p.createdAt])).toEqual(visible.map(p => [p.userId, p.authorId, p.content, p.createdAt]));
+    expect(copiedPosts.every(p => p.isApproved && !p.deletedAt && !p.publicationIntent)).toBe(true);
+    expect(await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, boardId) })).toMatchObject({ nThreads: boardId === "general" ? 2 : 1, nPosts: boardId === "general" ? 4 : 2, updatedAt: source!.updatedAt });
+    if (boardId !== "general") expect(await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") })).toEqual(sourceBoard);
+    const audits = await db.query.forumAudit.findMany({ where: eq(forumAudit.action, "topic.copy") }); expect(audits).toHaveLength(1);
+    expect(audits[0]).toMatchObject({ actorId: adminId, boardId: "general", targetId: id, reason: "Share reviewed guidance", before: { thread: { id, acceptedPostId: answer.id, tags: ["strategy"], summary: "Reviewed guidance" }, postIds: expect.arrayContaining(posts.map(p => p.id)) }, after: { threadId: result.threadId, boardId } });
+    expect(statements.filter(s => /^update `ForumThread` /i.test(s))).toHaveLength(1);
+    expect(statements.filter(s => /^update `ForumBoard` /i.test(s))).toHaveLength(1);
   });
   it.each(["SPLIT", "MERGE"] as const)("keeps existing alerts and read state with their posts after %s", async (action) => {
     const db = await getTestDatabase(); const source = await create(); const target = await create("other");
@@ -393,6 +428,31 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
 
 
 
+  it("aggregates shared poll votes once, retaining missing-option totals and empty poll defaults", async () => {
+    const db = await getTestDatabase();
+    await insertUsers([{ userId: "poll-voter", username: "PollVoter" }]);
+    await db.insert(poll).values(["active", "closed", "empty"].map(id => ({ id, title: id, description: "", createdByUserId: adminId, isActive: id !== "closed" })));
+    await db.insert(pollOption).values(["one", "two", "zero", "closed-option"].map(id => ({ id, pollId: id === "closed-option" ? "closed" : "active", text: id, createdByUserId: adminId })));
+    await db.insert(userPollVote).values([
+      { id: "vote-one", pollId: "active", optionId: "one", userId: playerId }, { id: "vote-two", pollId: "active", optionId: "one", userId: adminId },
+      { id: "vote-three", pollId: "active", optionId: "two", userId: moderatorId }, { id: "vote-orphan", pollId: "active", optionId: "missing-option", userId: "poll-voter" },
+      { id: "vote-closed", pollId: "closed", optionId: "closed-option", userId: playerId },
+    ]);
+    const queryCounts: number[] = [];
+    for (const ids of [[], ["missing"], ["empty"], ["active"], ["closed"], ["active", "active"], ["active", "closed", "empty", "missing"]]) {
+      const { result, statements } = await recordQueries(() => getVoteCountsForPolls(db, ids));
+      queryCounts.push(statements.length);
+      expect(result.optionVoteMap.get("active")).toEqual(ids.includes("active") ? new Map([["one", 2], ["two", 1], ["missing-option", 1]]) : undefined);
+      expect(result.optionVoteMap.get("closed")).toEqual(ids.includes("closed") ? new Map([["closed-option", 1]]) : undefined);
+      expect(result.optionVoteMap.size).toBe(Number(ids.includes("active")) + Number(ids.includes("closed")));
+      expect(result.totalVoteMap).toEqual(new Map([...(ids.includes("active") ? [["active", 4] as const] : []), ...(ids.includes("closed") ? [["closed", 1] as const] : [])]));
+    }
+    const listed = await callerForDatabase(pollRouter, playerId, db).getPolls({ includeInactive: true, limit: 10 });
+    expect(listed.data.find(p => p.id === "active")).toMatchObject({ totalVotes: 4, options: [{ id: "one", voteCount: 2, percentage: 50 }, { id: "two", voteCount: 1, percentage: 25 }, { id: "zero", voteCount: 0, percentage: 0 }] });
+    expect(listed.data.find(p => p.id === "closed")).toMatchObject({ totalVotes: 1, options: [{ id: "closed-option", voteCount: 1, percentage: 100 }] });
+    expect(listed.data.find(p => p.id === "empty")).toMatchObject({ totalVotes: 0, options: [] });
+    expect(queryCounts).toEqual([1, 1, 1, 1, 1, 1, 1]);
+  });
   it("embeds live polls with shared votes, checks board voting permissions and records summaries", async () => {
     const db = await getTestDatabase(); const id = await create();
     await db.update(userData).set({ rank: "JONIN" }).where(eq(userData.userId, playerId));
