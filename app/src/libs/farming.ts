@@ -218,6 +218,28 @@ export const summarizeFarmPlots = (plots: FarmPlotState[], now = new Date()) => 
   return summary;
 };
 
+/** Earliest harvest and pre-harvest watering times across growing plots; null when none. */
+export const getNextFarmEvents = (plots: FarmPlotState[], now = new Date()) => {
+  let nextHarvestAt: Date | null = null;
+  let nextWateringAt: Date | null = null;
+  for (const plot of plots) {
+    if (getFarmPlotStatus(plot, now) !== "growing") continue;
+    if (plot.finishAt && (!nextHarvestAt || plot.finishAt < nextHarvestAt)) {
+      nextHarvestAt = plot.finishAt;
+    }
+    const wateringAt = getNextWateringAt(plot.lastWateredAt, now);
+    if (
+      wateringAt &&
+      plot.finishAt &&
+      wateringAt < plot.finishAt &&
+      (!nextWateringAt || wateringAt < nextWateringAt)
+    ) {
+      nextWateringAt = wateringAt;
+    }
+  }
+  return { nextHarvestAt, nextWateringAt };
+};
+
 type FarmBulkToolAvailabilityInput = {
   selectedSeedId: string;
   selectedFertilizerId: string;

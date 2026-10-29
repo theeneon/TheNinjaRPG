@@ -6,7 +6,7 @@ import { useGameScene } from "@/hooks/game-scene";
 import * as runtime from "@/libs/rendering/runtime";
 import type { GameFrame, GameRenderer } from "@/libs/rendering/runtime";
 import { createFarmScene } from "@/libs/rendering/scenes/farm";
-import { FARM_VIEW_HEIGHT, farmPlotPosition } from "@/libs/rendering/scenes/farmLayout";
+import { farmPlotPosition, farmViewScale } from "@/libs/rendering/scenes/farmLayout";
 import { createTowerDefenseScene } from "@/libs/rendering/scenes/towerDefense";
 import { createTowerDefenseEffects } from "@/libs/rendering/scenes/towerDefenseEffects";
 import { prepareTowerDefenseTerrain } from "@/libs/rendering/scenes/towerDefenseTerrain";
@@ -111,7 +111,7 @@ describe("optional farm crop artwork", () => {
     expect(fixture.game.isDisposed()).toBe(false);
     expect(fixture.mount.contains(fixture.game.canvas)).toBe(true);
     for (let slot = 0; slot < 6; slot++) {
-      const position = farmPlotPosition(slot, 6), scale = 440 / FARM_VIEW_HEIGHT;
+      const position = farmPlotPosition(slot, 6), scale = farmViewScale(800, 440, 6);
       fixture.pointer("pointerdown", 400 + position.x * scale, 220 + position.y * scale);
     }
     expect(options.onPlotClick.mock.calls.map(([slot]) => slot)).toEqual([0, 1, 2, 3, 4, 5]);
@@ -121,6 +121,21 @@ describe("optional farm crop artwork", () => {
     hook.unmount();
     expect(fixture.game.isDisposed()).toBe(true);
     expect(fixture.mount.children).toHaveLength(0);
+  });
+
+  it("reports presses on the field outside every plot", async () => {
+    const fixture = renderer(() => Promise.resolve(Texture.WHITE));
+    const onFieldClick = vi.fn();
+    const options = { ...farmOptions(fixture), onFieldClick };
+    const scene = await createFarmScene(options);
+    fixture.pointer("pointerdown", 10, 10);
+    expect(onFieldClick).toHaveBeenCalledTimes(1);
+    expect(options.onPlotClick).not.toHaveBeenCalled();
+    const position = farmPlotPosition(0, 6), scale = farmViewScale(800, 440, 6);
+    fixture.pointer("pointerdown", 400 + position.x * scale, 220 + position.y * scale);
+    expect(options.onPlotClick).toHaveBeenCalledTimes(1);
+    expect(onFieldClick).toHaveBeenCalledTimes(1);
+    scene.dispose();
   });
 
   it("uses healthy crop/glow artwork and clears only changed artwork when its replacement fails", async () => {

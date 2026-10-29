@@ -523,7 +523,8 @@ function Residence() {
         isOpen={isFarmOpen}
         setIsOpen={setIsFarmOpen}
         returnFocusRef={farmTriggerRef}
-        className="sm:max-w-6xl md:max-w-6xl"
+        className="sm:max-w-[min(1240px,calc(100vw-2rem))] md:max-w-[min(1240px,calc(100vw-2rem))]"
+        closeButton={false}
       >
         {isFarmOpen && <HomeFarm embedded />}
       </Modal>

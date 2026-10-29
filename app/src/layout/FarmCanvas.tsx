@@ -6,6 +6,7 @@ import { useDayNightMapOverlays } from "@/hooks/day-night-overlay";
 import { useGameScene } from "@/hooks/game-scene";
 import WebGlError from "@/layout/WebGLError";
 import { createFarmScene } from "@/libs/rendering/scenes/farm";
+import { FARM_CANVAS_MIN_HEIGHT } from "@/libs/rendering/scenes/farmLayout";
 import { useUserData } from "@/utils/UserContext";
 import type { FarmEffect, FarmPlotState, FarmVisualState } from "@/validators/farming";
 
@@ -18,10 +19,17 @@ export type FarmCanvasHandle = {
 type FarmCanvasProps = {
   initialState: FarmVisualState;
   onPlotClick: (slotIndex: number, plot: FarmPlotState | undefined) => void;
+  /** A press on the field outside every plot. */
+  onFieldClick?: () => void;
   ref?: Ref<FarmCanvasHandle>;
 };
 
-const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) => {
+const FarmCanvasInner = ({
+  initialState,
+  onPlotClick,
+  onFieldClick,
+  ref,
+}: FarmCanvasProps) => {
   const { timeDiff } = useUserData();
   const { showDayNightMapOverlays } = useDayNightMapOverlays();
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -29,11 +37,13 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
     timeDiff,
     showDayNightMapOverlays,
     onPlotClick,
+    onFieldClick,
     state: initialState,
   });
   current.current.timeDiff = timeDiff;
   current.current.showDayNightMapOverlays = showDayNightMapOverlays;
   current.current.onPlotClick = onPlotClick;
+  current.current.onFieldClick = onFieldClick;
   const { scene, error, isReady } = useGameScene(
     mountRef,
     async (mount, signal, onError) => {
@@ -45,6 +55,7 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
         getTimeDiff: () => current.current.timeDiff,
         showDayNight: () => current.current.showDayNightMapOverlays,
         onPlotClick: (slot, plot) => current.current.onPlotClick(slot, plot),
+        onFieldClick: () => current.current.onFieldClick?.(),
       });
       // Server state can arrive while the renderer and artwork are loading.
       if (!signal.aborted) instance.updateState(current.current.state);
@@ -70,13 +81,15 @@ const FarmCanvasInner = ({ initialState, onPlotClick, ref }: FarmCanvasProps) =>
     <div
       ref={mountRef}
       className="w-full rounded-lg border bg-emerald-900/40"
-      style={{ minHeight: 360 }}
+      style={{ minHeight: FARM_CANVAS_MIN_HEIGHT }}
     />
   );
 };
 
 const propsAreEqual = (prev: FarmCanvasProps, next: FarmCanvasProps) =>
-  prev.onPlotClick === next.onPlotClick && prev.ref === next.ref;
+  prev.onPlotClick === next.onPlotClick &&
+  prev.onFieldClick === next.onFieldClick &&
+  prev.ref === next.ref;
 
 export const FarmCanvas = memo(FarmCanvasInner, propsAreEqual);
 
