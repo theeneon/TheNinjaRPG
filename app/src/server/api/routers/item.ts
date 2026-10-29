@@ -582,11 +582,10 @@ export const itemRouter = createTRPCRouter({
         return errorResponse("You are banned and cannot perform this action");
       if (!canChangeContent(user.role))
         return errorResponse("Not allowed to delete item");
-      const [entry, childEvolutions, variants, huntingReferences, requiredByVariants] =
+      const [entry, childEvolutions, huntingReferences, requiredByVariants] =
         await Promise.all([
           fetchItem(ctx.drizzle, input.id),
           listItemForDelete(ctx.drizzle, input),
-          listItemVariantForDelete(ctx.drizzle, input),
           listHuntingHabitats(ctx.drizzle),
           listItemVariantRequiringItemForDelete(ctx.drizzle, input),
         ]);
@@ -611,8 +610,7 @@ export const itemRouter = createTRPCRouter({
         return errorResponse(
           "This material is used by an active hunting session. Wait for it to finish.",
         );
-      if (!entry) return errorResponse("Item not found");
-      if (entry.id === TUTORIAL_ITEM_ID)
+      if (input.id === TUTORIAL_ITEM_ID)
         return errorResponse("Cannot delete tutorial item");
       if (childEvolutions.length > 0) {
         return errorResponse(
@@ -620,10 +618,26 @@ export const itemRouter = createTRPCRouter({
         );
       }
 
-      // No FK cascades on PlanetScale, so clean dependent rows leaf-first (user
-      // unlocks -> variant definitions -> user rows) and delete the parent Item
-      // last. A partial failure then leaves children pointing at a still-present
-      // parent, and the delete can simply be retried.
+      // Guard the parent deletion before removing owned rows, so new references
+      // reject without inventory loss. Missing parents still allow cleanup retries.
+      if (entry) {
+        // Materialize the evolution subquery to avoid MySQL's self-delete restriction.
+        const evolutionChildGuard = selectItemForDelete(ctx.drizzle, input);
+        const deleteResult = await deleteItemForDelete(
+          ctx.drizzle,
+          input,
+          evolutionChildGuard,
+        );
+        if (deleteResult.rowsAffected === 0) {
+          return errorResponse(
+            "Delete incomplete — an evolution or variant now requires this item. Remove the reference and retry.",
+          );
+        }
+        // Record the deletion before retryable cleanup loses the item's metadata.
+        await insertActionLogForDelete(ctx.drizzle, ctx, entry);
+      }
+      // Variant saves require a live parent; load cleanup IDs after deleting it.
+      const variants = await listItemVariantForDelete(ctx.drizzle, input);
       if (variants.length > 0) {
         await deleteUserItemVariantForDelete(ctx.drizzle, variants);
         await deleteItemVariantForDelete(ctx.drizzle, input);
@@ -633,29 +647,12 @@ export const itemRouter = createTRPCRouter({
         deleteUserItemImbuementForDelete(ctx.drizzle, input),
       ]);
 
-      // Write-time guards preserve evolution and unlock-item references added concurrently.
-      // The subquery alias materializes a derived table, avoiding MySQL errno 1093
-      // (a DELETE cannot otherwise read its own target table in a subquery).
-      const evolutionChildGuard = selectItemForDelete(ctx.drizzle, input);
-      const deleteResult = await deleteItemForDelete(
+      await outdateProposalsFor(
         ctx.drizzle,
-        input,
-        evolutionChildGuard,
+        "ITEM",
+        [input.id],
+        deletedReason("ITEM", entry?.name ?? input.id, user.username),
       );
-      if (deleteResult.rowsAffected === 0) {
-        return errorResponse(
-          "Delete incomplete — an evolution or variant now requires this item. Remove the reference and retry.",
-        );
-      }
-      await Promise.all([
-        insertActionLogForDelete(ctx.drizzle, ctx, entry),
-        outdateProposalsFor(
-          ctx.drizzle,
-          "ITEM",
-          [entry.id],
-          deletedReason("ITEM", entry.name, user.username),
-        ),
-      ]);
       return { success: true, message: `Item deleted` };
     }),
   // Update an item
@@ -1240,7 +1237,10 @@ export const itemRouter = createTRPCRouter({
           safeDescription,
           safeBattleDescription,
         );
-        if (result.rowsAffected === 0) return errorResponse("Variant not found");
+        if (result.rowsAffected === 0)
+          return errorResponse(
+            "Variant or required item changed — refresh and try again",
+          );
       } else {
         const newVariantId = nanoid();
         const insertResult = await insertItemVariantForUpsertItemVariant(
@@ -1251,7 +1251,9 @@ export const itemRouter = createTRPCRouter({
           safeBattleDescription,
         );
         if (insertResult.rowsAffected === 0) {
-          return errorResponse(`Order ${input.variant.order} is already taken`);
+          return errorResponse(
+            `Order ${input.variant.order} is taken or a required item changed — refresh and try again`,
+          );
         }
         // Re-count after insert to close the TOCTOU window on MAX_ITEM_VARIANTS
         const [countRow] = await selectItemVariantForUpsertItemVariant(

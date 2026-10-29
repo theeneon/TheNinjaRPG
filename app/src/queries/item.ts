@@ -7,6 +7,7 @@ import {
   count,
   eq,
   exists,
+  getTableColumns,
   gt,
   gte,
   inArray,
@@ -554,20 +555,23 @@ export const deleteItemForDelete = (
   input: { id: string },
   evolutionChildGuard: ReturnType<typeof selectItemForDelete>,
 ) =>
-  client
-    .delete(item)
-    .where(
-      and(
-        eq(item.id, input.id),
-        notExists(client.select({ one: sql`1` }).from(evolutionChildGuard)),
-        notExists(
-          client
-            .select({ one: sql`1` })
-            .from(itemVariant)
-            .where(eq(itemVariant.requiredItemId, input.id)),
-        ),
+  client.delete(item).where(
+    and(
+      eq(item.id, input.id),
+      notExists(client.select({ one: sql`1` }).from(evolutionChildGuard)),
+      notExists(
+        client
+          .select({ one: sql`1` })
+          .from(itemVariant)
+          .where(
+            and(
+              eq(itemVariant.requiredItemId, input.id),
+              ne(itemVariant.itemId, input.id),
+            ),
+          ),
       ),
-    );
+    ),
+  );
 
 /** Build the `actionLog` insert for `delete`. */
 export const insertActionLogForDelete = (
@@ -973,7 +977,7 @@ export const findItemForUpsertItemVariant = (
     columns: { id: true, name: true, itemType: true, effects: true },
   });
 
-/** Build the `itemVariant` update for `upsertItemVariant`, using predicates on `id` and `itemId`. */
+/** Update a variant only while its parent and optional required unlock item exist. */
 export const updateItemVariantForUpsertItemVariant = (
   client: Pick<DrizzleClient, "update">,
   input: {
@@ -1007,12 +1011,21 @@ export const updateItemVariantForUpsertItemVariant = (
       updatedAt: new Date(),
     })
     .where(
-      and(eq(itemVariant.id, input.variant.id), eq(itemVariant.itemId, input.itemId)),
+      and(
+        eq(itemVariant.id, input.variant.id),
+        eq(itemVariant.itemId, input.itemId),
+        exists(sql`(SELECT 1 FROM ${item} WHERE ${eq(item.id, input.itemId)})`),
+        input.variant.requiredItemId
+          ? exists(
+              sql`(SELECT 1 FROM ${item} WHERE ${eq(item.id, input.variant.requiredItemId)})`,
+            )
+          : undefined,
+      ),
     );
 
-/** Build the `itemVariant` insert for `upsertItemVariant`, updating duplicate keys. */
+/** Insert with live item references; duplicate keys leave the saved variant unchanged. */
 export const insertItemVariantForUpsertItemVariant = (
-  client: Pick<DrizzleClient, "insert">,
+  client: Pick<DrizzleClient, "execute">,
   newVariantId: string,
   input: {
     itemId: string;
@@ -1028,23 +1041,37 @@ export const insertItemVariantForUpsertItemVariant = (
   },
   safeDescription: null | string,
   safeBattleDescription: null | string,
-) =>
-  client
-    .insert(itemVariant)
-    .values({
-      id: newVariantId,
-      itemId: input.itemId,
-      name: input.variant.name,
-      image: input.variant.image,
-      requiredItemId: input.variant.requiredItemId,
-      costType: input.variant.costType,
-      cost: input.variant.cost,
-      order: input.variant.order,
-      description: safeDescription,
-      battleDescription: safeBattleDescription,
-      furnitureData: input.variant.furnitureData,
-    })
-    .onDuplicateKeyUpdate({ set: { id: sql`id` } });
+) => {
+  const values = {
+    id: newVariantId,
+    itemId: input.itemId,
+    name: input.variant.name,
+    image: input.variant.image,
+    requiredItemId: input.variant.requiredItemId,
+    costType: input.variant.costType,
+    cost: input.variant.cost,
+    order: input.variant.order,
+    description: safeDescription,
+    battleDescription: safeBattleDescription,
+    furnitureData: input.variant.furnitureData,
+  };
+  const columns = getTableColumns(itemVariant);
+  const keys = Object.keys(values) as (keyof typeof values)[];
+  // INSERT SELECT keeps both item references valid at the moment the variant is saved.
+  return client.execute(sql`
+    INSERT INTO ${itemVariant} (${sql.join(
+      keys.map((key) => sql.identifier(columns[key].name)),
+      sql`, `,
+    )})
+    SELECT ${sql.join(
+      keys.map((key) => sql.param(values[key], columns[key])),
+      sql`, `,
+    )}
+    WHERE EXISTS (SELECT 1 FROM ${item} WHERE ${eq(item.id, input.itemId)})
+      AND ${input.variant.requiredItemId ? exists(sql`(SELECT 1 FROM ${item} WHERE ${eq(item.id, input.variant.requiredItemId)})`) : sql`TRUE`}
+    ON DUPLICATE KEY UPDATE id = id
+  `);
+};
 
 /** Build the `itemVariant` selection for `upsertItemVariant`, using predicates on `itemId`. */
 export const selectItemVariantForUpsertItemVariant = (
