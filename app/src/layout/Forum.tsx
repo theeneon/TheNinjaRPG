@@ -28,46 +28,39 @@ import { canPostAsAi } from "@/utils/permissions";
 import { useUserData } from "@/utils/UserContext";
 import { getSearchValidator } from "@/validators/register";
 
-/** Expose the staff workspace only to eligible accounts; browse links can be omitted on the home view. */
-export const ForumNavigation = ({
-  showBrowseLinks = true,
-}: {
-  showBrowseLinks?: boolean;
-}) => {
+/** Provide forum browse links below the page header. */
+export const ForumNavigation = () => (
+  <nav
+    aria-label="Forum navigation"
+    className="mb-4 flex flex-wrap items-center gap-2 text-sm"
+  >
+    <Link
+      href="/forum"
+      className="hover:bg-accent rounded-md border px-3 py-2 font-medium"
+    >
+      All boards
+    </Link>
+    <Link
+      href="/forum?view=latest"
+      className="hover:bg-accent rounded-md border px-3 py-2"
+    >
+      Latest discussions
+    </Link>
+  </nav>
+);
+/** Expose the header shortcut only to accounts with forum management or moderation access. */
+export const ForumStaffLink = () => {
   const { data: context } = api.forum.getContext.useQuery();
   const canAccessStaffWorkspace = context?.canManage || context?.canModerate;
-  if (!showBrowseLinks && !canAccessStaffWorkspace) return null;
+  if (!canAccessStaffWorkspace) return null;
   return (
-    <nav
-      aria-label="Forum navigation"
-      className="mb-4 flex flex-wrap items-center gap-2 text-sm"
+    <Link
+      href="/forum/manage"
+      className="hover:bg-accent inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm whitespace-nowrap"
     >
-      {showBrowseLinks && (
-        <>
-          <Link
-            href="/forum"
-            className="hover:bg-accent rounded-md border px-3 py-2 font-medium"
-          >
-            All boards
-          </Link>
-          <Link
-            href="/forum?view=latest"
-            className="hover:bg-accent rounded-md border px-3 py-2"
-          >
-            Latest discussions
-          </Link>
-        </>
-      )}
-      {canAccessStaffWorkspace && (
-        <Link
-          href="/forum/manage"
-          className="hover:bg-accent ml-auto flex items-center gap-2 rounded-md border px-3 py-2"
-        >
-          <ShieldCheck className="h-4 w-4" />
-          Staff workspace
-        </Link>
-      )}
-    </nav>
+      <ShieldCheck className="h-4 w-4" />
+      Staff workspace
+    </Link>
   );
 };
 /** Render server-authorized topics with unread/resume links and optional staff selection. */

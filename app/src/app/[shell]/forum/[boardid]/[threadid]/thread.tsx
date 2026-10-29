@@ -14,7 +14,12 @@ import {
 } from "@/drizzle/constants";
 import Confirm from "@/layout/Confirm";
 import ContentBox from "@/layout/ContentBox";
-import { ForumComposer, ForumNavigation, ForumWatchButton } from "@/layout/Forum";
+import {
+  ForumComposer,
+  ForumNavigation,
+  ForumStaffLink,
+  ForumWatchButton,
+} from "@/layout/Forum";
 import { ForumRestructureTools, ForumTopicTools } from "@/layout/ForumModeration";
 import { ForumPoll, ForumTopicExtras } from "@/layout/ForumPoll";
 import Link from "@/layout/Link";
@@ -226,6 +231,7 @@ export default function Thread({
         ) : undefined
       }
       defaultBackHref={thread ? `/forum/${thread.boardId}` : "/forum"}
+      topRightContent={<ForumStaffLink />}
     >
       <ForumNavigation />
       {comments.error && (

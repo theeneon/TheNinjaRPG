@@ -16,6 +16,7 @@ import {
   ForumComposer,
   ForumNavigation,
   ForumSearch,
+  ForumStaffLink,
   ForumTopicList,
   ForumWatchButton,
 } from "@/layout/Forum";
@@ -56,6 +57,7 @@ export default function Board({
       title={board?.name ?? "Forum board"}
       subtitle={board?.summary}
       defaultBackHref="/forum"
+      topRightContent={<ForumStaffLink />}
     >
       <ForumNavigation />
       {threads.error && (

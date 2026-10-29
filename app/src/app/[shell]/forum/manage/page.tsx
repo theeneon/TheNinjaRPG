@@ -10,7 +10,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import ContentBox from "@/layout/ContentBox";
-import { ForumNavigation } from "@/layout/Forum";
+import { ForumNavigation, ForumStaffLink } from "@/layout/Forum";
 import { ForumAnalytics } from "@/layout/ForumAnalytics";
 import { ForumTopicTools } from "@/layout/ForumModeration";
 import Link from "@/layout/Link";
@@ -53,6 +53,7 @@ export default function ForumManagement() {
       title="Forum staff workspace"
       subtitle="Manage discussions, community access and forum structure."
       defaultBackHref="/forum"
+      topRightContent={<ForumStaffLink />}
     >
       <ForumNavigation />
       {!user ? (

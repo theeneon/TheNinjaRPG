@@ -15,7 +15,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import ContentBox from "@/layout/ContentBox";
 import { defineFilteringSchema, useContentFiltering } from "@/layout/ContentFiltering";
-import { ForumNavigation, ForumSearch, ForumTopicList } from "@/layout/Forum";
+import {
+  ForumNavigation,
+  ForumSearch,
+  ForumStaffLink,
+  ForumTopicList,
+} from "@/layout/Forum";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
 import { useUserData } from "@/utils/UserContext";
@@ -140,8 +145,9 @@ function ForumBrowse({
     <ContentBox
       title="Community forum"
       subtitle="Ask, share and write the next chapter of Seichi."
+      topRightContent={<ForumStaffLink />}
     >
-      <ForumNavigation showBrowseLinks={hasAppliedFilters} />
+      {hasAppliedFilters && <ForumNavigation />}
       <div className="mb-4">
         <ForumSearch
           query={query}
