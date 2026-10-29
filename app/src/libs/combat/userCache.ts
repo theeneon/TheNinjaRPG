@@ -25,6 +25,8 @@ const baselineFields = [
   "money",
   "seichiSilver",
   "pveFights",
+  "activePetId",
+  "petExperience",
 ] as const;
 type BaselineField = (typeof baselineFields)[number];
 export type CombatCacheBaseline = Pick<UserData, BaselineField> & {
@@ -236,8 +238,10 @@ export const canCacheCombatCompletion = (
   const baseline = battle.extraState.profileCacheSnapshots?.[userId];
   return (
     !!baseline &&
-    // Pet XP is guarded against the live ownership row; refetch its committed bank.
-    !battle.extraState.petIdsByOwner?.[userId] &&
+    // A confirmed settlement can add to the original companion's cached bank.
+    (!battle.extraState.petIdsByOwner?.[userId] ||
+      (baseline.activePetId === battle.extraState.petIdsByOwner[userId] &&
+        Number.isFinite(baseline.petExperience))) &&
     ["money", "seichiSilver", "experience", "earnedExperience", "pveFights"].every(
       (field) => Number.isFinite(baseline[field as "money"]),
     ) &&

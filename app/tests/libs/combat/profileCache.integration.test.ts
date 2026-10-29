@@ -1,23 +1,27 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
-import { aiProfile, battle, item, quest, questHistory, userData, userItem } from "@/drizzle/schema";
+import { aiProfile, battle, item, quest, questHistory, questParty, userData, userItem, userPet } from "@/drizzle/schema";
 import { updateUser } from "@/libs/combat/database";
 import { filterCombatQuests } from "@/libs/combat/quests";
 import { captureCombatCacheSnapshot, combatProfilePatch } from "@/libs/combat/userCache";
 import { calcBattleResult } from "@/libs/combat/util";
 import { Pusher, type PusherClient } from "@/libs/pusher";
 import { getActiveObjectives, getNewTrackers, mockAchievementHistoryEntries } from "@/libs/quest";
+import { projectPartyTracker } from "@/libs/questParty";
 import { initiateBattle } from "@/server/api/routers/combat";
-import type { UserWithRelations } from "@/server/api/routers/profile";
+import { profileRouter, type UserWithRelations } from "@/server/api/routers/profile";
 import { AllObjectives, QuestTracker } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
 import { insertItems, insertQuestHistory, insertQuests, insertUserItems, insertUsers } from "../../setup/factories";
-import { describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
+import { stubRateLimitTransport } from "../../setup/rateLimit";
+import { callerFor, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../setup/testDatabase";
 import { makeBattleUser, makeCompleteBattle } from "./helpers/battleScenario";
 
 describeWithDatabase("combat profile cache inventory confirmation", () => {
   beforeEach(async () => {
-    await resetTables(battle, aiProfile, questHistory, quest, userItem, item, userData);
+    await resetTables(userPet, battle, aiProfile, questHistory, questParty, quest, userItem, item, userData);
     await insertUsers([{ userId: "cache-player", username: "CachePlayer", status: "BATTLE", battleId: "cache-fight", rank: "NONE", curEnergy: 10, regeneration: 0 }]);
     await insertItems([{ id: "cache-consumable", itemType: "CONSUMABLE" }]);
     await insertUserItems([{ id: "cache-stack", userId: "cache-player", itemId: "cache-consumable", quantity: 2, equipped: "ITEM_1", durability: 100 }]);
@@ -44,6 +48,47 @@ describeWithDatabase("combat profile cache inventory confirmation", () => {
     if (tombstone) expect(result.profileUpdate).toBeUndefined();
     else expect(result.profileUpdate?.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: "cache-stack", quantity })]));
     expect((await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))?.battleId).toBeNull();
+  });
+
+  it.each(["ready", "disabled", "changed selection", "changed rank", "disabled without recovery"])("confirms companion XP atomically and preserves player rewards when eligibility changes (%s)", async (condition) => {
+    const eligible = condition === "ready";
+    const database = await getTestDatabase();
+    await database.update(userData).set({ rank: "GENIN", activePetId: "cache-pet", petExperience: 40 }).where(eq(userData.userId, "cache-player"));
+    await database.insert(userPet).values({ id: "cache-pet", userId: "cache-player", name: "Miso", speciesId: "cache-species", paletteIndex: 0, characteristicIndex: 0, auraIndex: 0, rank: 1, artRank: 1, avatar: "https://example.com/pet.webp", generationStatus: "READY" });
+    const original = (await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player"), with: { items: { with: { item: true } } } }))!;
+    const current = { ...original, titles: [], userQuests: [], questData: [] } as unknown as NonNullable<UserWithRelations>;
+    const state = makeCompleteBattle({ id: "cache-fight", battleType: "ARENA", rewardScaling: 1, usersState: [
+      makeBattleUser("cache-player", { direction: "left", rank: "GENIN", isAi: false, isSummon: false, curHealth: 100, sector: 1, items: [] }),
+      makeBattleUser("cache-ai", { direction: "right", isAi: true, curHealth: 0, sector: 1, leftBattle: true }),
+    ], extraState: { profileCacheSnapshots: { "cache-player": captureCombatCacheSnapshot(original) }, petIdsByOwner: { "cache-player": "cache-pet" }, energyCapacity: { "cache-player": 100 }, energyRegeneration: { "cache-player": 0 } } });
+    const result = calcBattleResult(state, "cache-player", [])!;
+    result.experience = 5.49; result.earnedExperience = 7.49;
+    result.villagePrestige = 0; result.villageTokens = 0; result.anbuPoints = 0; result.clanPoints = 0;
+    if (condition === "disabled without recovery") delete state.extraState.energyCapacity;
+    if (condition.startsWith("disabled")) await database.update(userPet).set({ battleEnabled: false }).where(eq(userPet.id, "cache-pet"));
+    if (condition === "changed selection") await database.update(userData).set({ activePetId: null }).where(eq(userData.userId, "cache-player"));
+    if (condition === "changed rank") await database.update(userData).set({ rank: "NONE" }).where(eq(userData.userId, "cache-player"));
+    const { statements } = await recordQueries(() => updateUser(database, { trigger: async () => {} } as unknown as PusherClient, state, result, "cache-player"));
+    expect(statements.some((statement) => /^select\b/i.test(statement))).toBe(false);
+    expect(statements.filter((statement) => /^update `UserData` /i.test(statement))).toHaveLength(eligible || condition === "disabled without recovery" ? 1 : 2);
+    const saved = (await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))!;
+    expect(saved).toMatchObject({ experience: original.experience + 5, earnedExperience: original.earnedExperience + 7, battleId: null, petExperience: eligible ? 52 : 40 });
+    if (!eligible) expect(result.profileUpdate).toBeUndefined();
+    else {
+      expect(result.profileUpdate?.userDelta.petExperience).toBe(12);
+      const key = [["profile", "getUser"], { type: "query" }];
+      const client = new QueryClient();
+      client.setQueryData(key, { userData: current });
+      let reads = 0;
+      const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return { userData: current }; } });
+      const stop = observer.subscribe(() => undefined);
+      try {
+        const revision = prepareUserUpdate(client, key);
+        await updateUserCache(client, key, (user) => combatProfilePatch(user, result.profileUpdate!), { revision, delta: result.profileUpdate!.userDelta });
+        expect(client.getQueryData<{ userData: typeof current }>(key)?.userData.petExperience).toBe(52);
+        expect(reads).toBe(0);
+      } finally { stop(); client.clear(); }
+    }
   });
 
   it("preserves omitted quest progress in storage and the client cache without publishing unloaded trackers or reading", async () => {
@@ -102,6 +147,121 @@ describeWithDatabase("combat profile cache inventory confirmation", () => {
     expect(patch?.questData).toEqual([]);
     expect(getActiveObjectives({ ...current, ...patch })).toEqual([]);
     expect(current.questData.map((tracker) => tracker.id)).toEqual(["timed-event"]);
+  });
+
+  it.each([
+    { questType: "mission", party: false, teamEnabled: false, remaining: false },
+    { questType: "achievement", party: false, teamEnabled: false, remaining: false },
+    { questType: "mission", party: true, teamEnabled: false, remaining: false },
+    { questType: "story", party: false, teamEnabled: true, remaining: false },
+    { questType: "event", party: false, teamEnabled: true, remaining: false },
+    { questType: "anbu", party: false, teamEnabled: true, remaining: false },
+    { questType: "story", party: false, teamEnabled: true, remaining: true },
+    { questType: "event", party: false, teamEnabled: true, remaining: true },
+    { questType: "anbu", party: false, teamEnabled: true, remaining: true },
+  ] as const)("projects a completed $questType objective only when no progression is pending (party=$party, team=$teamEnabled, remaining=$remaining)", async ({ questType, party, teamEnabled, remaining }) => {
+    const database = await getTestDatabase();
+    await insertQuests([{ id: "complete-goal", questType, teamEnabled, consecutiveObjectives: false, maxAttempts: 100, maxCompletes: 100,
+      content: { objectives: [AllObjectives.parse({ id: "kill", task: "arena_kills", value: 1 }), ...(remaining ? [AllObjectives.parse({ id: "next", task: "arena_kills", value: 2 })] : [])], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] },
+    }]);
+    await insertQuestHistory([{ userId: "cache-player", questId: "complete-goal", questType }]);
+    if (party) await database.update(userData).set({ questPartyId: "cache-party" }).where(eq(userData.userId, "cache-player"));
+    const profile = await callerFor(profileRouter, "cache-player");
+    if (teamEnabled) {
+      stubRateLimitTransport();
+      vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
+      expect((await profile.getUser()).notifications).toContainEqual(expect.objectContaining({ name: "Quest Teams" }));
+    }
+    const original = (await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player"), with: { items: { with: { item: true } }, userQuests: { with: { quest: true } } } }))!;
+    const current = { ...original, titles: [], completedQuests: [] } as unknown as NonNullable<UserWithRelations>;
+    current.questData = getNewTrackers(current, [{ task: "any" }]).trackers;
+    if (party) current.questData[0]!.party = { id: "cache-party", generation: 0, contributions: [] };
+    const state = makeCompleteBattle({ id: "cache-fight", battleType: "ARENA", rewardScaling: 1, usersState: [
+      makeBattleUser("cache-player", { direction: "left", status: "AWAKE", questPartyId: original.questPartyId, rank: "NONE", level: original.level, originalLevel: original.level, isAi: false, isSummon: false, curHealth: 100, sector: 1, items: [] }),
+      makeBattleUser("cache-ai", { direction: "right", isAi: true, curHealth: 0, sector: 1, leftBattle: true }),
+    ], extraState: { profileCacheSnapshots: { "cache-player": captureCombatCacheSnapshot(original) },
+      energyCapacity: { "cache-player": 100 }, energyRegeneration: { "cache-player": 0 },
+      questData: { "cache-player": current.questData }, userQuests: { "cache-player": filterCombatQuests(structuredClone(current.userQuests)) },
+    } });
+    const result = calcBattleResult(state, "cache-player", [])!;
+    result.villagePrestige = 0; result.villageTokens = 0; result.anbuPoints = 0; result.clanPoints = 0;
+    const { statements } = await recordQueries(() => updateUser(database, { trigger: async () => {} } as unknown as PusherClient, state, result, "cache-player"));
+    expect(statements.some((statement) => /^select\b/i.test(statement))).toBe(false);
+    const saved = (await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))!;
+    expect(saved.questData?.find((tracker) => tracker.id === "complete-goal")?.goals[0]?.done).toBe(true);
+    if (remaining) expect(saved.questData?.find((tracker) => tracker.id === "complete-goal")?.goals[1]?.done).toBe(false);
+    if (teamEnabled) {
+      expect(saved.questData?.find((tracker) => tracker.id === "complete-goal")?.party).toBeUndefined();
+      const refreshed = await profile.getUser();
+      expect(refreshed.notifications.some((notice) => notice.name === "Quest Teams")).toBe(remaining);
+      expect(refreshed.notifications.some((notice) => notice.name === "Quest rewards waiting: open your Logbook")).toBe(!remaining);
+    }
+    if (questType === "achievement" || party || (teamEnabled && !remaining)) expect(result.profileUpdate).toBeUndefined();
+    else {
+      const patch = combatProfilePatch(current, result.profileUpdate!);
+      expect(patch?.questData?.find((tracker) => tracker.id === "complete-goal")?.goals[0]?.done).toBe(true);
+      expect(patch?.questData).toEqual((await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))?.questData);
+    }
+    if (party) {
+      expect(saved.questData?.find((tracker) => tracker.id === "complete-goal")?.party?.contributions).toMatchObject([{ id: "kill", done: true }]);
+    }
+  });
+
+  it.each([true, false])("reconciles two companion owners' shared quest progress only when combat contributions change (advances=%s)", async (advances) => {
+    const database = await getTestDatabase();
+    stubRateLimitTransport();
+    vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
+    await insertQuests([{ id: "shared-kills", questType: "event", teamEnabled: true, consecutiveObjectives: false, maxAttempts: 100, maxCompletes: 100,
+      content: { objectives: [AllObjectives.parse({ id: "kill", task: advances ? "arena_kills" : "random_encounter_wins", value: 2 })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] },
+    }]);
+    await database.insert(questParty).values({ id: "cache-party", questId: "shared-kills", leaderId: "cache-player", memberIds: ["cache-player", "cache-helper"], invitedUserIds: [], tracker: QuestTracker.parse({ id: "shared-kills", goals: [{ id: "kill" }] }), contributions: {} });
+    const party = (await database.query.questParty.findFirst())!;
+    const tracker = projectPartyTracker(party);
+    tracker.party!.contributions = structuredClone(tracker.goals);
+    await insertUsers([{ userId: "cache-helper", username: "CacheHelper", status: "BATTLE", battleId: "cache-fight-helper", rank: "GENIN", curEnergy: 10, regeneration: 0 }]);
+    const completions = [];
+    for (const userId of party.memberIds) {
+      const petId = `${userId}-pet`;
+      await database.insert(userPet).values({ id: petId, userId, name: "Miso", speciesId: "cache-species", paletteIndex: 0, characteristicIndex: 0, auraIndex: 0, rank: 1, artRank: 1, avatar: "https://example.com/pet.webp", generationStatus: "READY" });
+      await database.update(userData).set({ rank: "GENIN", activePetId: petId, questPartyId: party.id, questData: [tracker] }).where(eq(userData.userId, userId));
+      await insertQuestHistory([{ userId, questId: party.questId, questType: "event" }]);
+      const original = (await database.query.userData.findFirst({ where: eq(userData.userId, userId), with: { items: { with: { item: true } }, userQuests: { with: { quest: true } } } }))!;
+      const current = { ...original, titles: [], completedQuests: [] } as unknown as NonNullable<UserWithRelations>;
+      const state = makeCompleteBattle({ id: original.battleId!, battleType: "ARENA", rewardScaling: 1, usersState: [
+        makeBattleUser(userId, { direction: "left", status: "AWAKE", questPartyId: party.id, rank: "GENIN", level: original.level, originalLevel: original.level, isAi: false, isSummon: false, curHealth: 100, sector: 1, items: [] }),
+        makeBattleUser("cache-ai", { direction: "right", isAi: true, curHealth: 0, sector: 1, leftBattle: true }),
+      ], extraState: { profileCacheSnapshots: { [userId]: captureCombatCacheSnapshot(original) }, petIdsByOwner: { [userId]: petId },
+        energyCapacity: { [userId]: 100 }, energyRegeneration: { [userId]: 0 },
+        questData: { [userId]: structuredClone(current.questData ?? []) }, userQuests: { [userId]: filterCombatQuests(structuredClone(current.userQuests)) },
+      } });
+      const result = calcBattleResult(state, userId, [])!;
+      result.experience = 5; result.earnedExperience = 7;
+      result.villagePrestige = 0; result.villageTokens = 0; result.anbuPoints = 0; result.clanPoints = 0;
+      const { statements } = await recordQueries(() => updateUser(database, { trigger: async () => {} } as unknown as PusherClient, state, result, userId));
+      expect(statements.some((statement) => /^select\b/i.test(statement))).toBe(false);
+      const saved = (await database.query.userData.findFirst({ where: eq(userData.userId, userId) }))!;
+      expect(saved.questData?.[0]?.goals[0]).toMatchObject({ value: advances ? 1 : 0, done: false });
+      expect(saved.questData?.[0]?.party?.contributions[0]).toMatchObject({ value: advances ? 1 : 0, done: false });
+      expect(saved.petExperience).toBe(12);
+      completions.push({ current, result });
+    }
+    expect((await database.query.questParty.findFirst())?.tracker.goals[0]).toMatchObject({ value: 0, done: false });
+    let reads = 0;
+    for (const { current, result } of completions) {
+      const profile = await callerFor(profileRouter, current.userId);
+      const key = [["profile", "getUser"], { type: "query" }];
+      const client = new QueryClient();
+      client.setQueryData(key, { userData: current });
+      const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return profile.getUser(); } });
+      const stop = observer.subscribe(() => undefined);
+      try {
+        const revision = prepareUserUpdate(client, key);
+        await updateUserCache(client, key, result.profileUpdate ? (user) => combatProfilePatch(user, result.profileUpdate!) : undefined, { revision, delta: result.profileUpdate?.userDelta });
+      } finally { stop(); client.clear(); }
+    }
+    expect((await database.query.questParty.findFirst())?.tracker.goals[0]).toMatchObject({ value: advances ? 2 : 0, done: advances });
+    expect(reads).toBe(advances ? 2 : 0);
+    expect(completions.every(({ result }) => !result.profileUpdate)).toBe(advances);
   });
 
   it("keeps loaded and omitted mock achievement trackers visible without persisting them", async () => {

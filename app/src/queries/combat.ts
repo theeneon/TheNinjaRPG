@@ -2387,6 +2387,7 @@ export const updateUserDataForUpdateUser2 = (
   updatedQuestData: import("@/validators/objectives").QuestTrackerType[],
   tookKageSeat: false | true,
   hydratedUser: Parameters<typeof getIsolatedPyramid>[0],
+  confirmPetReward = false,
 ) =>
   client
     .update(userData)
@@ -2494,7 +2495,23 @@ export const updateUserDataForUpdateUser2 = (
           STEALTH_POST_COMBAT_COOLDOWN_SECONDS * 1000,
       ),
     })
-    .where(and(eq(userData.userId, userId), eq(userData.battleId, curBattle.id)));
+    .where(
+      and(
+        eq(userData.userId, userId),
+        eq(userData.battleId, curBattle.id),
+        // Reuse the exact payout expression: this match proves the live companion
+        // receives its positive XP grant in the same atomic account update.
+        confirmPetReward
+          ? gt(
+              petExperienceGainSql(
+                Math.round(result.experience) + Math.round(result.earnedExperience),
+                curBattle.extraState.petIdsByOwner?.[userId] ?? null,
+              ),
+              userData.petExperience,
+            )
+          : undefined,
+      ),
+    );
 
 /** Build the `userItem` insert for `updateUser`. */
 export const insertUserItemForUpdateUser = (

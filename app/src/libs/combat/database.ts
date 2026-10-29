@@ -50,6 +50,7 @@ import { claimVillageMissionCombatEvents } from "@/libs/combat/villageMission";
 import { getPvpFarmActivityReductionSeconds } from "@/libs/farming";
 import { getJutsuMaxLevel } from "@/libs/jutsuProgression";
 import { allocateMasteryGains } from "@/libs/masteryProgression";
+import { isQuestComplete } from "@/libs/objectives";
 import {
   broadcastRaidAvailability,
   type PusherClient,
@@ -1323,12 +1324,12 @@ export const updateUser = async (
     // An isolated defeat stays in the run so its authored checkpoint remains playable.
     if (getIsolatedPyramid(hydratedUser))
       result.curHealth = Math.max(1, result.curHealth);
-    const previouslyDoneGoals = new Set(
-      hydratedUser.questData.flatMap((tracker) =>
-        tracker.goals
-          .filter((goal) => goal.done)
-          .map((goal) => `${tracker.id}:${goal.id}`),
-      ),
+    // Tracker processing mutates the preloaded objects, so retain contribution receipts first.
+    const previousPartyContributions = new Map(
+      hydratedUser.questData.map((tracker) => [
+        tracker.id,
+        JSON.stringify(tracker.party?.contributions),
+      ]),
     );
     const { trackers, notifications, questIdsUpdated, consequences } = getNewTrackers(
       hydratedUser,
@@ -1502,10 +1503,47 @@ export const updateUser = async (
       }
     }
 
+    const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
+    const capacity = curBattle.extraState.energyCapacity?.[userId];
+    const regeneration = curBattle.extraState.energyRegeneration?.[userId];
+    // Party contributions need synchronization, passive completions can award progression,
+    // and completed team-enabled quests change reward navigation even after detachment.
+    const hasUnprojectedQuestProgress = trackers.some(
+      (tracker) =>
+        (!!tracker.party &&
+          previousPartyContributions.get(tracker.id) !==
+            JSON.stringify(tracker.party.contributions)) ||
+        (questIdsUpdated.includes(tracker.id) &&
+          (!!tracker.party ||
+            hydratedUser.userQuests.some(
+              (entry) =>
+                entry.questId === tracker.id &&
+                (["tier", "daily", "achievement"].includes(entry.quest.questType) ||
+                  (entry.quest.teamEnabled && isQuestComplete(entry.quest, tracker))),
+            ))),
+    );
+    const canProjectProfileUpdate =
+      !!baseline &&
+      capacity !== undefined &&
+      regeneration !== undefined &&
+      canCacheCombatCompletion(curBattle, result, userId) &&
+      consequences.length === 0 &&
+      !hasUnprojectedQuestProgress &&
+      iExp === 0 &&
+      user.items.every((item) => !item.progressionRowId) &&
+      result.droppedItems.length === 0;
     // Use one timestamp for persisted recovery and its compact completion response.
     const settledAt = new Date();
     let userSettlementCommitted = false;
     let itemSettlementCommitted = true;
+    const rewardPetId = curBattle.extraState.petIdsByOwner?.[userId];
+    const petExperience = Math.max(
+      0,
+      Math.round(result.experience) + Math.round(result.earnedExperience),
+    );
+    const confirmPetReward =
+      !!rewardPetId && petExperience > 0 && canProjectProfileUpdate;
+    let petRewardConfirmed = !rewardPetId || petExperience === 0;
     // Defer execution so a hunting transaction never overlaps requests on its session.
     const settlementWrites: (() => PromiseLike<unknown>)[] = [
       ...(!user.isAi
@@ -1599,22 +1637,31 @@ export const updateUser = async (
           )
         : []),
       // Update user data
-      () =>
-        updateUserDataForUpdateUser2(
-          client,
-          combatEnergyRecoverySql,
-          curBattle,
-          userId,
-          result,
-          settledAt,
-          hasHumanOpponent,
-          user,
-          updatedQuestData,
-          tookKageSeat,
-          hydratedUser,
-        ).then((saved) => {
-          userSettlementCommitted = saved.rowsAffected === 1;
-        }),
+      async () => {
+        const save = (confirmPet: boolean) =>
+          updateUserDataForUpdateUser2(
+            client,
+            combatEnergyRecoverySql,
+            curBattle,
+            userId,
+            result,
+            settledAt,
+            hasHumanOpponent,
+            user,
+            updatedQuestData,
+            tookKageSeat,
+            hydratedUser,
+            confirmPet,
+          );
+        let saved = await save(confirmPetReward);
+        if (confirmPetReward) {
+          petRewardConfirmed = saved.rowsAffected === 1;
+          // Changed pet eligibility must not discard the player's battle rewards.
+          // The fallback retains the battle-ID guard and runs in this mutation phase.
+          if (!petRewardConfirmed) saved = await save(false);
+        }
+        userSettlementCommitted = saved.rowsAffected === 1;
+      },
       // Handle dropped items transfer if present on result. Currently only AI have droppable items, so no need to delete from loser
       ...(result.droppedItems.length > 0
         ? [() => insertUserItemForUpdateUser(client, result, user)]
@@ -1626,26 +1673,11 @@ export const updateUser = async (
       if (!userSettlementCommitted || !itemSettlementCommitted)
         throw new Error("Hunting character or inventory changed during settlement");
     } else await Promise.all(settlementWrites.map((write) => write()));
-    const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
-    const capacity = curBattle.extraState.energyCapacity?.[userId];
-    const regeneration = curBattle.extraState.energyRegeneration?.[userId];
-    const newlyDoneGoal = trackers.some((tracker) =>
-      tracker.goals.some(
-        (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
-      ),
-    );
     if (
+      canProjectProfileUpdate &&
       userSettlementCommitted &&
       itemSettlementCommitted &&
-      baseline &&
-      capacity !== undefined &&
-      regeneration !== undefined &&
-      canCacheCombatCompletion(curBattle, result, userId) &&
-      consequences.length === 0 &&
-      !newlyDoneGoal &&
-      iExp === 0 &&
-      user.items.every((item) => !item.progressionRowId) &&
-      result.droppedItems.length === 0
+      petRewardConfirmed
     ) {
       const publicUser = getPublicQuestUser({
         ...hydratedUser,
@@ -1656,6 +1688,7 @@ export const updateUser = async (
       const settledItems = combatCacheItems(baseline, user.items);
       const userDelta = {
         ...combatCacheIntegerDelta(baseline, result),
+        ...(rewardPetId ? { petExperience } : {}),
         offence: result.offence,
         defence: result.defence,
         strength: result.strength,
