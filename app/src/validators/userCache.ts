@@ -10,7 +10,7 @@ import {
   UserRanks,
   UserStatuses,
 } from "@/drizzle/constants";
-import type { UserItemWithRelations, UserQueue } from "@/drizzle/schema";
+import type { UserItemWithRelations, UserQueue, UserRaidBuff } from "@/drizzle/schema";
 import type {
   AchievementProgress,
   UserWithRelations,
@@ -72,6 +72,10 @@ export type UserDelta = z.infer<typeof userDeltaSchema>;
 
 // Absolute values are kept separate from arithmetic deltas so a saved field is never added.
 export const userPatchSchema = z.object({
+  raidBuffs: z.custom<UserRaidBuff[]>(Array.isArray).optional(),
+  marriageSlots: z.number().optional(),
+  extraReskinSlots: z.number().optional(),
+  extraJutsuSlots: z.number().optional(),
   elementalMastery: z.partialRecord(z.enum(BasicElementName), z.number()).optional(),
   activeTrainedElement: z.enum(BasicElementName).nullable().optional(),
   preferredDamageElement: z.enum(BasicElementName).nullable().optional(),
