@@ -72,5 +72,5 @@ export type AnimationClip = {
   loop: boolean;
 };
 
-/** Effect sheets keep their authored battlefield size independently of hex dimensions. */
-export const EFFECT_ANIMATION_SIZE = 50;
+/** Square effect sheets span this many hex heights, keeping their size relative to fighters. */
+export const EFFECT_ANIMATION_HEX_RATIO = 2.5;
