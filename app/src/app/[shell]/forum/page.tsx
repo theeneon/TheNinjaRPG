@@ -212,15 +212,12 @@ function ForumBrowse({ replaceUrl }: { replaceUrl: (url: URL) => void }) {
                 </div>
                 <div className="bg-popover divide-y rounded-lg border">
                   {group.map((board) => (
-                    <div
-                      key={board.id}
-                      className={`flex min-w-0 items-center gap-3 p-4 ${board.parentId ? "pl-8" : ""}`}
-                    >
+                    <div key={board.id} className="flex min-w-0 items-center gap-3 p-4">
                       <MessageSquare
                         aria-hidden
                         className="hidden h-6 w-6 shrink-0 text-orange-600 sm:block"
                       />
-                      <div className="min-w-0 flex-1">
+                      <div className={`min-w-0 flex-1 ${board.parentId ? "pl-4" : ""}`}>
                         {board.permissions.read ? (
                           <Link
                             href={`/forum/${board.id}`}
