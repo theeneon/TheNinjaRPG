@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { GameLayout } from "@/components/layout/GameLayout";
@@ -20,6 +21,18 @@ import type { WallpaperVariant } from "@/libs/wallpaperExperiment";
 import { LayoutContextProvider } from "@/utils/LayoutContext";
 import { usePublicPathname } from "@/utils/routing";
 import { useUserData } from "@/utils/UserContext";
+
+/**
+ * The cookie repair below refreshes at most once per document, so a cookie the server
+ * never receives (blocked, or shadowed by another cookie of the same name) cannot loop.
+ */
+let hasRefreshedForRepairedCookie = false;
+
+/** Whether the layout cookie the next request sends now carries this layout. */
+const cookieCarriesLayout = (layout: EffectiveLayout) =>
+  document.cookie
+    .split("; ")
+    .some((entry) => entry === `${LAYOUT_PREFERENCE_COOKIE}=${layout}`);
 
 interface LayoutSwitcherProps {
   children: React.ReactNode;
@@ -51,7 +64,17 @@ const LayoutSwitcher: React.FC<LayoutSwitcherProps> = ({
   // hydration replaced the entire viewport in one frame, which is among the largest
   // layout-shift events on the site. The stored preference is re-synced to the cookie so
   // the *next* request renders the right shell, and the current render is left alone.
+  // When the stored choice differs from what the server rendered, pages the router has
+  // already fetched or prefetched carry the wrong shell too, and navigating to them would
+  // flip between layouts; a single refresh re-renders under the repaired cookie.
+  const router = useRouter();
   useEffect(() => {
+    // The server rendered from this cookie, so it is authoritative; rewriting it only
+    // renews its expiry. A localStorage copy that failed to update must not replace it.
+    if (cookieCarriesLayout(initialLayout)) {
+      persistLayoutPreferenceCookie(initialLayout);
+      return;
+    }
     const stored = storedValueToLayout(
       safeLocalStorageGetItem(LAYOUT_PREFERENCE_COOKIE),
     );
@@ -59,7 +82,16 @@ const LayoutSwitcher: React.FC<LayoutSwitcherProps> = ({
     if (stored || initialIsSignedIn) {
       persistLayoutPreferenceCookie(stored ?? initialLayout);
     }
-  }, [initialLayout, initialIsSignedIn]);
+    if (
+      stored &&
+      stored !== initialLayout &&
+      !hasRefreshedForRepairedCookie &&
+      cookieCarriesLayout(stored)
+    ) {
+      hasRefreshedForRepairedCookie = true;
+      router.refresh();
+    }
+  }, [initialLayout, initialIsSignedIn, router]);
 
   const isKnownAnonymous = isClerkLoaded ? !isSignedIn : !initialIsSignedIn;
   useEffect(() => {

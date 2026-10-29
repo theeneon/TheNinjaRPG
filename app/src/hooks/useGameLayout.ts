@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback } from "react";
 import { safeLocalStorageGetItem, safeLocalStorageSetItem } from "@/hooks/localstorage";
 import {
@@ -26,15 +27,26 @@ export const applyGameLayout = (id: GameLayoutId) => {
   );
 };
 
-/** Change presentation in place so Clerk and the active game session stay mounted. */
+/**
+ * Change presentation in place, then refresh the router so its cache agrees.
+ *
+ * The layout is part of the route (`/[shell]/...`, picked by the proxy from the cookie),
+ * so every page the client router already holds was rendered under the old variant.
+ * Navigating to one of those remounts the root under the old `[shell]` value, which
+ * flips the player back to their previous layout until a hard reload. Refreshing after
+ * the cookie is written drops those entries and re-renders the current page under the
+ * new variant, so every later navigation agrees with the choice.
+ */
 export const useSelectGameLayout = () => {
   const changeLayout = useChangeLayout();
+  const router = useRouter();
   return useCallback(
     (layout: GameLayoutId) => {
       safeLocalStorageSetItem(LAYOUT_PREFERENCE_COOKIE, JSON.stringify(layout));
       persistLayoutPreferenceCookie(layout);
       changeLayout(layout);
+      router.refresh();
     },
-    [changeLayout],
+    [changeLayout, router],
   );
 };
