@@ -59,6 +59,7 @@ import type { HomeRoomStyle } from "@/validators/home";
 import type { ObjectiveWarState, WarRules, WarMissionAttempt, WarSettlement } from "@/validators/war";
 import type { DungeonContent, DungeonRunState, DungeonRewardReceipt } from "@/validators/dungeon";
 import type { PetTask } from "@/validators/petTasks";
+import type { ZodPetSpeciesEffect } from "@/validators/petSpecies";
 
 import type { HuntingHabitatContent, HuntingReceipt, HuntingSessionContent } from "@/validators/hunting";
 
@@ -2953,8 +2954,7 @@ export const petSpecies = mysqlTable(
     defaultJutsuIds: json("defaultJutsuIds").$type<string[]>().default([]).notNull(),
     aiRules: json("aiRules").$type<AiRuleType[]>().default([]).notNull(),
     includeDefaultRules: boolean("includeDefaultRules").default(true).notNull(),
-    effects: json("effects").$type<ZodAllTags[]>().default([]).notNull(),
-    skillTarget: mysqlEnum("skillTarget", consts.PetSkillTargets).default("SELF").notNull(),
+    effects: json("effects").$type<ZodPetSpeciesEffect[]>().default([]).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
     updatedAt: datetime("updatedAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),

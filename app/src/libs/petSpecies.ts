@@ -2,12 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { api } from "@/app/_trpc/client";
-import {
-  BasicElementName,
-  PetRarities,
-  PetRoles,
-  PetSkillTargets,
-} from "@/drizzle/constants";
+import { BasicElementName, PetRarities, PetRoles } from "@/drizzle/constants";
 import type { PetSpecies } from "@/drizzle/schema";
 import type { FormEntry } from "@/layout/EditContent";
 import { getPreferredDamageElement } from "@/libs/combat/elementalDamage";
@@ -33,7 +28,6 @@ const emptySpecies: ZodPetSpeciesType = {
   aiRules: [],
   includeDefaultRules: true,
   effects: [],
-  skillTarget: "SELF",
 };
 
 /** Share the Manual create/edit form while keeping rejected saves recoverable. */
@@ -151,19 +145,10 @@ export const usePetSpeciesEditForm = (
       ],
     },
   ];
-  const skillFormData: FormEntry<keyof ZodPetSpeciesType>[] = [
-    {
-      id: "skillTarget",
-      label: "Pet skill target",
-      type: "str_array",
-      values: PetSkillTargets,
-    },
-  ];
   return {
     form,
     formData,
     loadoutFormData,
-    skillFormData,
     catalogue,
     aiProfile,
     effects: effects ?? [],

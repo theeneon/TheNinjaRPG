@@ -17,6 +17,12 @@ import {
 import { idSchema } from "@/validators/misc";
 import { petAiProfileSchema } from "@/validators/pets";
 
+/** Each innate passive chooses its recipients independently of the other tags. */
+export const PetSpeciesEffect = AllTags.and(
+  z.object({ skillTarget: z.enum(PetSkillTargets).optional() }),
+);
+export type ZodPetSpeciesEffect = z.infer<typeof PetSpeciesEffect>;
+
 /** Authored species identity, acquisition rarity and owner-editable starting behavior. */
 export const PetSpeciesValidator = z
   .object({
@@ -58,7 +64,7 @@ export const PetSpeciesValidator = z
     aiRules: petAiProfileSchema.shape.rules.default([]),
     includeDefaultRules: petAiProfileSchema.shape.includeDefaultRules.default(true),
     effects: z
-      .array(AllTags)
+      .array(PetSpeciesEffect)
       .superRefine(SuperRefineEffects)
       .superRefine(SuperRefinePassiveEffects)
       .superRefine(rejectActivityBonuses)
@@ -75,7 +81,6 @@ export const PetSpeciesValidator = z
         });
       })
       .default([]),
-    skillTarget: z.enum(PetSkillTargets).default("SELF"),
   })
   .superRefine((species, ctx) => {
     if (new Set(species.defaultJutsuIds).size !== species.defaultJutsuIds.length) {

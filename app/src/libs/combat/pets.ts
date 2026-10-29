@@ -3,9 +3,10 @@ import { nanoid } from "nanoid";
 import type { BattleType, PetSpawnPosition, UserRank } from "@/drizzle/constants";
 import { CombatStatNames, PET_BASE_STAT, PET_BATTLE_CONFIG } from "@/drizzle/constants";
 import type { Jutsu, PetSpecies, UserPet } from "@/drizzle/schema";
-import { getDefaultBasicActions } from "@/libs/combat/actions";
+import { getDefaultBasicActions, stillInBattle } from "@/libs/combat/actions";
 import { GenNames, GROUND_EFFECT_TAG_TYPES } from "@/libs/combat/constants";
 import { getPreferredDamageElement } from "@/libs/combat/elementalDamage";
+import { checkFriendlyFire } from "@/libs/combat/process";
 import { realizeTag } from "@/libs/combat/tags";
 import type {
   BattleUserState,
@@ -31,8 +32,7 @@ export const petsAllowedInBattle = (battleType: BattleType) =>
 /**
  * Mutate initiation's preloaded state with at most one eligible active pet per owner.
  * Abilities, passives and AI rules are frozen here so later turns need no pet reads.
- * Species ground effects enter battlefield processing; enemy passives trigger
- * when an action reaches an opponent.
+ * Species passives enter battle once, after all companions have joined their teams.
  * petIdsByOwner records only pets actually spawned, binding settlement XP to them.
  */
 export const addPetsToBattle = (info: {
@@ -56,6 +56,12 @@ export const addPetsToBattle = (info: {
   const { pets, usersState, extraState, battleType, width, height, ownerRanks } = info;
   extraState.petIdsByOwner = {};
   if (!petsAllowedInBattle(battleType)) return;
+  const bonds: {
+    owner: BattleUserState;
+    actor: BattleUserState;
+    species: PetSpecies;
+    sourceId: string;
+  }[] = [];
   for (const pet of pets) {
     if (extraState.petIdsByOwner[pet.userId]) continue;
     const owner = usersState.find((u) => u.userId === pet.userId && !u.isAi);
@@ -120,42 +126,12 @@ export const addPetsToBattle = (info: {
         }
       }
     }
-    // Innate bonuses belong to the participating bond, never to an absent pet or the whole team.
-    const speciesEffects = pet.species.effects;
-    const sourceId = `pet:${pet.id}:species`;
-    if (pet.species.skillTarget === "ENEMIES" && speciesEffects.length) {
-      extraState.enemySkills ??= {};
-      extraState.enemySkills[sourceId] = structuredClone(speciesEffects);
-      for (const target of [owner, actor]) {
-        target.enemySkillIds ??= [];
-        target.enemySkillIds.push(sourceId);
-      }
-    } else if (pet.species.skillTarget === "SELF") {
-      for (const target of [owner, actor]) {
-        for (const effect of speciesEffects) {
-          const realized = realizeTag({
-            tag: structuredClone(effect) as UserEffect,
-            user: target,
-            target,
-            actionId: sourceId,
-            level: target.level,
-          });
-          realized.fromType = "skill";
-          if (GROUND_EFFECT_TAG_TYPES.has(effect.type)) {
-            realized.longitude = target.longitude;
-            realized.latitude = target.latitude;
-            // Battles start at round one; summons/clones must cast on first processing.
-            realized.createdRound = 1;
-            info.groundEffects?.push(realized);
-          } else {
-            realized.isNew = false;
-            realized.castThisRound = false;
-            realized.targetId = target.userId;
-            info.usersEffects?.push(realized);
-          }
-        }
-      }
-    }
+    bonds.push({
+      owner,
+      actor,
+      species: pet.species,
+      sourceId: `pet:${pet.id}:species`,
+    });
     actor.initiative = rollInitiative(actor, usersState);
     const aiProfileId = `pet:${pet.id}`;
     extraState.aiProfiles[aiProfileId] = {
@@ -166,6 +142,44 @@ export const addPetsToBattle = (info: {
     };
     extraState.petIdsByOwner[owner.userId] = pet.id;
     usersState.push(actor);
+  }
+  // Resolve enemies after spawning every companion, so opposing pets receive the same passives.
+  for (const { owner, actor, species, sourceId } of bonds) {
+    for (const { skillTarget = "SELF", ...effect } of species.effects) {
+      const targets =
+        skillTarget === "SELF"
+          ? [owner, actor]
+          : usersState.filter(
+              (target) =>
+                !target.isSummonTemplate &&
+                stillInBattle(target) &&
+                target.direction !== owner.direction,
+            );
+      for (const target of targets) {
+        const creator = skillTarget === "SELF" ? target : actor;
+        const realized = realizeTag({
+          tag: structuredClone(effect) as UserEffect,
+          user: creator,
+          target,
+          actionId: sourceId,
+          level: creator.level,
+        });
+        realized.fromType = "skill";
+        if (!checkFriendlyFire(realized, target, usersState)) continue;
+        if (GROUND_EFFECT_TAG_TYPES.has(effect.type)) {
+          realized.longitude = target.longitude;
+          realized.latitude = target.latitude;
+          // Battles start at round one; summons/clones must cast on first processing.
+          realized.createdRound = 1;
+          info.groundEffects?.push(realized);
+        } else {
+          realized.isNew = false;
+          realized.castThisRound = false;
+          realized.targetId = target.userId;
+          info.usersEffects?.push(realized);
+        }
+      }
+    }
   }
 };
 

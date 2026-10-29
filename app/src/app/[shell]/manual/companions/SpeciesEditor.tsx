@@ -1,7 +1,7 @@
 "use client";
 
 import { FilePlus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,13 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { PET_ABILITY_SLOTS_BY_RARITY, PET_RANKS } from "@/drizzle/constants";
@@ -21,8 +28,12 @@ import { EditContent, EffectFormWrapper } from "@/layout/EditContent";
 import Modal from "@/layout/Modal";
 import { usePetSpeciesEditForm } from "@/libs/petSpecies";
 import { PET_RANK_APPEARANCES } from "@/libs/pets/catalogue";
-import { IncreaseStatTag, tagTypes, type ZodAllTags } from "@/validators/combat";
-import { PetSpeciesValidator, type ZodPetSpeciesType } from "@/validators/petSpecies";
+import { getTagSchema, IncreaseStatTag, tagTypes } from "@/validators/combat";
+import {
+  PetSpeciesValidator,
+  type ZodPetSpeciesEffect,
+  type ZodPetSpeciesType,
+} from "@/validators/petSpecies";
 import { PET_AI_ACTION_TYPES, PET_AI_EFFECT_TYPES } from "@/validators/pets";
 
 /** Species provide authored defaults; every owned companion retains its own appearance and choices. */
@@ -67,9 +78,17 @@ const SpeciesForm = ({
   const [tab, setTab] = useState("general");
   const { form, formData, handleSubmit, isActive, isSaving, message, effects } = editor;
   const validEffects = effects.filter(
-    (effect): effect is ZodAllTags => effect !== undefined,
+    (effect): effect is ZodPetSpeciesEffect => effect !== undefined,
   );
-  const setEffects = (values: ZodAllTags[]) =>
+  // The shared combat editor owns tag fields; recipient settings stay on the species form.
+  const combatEffects = useMemo(
+    () =>
+      effects
+        .filter((effect): effect is ZodPetSpeciesEffect => effect !== undefined)
+        .map(({ skillTarget: _target, ...effect }) => effect),
+    [effects],
+  );
+  const setEffects = (values: ZodPetSpeciesEffect[]) =>
     form.setValue("effects", values, { shouldDirty: true });
   const contentForm = form as unknown as UseFormReturn<ZodPetSpeciesType>;
   return (
@@ -147,21 +166,19 @@ const SpeciesForm = ({
         </TabsContent>
         <TabsContent value="skills" forceMount hidden={tab !== "skills"}>
           <p className="mb-4 text-muted-foreground text-sm">
-            Self skills apply to the participating companion and its owner. Enemy skills
-            trigger when either reaches an opponent with an accepted action. These
-            bonuses apply only while the companion participates in an eligible battle.
+            Each tag applies once at battle start. Self tags affect the participating
+            companion and its owner; enemy tags affect opposing combatants. Choose a
+            target for each tag. These bonuses require the companion to participate in
+            an eligible battle.
           </p>
-          <EditContent
-            schema={PetSpeciesValidator}
-            form={contentForm}
-            formData={editor.skillFormData}
-            showSubmit={false}
-            onAccept={handleSubmit}
-            submitLoading={isSaving}
-          />
           <Button
             variant="outline"
-            onClick={() => setEffects([...validEffects, IncreaseStatTag.parse({})])}
+            onClick={() =>
+              setEffects([
+                ...validEffects,
+                { ...IncreaseStatTag.parse({}), skillTarget: "SELF" },
+              ])
+            }
           >
             <FilePlus className="mr-2 h-4 w-4" />
             Add pet skill tag
@@ -182,12 +199,53 @@ const SpeciesForm = ({
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
+                <Form {...contentForm}>
+                  <FormField
+                    control={contentForm.control}
+                    name={`effects.${index}.skillTarget`}
+                    render={({ field }) => (
+                      <FormItem className="mb-3">
+                        <FormLabel>Pet skill target</FormLabel>
+                        <Select
+                          value={field.value ?? "SELF"}
+                          onValueChange={field.onChange}
+                          disabled={isSaving}
+                        >
+                          <FormControl>
+                            <SelectTrigger
+                              aria-label={`Pet skill tag ${index + 1} target`}
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="SELF">
+                              Self (companion and owner)
+                            </SelectItem>
+                            <SelectItem value="ENEMIES">Enemies</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </Form>
                 <EffectFormWrapper
                   idx={index}
                   type="skillTree"
-                  tag={effect}
-                  effects={validEffects}
-                  setEffects={setEffects}
+                  tag={combatEffects[index]!}
+                  effects={combatEffects}
+                  setEffects={(values) =>
+                    setEffects(
+                      values.map((value, i) => ({
+                        ...value,
+                        skillTarget: validEffects[i]?.skillTarget ?? "SELF",
+                      })),
+                    )
+                  }
+                  editableFields={Object.keys(getTagSchema(effect.type).shape).filter(
+                    (field) => field !== "target" && field !== "coordinateTargeting",
+                  )}
                   availableTags={tagTypes.filter(
                     // Innate skills cannot select empty ground or invoke system-only sage activation.
                     (type) =>

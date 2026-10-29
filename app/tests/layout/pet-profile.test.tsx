@@ -858,7 +858,7 @@ it("shows role and compact species skills without expanding the overview", async
   await view.findByText("Support");
   const skills = view.getByText("Species skills · 1 tag").closest("details")!;
   expect(skills.open).toBe(false);
-  expect(skills.textContent).toContain("Applies to the companion and its owner");
+  expect(skills.textContent).toContain("Applies once at battle start");
   expect(skills.textContent).toContain("participates in an eligible battle");
 });
 

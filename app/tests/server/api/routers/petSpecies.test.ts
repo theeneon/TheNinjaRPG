@@ -21,7 +21,6 @@ const species = {
   aiRules: [],
   includeDefaultRules: true,
   effects: [],
-  skillTarget: "SELF" as const,
 };
 
 describeWithDatabase("Manual companion species", () => {
@@ -107,11 +106,11 @@ describeWithDatabase("Manual companion species", () => {
     expect(await database.query.actionLog.findMany()).toHaveLength(0);
   });
 
-  it("stores authored role, compatible pet jutsu, instructions and on-action passive skills", async () => {
+  it("stores authored role, compatible pet jutsu, instructions and independently targeted passive skills", async () => {
     const database = await getTestDatabase();
     await database.insert(jutsu).values(petJutsuFixture({ id: "pet-strike", name: "Pet strike" }));
     const caller = callerForDatabase(petSpeciesRouter, staffId, database);
-    const input = { ...species, role: "SUPPORT" as const, defaultJutsuIds: ["pet-strike"], includeDefaultRules: false, aiRules: [{ conditions: [], action: ActionEndTurn.parse({}) }], skillTarget: "ENEMIES" as const, effects: [DamageTag.parse({ rounds: 3 })] };
+    const input = { ...species, role: "SUPPORT" as const, defaultJutsuIds: ["pet-strike"], includeDefaultRules: false, aiRules: [{ conditions: [], action: ActionEndTurn.parse({}) }], effects: [{ ...DamageTag.parse({ rounds: 3 }), skillTarget: "ENEMIES" as const }] };
     const created = await caller.create(input);
     expect(created.success).toBe(true);
     expect(await caller.get({ id: created.message })).toMatchObject(input);
@@ -124,7 +123,7 @@ describeWithDatabase("Manual companion species", () => {
     const database = await getTestDatabase();
     await database.insert(petSpecies).values({ id: "original", ...species });
     const caller = callerForDatabase(petSpeciesRouter, staffId, database);
-    const data = { ...species, skillTarget, effects: [BarrierTag.parse({ staticAssetPath: "barrier" })] };
+    const data = { ...species, effects: [{ ...BarrierTag.parse({ staticAssetPath: "barrier" }), skillTarget }] };
     await expect(caller.create(data)).rejects.toMatchObject({ code: "BAD_REQUEST" });
     await expect(caller.update({ id: "original", data })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(await database.query.petSpecies.findMany()).toMatchObject([{ id: "original", effects: [] }]);

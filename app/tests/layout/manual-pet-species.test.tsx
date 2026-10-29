@@ -29,7 +29,7 @@ setDefaultTimeout(20_000);
 
 const testApi = createTRPCReact<AppRouter>();
 const usePetSpeciesEditForm = petSpecies.usePetSpeciesEditForm;
-const defaults = { artDirection: null, rankConcepts: [], preferredDamageElement: null, role: "ASSAULT" as const, defaultJutsuIds: [], aiRules: [], includeDefaultRules: true, effects: [], skillTarget: "SELF" as const };
+const defaults = { artDirection: null, rankConcepts: [], preferredDamageElement: null, role: "ASSAULT" as const, defaultJutsuIds: [], aiRules: [], includeDefaultRules: true, effects: [] };
 let queryClient: QueryClient;
 let role: UserRole;
 let species: RouterOutputs["petSpecies"]["getAll"];
@@ -239,10 +239,31 @@ it("edits role, default loadout and species passives through separate compact ta
   expect(availableTags).not.toContain("barrier");
   expect(availableTags).not.toContain("activatesagemode");
   expect(availableTags).toEqual(expect.arrayContaining(["moveprevent", "summon", "clone"]));
-  act(() => editor.form.setValue("skillTarget", "ENEMIES", { shouldDirty: true }));
+    fireEvent.click(view.getByRole("button", { name: "Add pet skill tag" }));
+  expect(view.queryByRole("combobox", { name: "Pet skill target" })).toBeNull();
+  fireEvent.click(view.getByRole("combobox", { name: "Pet skill tag 2 target" }));
+  fireEvent.click(view.getByRole("option", { name: "Enemies" }));
   fireEvent.click(view.getByRole("button", { name: "Save to Database" }));
   await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
-  expect(update.mock.calls[0]?.[0].data).toMatchObject({ role: "SUPPORT", skillTarget: "ENEMIES", effects: [IncreaseStatTag.parse({})] });
+  expect(update.mock.calls[0]?.[0].data).toMatchObject({ role: "SUPPORT", effects: [{ ...IncreaseStatTag.parse({}), skillTarget: "SELF" }, { ...IncreaseStatTag.parse({}), skillTarget: "ENEMIES" }] });
+});
+
+it("preserves per-tag targets while editing a tag and removing an earlier tag", async () => {
+  species[0]!.effects = [
+    { ...IncreaseStatTag.parse({ power: 10 }), skillTarget: "SELF" },
+    { ...IncreaseStatTag.parse({ power: 20 }), skillTarget: "ENEMIES" },
+  ];
+  vi.spyOn(EditContent, "EffectFormWrapper").mockImplementation(({ idx, tag, effects, setEffects }) => <button type="button" onClick={() => setEffects(effects.map((effect, i) => i === idx ? { ...tag, power: 35 } : effect))}>Edit tag {idx + 1} power</button>);
+  const view = await mount(true);
+  await view.findByRole("textbox", { name: "Species name" });
+  fireEvent.mouseDown(view.getByRole("tab", { name: "Pet skills" }), { button: 0 });
+  fireEvent.click(view.getByRole("button", { name: "Edit tag 2 power" }));
+  expect(editor.form.getValues("effects.1.skillTarget")).toBe("ENEMIES");
+  fireEvent.click(view.getByRole("button", { name: "Remove pet skill tag 1" }));
+  expect(view.getByRole("combobox", { name: "Pet skill tag 1 target" }).textContent).toBe("Enemies");
+  fireEvent.click(view.getByRole("button", { name: "Save to Database" }));
+  await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+  expect(update.mock.calls[0]?.[0].data.effects).toEqual([{ ...IncreaseStatTag.parse({ power: 35 }), skillTarget: "ENEMIES" }]);
 });
 
 it("persists authored AI defaults through the shared controlled profile editor", async () => {
