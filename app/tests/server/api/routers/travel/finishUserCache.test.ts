@@ -203,34 +203,16 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     const profile = await (await callerFor(profileRouter, userId)).getUser();
     expect(profile.userData?.userQuests.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 1337 });
     await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
-    const client = new QueryClient();
-    client.setQueryData(key, { ...profile, userData: { ...profile.userData!, sector: 2 } });
-    let reads = 0;
-    const observer = new QueryObserver(client, {
-      queryKey: key,
-      staleTime: Infinity,
-      queryFn: async () => {
-        reads++;
-        return (await callerFor(profileRouter, userId)).getUser();
-      },
-    });
-    const stop = observer.subscribe(() => undefined);
-    try {
-      const revision = prepareUserUpdate(client, key);
-      const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
-      expect(result.success).toBe(true);
-      if (hasHistory) {
-        expect(result.projectedQuestIds).toContain(achievementId);
-        expect(result.userPatch?.userQuests?.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9 });
-      } else {
-        expect(result.projectedQuestIds).not.toContain(achievementId);
-      }
-      await updateUserCache(client, key, (current) => globalTravelFinishPatch(current, result.userPatch!, result.projectedQuestIds), { revision, delta: result.userDelta });
-      expect(reads).toBe(hasHistory ? 0 : 1);
-      const cached = client.getQueryData<typeof profile>(key)?.userData;
-      expect(cached?.userQuests.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9 });
-      expect(cached?.questData?.find((tracker) => tracker.id === achievementId)?.goals[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9, done: false });
-    } finally { stop(); client.clear(); }
+    const { result, cached, reads } = await finishAndReconcile(profile);
+    if (hasHistory) {
+      expect(result.projectedQuestIds).toContain(achievementId);
+      expect(result.userPatch?.userQuests?.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9 });
+    } else {
+      expect(result.projectedQuestIds).not.toContain(achievementId);
+    }
+    expect(reads).toBe(hasHistory ? 0 : 1);
+    expect(cached?.userQuests.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9 });
+    expect(cached?.questData?.find((tracker) => tracker.id === achievementId)?.goals[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9, done: false });
   });
 
   it("captures bloodline, active skill and title-enabled gear bonuses when arrival starts gathering", async () => {
