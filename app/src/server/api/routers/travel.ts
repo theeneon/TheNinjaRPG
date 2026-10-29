@@ -690,6 +690,8 @@ export const travelRouter = createTRPCRouter({
           `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
         );
       const wasTravelling = user.status === "TRAVEL";
+      // The cleaner can finish travel before profile hydration evaluates arrival goals.
+      canProject &&= wasTravelling;
       const projectedQuests = user.userQuests.filter(
         (entry) =>
           entry.questType !== "achievement" ||
@@ -700,7 +702,10 @@ export const travelRouter = createTRPCRouter({
       const visible = projectedQuests.filter(
         (entry) =>
           entry.quest &&
-          isAvailableUserQuests({ ...entry.quest, ...entry }, user, true).check,
+          (((entry.questType === "battlepyramid" || entry.isolated) &&
+            !entry.endAt &&
+            !entry.completed) ||
+            isAvailableUserQuests({ ...entry.quest, ...entry }, user, true).check),
       );
       const arrival = {
         ...user,

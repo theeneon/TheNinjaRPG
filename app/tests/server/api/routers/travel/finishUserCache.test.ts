@@ -5,7 +5,7 @@ import { bloodline, item, quest, questHistory, skillTree, userData, userItem, us
 import { globalTravelFinishPatch } from "@/libs/travel";
 import { Pusher } from "@/libs/pusher";
 import { profileRouter } from "@/server/api/routers/profile";
-import { travelRouter } from "@/server/api/routers/travel";
+import { completeExpiredGlobalTravel, travelRouter } from "@/server/api/routers/travel";
 import { DecreaseGatheringTime, IncreaseGatheringYield } from "@/validators/combat";
 import { AllObjectives, QuestTracker } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
@@ -27,6 +27,58 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     await (await getTestDatabase()).update(userData).set({ questData: [2, 3].map((sector) => QuestTracker.parse({ id: `hidden-${sector}`, goals: [{ id: "target", sector, longitude: 4, latitude: 5, locationChecked: true }] })) }).where(eq(userData.userId, userId));
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(["move_to_location", "collect_item"] as const)("reconciles %s progress when the cleaner finishes before the client", async (task) => {
+    const db = await getTestDatabase();
+    if (task === "collect_item") {
+      const objective = AllObjectives.parse({ id: "target", task, sector: 2, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true, collectItemIds: ["herb"], item_name: "Herb", collect_time_minutes: 1 });
+      await db.update(quest).set({ questType: "gathering", content: { objectives: [objective], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }).where(eq(quest.id, "hidden-2"));
+      await db.update(questHistory).set({ questType: "gathering" }).where(eq(questHistory.questId, "hidden-2"));
+    }
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const client = new QueryClient();
+    client.setQueryData(key, { ...profile, userData: { ...profile.userData!, sector: 2 } });
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => {
+      reads++;
+      return (await callerFor(profileRouter, userId)).getUser();
+    } });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      await completeExpiredGlobalTravel(db);
+      const arrived = await db.query.userData.findFirst({ where: eq(userData.userId, userId) });
+      expect(arrived?.status).toBe("AWAKE");
+      const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
+      expect(result.success).toBe(true);
+      expect(result.userDelta).toBeUndefined();
+      expect(result.userPatch).toBeUndefined();
+      expect(await db.query.userData.findFirst({ where: eq(userData.userId, userId) })).toEqual(arrived);
+      await updateUserCache(client, key, (current) => globalTravelFinishPatch(current, result.userPatch!, result.projectedQuestIds), { revision, delta: result.userDelta });
+      expect(reads).toBe(1);
+      const cached = client.getQueryData<typeof profile>(key)?.userData;
+      expect(cached?.status).toBe("AWAKE");
+      const goal = cached?.questData?.find((tracker) => tracker.id === "hidden-2")?.goals[0];
+      if (task === "move_to_location") expect(goal?.done).toBe(true);
+      else expect(new Date(goal!.collectDeadline!).getTime() - new Date(goal!.timestamp!).getTime()).toBe(60_000);
+    } finally { stop(); client.clear(); }
+  });
+
+  it("preserves a hidden Pyramid checkpoint without evaluating its objectives", async () => {
+    const db = await getTestDatabase();
+    const definition = (await db.query.quest.findFirst({ where: eq(quest.id, "hidden-2") }))!;
+    await db.update(quest).set({ questType: "battlepyramid", hidden: true, content: { ...definition.content, objectives: [AllObjectives.parse({ id: "completed-floor", task: "start_battle", opponentAIs: [{ ids: ["floor-foe"], number: 1, quantity: 1 }], nextObjectiveId: "target" }), ...definition.content.objectives] } }).where(eq(quest.id, definition.id));
+    const pyramid = (await db.query.quest.findFirst({ where: eq(quest.id, "hidden-2") }))!;
+    await db.update(questHistory).set({ questType: "battlepyramid", isolated: false, questVersion: pyramid.updatedAt }).where(eq(questHistory.questId, pyramid.id));
+    const checkpoint = QuestTracker.parse({ id: pyramid.id, goals: [{ id: "completed-floor", done: true }, { id: "target", sector: 2, longitude: 4, latitude: 5, locationChecked: true }] });
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1), questData: [checkpoint] }).where(eq(userData.userId, userId));
+    const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
+    expect(result.success).toBe(true);
+    expect(result.userDelta).toEqual({});
+    expect(result.userPatch?.questData?.find((tracker) => tracker.id === pyramid.id)).toEqual(checkpoint);
+    expect((await db.query.userData.findFirst({ where: eq(userData.userId, userId) }))?.questData?.find((tracker) => tracker.id === pyramid.id)).toEqual(checkpoint);
+  });
 
   it.each(["daily", "delivery", "achievement"] as const)("retains progression reconciliation for %s objectives", async (scenario) => {
     const db = await getTestDatabase();
