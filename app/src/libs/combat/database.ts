@@ -50,6 +50,7 @@ import { claimVillageMissionCombatEvents } from "@/libs/combat/villageMission";
 import { getPvpFarmActivityReductionSeconds } from "@/libs/farming";
 import { getJutsuMaxLevel } from "@/libs/jutsuProgression";
 import { allocateMasteryGains } from "@/libs/masteryProgression";
+import { isQuestComplete } from "@/libs/objectives";
 import {
   broadcastRaidAvailability,
   type PusherClient,
@@ -1323,6 +1324,13 @@ export const updateUser = async (
     // An isolated defeat stays in the run so its authored checkpoint remains playable.
     if (getIsolatedPyramid(hydratedUser))
       result.curHealth = Math.max(1, result.curHealth);
+    // Tracker processing mutates the preloaded objects, so retain contribution receipts first.
+    const previousPartyContributions = new Map(
+      hydratedUser.questData.map((tracker) => [
+        tracker.id,
+        JSON.stringify(tracker.party?.contributions),
+      ]),
+    );
     const { trackers, notifications, questIdsUpdated, consequences } = getNewTrackers(
       hydratedUser,
       trackerTasks,
@@ -1498,17 +1506,21 @@ export const updateUser = async (
     const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
     const capacity = curBattle.extraState.energyCapacity?.[userId];
     const regeneration = curBattle.extraState.energyRegeneration?.[userId];
-    // Passive completions can award progression, and shared completions must publish
-    // their personal contributions before the party can advance or claim rewards.
-    const hasUnprojectedQuestCompletion = trackers.some(
+    // Party contributions need synchronization, passive completions can award progression,
+    // and completed team-enabled quests change reward navigation even after detachment.
+    const hasUnprojectedQuestProgress = trackers.some(
       (tracker) =>
-        questIdsUpdated.includes(tracker.id) &&
-        (!!tracker.party ||
-          hydratedUser.userQuests.some(
-            (entry) =>
-              entry.questId === tracker.id &&
-              ["tier", "daily", "achievement"].includes(entry.quest.questType),
-          )),
+        (!!tracker.party &&
+          previousPartyContributions.get(tracker.id) !==
+            JSON.stringify(tracker.party.contributions)) ||
+        (questIdsUpdated.includes(tracker.id) &&
+          (!!tracker.party ||
+            hydratedUser.userQuests.some(
+              (entry) =>
+                entry.questId === tracker.id &&
+                (["tier", "daily", "achievement"].includes(entry.quest.questType) ||
+                  (entry.quest.teamEnabled && isQuestComplete(entry.quest, tracker))),
+            ))),
     );
     const canProjectProfileUpdate =
       !!baseline &&
@@ -1516,7 +1528,7 @@ export const updateUser = async (
       regeneration !== undefined &&
       canCacheCombatCompletion(curBattle, result, userId) &&
       consequences.length === 0 &&
-      !hasUnprojectedQuestCompletion &&
+      !hasUnprojectedQuestProgress &&
       iExp === 0 &&
       user.items.every((item) => !item.progressionRowId) &&
       result.droppedItems.length === 0;
