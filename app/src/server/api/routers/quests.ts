@@ -3848,6 +3848,10 @@ export const commitQuestObjectiveRewards = async (info: {
     user.reputationPoints += userDelta.reputationPoints ?? 0;
     user.reputationPointsTotal += rewards.reward_reputation;
     user.villagePrestige += rewards.reward_prestige;
+    user.skillPoints = Math.min(
+      MAX_SKILL_POINTS,
+      user.skillPoints + (userDelta.skillPoints ?? 0),
+    );
   }
   if (resolved && userQuest && completedEndAt) {
     const entry = user.userQuests.find((entry) => entry.questId === userQuest.questId);
@@ -3924,6 +3928,16 @@ export const commitQuestObjectiveRewards = async (info: {
     userDelta,
     userCacheEligible:
       userCacheEligible &&
+      // Carried grants do not change equipped passives. Collection goals need the
+      // inventory-aware profile hydration before their progress can be projected.
+      !(
+        items.length > 0 &&
+        user.userQuests.some((entry) =>
+          entry.quest.content.objectives.some(
+            (objective) => objective.task === "collect_item",
+          ),
+        )
+      ) &&
       !changedQuestAssignments &&
       !(farmRewardResult && farmRewardResult.rowsAffected > 0),
   };
@@ -4525,18 +4539,23 @@ export const getRewardUserDelta = (
 ): UserDelta | undefined => {
   if (
     // Integer columns round SQL payouts; fractional atomic increments need reconciliation.
-    [rewards.reward_money, rewards.reward_seichi_silver, rewards.reward_exp].some(
-      (amount) => !Number.isInteger(amount),
-    ) ||
+    [
+      rewards.reward_money,
+      rewards.reward_seichi_silver,
+      rewards.reward_exp,
+      rewards.reward_skillpoints,
+    ].some((amount) => !Number.isInteger(amount)) ||
     (!hasQuestSnapshot && rewards.reward_reputation !== 0) ||
     rewards.reward_prestige < 0 ||
     rewards.reward_rank !== "NONE" ||
     rewards.reward_village_membership !== "NONE" ||
-    rewards.reward_items.length > 0 ||
-    rewards.reward_jutsus.length > 0 ||
+    (!hasQuestSnapshot &&
+      (rewards.reward_items.length > 0 ||
+        rewards.reward_jutsus.length > 0 ||
+        rewards.reward_badges.length > 0 ||
+        rewards.reward_skillpoints !== 0)) ||
     rewards.reward_bloodlines.length > 0 ||
     rewards.reward_sage_modes.length > 0 ||
-    rewards.reward_badges.length > 0 ||
     (rewards.reward_titles?.length ?? 0) > 0 ||
     rewards.reward_hunter_items ||
     rewards.reward_gathering_items ||
@@ -4552,8 +4571,7 @@ export const getRewardUserDelta = (
     (rewards.reward_pet_experience ?? 0) !== 0 ||
     MASTERY_EXPERIENCE_FIELDS.some((field) => (rewards[field] ?? 0) > 0) ||
     (rewards.reward_mastery_rank && rewards.reward_mastery_rank !== "NONE") ||
-    rewards.reward_sage_mastery_experience !== 0 ||
-    rewards.reward_skillpoints !== 0
+    rewards.reward_sage_mastery_experience !== 0
   ) {
     // Content grants, profession milestones and shared relations change derived profile data.
     return undefined;
@@ -4565,6 +4583,9 @@ export const getRewardUserDelta = (
     reputationPoints: rewards.reward_reputation - reputationCost,
     reputationPointsTotal: rewards.reward_reputation,
     villagePrestige: rewards.reward_prestige,
+    ...(hasQuestSnapshot && rewards.reward_skillpoints !== 0
+      ? { skillPoints: rewards.reward_skillpoints }
+      : {}),
   };
 };
 

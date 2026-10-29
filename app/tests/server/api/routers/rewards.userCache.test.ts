@@ -62,3 +62,8 @@ describe("confirmed reward cache deltas", () => {
     expect(getRewardUserDelta(reward({ [field as string]: value }))).toBeUndefined();
   });
 });
+
+
+it("includes skill points and unequipped inventory grants with a hydrated quest snapshot", () => {
+  expect(getRewardUserDelta(reward({ reward_items: ["gift"], reward_jutsus: ["jutsu"], reward_badges: ["badge"], reward_skillpoints: 3 }), 0, true)).toMatchObject({ skillPoints: 3, money: 0 });
+});

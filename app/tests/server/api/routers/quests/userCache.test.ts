@@ -271,6 +271,33 @@ describeWithDatabase("confirmed quest cache responses", () => {
     }
   });
 
+  it("applies claimed inventory and skill-point rewards without refetching getUser", async () => {
+    const db = await getTestDatabase();
+    await insertItems([{ id: "cache-gift", name: "Gift" }]);
+    await db.update(quest).set({ content: { ...content(10), reward: ObjectiveReward.parse({ reward_money: 100, reward_skillpoints: 3, reward_items: [{ ids: ["cache-gift"], number: 100 }] }) } }).where(eq(quest.id, missionId));
+    const api = await callerFor(questsRouter, playerId);
+    expect((await api.startQuest({ questId: missionId, userSector: 0 })).success).toBe(true);
+    await db.update(userData).set({ questData: [{ id: missionId, startAt: new Date().toISOString(), goals: [{ id: "train", value: 10, done: true, collected: false, recentlyDied: false }] }] }).where(eq(userData.userId, playerId));
+    const profile = await (await callerFor(profileRouter, playerId)).getUser();
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, profile);
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return profile; } });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await api.checkRewards({ questId: missionId });
+      expect(result.success).toBe(true);
+      expect(result.userDelta?.skillPoints).toBe(3);
+      expect(await db.query.userItem.findMany()).toHaveLength(1);
+      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      const saved = await readPlayer();
+      expect(client.getQueryData<typeof profile>(key)?.userData).toMatchObject({ skillPoints: saved?.skillPoints, money: saved?.money });
+      expect(reads).toBe(0);
+    } finally { stop(); client.clear(); }
+  });
+
   it("returns a completed repeatable mission without exposing it as active or recreating its tracker", async () => {
     const api = await callerFor(questsRouter, playerId);
     expect((await api.startQuest({ questId: missionId, userSector: 0 })).success).toBe(true);
