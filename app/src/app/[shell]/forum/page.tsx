@@ -138,8 +138,8 @@ function ForumBrowse({
   );
   return (
     <ContentBox
-      title="Community forum"
-      subtitle="Ask, share and write the next chapter of Seichi."
+      title="Forum"
+      subtitle="Ask, share and discuss."
       topRightContent={<ForumNavigation showBrowseLinks={hasAppliedFilters} />}
     >
       <div className="mb-4">

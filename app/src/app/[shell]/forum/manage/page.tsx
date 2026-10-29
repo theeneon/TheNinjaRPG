@@ -50,8 +50,8 @@ export default function ForumManagement() {
   };
   return (
     <ContentBox
-      title="Forum staff workspace"
-      subtitle="Manage discussions, community access and forum structure."
+      title="Forum tools"
+      subtitle="Moderation, access and boards."
       defaultBackHref="/forum"
       topRightCorntentBreakpoint="sm"
       topRightContent={<ForumNavigation />}
