@@ -424,7 +424,6 @@ export const occupationRouter = createTRPCRouter({
             ...progression.userPatch,
             craftingExperience: user.craftingExperience,
           },
-          userDelta: {},
         };
       };
       if (isQueued) {

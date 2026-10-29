@@ -70,8 +70,7 @@ describeWithDatabase("Cooking production and consumption", () => {
         const revision = prepareUserUpdate(client, key);
         const result = await caller.craftItem({ itemId: "meal", quantity: 1 });
         expect(result.success).toBe(true);
-        expect(result.userDelta).toEqual({});
-        await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+        await updateUserCache(client, key, result.userPatch, { revision, achievementProgress: result.achievementProgress });
         const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
         expect(cached.cookingJobs).toEqual(await db.query.userCookingJob.findMany());
         expect(cached.queue).toEqual(await db.query.userQueue.findMany());
@@ -100,12 +99,11 @@ describeWithDatabase("Cooking production and consumption", () => {
       const jobs = await db.query.userCookingJob.findMany();
       expect(result.success).toBe(true);
       expect(saved.cookingExperience).toBe(30);
-      expect(result.userDelta).toEqual({});
       expect(result.userPatch?.cookingExperience).toBe(saved.cookingExperience);
       expect(result.userPatch?.cookingJobs).toEqual(jobs);
       expect(jobs).toHaveLength(1);
       expect(jobs[0]?.id).not.toBe("completed-batch");
-      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      await updateUserCache(client, key, result.userPatch, { revision, achievementProgress: result.achievementProgress });
       const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
       expect(cached.cookingExperience).toBe(saved.cookingExperience);
       expect(cached.cookingJobs).toEqual(jobs);

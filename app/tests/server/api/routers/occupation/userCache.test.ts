@@ -43,11 +43,9 @@ describeWithDatabase("crafting user cache quest progress", () => {
       expect(saved.craftingExperience).toBe(scenario === "queued" ? 0 : 5);
       if (scenario === "achievement") {
         expect(result.userPatch).toBeUndefined();
-        expect(result.userDelta).toBeUndefined();
         return;
       }
-      expect(result.userDelta).toEqual({});
-      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      await updateUserCache(client, key, result.userPatch, { revision, achievementProgress: result.achievementProgress });
       const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
       expect(cached.questData).toEqual(saved.questData);
       expect(cached.questData?.find((tracker) => tracker.id === "craft-goal")?.goals[0]).toMatchObject({ value: scenario === "queued" ? 0 : 1, done: scenario !== "queued" });
@@ -87,12 +85,10 @@ describeWithDatabase("crafting user cache quest progress", () => {
       expect(goals?.find((goal) => goal.id === "earned-xp")).toMatchObject({ value: 5, done: false });
       if (questType === "achievement") {
         expect(result.userPatch).toBeUndefined();
-        expect(result.userDelta).toBeUndefined();
       } else {
         expect(result.userPatch?.questData).toEqual(saved.questData);
-        expect(result.userDelta).toEqual({});
       }
-      await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+      await updateUserCache(client, key, result.userPatch, { revision, achievementProgress: result.achievementProgress });
       const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
       expect(cached.craftingExperience).toBe(saved.craftingExperience);
       expect(cached.questData).toEqual(saved.questData);

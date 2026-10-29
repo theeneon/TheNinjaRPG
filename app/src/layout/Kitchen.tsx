@@ -75,7 +75,6 @@ export default function Kitchen({ image }: { image?: string }) {
           refresh(false),
           updateUser(result.userPatch, {
             revision,
-            delta: result.userDelta,
             achievementProgress: result.achievementProgress,
           }),
         ]);

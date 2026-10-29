@@ -143,7 +143,6 @@ export const CraftingCatalog: React.FC<CraftingCatalogProps> = ({
           utils.profile.getSidebarTimers.invalidate(),
           updateUser(data.userPatch, {
             revision,
-            delta: data.userDelta,
             achievementProgress: data.achievementProgress,
           }),
           utils.occupation.getCraftingQueue.invalidate(),
