@@ -12,7 +12,7 @@ import { AllObjectives, CollectItem, InstantNewQuestObjective, InstantStartBattl
 import { ObjectiveReward } from "@/validators/rewards";
 import { insertItems, insertQuestHistory, insertQuests, insertUserItems, insertUsers } from "../../../../setup/factories";
 import { queueEnergy } from "../../../../setup/queues";
-import { callerFor, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../../../setup/testDatabase";
+import { callerFor, callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../../../setup/testDatabase";
 
 const playerId = "quest-cache-player";
 const missionId = "quest-cache-mission";
@@ -269,6 +269,101 @@ describeWithDatabase("confirmed quest cache responses", () => {
       const saved = await readPlayer();
       expect(saved?.questData?.find((entry) => entry.id === missionId)?.goals[0]?.done, name).toBe(done);
     }
+  });
+
+  it("returns the live skill-point balance after overlapping quest payouts in separate clients", async () => {
+    const db = await getTestDatabase();
+    const questIds = ["cache-event", "cache-story"];
+    await insertItems([{ id: "cache-gift", name: "Gift" }]);
+    await insertQuests(questIds.map((id, index) => ({
+      id,
+      name: id,
+      questType: index === 0 ? "event" as const : "story" as const,
+      content: { ...content(10), objectives: [SimpleObjective.parse({ id: "level", task: "user_level", value: 50 })],
+        reward: ObjectiveReward.parse({ reward_skillpoints: 3, reward_items: [{ ids: ["cache-gift"], number: 100 }] }) },
+    })));
+    await insertQuestHistory(questIds.map((questId, index) => ({ userId: playerId, questId, questType: index === 0 ? "event" as const : "story" as const })));
+    await db.update(userData).set({ skillPoints: 2 }).where(eq(userData.userId, playerId));
+    const profileApi = await callerFor(profileRouter, playerId);
+    const profile = await profileApi.getUser();
+    const reads = await countProfileReads();
+    const key = ["independent-profile"];
+    const clients = questIds.map(() => new QueryClient());
+    for (const client of clients) client.setQueryData(key, profile);
+    const revisions = clients.map((client) => prepareUserUpdate(client, key));
+    const gate = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((settle) => { resolve = settle; });
+      return { promise, resolve };
+    };
+    const entered = questIds.map(gate);
+    const releases = questIds.map(gate);
+    let selections = 0;
+    const select = db.select.bind(db);
+    const selectWithPause = ((fields: Parameters<typeof select>[0]) => {
+      const selection = select(fields);
+      if (!fields || !("canStack" in fields)) return selection;
+      return { from: (table: Parameters<typeof selection.from>[0]) => {
+        const query = selection.from(table);
+        return { where: async (condition: Parameters<typeof query.where>[0]) => {
+          const index = selections++;
+          entered[index]!.resolve();
+          await releases[index]!.promise;
+          return await query.where(condition);
+        } };
+      } };
+    }) as typeof db.select;
+    const pausedDb = new Proxy(db, { get: (target, property, receiver) => property === "select" ? selectWithPause : Reflect.get(target, property, receiver) });
+    const api = callerForDatabase(questsRouter, playerId, pausedDb);
+    const first = api.checkRewards({ questId: questIds[0]! });
+    await Promise.race([entered[0]!.promise, first.then((result) => { throw new Error(`First claim skipped payout: ${result.success}`); })]);
+    expect((await readPlayer())?.skillPoints).toBe(2);
+    const second = api.checkRewards({ questId: questIds[1]! });
+    await Promise.race([entered[1]!.promise, second.then((result) => { throw new Error(`Second claim skipped payout: ${result.success}`); })]);
+    releases[0]!.resolve();
+    const firstResult = await first;
+    expect(firstResult.success).toBe(true);
+    expect((await readPlayer())?.skillPoints).toBe(5);
+    releases[1]!.resolve();
+    const secondResult = await second;
+    expect(secondResult.success).toBe(true);
+    expect((await readPlayer())?.skillPoints).toBe(8);
+    for (const [index, result] of [firstResult, secondResult].entries()) {
+      await updateUserCache(clients[index]!, key, result.userPatch, { revision: revisions[index], delta: result.userDelta, achievementProgress: result.achievementProgress });
+      expect(clients[index]!.getQueryState(key)?.isInvalidated).toBe(false);
+    }
+    expect(clients[1]!.getQueryData<typeof profile>(key)?.userData?.skillPoints).toBe(8);
+    expect(secondResult.userPatch?.skillPoints).toBe(8);
+    expect(reads()).toBe(2);
+    for (const client of clients) client.clear();
+  });
+
+  it.each(["event", "story"] as const)("reconciles completed %s team navigation after disbanding", async (questType) => {
+    const db = await getTestDatabase();
+    const questId = "disbanded-team-cache";
+    await insertItems([{ id: "cache-gift", name: "Gift" }]);
+    await insertQuests([{ id: questId, name: "Team quest", questType, teamEnabled: true,
+      content: { ...content(10), objectives: [SimpleObjective.parse({ id: "level", task: "user_level", value: 50 })],
+        reward: ObjectiveReward.parse({ reward_items: [{ ids: ["cache-gift"], number: 100 }] }) },
+    }]);
+    await insertQuestHistory([{ userId: playerId, questId, questType }]);
+    const profileApi = await callerFor(profileRouter, playerId);
+    const profile = await profileApi.getUser();
+    const notice = { name: "Quest rewards waiting: open your Logbook" };
+    expect(profile.userData?.questPartyId).toBeNull();
+    expect(profile.notifications).toContainEqual(expect.objectContaining(notice));
+    const key = ["disbanded-team-profile"];
+    const client = new QueryClient();
+    client.setQueryData(key, profile);
+    const revision = prepareUserUpdate(client, key);
+    const result = await (await callerFor(questsRouter, playerId)).checkRewards({ questId });
+    expect(result).toMatchObject({ success: true, resolved: true });
+    await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+    const authoritative = await profileApi.getUser();
+    expect(authoritative.notifications).not.toContainEqual(expect.objectContaining(notice));
+    const cached = client.getQueryData<typeof profile>(key);
+    expect(client.getQueryState(key)?.isInvalidated || !cached?.notifications.some((entry) => entry.name === notice.name)).toBe(true);
+    client.clear();
   });
 
   it.each([

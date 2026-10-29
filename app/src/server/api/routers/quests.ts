@@ -148,6 +148,7 @@ import {
   findQuestHistoryForClaimRewardChoice,
   findQuestHistoryForCollectPetTask,
   findQuestHistoryForUpsertQuestEntry,
+  findQuestRewardSkillPoints,
   findUserDataForGet,
   findUserDataForGetPendingRewardChoices,
   findUserDataForGetPetTask,
@@ -3503,6 +3504,8 @@ export const commitQuestObjectiveRewards = async (info: {
     // Terminal isolation release is conditional on the current run at payout time.
     !(resolved && isolatedRun) &&
     !(resolved && userQuest?.quest.questType === "achievement") &&
+    // Completed teams change the Quest Teams and unclaimed-rewards navigation.
+    !(resolved && userQuest?.quest.teamEnabled) &&
     !(resolved && info.existingHistory === null);
 
   const collectionObjectiveIds = new Set(
@@ -3808,11 +3811,21 @@ export const commitQuestObjectiveRewards = async (info: {
 
   // Update database. Chain the farm bonus after payout so a failed reward write cannot still
   // shorten crop timers and the established completion/snapshot/payout ordering is preserved.
-  const [rewardResult, farmRewardResult] = await Promise.all([
+  const needsConfirmedSkillPoints =
+    userCacheEligible &&
+    !changedQuestAssignments &&
+    userDelta !== undefined &&
+    rewards.reward_skillpoints !== 0;
+  const [rewardResult, farmRewardResult, confirmedSkillPoints] = await Promise.all([
     rewardPromise,
     shouldReduceFarmTimers
       ? rewardPromise.then(reduceFarmTimers)
       : Promise.resolve(null),
+    // The account claim precedes this atomic payout; another claim may have read its
+    // advanced snapshot before either payout. Return the saved capped balance instead.
+    needsConfirmedSkillPoints
+      ? rewardPromise.then(() => findQuestRewardSkillPoints(client, userId))
+      : undefined,
     resolved && userQuest
       ? rewardPromise.then(() =>
           recordVillageMissionProgress(
@@ -3848,10 +3861,7 @@ export const commitQuestObjectiveRewards = async (info: {
     user.reputationPoints += userDelta.reputationPoints ?? 0;
     user.reputationPointsTotal += rewards.reward_reputation;
     user.villagePrestige += rewards.reward_prestige;
-    user.skillPoints = Math.min(
-      MAX_SKILL_POINTS,
-      user.skillPoints + rewards.reward_skillpoints,
-    );
+    if (confirmedSkillPoints) user.skillPoints = confirmedSkillPoints.skillPoints;
   }
   if (resolved && userQuest && completedEndAt) {
     const entry = user.userQuests.find((entry) => entry.questId === userQuest.questId);
@@ -3928,6 +3938,7 @@ export const commitQuestObjectiveRewards = async (info: {
     userDelta,
     userCacheEligible:
       userCacheEligible &&
+      (!needsConfirmedSkillPoints || confirmedSkillPoints !== undefined) &&
       !changedQuestAssignments &&
       !(farmRewardResult && farmRewardResult.rowsAffected > 0),
   };
