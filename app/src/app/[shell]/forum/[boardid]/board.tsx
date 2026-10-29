@@ -57,6 +57,7 @@ export default function Board({
       title={board?.name ?? "Forum board"}
       subtitle={board?.summary}
       defaultBackHref="/forum"
+      topRightCorntentBreakpoint="sm"
       topRightContent={<ForumStaffLink />}
     >
       <ForumNavigation />

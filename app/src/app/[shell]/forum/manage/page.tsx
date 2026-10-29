@@ -53,6 +53,7 @@ export default function ForumManagement() {
       title="Forum staff workspace"
       subtitle="Manage discussions, community access and forum structure."
       defaultBackHref="/forum"
+      topRightCorntentBreakpoint="sm"
       topRightContent={<ForumStaffLink />}
     >
       <ForumNavigation />
