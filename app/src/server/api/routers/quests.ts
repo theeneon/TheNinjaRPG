@@ -3186,7 +3186,9 @@ export const upsertQuestEntry = async (
   user.completedQuests = user.completedQuests.filter((row) => row.questId !== quest.id);
   // A concurrent delegation may preserve a different tracker/attempt. Immediate
   // effects also require reconciliation beyond the tracker-only assignment write.
+  // Team assignments change navigation derived by the profile query.
   let userCacheEligible =
+    !quest.teamEnabled &&
     !professionContract &&
     consequences.every((entry) => entry.type === "update_user") &&
     notifications.length === 0;
