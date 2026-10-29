@@ -1506,6 +1506,16 @@ export const updateUser = async (
     const settledAt = new Date();
     let userSettlementCommitted = false;
     let itemSettlementCommitted = true;
+    const rewardPetId = curBattle.extraState.petIdsByOwner?.[userId];
+    const petExperience = Math.max(
+      0,
+      Math.round(result.experience) + Math.round(result.earnedExperience),
+    );
+    const confirmPetReward =
+      !!rewardPetId &&
+      petExperience > 0 &&
+      canCacheCombatCompletion(curBattle, result, userId);
+    let petRewardConfirmed = !rewardPetId || petExperience === 0;
     // Defer execution so a hunting transaction never overlaps requests on its session.
     const settlementWrites: (() => PromiseLike<unknown>)[] = [
       ...(!user.isAi
@@ -1599,22 +1609,31 @@ export const updateUser = async (
           )
         : []),
       // Update user data
-      () =>
-        updateUserDataForUpdateUser2(
-          client,
-          combatEnergyRecoverySql,
-          curBattle,
-          userId,
-          result,
-          settledAt,
-          hasHumanOpponent,
-          user,
-          updatedQuestData,
-          tookKageSeat,
-          hydratedUser,
-        ).then((saved) => {
-          userSettlementCommitted = saved.rowsAffected === 1;
-        }),
+      async () => {
+        const save = (confirmPet: boolean) =>
+          updateUserDataForUpdateUser2(
+            client,
+            combatEnergyRecoverySql,
+            curBattle,
+            userId,
+            result,
+            settledAt,
+            hasHumanOpponent,
+            user,
+            updatedQuestData,
+            tookKageSeat,
+            hydratedUser,
+            confirmPet,
+          );
+        let saved = await save(confirmPetReward);
+        if (confirmPetReward) {
+          petRewardConfirmed = saved.rowsAffected === 1;
+          // Changed pet eligibility must not discard the player's battle rewards.
+          // The fallback retains the battle-ID guard and runs in this mutation phase.
+          if (!petRewardConfirmed) saved = await save(false);
+        }
+        userSettlementCommitted = saved.rowsAffected === 1;
+      },
       // Handle dropped items transfer if present on result. Currently only AI have droppable items, so no need to delete from loser
       ...(result.droppedItems.length > 0
         ? [() => insertUserItemForUpdateUser(client, result, user)]
@@ -1645,6 +1664,7 @@ export const updateUser = async (
     if (
       userSettlementCommitted &&
       itemSettlementCommitted &&
+      petRewardConfirmed &&
       baseline &&
       capacity !== undefined &&
       regeneration !== undefined &&
@@ -1664,6 +1684,7 @@ export const updateUser = async (
       const settledItems = combatCacheItems(baseline, user.items);
       const userDelta = {
         ...combatCacheIntegerDelta(baseline, result),
+        ...(rewardPetId ? { petExperience } : {}),
         offence: result.offence,
         defence: result.defence,
         strength: result.strength,

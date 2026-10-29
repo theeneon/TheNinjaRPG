@@ -50,6 +50,7 @@ export const userDeltaSchema = z.object({
   dailySageActivations: z.number().optional(),
 
   money: z.number().optional(),
+  petExperience: z.number().optional(),
   earnedExperience: z.number().optional(),
   reputationPoints: z.number().optional(),
   seichiSilver: z.number().optional(),
