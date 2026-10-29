@@ -162,7 +162,51 @@ export default function Thread({
     const total = comments.data?.totalPages ?? 0;
     if (total > 0 && page >= total) setPage(total - 1);
   }, [comments.data?.totalPages, page]);
-  const refresh = async () => {
+  const refresh = async (removedPostId?: string) => {
+    if (removedPostId) {
+      // Cancel older reads so a failed refresh retains the confirmed removal.
+      await utils.comments.getForumComments.cancel({
+        thread_id: threadId,
+        limit: FORUM_THREAD_POSTS_PER_PAGE,
+      });
+      const cachedPage = utils.comments.getForumComments.getData({
+        thread_id: threadId,
+        limit: FORUM_THREAD_POSTS_PER_PAGE,
+        cursor: page,
+      });
+      const totalComments = Math.max(
+        0,
+        (cachedPage?.totalComments ?? 0) -
+          Number(cachedPage?.data.some((post) => post.id === removedPostId)),
+      );
+      const totalPages = Math.ceil(totalComments / FORUM_THREAD_POSTS_PER_PAGE);
+      utils.comments.getForumComments.setQueriesData(
+        { thread_id: threadId, limit: FORUM_THREAD_POSTS_PER_PAGE },
+        {},
+        (current) => {
+          if (!current?.thread) return current;
+          return {
+            ...current,
+            data: current.data.filter((post) => post.id !== removedPostId),
+            totalComments,
+            totalPages,
+            nextCursor:
+              current.nextCursor !== null && current.nextCursor < totalPages
+                ? current.nextCursor
+                : null,
+            thread: {
+              ...current.thread,
+              nPosts: totalComments,
+              acceptedPostId:
+                current.thread.acceptedPostId === removedPostId
+                  ? null
+                  : current.thread.acceptedPostId,
+            },
+          };
+        },
+      );
+      setSelectedPosts((ids) => ids.filter((id) => id !== removedPostId));
+    }
     await Promise.all([
       utils.comments.getForumComments.invalidate(),
       utils.forum.getThreads.invalidate(),
@@ -398,7 +442,7 @@ function ForumPost({
   board: NonNullable<ThreadData["board"]>;
   number: number;
   onQuote: () => void;
-  onChange: () => Promise<void>;
+  onChange: (removedPostId?: string) => Promise<void>;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -424,7 +468,10 @@ function ForumPost({
     !!user &&
     ((own && board.permissions.edit && !thread.isLocked && !post.isLocked) ||
       board.permissions.editOthers);
-  const run = async (action: () => Promise<{ success: boolean; message: string }>) => {
+  const run = async (
+    action: () => Promise<{ success: boolean; message: string }>,
+    removesPost = false,
+  ) => {
     setError("");
     try {
       const result = await action();
@@ -434,7 +481,7 @@ function ForumPost({
         return;
       }
       setEditing(false);
-      await onChange();
+      await onChange(removesPost ? post.id : undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The action could not be completed.");
     }
@@ -576,7 +623,9 @@ function ForumPost({
                 }
                 disabled={remove.isPending}
                 proceed_label="Remove post"
-                onAccept={() => void run(() => remove.mutateAsync({ id: post.id }))}
+                onAccept={() =>
+                  void run(() => remove.mutateAsync({ id: post.id }), true)
+                }
               >
                 This post will be hidden. Staff can restore it from the forum workspace.
               </Confirm>
@@ -662,12 +711,14 @@ function ForumPost({
                   variant="outline"
                   disabled={reason.trim().length < 3 || moderation.isPending}
                   onClick={() =>
-                    void run(() =>
-                      moderation.mutateAsync({
-                        postId: post.id,
-                        action: action as "LOCK" | "UNLOCK" | "REMOVE",
-                        reason,
-                      }),
+                    void run(
+                      () =>
+                        moderation.mutateAsync({
+                          postId: post.id,
+                          action: action as "LOCK" | "UNLOCK" | "REMOVE",
+                          reason,
+                        }),
+                      action === "REMOVE",
                     )
                   }
                 >
