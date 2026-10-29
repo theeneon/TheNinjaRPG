@@ -52,7 +52,6 @@ import {
   insertUserCookingJobForStartQueuedCraft,
   insertUserItemForReturnMaterials,
   insertUserJutsuForStartQueuedJutsu,
-  insertUserQueueForAppendQueueEntries,
   insertUserQueueRows,
   listUserQueueForFetchCraftingQueue,
   listUserQueueForFetchJutsuTrainingQueue,
@@ -212,13 +211,15 @@ export const appendQueueEntries = async (
   entries: QueueEntryInsert[],
   lastPosition?: number,
 ) => {
-  if (entries.length === 0) return;
+  if (entries.length === 0) return [];
   let last = lastPosition;
   if (last === undefined) {
     const [row] = await selectUserQueueForAppendQueueEntries(client, userId, kind);
     last = Number(row?.position ?? 0);
   }
-  await insertUserQueueForAppendQueueEntries(client, entries, userId, kind, last);
+  const rows = queueRows(userId, kind, last, entries);
+  await insertUserQueueRows(client, rows);
+  return rows;
 };
 
 /** The last position used by a queue among `rows`, or 0. */
@@ -231,24 +232,20 @@ export const lastQueuePosition = (
     0,
   );
 
-/** New MASTERY, ELEMENT or ENERGY rows for `entries`, at positions after `after`. */
-const trainingQueueRows = (
+/** New queue rows for `entries`, at positions after `after`. */
+const queueRows = (
   userId: string,
-  kind: "MASTERY" | "ELEMENT" | "ENERGY",
+  kind: QueueKind,
   after: number,
-  entries: readonly (EnergyTrainingQueueEntry | MasteryTrainingQueueEntry)[],
+  entries: readonly QueueEntryInsert[],
 ): UserQueue[] => {
   const createdAt = new Date();
   return entries.map((entry, index) => ({
-    id: nanoid(),
-    userId,
-    kind,
-    position: after + index + 1,
     jutsuId: null,
     itemId: null,
-    stat: entry.stat,
-    speed: "speed" in entry ? entry.speed : null,
-    energy: "energy" in entry ? entry.energy : null,
+    stat: null,
+    speed: null,
+    energy: null,
     reservedRyo: null,
     quantity: null,
     materials: null,
@@ -256,6 +253,11 @@ const trainingQueueRows = (
     startsAt: null,
     finishesAt: null,
     createdAt,
+    ...entry,
+    id: nanoid(),
+    userId,
+    kind,
+    position: after + index + 1,
   }));
 };
 
@@ -295,7 +297,7 @@ export const claimAndReplaceTrainingQueue = async ({
     kind === "ENERGY"
       ? { energyQueueHead: head, energyQueueTail: head + entries.length }
       : { [masteryTrainingFields[kind].head]: head };
-  const rows = trainingQueueRows(user.userId, kind, head, entries);
+  const rows = queueRows(user.userId, kind, head, entries);
   return retryOnDeadlock(() =>
     client.transaction(async (tx) => {
       const claim = await claimUserSnapshot({

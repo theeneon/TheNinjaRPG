@@ -103,7 +103,7 @@ export const CraftingCatalog: React.FC<CraftingCatalogProps> = ({
   const craftingReductionPercent = userData
     ? getActivityBonuses(userData).craftingReductionPercent
     : 0;
-  const { timeDiff = 0 } = useUserData();
+  const { timeDiff = 0, prepareUserUpdate, updateUser } = useUserData();
   const territoryWarBoost = userData
     ? getTerritoryWarBoost(userData, new Date(Date.now() - timeDiff))
     : 0;
@@ -132,7 +132,8 @@ export const CraftingCatalog: React.FC<CraftingCatalogProps> = ({
 
   // Craft mutation
   const craftItemMutation = api.occupation.craftItem.useMutation({
-    onSuccess: (data) => {
+    onMutate: prepareUserUpdate,
+    onSuccess: (data, _variables, revision) => {
       showMutationToast(data);
       if (data.success) {
         setSelectedItem(null);
@@ -140,7 +141,10 @@ export const CraftingCatalog: React.FC<CraftingCatalogProps> = ({
         void Promise.allSettled([
           utils.item.getUserItems.invalidate(),
           utils.profile.getSidebarTimers.invalidate(),
-          utils.profile.getUser.invalidate(),
+          updateUser(data.userPatch, {
+            revision,
+            achievementProgress: data.achievementProgress,
+          }),
           utils.occupation.getCraftingQueue.invalidate(),
         ]);
       }

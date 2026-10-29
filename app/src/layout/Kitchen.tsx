@@ -30,7 +30,12 @@ import { countBoostingShrines, getShrineBoost } from "@/utils/village";
 
 /** Recipe selection, batch production, Cooking progression, and active meal effects. */
 export default function Kitchen({ image }: { image?: string }) {
-  const { data: user, timeDiff = 0 } = useRequiredUserData();
+  const {
+    data: user,
+    timeDiff = 0,
+    prepareUserUpdate,
+    updateUser,
+  } = useRequiredUserData();
   const territoryWarBoost = user
     ? getTerritoryWarBoost(user, new Date(Date.now() - timeDiff))
     : 0;
@@ -49,23 +54,30 @@ export default function Kitchen({ image }: { image?: string }) {
   const queue = api.occupation.getCraftingQueue.useQuery(undefined, {
     refetchInterval: 15000,
   });
-  const refresh = async () => {
+  const refresh = async (refreshProfile = true) => {
     await Promise.all([
       utils.item.getUserItems.invalidate(),
       utils.item.getUserItemsWithVariants.invalidate(),
       utils.occupation.getCraftingQueue.invalidate(),
-      utils.profile.getUser.invalidate(),
+      ...(refreshProfile ? [utils.profile.getUser.invalidate()] : []),
       utils.profile.getSidebarTimers.invalidate(),
     ]);
   };
   const cook = api.occupation.craftItem.useMutation({
-    onSuccess: async (result) => {
+    onMutate: prepareUserUpdate,
+    onSuccess: async (result, _variables, revision) => {
       showMutationToast(result);
       setMessage(result.message);
       if (result.success) {
         setSelectedId("");
         setBatches(1);
-        await refresh();
+        await Promise.all([
+          refresh(false),
+          updateUser(result.userPatch, {
+            revision,
+            achievementProgress: result.achievementProgress,
+          }),
+        ]);
       }
     },
     onError: (error) => setMessage(error.message),

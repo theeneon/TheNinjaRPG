@@ -13,7 +13,6 @@ import {
   userItemImbuement,
 } from "@/drizzle/schema";
 import type { DrizzleClient } from "@/server/db";
-import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 
 /** Build the `item` listing for `getCraftableItems`, using predicates on `canBeCrafted`, `hidden`, `itemType`. */
 export const listItemForGetCraftableItems = (client: Pick<DrizzleClient, "query">) =>
@@ -80,11 +79,12 @@ export const updateUserDataForCraftItem = (
   expGain: number,
   questDataForDb: import("@/validators/objectives").QuestTrackerType[],
   ctx: { userId: string },
+  updatedAt: Date,
 ) =>
   client
     .update(userData)
     .set({
-      updatedAt: getNextUserSnapshotAt(user.updatedAt),
+      updatedAt,
       craftingExperience: sql`${userData.craftingExperience} + ${expGain}`,
       questData: questDataForDb,
     })
@@ -100,16 +100,8 @@ export const updateUserDataForCraftItem = (
 /** Build the `userCookingJob` insert for `craftItem`. */
 export const insertUserCookingJobForCraftItem = (
   client: Pick<DrizzleClient, "insert">,
-  ctx: { userId: string },
-  cookingExpGain: number,
-  finishTime: Date,
-) =>
-  client.insert(userCookingJob).values({
-    id: nanoid(),
-    userId: ctx.userId,
-    experience: cookingExpGain,
-    finishesAt: finishTime,
-  });
+  job: typeof userCookingJob.$inferInsert,
+) => client.insert(userCookingJob).values(job);
 
 /** Build the `userItem` update for `imbueItem`, setting `updatedAt`, including predicates on `id`, `userId`, `quantity`. */
 export const updateUserItemForImbueItem = (
