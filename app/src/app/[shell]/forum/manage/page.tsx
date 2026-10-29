@@ -1,13 +1,26 @@
 "use client";
 
 import {
+  ArrowLeft,
+  ArrowRight,
   Ban,
   BarChart3,
+  Check,
   ChevronRight,
   ClipboardCheck,
+  FolderPlus,
   FolderTree,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Save,
   ScrollText,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
   Users,
+  X,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
@@ -72,9 +85,13 @@ export default function ForumManagement() {
       ) : data.error ? (
         <p role="alert">
           The workspace could not load.{" "}
-          <Button onClick={() => void data.refetch()}>Try again</Button>
+          <Button className="gap-2" onClick={() => void data.refetch()}>
+            <RotateCcw className="h-4 w-4" aria-hidden />
+            Try again
+          </Button>
           {query && (
-            <Button variant="outline" onClick={() => setQuery("")}>
+            <Button variant="outline" className="gap-2" onClick={() => setQuery("")}>
+              <X className="h-4 w-4" aria-hidden />
               Clear search
             </Button>
           )}
@@ -110,14 +127,14 @@ export default function ForumManagement() {
                 key={key}
                 variant={tab === key ? "default" : "outline"}
                 size="sm"
-                className="h-9 w-9 shrink-0 px-0 @min-[32rem]:h-8 @min-[32rem]:w-auto @min-[32rem]:px-3"
+                className="h-9 w-9 shrink-0 gap-2 px-0 @min-[42rem]:h-8 @min-[42rem]:w-auto @min-[42rem]:px-3"
                 aria-label={label}
                 hoverText={label}
                 aria-pressed={tab === key}
                 onClick={() => setTab(key)}
               >
-                <Icon className="h-4 w-4 @min-[32rem]:hidden" aria-hidden />
-                <span className="hidden @min-[32rem]:inline">{label}</span>
+                <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                <span className="hidden @min-[42rem]:inline">{label}</span>
               </Button>
             ))}
           </nav>
@@ -141,19 +158,23 @@ export default function ForumManagement() {
                   <Button
                     variant="outline"
                     size="sm"
+                    className="gap-2"
                     disabled={reviewPage === 0 || data.isFetching}
                     onClick={() => setReviewPage((page) => page - 1)}
                   >
+                    <ArrowLeft className="h-4 w-4" aria-hidden />
                     Previous
                   </Button>
                   <span className="text-sm">Page {reviewPage + 1}</span>
                   <Button
                     variant="outline"
                     size="sm"
+                    className="gap-2"
                     disabled={!data.data.hasMoreReviews || data.isFetching}
                     onClick={() => setReviewPage((page) => page + 1)}
                   >
                     Next
+                    <ArrowRight className="h-4 w-4" aria-hidden />
                   </Button>
                 </nav>
               )}
@@ -162,18 +183,36 @@ export default function ForumManagement() {
           {tab === "analytics" && <ForumAnalytics />}
           {tab === "logs" && (
             <div className="space-y-3">
-              <label className="block text-sm" htmlFor={`${fieldPrefix}-1`}>
-                Find an action, reason, player or target
-                <Input
-                  id={`${fieldPrefix}-1`}
-                  placeholder="Search the audit log"
-                  maxLength={200}
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </label>
+              <h2 className="flex items-center gap-2 font-semibold">
+                <ScrollText className="h-4 w-4" aria-hidden />
+                Audit log
+              </h2>
+              <div className="flex items-end gap-2">
+                <label className="block flex-1 text-sm" htmlFor={`${fieldPrefix}-1`}>
+                  <Search className="mr-1 inline h-3 w-3" aria-hidden />
+                  Find an action, reason, player or target
+                  <Input
+                    id={`${fieldPrefix}-1`}
+                    placeholder="Search the audit log"
+                    maxLength={200}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                </label>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Clear search"
+                  hoverText="Clear search"
+                  disabled={!query}
+                  onClick={() => setQuery("")}
+                >
+                  <X className="h-4 w-4" aria-hidden />
+                </Button>
+              </div>
               <p className="text-muted-foreground text-xs">
-                Showing up to 100 recent matching actions.
+                {data.data.logs.length} matching actions · showing up to 100 recent
+                entries.
               </p>
               {data.data.logs.length === 0 ? (
                 <p className="rounded-md border p-6 text-sm">
@@ -231,18 +270,22 @@ function ForumStructure({
   } | null>(null);
   const editRef = useRef<HTMLDivElement>(null);
   const removeRef = useRef<HTMLElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    if (!edit) return;
-    const form = editRef.current;
-    form?.querySelector<HTMLHeadingElement>("h2")?.focus({ preventScroll: true });
-    form?.scrollIntoView({ block: "start", behavior: "instant" });
-  }, [edit]);
-  useEffect(() => {
-    if (!remove) return;
-    const form = removeRef.current;
-    form?.focus({ preventScroll: true });
-    form?.scrollIntoView({ block: "start", behavior: "instant" });
-  }, [remove]);
+    // Keep keyboard focus in the current task and return it to the directory on close.
+    const target = edit
+      ? editRef.current?.querySelector<HTMLHeadingElement>("h2")
+      : remove
+        ? removeRef.current
+        : headingRef.current;
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "nearest", behavior: "instant" });
+  }, [edit, remove]);
+  const closeEditor = () => {
+    setEdit(null);
+    setRemove(null);
+    void refresh();
+  };
   const repair = api.forum.repairCounters.useMutation({
     onSuccess: async (r) => {
       showMutationToast(r);
@@ -251,26 +294,48 @@ function ForumStructure({
   });
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={() => setEdit({ type: "section" })}>New section</Button>
-        <Button
-          variant="outline"
-          onClick={() => setEdit({ type: "board" })}
-          disabled={!data.sections.length}
-        >
-          New board
-        </Button>
-      </div>
+      {!edit && !remove && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 ref={headingRef} tabIndex={-1} className="font-semibold">
+              Boards & sections
+            </h2>
+            <p className="text-muted-foreground text-xs">
+              Choose a board or section to edit its settings.
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="gap-2"
+              onClick={() => setEdit({ type: "section" })}
+            >
+              <Plus className="h-4 w-4" aria-hidden />
+              New section
+            </Button>
+            <Button
+              className="gap-2"
+              onClick={() => setEdit({ type: "board" })}
+              disabled={!data.sections.length}
+            >
+              <FolderPlus className="h-4 w-4" aria-hidden />
+              New board
+            </Button>
+          </div>
+          {!data.sections.length && (
+            <p className="text-muted-foreground w-full text-xs">
+              Create a section before adding boards.
+            </p>
+          )}
+        </div>
+      )}
       {edit && (
         <div ref={editRef} className="scroll-mt-6">
           {edit.type === "section" && (
             <SectionEditor
               key={edit.id ?? "new-section"}
               section={data.sections.find((s) => s.id === edit.id)}
-              done={() => {
-                setEdit(null);
-                void refresh();
-              }}
+              done={closeEditor}
             />
           )}
           {edit.type === "board" && (
@@ -278,10 +343,7 @@ function ForumStructure({
               key={edit.id ?? "new-board"}
               board={data.boards.find((b) => b.id === edit.id)}
               data={data}
-              done={() => {
-                setEdit(null);
-                void refresh();
-              }}
+              done={closeEditor}
             />
           )}
         </div>
@@ -297,86 +359,100 @@ function ForumStructure({
             key={remove.id}
             target={remove}
             data={data}
-            done={() => {
-              setRemove(null);
-              void refresh();
-            }}
+            done={closeEditor}
           />
         </section>
       )}
-      {data.sections.map((section) => (
-        <section key={section.id} className="overflow-hidden rounded-lg border">
-          <div className="bg-muted/40 flex flex-wrap items-center gap-2 p-4">
-            <div className="mr-auto">
-              <h2 className="font-semibold">
-                {section.name}
-                {section.archived && " (archived)"}
-              </h2>
-              <p className="text-muted-foreground text-xs">
-                {data.boards.filter((b) => b.sectionId === section.id).length} boards ·
-                position {section.position}
-              </p>
+      {!edit &&
+        !remove &&
+        data.sections.map((section) => (
+          <section key={section.id} className="overflow-hidden rounded-lg border">
+            <div className="bg-muted/40 flex items-center gap-2 p-3">
+              <div className="mr-auto min-w-0 flex-1">
+                <h2 className="font-semibold">
+                  {section.name}
+                  {section.archived && " (archived)"}
+                </h2>
+                <p className="text-muted-foreground text-xs">
+                  {data.boards.filter((b) => b.sectionId === section.id).length} boards
+                  · position {section.position}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                aria-label={`Edit section ${section.name}`}
+                hoverText="Edit section"
+                onClick={() => setEdit({ type: "section", id: section.id })}
+              >
+                <Pencil className="h-4 w-4" aria-hidden />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive shrink-0"
+                aria-label={`Remove section ${section.name}`}
+                hoverText="Remove section"
+                onClick={() => setRemove({ type: "SECTION", id: section.id })}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden />
+              </Button>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setEdit({ type: "section", id: section.id })}
-            >
-              Edit section
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRemove({ type: "SECTION", id: section.id })}
-            >
-              Remove container
-            </Button>
-          </div>
-          <div className="divide-y">
-            {data.boards
-              .filter((b) => b.sectionId === section.id)
-              .map((board) => (
-                <div key={board.id} className="flex flex-wrap items-center gap-2 p-4">
-                  <div className="mr-auto min-w-0">
-                    <Link
-                      href={`/forum/${board.id}`}
-                      className="font-medium hover:underline"
+            <div className="divide-y">
+              {data.boards
+                .filter((b) => b.sectionId === section.id)
+                .map((board) => (
+                  <div key={board.id} className="flex items-center gap-2 p-3">
+                    <div className="mr-auto min-w-0 flex-1">
+                      <Link
+                        href={`/forum/${board.id}`}
+                        className="font-medium break-words hover:underline"
+                      >
+                        {board.name}
+                      </Link>
+                      {board.archived && <span className="ml-2 text-xs">Archived</span>}
+                      <p className="text-muted-foreground text-xs">
+                        {board.nThreads} topics · {board.nPosts} posts · position{" "}
+                        {board.position}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="shrink-0"
+                      aria-label={`Edit board ${board.name}`}
+                      hoverText="Edit board"
+                      onClick={() => setEdit({ type: "board", id: board.id })}
                     >
-                      {board.name}
-                    </Link>
-                    {board.archived && <span className="ml-2 text-xs">Archived</span>}
-                    <p className="text-muted-foreground text-xs">
-                      {board.nThreads} topics · {board.nPosts} posts · position{" "}
-                      {board.position}
-                    </p>
+                      <Pencil className="h-4 w-4" aria-hidden />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      aria-label={`Recount ${board.name}`}
+                      hoverText="Repair topic and post counts"
+                      disabled={repair.isPending}
+                      onClick={() => repair.mutate({ boardId: board.id })}
+                    >
+                      <RotateCcw className="h-4 w-4" aria-hidden />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive shrink-0"
+                      aria-label={`Remove board ${board.name}`}
+                      hoverText="Remove board"
+                      onClick={() => setRemove({ type: "BOARD", id: board.id })}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden />
+                    </Button>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEdit({ type: "board", id: board.id })}
-                  >
-                    Edit board
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={repair.isPending}
-                    onClick={() => repair.mutate({ boardId: board.id })}
-                  >
-                    Recount
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setRemove({ type: "BOARD", id: board.id })}
-                  >
-                    Remove container
-                  </Button>
-                </div>
-              ))}
-          </div>
-        </section>
-      ))}
+                ))}
+            </div>
+          </section>
+        ))}
     </div>
   );
 }
@@ -405,6 +481,8 @@ function SectionEditor({
       className="space-y-3 rounded-lg border p-4"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (save.isPending) return;
+        setError("");
         const parsed = forumSectionSchema.safeParse(values);
         if (!parsed.success) {
           setError(parsed.error.issues[0]?.message ?? "Check the form");
@@ -420,12 +498,22 @@ function SectionEditor({
         }
       }}
     >
-      <h2
-        tabIndex={-1}
-        className="focus-visible:outline-ring rounded-sm font-semibold focus-visible:outline focus-visible:outline-2"
-      >
-        {section ? "Edit section" : "New section"}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+        <h2 tabIndex={-1} className="min-w-0 font-semibold break-words">
+          {section ? `Edit section: ${section.name}` : "New section"}
+        </h2>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="gap-2"
+          disabled={save.isPending}
+          onClick={done}
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Back to boards
+        </Button>
+      </div>
       <label className="block text-sm" htmlFor={`${fieldPrefix}-2`}>
         Name
         <Input
@@ -447,6 +535,7 @@ function SectionEditor({
           onChange={(e) =>
             setValues((current) => ({ ...current, summary: e.target.value }))
           }
+          rows={2}
           maxLength={1000}
         />
       </label>
@@ -485,12 +574,20 @@ function SectionEditor({
           {error}
         </p>
       )}
-      <div className="flex gap-2">
-        <Button disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save section"}
-        </Button>
-        <Button type="button" variant="ghost" onClick={done}>
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2"
+          disabled={save.isPending}
+          onClick={done}
+        >
+          <X className="h-4 w-4" aria-hidden />
           Cancel
+        </Button>
+        <Button className="gap-2" disabled={save.isPending} aria-busy={save.isPending}>
+          <Save className="h-4 w-4" aria-hidden />
+          {save.isPending ? "Saving…" : "Save section"}
         </Button>
       </div>
     </form>
@@ -528,6 +625,8 @@ function BoardEditor({
       className="space-y-3 rounded-lg border p-4"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (save.isPending) return;
+        setError("");
         const parsed = forumStructureBoardSchema.safeParse(values);
         if (!parsed.success) {
           setError(parsed.error.issues[0]?.message ?? "Check the form");
@@ -543,12 +642,22 @@ function BoardEditor({
         }
       }}
     >
-      <h2
-        tabIndex={-1}
-        className="focus-visible:outline-ring rounded-sm font-semibold focus-visible:outline focus-visible:outline-2"
-      >
-        {board ? "Edit board" : "New board"}
-      </h2>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
+        <h2 tabIndex={-1} className="min-w-0 font-semibold break-words">
+          {board ? `Edit board: ${board.name}` : "New board"}
+        </h2>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="gap-2"
+          disabled={save.isPending}
+          onClick={done}
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Back to boards
+        </Button>
+      </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm" htmlFor={`${fieldPrefix}-5`}>
           Name
@@ -620,55 +729,67 @@ function BoardEditor({
         <Textarea
           id={`${fieldPrefix}-7`}
           value={values.summary}
+          rows={2}
           maxLength={2000}
           onChange={(e) =>
             setValues((current) => ({ ...current, summary: e.target.value }))
           }
         />
       </label>
-      <label className="block text-sm" htmlFor={`${fieldPrefix}-8`}>
-        Board rules
-        <Textarea
-          id={`${fieldPrefix}-8`}
-          value={values.rules}
-          maxLength={5000}
-          onChange={(e) =>
-            setValues((current) => ({ ...current, rules: e.target.value }))
-          }
-        />
-      </label>
-      <label className="block text-sm" htmlFor={`${fieldPrefix}-9`}>
-        Seconds between replies (0 disables slow mode)
-        <NumberInput
-          id={`${fieldPrefix}-9`}
-          min={0}
-          max={86400}
-          value={values.slowModeSeconds}
-          onValueChange={(slowModeSeconds) =>
-            setValues((current) => ({ ...current, slowModeSeconds }))
-          }
-        />
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={values.requireApproval}
-          onChange={(e) =>
-            setValues((current) => ({ ...current, requireApproval: e.target.checked }))
-          }
-        />
-        Require staff approval before publishing new posts
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={values.archived}
-          onChange={(e) =>
-            setValues((current) => ({ ...current, archived: e.target.checked }))
-          }
-        />
-        Archive board (keep discussions readable)
-      </label>
+      <details className="rounded-md border p-3">
+        <summary className="cursor-pointer text-sm font-medium">
+          <SlidersHorizontal className="mr-2 inline h-4 w-4" aria-hidden />
+          Posting & archive settings
+        </summary>
+        <div className="mt-3 space-y-3">
+          <label className="block text-sm" htmlFor={`${fieldPrefix}-8`}>
+            Board rules
+            <Textarea
+              id={`${fieldPrefix}-8`}
+              value={values.rules}
+              maxLength={5000}
+              onChange={(e) =>
+                setValues((current) => ({ ...current, rules: e.target.value }))
+              }
+            />
+          </label>
+          <label className="block text-sm" htmlFor={`${fieldPrefix}-9`}>
+            Seconds between replies (0 disables slow mode)
+            <NumberInput
+              id={`${fieldPrefix}-9`}
+              min={0}
+              max={86400}
+              value={values.slowModeSeconds}
+              onValueChange={(slowModeSeconds) =>
+                setValues((current) => ({ ...current, slowModeSeconds }))
+              }
+            />
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={values.requireApproval}
+              onChange={(e) =>
+                setValues((current) => ({
+                  ...current,
+                  requireApproval: e.target.checked,
+                }))
+              }
+            />
+            Require staff approval before publishing new posts
+          </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={values.archived}
+              onChange={(e) =>
+                setValues((current) => ({ ...current, archived: e.target.checked }))
+              }
+            />
+            Archive board (keep discussions readable)
+          </label>
+        </div>
+      </details>
       <PolicyEditor
         policy={values.policy}
         onChange={(policy) => setValues((current) => ({ ...current, policy }))}
@@ -682,12 +803,20 @@ function BoardEditor({
           {error}
         </p>
       )}
-      <div className="flex gap-2">
-        <Button disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save board"}
-        </Button>
-        <Button type="button" variant="ghost" onClick={done}>
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2"
+          disabled={save.isPending}
+          onClick={done}
+        >
+          <X className="h-4 w-4" aria-hidden />
           Cancel
+        </Button>
+        <Button className="gap-2" disabled={save.isPending} aria-busy={save.isPending}>
+          <Save className="h-4 w-4" aria-hidden />
+          {save.isPending ? "Saving…" : "Save board"}
         </Button>
       </div>
     </form>
@@ -702,74 +831,84 @@ function PolicyEditor({
   onChange: (p: ForumPolicy) => void;
 }) {
   return (
-    <fieldset className="rounded-md border p-3">
-      <legend className="px-1 text-sm font-semibold">Access policy</legend>
-      <p className="text-muted-foreground mb-3 text-xs">
-        Inherit uses the parent board, then section policy. Forum staff grants are
-        evaluated separately; explicit denies override grants.
-      </p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {(["view", "read", "create", "reply", "upload", "vote"] as const).map((key) => (
-          <label key={key} className="text-sm">
-            {
-              {
-                view: "See board",
-                read: "Read topics",
-                create: "Create topics",
-                reply: "Reply",
-                upload: "Embed media",
-                vote: "React & vote",
-              }[key]
-            }
-            <select
-              className="bg-background block h-10 w-full rounded-md border px-2"
-              value={policy[key] ?? ""}
-              onChange={(e) => {
-                const next = { ...policy };
-                if (e.target.value)
-                  next[key] = e.target.value as NonNullable<ForumPolicy[typeof key]>;
-                else delete next[key];
-                onChange(next);
-              }}
-            >
-              <option value="">Inherit</option>
-              {forumAudiences.map((a) => (
-                <option key={a} value={a}>
+    <details className="rounded-md border p-3">
+      <summary className="cursor-pointer text-sm font-medium">
+        <ShieldCheck className="mr-2 inline h-4 w-4" aria-hidden />
+        Access policy
+      </summary>
+      <fieldset className="mt-3">
+        <legend className="sr-only">Access policy overrides</legend>
+        <p className="text-muted-foreground mb-3 text-xs">
+          Inherit uses the parent board, then section policy. Forum staff grants are
+          evaluated separately; explicit denies override grants.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(["view", "read", "create", "reply", "upload", "vote"] as const).map(
+            (key) => (
+              <label key={key} className="text-sm">
+                {
                   {
-                    {
-                      PUBLIC: "Everyone",
-                      MEMBERS: "Registered players",
-                      STAFF: "Game staff",
-                      MODERATORS: "Forum moderators",
-                      NONE: "Nobody (explicit grants only)",
-                    }[a]
-                  }
-                </option>
-              ))}
-            </select>
-          </label>
-        ))}
-        {(["editOwn", "deleteOwn"] as const).map((key) => (
-          <label key={key} className="text-sm">
-            {key === "editOwn" ? "Edit own posts" : "Remove own posts"}
-            <select
-              className="bg-background block h-10 w-full rounded-md border px-2"
-              value={policy[key] === undefined ? "" : String(policy[key])}
-              onChange={(e) => {
-                const next = { ...policy };
-                if (e.target.value) next[key] = e.target.value === "true";
-                else delete next[key];
-                onChange(next);
-              }}
-            >
-              <option value="">Inherit</option>
-              <option value="true">Allow</option>
-              <option value="false">Deny</option>
-            </select>
-          </label>
-        ))}
-      </div>
-    </fieldset>
+                    view: "See board",
+                    read: "Read topics",
+                    create: "Create topics",
+                    reply: "Reply",
+                    upload: "Embed media",
+                    vote: "React & vote",
+                  }[key]
+                }
+                <select
+                  className="bg-background block h-10 w-full rounded-md border px-2"
+                  value={policy[key] ?? ""}
+                  onChange={(e) => {
+                    const next = { ...policy };
+                    if (e.target.value)
+                      next[key] = e.target.value as NonNullable<
+                        ForumPolicy[typeof key]
+                      >;
+                    else delete next[key];
+                    onChange(next);
+                  }}
+                >
+                  <option value="">Inherit</option>
+                  {forumAudiences.map((a) => (
+                    <option key={a} value={a}>
+                      {
+                        {
+                          PUBLIC: "Everyone",
+                          MEMBERS: "Registered players",
+                          STAFF: "Game staff",
+                          MODERATORS: "Forum moderators",
+                          NONE: "Nobody (explicit grants only)",
+                        }[a]
+                      }
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ),
+          )}
+          {(["editOwn", "deleteOwn"] as const).map((key) => (
+            <label key={key} className="text-sm">
+              {key === "editOwn" ? "Edit own posts" : "Remove own posts"}
+              <select
+                className="bg-background block h-10 w-full rounded-md border px-2"
+                value={policy[key] === undefined ? "" : String(policy[key])}
+                onChange={(e) => {
+                  const next = { ...policy };
+                  if (e.target.value) next[key] = e.target.value === "true";
+                  else delete next[key];
+                  onChange(next);
+                }}
+              >
+                <option value="">Inherit</option>
+                <option value="true">Allow</option>
+                <option value="false">Deny</option>
+              </select>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+    </details>
   );
 }
 /** Require a destination for retained content and surface recoverable server rejections in place. */
@@ -798,6 +937,8 @@ function RemoveStructure({
       className="space-y-3 rounded-lg border p-4"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (mutation.isPending || reason.trim().length < 3) return;
+        setError("");
         try {
           const result = await mutation.mutateAsync({
             ...target,
@@ -812,7 +953,10 @@ function RemoveStructure({
         }
       }}
     >
-      <h2 className="font-semibold">Remove {source?.name}</h2>
+      <h2 className="flex items-center gap-2 font-semibold">
+        <Trash2 className="h-4 w-4" aria-hidden />
+        Remove {source?.name}
+      </h2>
       <p className="text-sm">
         This contains {count} {target.type === "BOARD" ? "visible topics" : "boards"}.
         Choose where to move its content. Archive from the edit form to keep the
@@ -841,12 +985,24 @@ function RemoveStructure({
           {error}
         </p>
       )}
-      <div className="flex gap-2">
-        <Button disabled={mutation.isPending || reason.trim().length < 3}>
-          Move content and remove container
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2"
+          disabled={mutation.isPending}
+          onClick={done}
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Back to boards
         </Button>
-        <Button type="button" variant="ghost" onClick={done}>
-          Cancel
+        <Button
+          variant="destructive"
+          className="gap-2"
+          disabled={mutation.isPending || reason.trim().length < 3}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden />
+          {destinationId ? "Move content & remove" : "Remove empty container"}
         </Button>
       </div>
     </form>
@@ -882,6 +1038,7 @@ function ForumStaff({
   const [denies, setDenies] = useState<(typeof forumCapabilities)[number][]>([]);
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
+  const [assignmentError, setAssignmentError] = useState("");
   const save = api.forum.saveGrant.useMutation();
   const effective = api.forum.effectivePermissions.useQuery(
     { userId },
@@ -922,7 +1079,13 @@ function ForumStaff({
           }
         }}
       >
-        <h2 className="font-semibold">Assign forum capabilities</h2>
+        <h2 className="flex items-center gap-2 font-semibold">
+          <Users className="h-4 w-4" aria-hidden />
+          Staff permissions
+        </h2>
+        <p className="text-muted-foreground text-xs">
+          Select a player, choose where they can act, then grant or deny capabilities.
+        </p>
         <ForumPlayerSelect onSelect={setUserId} />
         {userId && (
           <p className="text-sm">
@@ -972,50 +1135,64 @@ function ForumStaff({
             </label>
           )}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr>
-                <th className="p-2">Capability</th>
-                <th className="p-2">Grant</th>
-                <th className="p-2">Deny</th>
-              </tr>
-            </thead>
-            <tbody>
-              {forumCapabilities
-                .filter((c) => scope === "GLOBAL" || !["manage", "purge"].includes(c))
-                .map((cap) => (
-                  <tr key={cap} className="border-t">
-                    <td className="p-2">{capabilityLabel(cap)}</td>
-                    <td className="p-2">
-                      <input
-                        type="checkbox"
-                        aria-label={`Grant ${capabilityLabel(cap)}`}
-                        checked={permissions.includes(cap)}
-                        onChange={(e) =>
-                          setPermissions((p) =>
-                            e.target.checked ? [...p, cap] : p.filter((c) => c !== cap),
-                          )
-                        }
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="checkbox"
-                        aria-label={`Deny ${capabilityLabel(cap)}`}
-                        checked={denies.includes(cap)}
-                        onChange={(e) =>
-                          setDenies((p) =>
-                            e.target.checked ? [...p, cap] : p.filter((c) => c !== cap),
-                          )
-                        }
-                      />
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
+        <details className="rounded-md border p-3" open={!!userId}>
+          <summary className="cursor-pointer text-sm font-medium">
+            <ShieldCheck className="mr-2 inline h-4 w-4" aria-hidden />
+            Capabilities
+          </summary>
+          <p className="text-muted-foreground mt-2 text-xs">
+            Unselected capabilities inherit existing access. An explicit deny overrides
+            a grant.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr>
+                  <th className="p-2">Capability</th>
+                  <th className="p-2">Grant</th>
+                  <th className="p-2">Deny</th>
+                </tr>
+              </thead>
+              <tbody>
+                {forumCapabilities
+                  .filter((c) => scope === "GLOBAL" || !["manage", "purge"].includes(c))
+                  .map((cap) => (
+                    <tr key={cap} className="border-t">
+                      <td className="p-2">{capabilityLabel(cap)}</td>
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`Grant ${capabilityLabel(cap)}`}
+                          checked={permissions.includes(cap)}
+                          onChange={(e) =>
+                            setPermissions((p) =>
+                              e.target.checked
+                                ? [...p, cap]
+                                : p.filter((c) => c !== cap),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          aria-label={`Deny ${capabilityLabel(cap)}`}
+                          checked={denies.includes(cap)}
+                          onChange={(e) =>
+                            setDenies((p) =>
+                              e.target.checked
+                                ? [...p, cap]
+                                : p.filter((c) => c !== cap),
+                            )
+                          }
+                        />
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
         <Reason value={reason} setValue={setReason} />
         {error && (
           <p role="alert" className="text-destructive text-sm">
@@ -1031,17 +1208,23 @@ function ForumStaff({
             {saveDisabledReason}
           </p>
         )}
-        <Button
-          type="submit"
-          disabled={!!saveDisabledReason || save.isPending}
-          aria-describedby={saveDisabledReason ? `${fieldPrefix}-save-help` : undefined}
-          aria-busy={save.isPending}
-        >
-          {save.isPending ? "Saving…" : "Save capabilities"}
-        </Button>
+        <div className="flex justify-end border-t pt-3">
+          <Button
+            type="submit"
+            className="gap-2"
+            disabled={!!saveDisabledReason || save.isPending}
+            aria-describedby={
+              saveDisabledReason ? `${fieldPrefix}-save-help` : undefined
+            }
+            aria-busy={save.isPending}
+          >
+            <Save className="h-4 w-4" aria-hidden />
+            {save.isPending ? "Saving…" : "Save capabilities"}
+          </Button>
+        </div>
       </form>
       {effective.data && (
-        <details className="rounded-lg border p-4" open>
+        <details className="rounded-lg border p-4">
           <summary className="cursor-pointer font-semibold">
             Effective access for {effective.data.username}
           </summary>
@@ -1075,7 +1258,15 @@ function ForumStaff({
           </div>
         </details>
       )}
-      <h2 className="font-semibold">Explicit assignments</h2>
+      <h2 className="font-semibold">Current assignments ({data.grants.length})</h2>
+      {!data.grants.length && (
+        <p className="text-muted-foreground text-sm">No explicit staff assignments.</p>
+      )}
+      {assignmentError && (
+        <p role="alert" className="text-destructive text-sm">
+          {assignmentError}
+        </p>
+      )}
       {data.grants.map((g) => (
         <div
           key={g.id}
@@ -1097,10 +1288,12 @@ function ForumStaff({
           </div>
           <Button
             variant="outline"
-            size="sm"
+            size="icon"
+            aria-label={`Remove assignment for ${g.user?.username ?? g.userId}`}
+            hoverText="Remove assignment"
             disabled={save.isPending}
             onClick={async () => {
-              setError("");
+              setAssignmentError("");
               try {
                 const result = await save.mutateAsync({
                   ...g,
@@ -1109,17 +1302,17 @@ function ForumStaff({
                 });
                 showMutationToast(result);
                 if (result.success) await refresh();
-                else setError(result.message);
+                else setAssignmentError(result.message);
               } catch (error) {
                 const message =
                   error instanceof Error
                     ? error.message
                     : "Assignment could not be removed";
-                setError(message);
+                setAssignmentError(message);
               }
             }}
           >
-            Remove assignment
+            <Trash2 className="h-4 w-4" aria-hidden />
           </Button>
         </div>
       ))}
@@ -1145,13 +1338,22 @@ function ForumRestrictions({
   const [days, setDays] = useState(1);
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
+  const [liftError, setLiftError] = useState("");
   const save = api.forum.restrict.useMutation();
+  const disabledReason = !userId
+    ? "Select a player before restricting posting."
+    : !data.canManage && !boardId
+      ? "Select a board before restricting posting."
+      : reason.trim().length < 3
+        ? "Enter an audit reason with at least 3 characters."
+        : "";
   return (
     <div className="space-y-4">
       <form
         className="space-y-3 rounded-lg border p-4"
         onSubmit={async (e) => {
           e.preventDefault();
+          if (save.isPending || disabledReason) return;
           setError("");
           try {
             const r = await save.mutateAsync({
@@ -1162,54 +1364,85 @@ function ForumRestrictions({
               remove: false,
             });
             showMutationToast(r);
-            if (r.success) await refresh();
-            else setError(r.message);
+            if (r.success) {
+              setReason("");
+              await refresh();
+            } else setError(r.message);
           } catch (e) {
             setError(e instanceof Error ? e.message : "Restriction could not be saved");
           }
         }}
       >
-        <h2 className="font-semibold">Temporarily restrict forum posting</h2>
+        <h2 className="flex items-center gap-2 font-semibold">
+          <Ban className="h-4 w-4" aria-hidden />
+          Restrict posting
+        </h2>
         <p className="text-muted-foreground text-sm">
           The player can read permitted boards. Their game account remains active.
         </p>
         <ForumPlayerSelect onSelect={setUserId} />
-        <label className="block text-sm">
-          Scope
-          <select
-            value={boardId}
-            onChange={(e) => setBoardId(e.target.value)}
-            className="bg-background block h-10 w-full rounded-md border px-2"
-          >
-            {data.canManage && <option value="">Whole forum</option>}
-            {restrictable.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm" htmlFor={`${fieldPrefix}-10`}>
-          Duration in days
-          <NumberInput
-            id={`${fieldPrefix}-10`}
-            value={days}
-            min={1}
-            max={90}
-            onValueChange={setDays}
-          />
-        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-sm">
+            Scope
+            <select
+              value={boardId}
+              onChange={(e) => setBoardId(e.target.value)}
+              className="bg-background block h-10 w-full rounded-md border px-2"
+            >
+              {data.canManage && <option value="">Whole forum</option>}
+              {restrictable.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm" htmlFor={`${fieldPrefix}-10`}>
+            Duration in days
+            <NumberInput
+              id={`${fieldPrefix}-10`}
+              value={days}
+              min={1}
+              max={90}
+              onValueChange={setDays}
+            />
+          </label>
+        </div>
         <Reason value={reason} setValue={setReason} />
         {error && (
           <p role="alert" className="text-destructive text-sm">
             {error}
           </p>
         )}
-        <Button disabled={!userId || save.isPending || reason.trim().length < 3}>
-          Restrict posting
-        </Button>
+        {disabledReason && (
+          <p
+            id={`${fieldPrefix}-hint`}
+            role="status"
+            className="text-muted-foreground text-sm"
+          >
+            {disabledReason}
+          </p>
+        )}
+        <div className="flex justify-end border-t pt-3">
+          <Button
+            className="gap-2"
+            disabled={!!disabledReason || save.isPending}
+            aria-busy={save.isPending}
+            aria-describedby={disabledReason ? `${fieldPrefix}-hint` : undefined}
+          >
+            <Ban className="h-4 w-4" aria-hidden />
+            {save.isPending ? "Saving…" : "Restrict posting"}
+          </Button>
+        </div>
       </form>
-      <h2 className="font-semibold">Restrictions</h2>
+      <h2 className="font-semibold">
+        Current restrictions ({data.restrictions.length})
+      </h2>
+      {liftError && (
+        <p role="alert" className="text-destructive text-sm">
+          {liftError}
+        </p>
+      )}
       {!data.restrictions.length && (
         <p className="text-muted-foreground text-sm">No restrictions in your scope.</p>
       )}
@@ -1218,7 +1451,7 @@ function ForumRestrictions({
           key={r.id}
           className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-sm"
         >
-          <div className="mr-auto">
+          <div className="mr-auto min-w-0 break-words">
             <b>{r.user?.username ?? r.userId}</b>
             <p>{r.reason}</p>
             <p className="text-muted-foreground text-xs" suppressHydrationWarning>
@@ -1230,24 +1463,26 @@ function ForumRestrictions({
           </div>
           <Button
             size="sm"
+            className="shrink-0 gap-2"
             variant="outline"
             disabled={save.isPending}
             onClick={async () => {
-              setError("");
+              setLiftError("");
               try {
                 const result = await save.mutateAsync({ ...r, remove: true });
                 showMutationToast(result);
                 if (result.success) await refresh();
-                else setError(result.message);
+                else setLiftError(result.message);
               } catch (error) {
                 const message =
                   error instanceof Error
                     ? error.message
                     : "Restriction could not be lifted";
-                setError(message);
+                setLiftError(message);
               }
             }}
           >
+            <RotateCcw className="h-4 w-4" aria-hidden />
             Lift restriction
           </Button>
         </div>
@@ -1268,14 +1503,20 @@ function ForumApprovals({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="mr-auto">
-          <h2 className="font-semibold">Approvals & recovery</h2>
+        <div className="mr-auto min-w-0 flex-1">
+          <h2 className="flex items-center gap-2 font-semibold">
+            <ClipboardCheck className="h-4 w-4" aria-hidden />
+            Approvals & recovery
+          </h2>
           <p className="text-muted-foreground text-xs">
             {itemCount} {itemCount === 1 ? "item" : "items"} on this page
           </p>
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link href="/reports">Player reports</Link>
+        <Button asChild variant="outline" size="sm" className="gap-2">
+          <Link href="/reports">
+            <ShieldCheck className="h-4 w-4" aria-hidden />
+            Player reports
+          </Link>
         </Button>
       </div>
       <p className="text-muted-foreground text-xs">
@@ -1481,26 +1722,34 @@ function ForumPostApproval({
                 {error}
               </p>
             )}
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
+              {disabledReason && (
+                <p
+                  id={`${fieldPrefix}-hint`}
+                  role="status"
+                  className="text-muted-foreground mr-auto text-xs"
+                >
+                  {disabledReason}
+                </p>
+              )}
               <Button
                 type="submit"
                 size="sm"
+                className="gap-2"
                 variant={selectedAction === "REMOVE" ? "destructive" : "default"}
                 disabled={!!disabledReason || isPending}
                 aria-busy={isPending}
                 aria-describedby={disabledReason ? `${fieldPrefix}-hint` : undefined}
               >
+                {selectedAction === "REMOVE" ? (
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                ) : selectedAction === "RESTORE" ? (
+                  <RotateCcw className="h-4 w-4" aria-hidden />
+                ) : (
+                  <Check className="h-4 w-4" aria-hidden />
+                )}
                 {isPending ? "Saving…" : labels[selectedAction]}
               </Button>
-              {disabledReason && (
-                <p
-                  id={`${fieldPrefix}-hint`}
-                  role="status"
-                  className="text-muted-foreground text-xs"
-                >
-                  {disabledReason}
-                </p>
-              )}
             </div>
           </form>
         )}
@@ -1590,10 +1839,12 @@ function PurgeTopic({
         )}
         <Button
           variant="destructive"
+          className="gap-2"
           disabled={
             mutation.isPending || title !== thread.title || reason.trim().length < 3
           }
         >
+          <Trash2 className="h-4 w-4" aria-hidden />
           Permanently purge topic
         </Button>
       </form>

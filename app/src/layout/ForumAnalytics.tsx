@@ -1,5 +1,6 @@
 "use client";
 
+import { BarChart3, CalendarDays, RotateCcw, Users } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,10 @@ export function ForumAnalytics() {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold text-lg">Community health</h2>
+          <h2 className="flex items-center gap-2 font-semibold">
+            <BarChart3 className="h-4 w-4" aria-hidden />
+            Community health
+          </h2>
           <p className="text-xs text-muted-foreground">
             Participation and demand in the boards you moderate.
           </p>
@@ -29,9 +33,12 @@ export function ForumAnalytics() {
             <Button
               key={period}
               size="sm"
+              className="gap-2"
+              aria-pressed={days === period}
               variant={days === period ? "default" : "outline"}
               onClick={() => setDays(period)}
             >
+              <CalendarDays className="h-4 w-4" aria-hidden />
               {period} days
             </Button>
           ))}
@@ -42,7 +49,10 @@ export function ForumAnalytics() {
       ) : metrics.error ? (
         <p role="alert">
           Metrics could not load.{" "}
-          <Button onClick={() => void metrics.refetch()}>Try again</Button>
+          <Button className="gap-2" onClick={() => void metrics.refetch()}>
+            <RotateCcw className="h-4 w-4" aria-hidden />
+            Try again
+          </Button>
         </p>
       ) : !metrics.data ? (
         <p>You do not have access to forum analytics.</p>
@@ -97,19 +107,19 @@ export function ForumAnalytics() {
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
               <caption className="p-3 text-left font-semibold">
-                Board participation & backlog
+                Board activity & backlog
               </caption>
               <thead className="bg-muted text-left text-xs">
                 <tr>
                   {[
                     "Board",
-                    "New topics",
+                    "Topics",
                     "Posts",
-                    "Participants",
+                    "Authors",
                     "Unanswered",
-                    "Pending posts",
+                    "Pending",
                     "Reported",
-                    "Removed posts",
+                    "Removed",
                   ].map((label) => (
                     <th className="p-3" key={label} scope="col">
                       {label}
@@ -143,8 +153,11 @@ export function ForumAnalytics() {
               </tbody>
             </table>
           </div>
-          <div className="rounded-lg border p-4">
-            <h3 className="font-semibold">Staff workload</h3>
+          <details className="rounded-lg border p-4">
+            <summary className="cursor-pointer font-semibold">
+              <Users className="mr-2 inline h-4 w-4" aria-hidden />
+              Staff workload
+            </summary>
             <p className="mb-3 text-xs text-muted-foreground">
               Recorded forum actions in this period; this is a workload indicator, not a
               staff performance score.
@@ -166,7 +179,7 @@ export function ForumAnalytics() {
                 ))}
               </ul>
             )}
-          </div>
+          </details>
         </>
       )}
     </section>

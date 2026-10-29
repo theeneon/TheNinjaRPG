@@ -1,5 +1,6 @@
 "use client";
 
+import { Check } from "lucide-react";
 import { useId, useState } from "react";
 import { api, type RouterOutputs } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
@@ -198,9 +199,16 @@ export const ForumTopicTools = ({
           {error}
         </p>
       )}
-      <Button type="submit" disabled={mutation.isPending || reason.trim().length < 3}>
-        {mutation.isPending ? "Saving…" : "Apply changes"}
-      </Button>
+      <div className="flex justify-end border-t pt-3">
+        <Button
+          type="submit"
+          className="gap-2"
+          disabled={mutation.isPending || reason.trim().length < 3}
+        >
+          <Check className="h-4 w-4" aria-hidden />
+          {mutation.isPending ? "Saving…" : "Apply changes"}
+        </Button>
+      </div>
     </form>
   );
 };

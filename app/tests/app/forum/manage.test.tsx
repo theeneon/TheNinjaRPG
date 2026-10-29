@@ -24,9 +24,12 @@ let reviewPosts: NonNullable<RouterOutputs["forum"]["administration"]>["posts"];
 let reviewRequests: { path: string; input: unknown }[];
 let canModerate: boolean;
 let hasMoreReviews: boolean;
+let scrollDescriptor: PropertyDescriptor | undefined;
 
 beforeEach(() => {
   ensureDom();
+  scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => undefined });
   hasLocations = true;
   requests = [];
   response = { success: true, message: "Capabilities saved" };
@@ -51,6 +54,8 @@ afterEach(() => {
   cleanup();
   queryClient.clear();
   vi.restoreAllMocks();
+  if (scrollDescriptor) Object.defineProperty(HTMLElement.prototype, "scrollIntoView", scrollDescriptor);
+  else Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 });
 
 /** Exercise the actual staff form with controlled application responses and the existing picker contract. */
@@ -59,12 +64,12 @@ async function renderManagement(tab = "Staff") {
     let data: unknown = [];
     if (op.path === "forum.administration") data = {
       canManage: true,
-      boards: hasLocations ? [{ id: "board", name: "Strategy", permissions: { moderate: canModerate, approve: true, removeOthers: canModerate } }] : [],
+      boards: hasLocations ? [{ id: "board", sectionId: "section", name: "Strategy", permissions: { moderate: canModerate, approve: true, removeOthers: canModerate } }] : [],
       sections: hasLocations ? [{ id: "section", name: "Community" }] : [],
       grants: [], restrictions: [], threads: [], posts: reviewPosts, logs: [], hasMoreReviews,
     };
     if (op.path === "forum.effectivePermissions") data = { username: "Player", boards: [] };
-    if (op.path === "forum.saveGrant" || op.path === "forum.moderatePost") {
+    if (["forum.saveGrant", "forum.moderatePost", "forum.saveBoard", "forum.saveSection", "forum.restrict"].includes(op.path)) {
       if (op.path === "forum.saveGrant") requests.push(op.input as RouterInputs["forum"]["saveGrant"]);
       else reviewRequests.push({ path: op.path, input: op.input });
       const complete = () => { observer.next({ result: { data: response } }); observer.complete(); };
@@ -243,4 +248,76 @@ it("keeps paging available when there is another page or a previous page", async
   expect((view.getByRole("button", { name: "Next" }) as HTMLButtonElement).disabled).toBe(true);
   fireEvent.click(view.getByRole("button", { name: "Previous" }));
   await waitFor(() => expect(view.queryByRole("navigation", { name: "Approvals and recovery pages" }) === null).toBe(true));
+});
+
+
+it("focuses a board edit task, keeps optional settings compact and returns to the directory on cancel", async () => {
+  const view = await renderManagement("Boards");
+  fireEvent.click(view.getByRole("button", { name: "Edit board Strategy" }));
+  const heading = view.getByRole("heading", { name: "Edit board: Strategy" });
+  await waitFor(() => expect(document.activeElement).toBe(heading));
+  expect(view.queryByRole("button", { name: "New board" })).toBeNull();
+  expect(view.queryByRole("link", { name: "Strategy" })).toBeNull();
+  expect(view.getByText("Posting & archive settings").closest("details")?.open).toBe(false);
+  expect(view.getByText("Access policy", { selector: "summary" }).closest("details")?.open).toBe(false);
+  fireEvent.change(view.getByLabelText("Name"), { target: { value: "Unsubmitted name" } });
+  fireEvent.click(view.getByRole("button", { name: "Cancel" }));
+  expect(await view.findByRole("button", { name: "New board" })).toBeTruthy();
+  expect(document.activeElement).toBe(view.getByRole("heading", { name: "Boards & sections" }));
+  expect(reviewRequests).toEqual([]);
+  fireEvent.click(view.getByRole("button", { name: "Edit board Strategy" }));
+  expect((view.getByLabelText("Name") as HTMLInputElement).value).toBe("Strategy");
+  fireEvent.click(view.getByRole("button", { name: "Back to boards" }));
+  expect(await view.findByRole("link", { name: "Strategy" })).toBeTruthy();
+});
+
+it.each(["board", "section"])("preserves rejected %s edits and prevents closing or resubmitting during save", async (kind) => {
+  const view = await renderManagement("Boards");
+  fireEvent.click(view.getByRole("button", { name: kind === "board" ? "Edit board Strategy" : "Edit section Community" }));
+  const reason = view.getByLabelText("Reason for the audit log") as HTMLInputElement;
+  fireEvent.change(reason, { target: { value: "Clarify the forum layout" } });
+  const form = view.getByRole("button", { name: `Save ${kind}` }).closest("form")!;
+  response = { success: false, message: "Settings changed. Please retry." };
+  fireEvent.submit(form);
+  expect((await view.findByRole("alert")).textContent).toBe(response.message);
+  expect(reason.value).toBe("Clarify the forum layout");
+  holdSave = true;
+  response = { success: true, message: "Settings saved" };
+  fireEvent.submit(form);
+  expect((await view.findByRole("button", { name: "Saving…" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((view.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+  expect((view.getByRole("button", { name: "Back to boards" }) as HTMLButtonElement).disabled).toBe(true);
+  expect(view.queryByRole("alert")).toBeNull();
+  fireEvent.submit(form);
+  expect(reviewRequests).toHaveLength(2);
+  expect(reviewRequests[1]).toMatchObject({ path: kind === "board" ? "forum.saveBoard" : "forum.saveSection", input: { reason: "Clarify the forum layout" } });
+  await act(async () => { finishSave!(); });
+  expect(await view.findByRole("heading", { name: "Boards & sections" })).toBeTruthy();
+});
+
+it("explains restriction prerequisites, retains rejected inputs and clears the reason after success", async () => {
+  const view = await renderManagement("Restrictions");
+  const save = view.getByRole("button", { name: "Restrict posting" }) as HTMLButtonElement;
+  const form = save.closest("form")!;
+  expect(save.disabled).toBe(true);
+  expect(view.getByText("Select a player before restricting posting.")).toBeTruthy();
+  fireEvent.submit(form);
+  expect(reviewRequests).toEqual([]);
+  fireEvent.click(view.getByRole("button", { name: "Select player" }));
+  expect(await view.findByText("Enter an audit reason with at least 3 characters.")).toBeTruthy();
+  const reason = view.getByLabelText("Reason for the audit log") as HTMLInputElement;
+  fireEvent.change(reason, { target: { value: "Keep discussion on topic" } });
+  response = { success: false, message: "Access changed. Try again." };
+  fireEvent.submit(form);
+  expect((await view.findByRole("alert")).textContent).toBe(response.message);
+  expect(reason.value).toBe("Keep discussion on topic");
+  response = { success: true, message: "Posting restricted" };
+  holdSave = true;
+  fireEvent.submit(form);
+  expect((await view.findByRole("button", { name: "Saving…" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.submit(form);
+  expect(reviewRequests).toHaveLength(2);
+  expect(reviewRequests[1]).toMatchObject({ path: "forum.restrict", input: { userId: "player", boardId: null, remove: false, reason: "Keep discussion on topic" } });
+  await act(async () => { finishSave!(); });
+  await waitFor(() => expect(reason.value).toBe(""));
 });
