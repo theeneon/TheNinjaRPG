@@ -85,6 +85,8 @@ describeWithDatabase("raid participation battle snapshots", () => {
     expect(saved.extraState.raidStartBattleCount?.newcomer).toBeUndefined();
     expect(saved.extraState.raidInitialBossHp).toBe(1000);
     saved.usersState.find((actor) => actor.isAi && !actor.isSummon)!.curHealth = 400;
+    // Raid credit is capped at the damage the attackers actually dealt
+    saved.usersState.find((actor) => actor.userId === "human")!.damageDealt = 600;
 
     for (const userId of ["human", "newcomer", "defender"]) {
       await Promise.all([
