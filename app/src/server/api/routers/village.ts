@@ -172,13 +172,17 @@ export const villageRouter = createTRPCRouter({
         return errorResponse("This is not a safe area for you to eat ramen");
       }
       // Mutate with guard
-      const newStamina = Math.min(
-        user.maxStamina,
-        user.curStamina + (user.maxStamina * healPercentage) / 100,
+      const newStamina = Math.round(
+        Math.min(
+          user.maxStamina,
+          user.curStamina + (user.maxStamina * healPercentage) / 100,
+        ),
       );
-      const newChakra = Math.min(
-        user.maxChakra,
-        user.curChakra + (user.maxChakra * healPercentage) / 100,
+      const newChakra = Math.round(
+        Math.min(
+          user.maxChakra,
+          user.curChakra + (user.maxChakra * healPercentage) / 100,
+        ),
       );
       const result = await updateUserDataForBuyFood(
         ctx.drizzle,
@@ -192,7 +196,7 @@ export const villageRouter = createTRPCRouter({
       } else {
         return {
           success: true,
-          message: `You have bought food and healed to ${Math.floor(newStamina)}SP and ${Math.floor(newChakra)}CP`,
+          message: `You have bought food and healed to ${newStamina}SP and ${newChakra}CP`,
           ...(!updatedUser.requiresProgressionRefresh
             ? {
                 ...getUserProgressionUpdate(
