@@ -69,6 +69,12 @@ const LayoutSwitcher: React.FC<LayoutSwitcherProps> = ({
   // flip between layouts; a single refresh re-renders under the repaired cookie.
   const router = useRouter();
   useEffect(() => {
+    // The server rendered from this cookie, so it is authoritative; rewriting it only
+    // renews its expiry. A localStorage copy that failed to update must not replace it.
+    if (cookieCarriesLayout(initialLayout)) {
+      persistLayoutPreferenceCookie(initialLayout);
+      return;
+    }
     const stored = storedValueToLayout(
       safeLocalStorageGetItem(LAYOUT_PREFERENCE_COOKIE),
     );
