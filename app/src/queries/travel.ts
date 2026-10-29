@@ -440,7 +440,7 @@ export const updateUserDataForCompleteExpiredGlobalTravel = (
     .set({ status: "AWAKE", travelFinishAt: null })
     .where(and(expiredTravel, sql`NOT (${hasQueue})`));
 
-/** Arrival needs active quest definitions and equipped items without the full profile relation graph. */
+/** Arrival evaluates quest targets and collection bonuses from one relation read. */
 export const findUserForGlobalTravelFinish = (
   client: Pick<DrizzleClient, "query">,
   userId: string,
@@ -450,8 +450,11 @@ export const findUserForGlobalTravelFinish = (
     with: {
       userQuests: userQuestHistoryRelation,
       completedQuests: completedQuestHistoryRelation,
+      bloodline: true,
       village: true,
       clan: true,
+      titles: true,
+      userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
       items: {
         where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
         with: { item: true, imbuements: { with: { item: true } } },

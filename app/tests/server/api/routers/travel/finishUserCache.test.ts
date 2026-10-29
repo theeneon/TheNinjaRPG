@@ -1,15 +1,16 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
-import { quest, questHistory, userData, userQueue, userVote } from "@/drizzle/schema";
+import { bloodline, item, quest, questHistory, skillTree, userData, userItem, userQueue, userSkill, userTitle, userVote } from "@/drizzle/schema";
 import { globalTravelFinishPatch } from "@/libs/travel";
 import { Pusher } from "@/libs/pusher";
 import { profileRouter } from "@/server/api/routers/profile";
 import { travelRouter } from "@/server/api/routers/travel";
+import { DecreaseGatheringTime, IncreaseGatheringYield } from "@/validators/combat";
 import { AllObjectives, QuestTracker } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
-import { insertQuestHistory, insertQuests, insertUsers } from "../../../../setup/factories";
+import { insertItems, insertQuestHistory, insertQuests, insertUserItems, insertUsers } from "../../../../setup/factories";
 import { callerFor, describeWithDatabase, getTestDatabase, resetTables } from "../../../../setup/testDatabase";
 
 const userId = "arrival-cache-player";
@@ -17,7 +18,7 @@ const key = [["profile", "getUser"], { type: "query" }];
 describeWithDatabase("confirmed arrival profile updates", () => {
   beforeEach(async () => {
     vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
-    await resetTables(userQueue, userVote, questHistory, quest, userData);
+    await resetTables(userQueue, userVote, questHistory, quest, userData, bloodline, userSkill, skillTree, userTitle, item, userItem);
     await insertUsers([{ userId, username: "ArrivalCache", rank: "JONIN", primaryElement: "Fire", secondaryElement: "Water", level: 50, isOutlaw: true, status: "TRAVEL", sector: 1, longitude: 4, latitude: 5, regeneration: 0, travelFinishAt: new Date(Date.now() + 60000) }]);
     await insertQuests([2, 3].map((sector) => ({ id: `hidden-${sector}`, name: `Hidden ${sector}`, questType: "story", maxCompletes: 10, content: {
       objectives: [AllObjectives.parse({ id: "target", task: "move_to_location", sector, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [],
@@ -27,10 +28,10 @@ describeWithDatabase("confirmed arrival profile updates", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it.each(["daily", "delivery"] as const)("retains progression reconciliation for %s objectives", async (scenario) => {
+  it.each(["daily", "delivery", "achievement"] as const)("retains progression reconciliation for %s objectives", async (scenario) => {
     const db = await getTestDatabase();
-    const questType = scenario === "daily" ? "daily" : "story";
-    const objective = AllObjectives.parse({ id: "target", task: scenario === "daily" ? "move_to_location" : "deliver_item", sector: 2, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true, deliverItemIds: ["parcel"], item_name: "Parcel" });
+    const questType = scenario === "delivery" ? "story" : scenario;
+    const objective = AllObjectives.parse({ id: "target", task: scenario === "delivery" ? "deliver_item" : "move_to_location", sector: 2, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true, deliverItemIds: ["parcel"], item_name: "Parcel" });
     await db.update(quest).set({ questType, content: { objectives: [objective], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }).where(eq(quest.id, "hidden-2"));
     await db.update(questHistory).set({ questType }).where(eq(questHistory.questId, "hidden-2"));
     await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
@@ -41,6 +42,80 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     const stored = (await db.query.userData.findFirst({ where: eq(userData.userId, userId) }))!;
     expect(stored.status).toBe("AWAKE");
     expect(stored.questData?.find((tracker) => tracker.id === "hidden-2")?.goals[0]?.done).toBe(false);
+  });
+
+  it.each([true, false])("updates a cached overworld achievement with stored history=%s", async (hasHistory) => {
+    const db = await getTestDatabase();
+    const achievementId = "overworld-achievement";
+    await insertQuests([{
+      id: achievementId,
+      name: "Explore the clearing",
+      questType: "achievement",
+      content: {
+        objectives: [AllObjectives.parse({ id: "target", task: "move_to_location", sector: 2, longitude: 8, latitude: 9, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true })],
+        reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [],
+      },
+    }]);
+    if (hasHistory) await insertQuestHistory([{ userId, questId: achievementId, questType: "achievement" }]);
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    expect(profile.userData?.userQuests.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 1337 });
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const client = new QueryClient();
+    client.setQueryData(key, { ...profile, userData: { ...profile.userData!, sector: 2 } });
+    let reads = 0;
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      staleTime: Infinity,
+      queryFn: async () => {
+        reads++;
+        return (await callerFor(profileRouter, userId)).getUser();
+      },
+    });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
+      expect(result.success).toBe(true);
+      if (hasHistory) {
+        expect(result.projectedQuestIds).toContain(achievementId);
+        expect(result.userPatch?.userQuests?.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9 });
+      } else {
+        expect(result.projectedQuestIds).not.toContain(achievementId);
+      }
+      await updateUserCache(client, key, (current) => globalTravelFinishPatch(current, result.userPatch!, result.projectedQuestIds), { revision, delta: result.userDelta });
+      expect(reads).toBe(hasHistory ? 0 : 1);
+      const cached = client.getQueryData<typeof profile>(key)?.userData;
+      expect(cached?.userQuests.find((entry) => entry.questId === achievementId)?.quest.content.objectives[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9 });
+      expect(cached?.questData?.find((tracker) => tracker.id === achievementId)?.goals[0]).toMatchObject({ sector: 2, longitude: 8, latitude: 9, done: false });
+    } finally { stop(); client.clear(); }
+  });
+
+  it("captures bloodline, active skill and title-enabled gear bonuses when arrival starts gathering", async () => {
+    const db = await getTestDatabase();
+    const gatheringObjective = AllObjectives.parse({ id: "target", task: "collect_item", sector: 2, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true, collectItemIds: ["herb"], item_name: "Herb", collect_time_minutes: 1 });
+    await db.update(quest).set({ questType: "gathering", content: { objectives: [gatheringObjective], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }).where(eq(quest.id, "hidden-2"));
+    await db.update(questHistory).set({ questType: "gathering" }).where(eq(questHistory.questId, "hidden-2"));
+    await db.insert(bloodline).values({ id: "gathering-bloodline", name: "Gatherer", image: "", description: "", rank: "C", effects: [DecreaseGatheringTime.parse({ power: 10 }), IncreaseGatheringYield.parse({ power: 2 })] });
+    await db.insert(skillTree).values([
+      { id: "gathering-skill", name: "Gathering skill", image: "", description: "", effects: [DecreaseGatheringTime.parse({ power: 15 }), IncreaseGatheringYield.parse({ power: 3 })] },
+      { id: "inactive-gathering-skill", name: "Inactive gathering skill", image: "", description: "", effects: [DecreaseGatheringTime.parse({ power: 5 }), IncreaseGatheringYield.parse({ power: 5 })] },
+    ]);
+    await db.insert(userSkill).values([
+      { id: "active-skill", userId, skillId: "gathering-skill", activated: true },
+      { id: "inactive-skill", userId, skillId: "inactive-gathering-skill", activated: false },
+    ]);
+    await db.insert(userTitle).values({ userId, titleId: "gathering-title", effects: [{ type: "increasemastery", power: 10, masteryTypes: ["Ninjutsu"] }] });
+    await insertItems([{ id: "gathering-gear", itemType: "ARMOR", slot: "CHEST", maxDurability: 100, requiredNinjutsuMastery: 110, requiredSkillId: "gathering-skill", effects: [DecreaseGatheringTime.parse({ power: 20 }), IncreaseGatheringYield.parse({ power: 4 })] }]);
+    await insertUserItems([{ id: "worn-gathering-gear", userId, itemId: "gathering-gear", equipped: "CHEST", durability: 100 }]);
+    await db.update(userData).set({ sector: 2, bloodlineId: "gathering-bloodline", ninjutsuMastery: 100, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
+    expect(result.success).toBe(true);
+    expect(result.userDelta).toEqual({});
+    const goal = result.userPatch?.questData?.find((tracker) => tracker.id === "hidden-2")?.goals[0];
+    expect(goal?.gatheringBonusQuantity).toBe(9);
+    expect(new Date(goal!.collectDeadline!).getTime() - new Date(goal!.timestamp!).getTime()).toBe(33_000);
+    const stored = await db.query.userData.findFirst({ where: eq(userData.userId, userId) });
+    expect(stored?.questData?.find((tracker) => tracker.id === "hidden-2")?.goals[0]).toMatchObject({ collectDeadline: goal?.collectDeadline, gatheringBonusQuantity: 9 });
   });
 
   it("reveals only arrival targets, persists progress and avoids a full profile read or cache refetch", async () => {

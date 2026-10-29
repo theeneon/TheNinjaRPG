@@ -38,6 +38,7 @@ import {
   getQuestTargetSectorsToCheck,
   getUserQuests,
   isAvailableUserQuests,
+  questHasOverworldObjectives,
   snapQuestTargetsToReachable,
 } from "@/libs/quest";
 import { ISOLATED_PYRAMID_MESSAGE } from "@/libs/questRun";
@@ -689,14 +690,16 @@ export const travelRouter = createTRPCRouter({
           `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
         );
       const wasTravelling = user.status === "TRAVEL";
-      const projectedQuestIds = user.userQuests
-        .filter((entry) => entry.questType !== "achievement")
-        .map((entry) => entry.questId);
+      const projectedQuests = user.userQuests.filter(
+        (entry) =>
+          entry.questType !== "achievement" ||
+          (entry.quest && questHasOverworldObjectives(entry.quest)),
+      );
+      const projectedQuestIds = projectedQuests.map((entry) => entry.questId);
       const knownIds = new Set(projectedQuestIds);
-      const visible = user.userQuests.filter(
+      const visible = projectedQuests.filter(
         (entry) =>
           entry.quest &&
-          entry.questType !== "achievement" &&
           isAvailableUserQuests({ ...entry.quest, ...entry }, user, true).check,
       );
       const arrival = {

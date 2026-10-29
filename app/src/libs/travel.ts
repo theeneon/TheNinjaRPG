@@ -134,6 +134,15 @@ export const globalTravelFinishPatch = (
   patch: UserCachePatch,
   projectedQuestIds: readonly string[] = [],
 ) => {
+  const projected = new Set(projectedQuestIds);
+  // Synthetic overworld achievements have no history row in the sparse arrival read.
+  // Reconcile their locations and passive progress through the full profile flow.
+  if (
+    current.userQuests.some(
+      (entry) => entry.questType === "achievement" && !projected.has(entry.questId),
+    )
+  )
+    return undefined;
   const replaced = new Set([
     ...current.userQuests.map((entry) => entry.questId),
     ...projectedQuestIds,
