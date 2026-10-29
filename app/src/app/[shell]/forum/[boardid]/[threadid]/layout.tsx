@@ -1,24 +1,28 @@
 import type { Metadata } from "next";
+import { getForumContext } from "@/libs/forum";
 import { buildMetadata, noindexMetadata } from "@/libs/seo";
-import { findForumBoardNameById, findForumThreadMetadata } from "@/queries/forum";
+import { fetchThread } from "@/queries/forum";
 import { drizzleDB } from "@/server/db";
 
+/** Expose only published, publicly readable topics and derive the canonical URL from their actual board. */
 export async function generateMetadata(props: {
   params: Promise<{ boardid: string; threadid: string }>;
 }): Promise<Metadata> {
   const params = await props.params;
-  // forumThread has no board relation, so both are fetched in one parallel round-trip.
-  const [thread, boardRow] = await Promise.all([
-    findForumThreadMetadata(drizzleDB, params.threadid),
-    findForumBoardNameById(drizzleDB, params.boardid),
+  const [context, thread] = await Promise.all([
+    getForumContext(drizzleDB),
+    fetchThread(drizzleDB, params.threadid),
   ]);
-  if (!thread) return noindexMetadata("Thread Not Found");
-  const board = boardRow?.name;
+  const board = context.boards.find(
+    (b) => b.id === thread?.boardId && b.permissions.read,
+  );
+  if (!thread || thread.deletedAt || !thread.isApproved || !board)
+    return noindexMetadata("Thread Not Found");
   return buildMetadata({
     title: thread.title,
     description: `${thread.title} - a discussion with ${thread.nPosts} ${
       thread.nPosts === 1 ? "post" : "posts"
-    }${board ? ` in the ${board} board` : ""} on the TheNinja-RPG community forums.`,
+    }${board ? ` in the ${board.name} board` : ""} on the TheNinja-RPG community forums.`,
     // Built from the thread's own boardId rather than the requested one. Any board id
     // resolves this route, so pairing a real thread with an unrelated board would
     // otherwise mint unlimited URLs that each declare themselves canonical.

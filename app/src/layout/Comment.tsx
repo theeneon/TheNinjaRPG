@@ -10,11 +10,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type {
-  ConversationComment,
-  ForumPost,
-  UserReportComment,
-} from "@/drizzle/schema";
+import type { ConversationComment, UserReportComment } from "@/drizzle/schema";
 import Confirm from "@/layout/Confirm";
 import EmojiPicker from "@/layout/EmojiPicker";
 import { ModerationSummary } from "@/layout/ModerationSummary";
@@ -110,80 +106,13 @@ export const CommentOnConversation: React.FC<ConversationCommentProps> = (props)
 };
 
 /**
- * Component for handling comments on forum threads
- */
-interface ForumCommentProps extends PostProps {
-  comment: ForumPost;
-  toggleReaction?: (emoji: string) => void;
-  setQuoteId?: (id: string) => void;
-  quoteIds?: string[] | null;
-  onDeleted?: (commentId: string) => void;
-}
-export const CommentOnForum: React.FC<ForumCommentProps> = (props) => {
-  const [editing, setEditing] = useState(false);
-  const utils = api.useUtils();
-  const deleteInFlightRef = useRef(false);
-
-  const editComment = api.comments.editForumComment.useMutation({
-    onSuccess: async (data) => {
-      showMutationToast(data);
-      if (data.success) {
-        await utils.comments.getForumComments.invalidate();
-        setEditing(false);
-      }
-    },
-  });
-
-  const deleteComment = api.comments.deleteForumComment.useMutation({
-    onSuccess: (data, variables) => {
-      showMutationToast(data);
-      if (data.success) {
-        // Hide the proven-deleted post synchronously. The thread owns an
-        // id-level suppression guard, so even a stale or failed refresh cannot
-        // resurrect this exact post.
-        props.onDeleted?.(variables.id);
-        setEditing(false);
-        if (!props.onDeleted) {
-          void utils.comments.getForumComments.invalidate().catch(() => undefined);
-        }
-      }
-    },
-    onError: (error) => {
-      showMutationToast({ success: false, message: error.message });
-    },
-    onSettled: () => {
-      deleteInFlightRef.current = false;
-    },
-  });
-
-  const handleDelete = (data: DeleteCommentSchema) => {
-    if (deleteInFlightRef.current || deleteComment.isPending) return;
-    deleteInFlightRef.current = true;
-    deleteComment.mutate(data);
-  };
-
-  return (
-    <BaseComment
-      {...props}
-      system="forum_comment"
-      editComment={editComment.mutate}
-      isEditPending={editComment.isPending}
-      deleteComment={handleDelete}
-      isDeletePending={deleteComment.isPending}
-      editing={editing}
-      setEditing={setEditing}
-    />
-  );
-};
-
-/**
 /**
  * Base component on which other comment components are built
  * @param props
  * @returns
  */
 interface BaseCommentProps extends PostProps {
-  comment: UserReportComment | ForumPost | ConversationComment;
+  comment: UserReportComment | ConversationComment;
   editing: boolean;
   system?: (typeof systems)[number];
   quoteIds?: string[] | null;
@@ -355,9 +284,8 @@ const BaseComment: React.FC<BaseCommentProps> = (props) => {
             {props.children}
           </div>
           <div className="absolute right-2 bottom-0 flex flex-row items-end gap-1">
-            {/* Rendered on the server for forum threads, so the server's locale and
-                timezone format it first and the browser's reformats it on hydrate.
-                Same opt-out FancyForumThreads already applies to its dates. */}
+            {/* Server and browser locale or timezone settings can format this date
+                differently during hydration. */}
             <p className="pr-2 text-gray-600 text-xs italic" suppressHydrationWarning>
               @{props.comment.createdAt.toLocaleString()}
             </p>

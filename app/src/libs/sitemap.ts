@@ -1,8 +1,8 @@
+import { getForumContext } from "@/libs/forum";
 import { absoluteUrl } from "@/libs/seo";
 import type { SitemapEntry, SitemapSection } from "@/libs/sitemapXml";
 import {
   selectBloodlineForManualEntries,
-  selectForumBoardForForumEntries,
   selectForumThreadForForumEntries,
   selectGuideArticleForGuideEntries,
   selectItemForManualEntries,
@@ -109,12 +109,15 @@ const guideEntries = async (): Promise<SitemapEntry[]> => {
   }));
 };
 
+/** Include only discussions whose entire board hierarchy permits public reading. */
 const forumEntries = async (): Promise<SitemapEntry[]> => {
   const now = new Date();
-  const [boards, threads] = await Promise.all([
-    selectForumBoardForForumEntries(drizzleDB),
+  const [context, allThreads] = await Promise.all([
+    getForumContext(drizzleDB),
     selectForumThreadForForumEntries(drizzleDB, MAX_THREADS),
   ]);
+  const boards = context.boards.filter((b) => b.permissions.read);
+  const threads = allThreads.filter((t) => boards.some((b) => b.id === t.boardId));
   return [
     ...boards.map((row) => ({
       url: absoluteUrl(`/forum/${row.id}`),

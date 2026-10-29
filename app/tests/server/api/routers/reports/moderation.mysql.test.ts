@@ -7,8 +7,9 @@ import { unflaggedModeration } from "../../../../setup/moderation";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { TERR_BOT_ID } from "@/drizzle/constants";
-import { forumPost, moderationScan, userData, userReport } from "@/drizzle/schema";
+import { automatedModeration, forumBoard, forumGrant, forumSection, forumThread, forumPost, moderationScan, userData, userReport } from "@/drizzle/schema";
 import * as moderator from "@/libs/moderator";
+import { forumRouter } from "@/routers/forum";
 import { reportsRouter } from "@/server/api/routers/reports";
 import { insertUsers } from "../../../../setup/factories";
 import { resetServerModuleStubs, stubProfile } from "../../../../setup/serverModules";
@@ -19,9 +20,12 @@ const reportInput = { system: "forum_comment" as const, system_id: "target-post"
 describeWithDatabase("moderation report evidence and dashboard", () => {
   beforeEach(async () => {
     const db = await getTestDatabase();
-    await resetTables(moderationScan, userReport, forumPost, userData);
+    await resetTables(automatedModeration, moderationScan, userReport, forumGrant, forumPost, forumThread, forumBoard, forumSection, userData);
     await insertUsers([{ userId: "reporter" }, { userId: "target" }, { userId: "staff", role: "MODERATOR" }]);
     stubProfile("fetchUser", async (_client: unknown, id: string) => db.query.userData.findFirst({ where: eq(userData.userId, id) }));
+    await db.insert(forumSection).values({ id: "section", name: "General", summary: "", policy: {} });
+    await db.insert(forumBoard).values({ id: "board", name: "Discussion", summary: "", sectionId: "section" });
+    await db.insert(forumThread).values({ id: "thread", boardId: "board", title: "Discussion", userId: "target" });
     await db.insert(forumPost).values([
       { id: "context-post", threadId: "thread", userId: "reporter", authorId: "staff", content: "Earlier conversation", createdAt: new Date(Date.now() - 60_000) },
       { id: "target-post", threadId: "thread", userId: "target", authorId: "target", content: "The actual reported message", createdAt: new Date(Date.now() - 30_000) },
@@ -58,6 +62,22 @@ describeWithDatabase("moderation report evidence and dashboard", () => {
     expect(stored?.predictedStatus).toBeNull();
     expect(stored?.predictedAt).toBeNull();
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, "target-post") }))?.isReported).toBe(true);
+  });
+
+  it("keeps automated and human forum reports in Reports rather than approvals and recovery", async () => {
+    const db = await getTestDatabase(); const gate = unflaggedModeration(); gate.results[0]!.flagged = true;
+    vi.spyOn(Moderations.prototype, "create").mockResolvedValue(gate);
+    vi.spyOn(moderator, "generateModerationDecision").mockResolvedValue({ decision: { createReport: "OFFICIAL_WARNING", reasoning: "Review this flagged message" }, aiInterpretation: "Flagged forum message" });
+    expect((await callerForDatabase(reportsRouter, "reporter", db).create(reportInput)).success).toBe(true);
+    await moderator.moderateContent(db, { userId: "target", relationId: "target-post", relationType: "forumPost", contextId: "thread", content: "The actual reported message" });
+    const reports = await db.query.userReport.findMany(); expect(reports.map(r => r.system).sort()).toEqual(["forumPost", "forum_comment"]);
+    await db.insert(forumGrant).values({ id: "scoped-reviewer", userId: "reporter", scope: "BOARD", scopeId: "board", permissions: ["moderate"], denies: [] });
+    const reviewer = callerForDatabase(forumRouter, "reporter", db);
+    expect((await reviewer.administration({ query: "" }))?.posts).toEqual([]);
+    expect((await callerForDatabase(forumRouter, "staff", db).administration({ query: "" }))?.posts).toEqual([]);
+    const staff = callerForDatabase(reportsRouter, "staff", db);
+    for (const report of reports) expect((await staff.get({ id: report.id }))?.report.id).toBe(report.id);
+    expect(await db.query.userReport.findMany()).toEqual(reports);
   });
 
   it("records gate clears and missing-provider-result failures as different scan outcomes", async () => {

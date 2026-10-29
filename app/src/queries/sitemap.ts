@@ -4,7 +4,6 @@
 import { and, desc, eq, gte, isNull } from "drizzle-orm";
 import {
   bloodline,
-  forumBoard,
   forumThread,
   guideArticle,
   item,
@@ -49,14 +48,6 @@ export const selectGuideArticleForGuideEntries = (
     .from(guideArticle)
     .where(eq(guideArticle.published, true));
 
-/** Build the `forumBoard` selection for `umBoardForForumEntries`. */
-export const selectForumBoardForForumEntries = (
-  client: Pick<DrizzleClient, "select">,
-) =>
-  client
-    .select({ id: forumBoard.id, updatedAt: forumBoard.updatedAt })
-    .from(forumBoard);
-
 /** Build the `forumThread` selection for `umThreadForForumEntries`. */
 export const selectForumThreadForForumEntries = (
   client: Pick<DrizzleClient, "select">,
@@ -69,6 +60,7 @@ export const selectForumThreadForForumEntries = (
       updatedAt: forumThread.updatedAt,
     })
     .from(forumThread)
+    .where(and(isNull(forumThread.deletedAt), eq(forumThread.isApproved, true)))
     .orderBy(desc(forumThread.updatedAt))
     .limit(MAX_THREADS);
 

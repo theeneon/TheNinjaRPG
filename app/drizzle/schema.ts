@@ -1,3 +1,4 @@
+import type { ForumPolicy, ForumCapability } from "@/validators/forum";
 import type { StoreContents } from "@/validators/points";
 import type { TitleEffect } from "@/validators/title";
 import type { MethodSize } from "@/validators/methodSize";
@@ -1339,95 +1340,156 @@ export const damageSimulation = mysqlTable(
 );
 export type DamageSimulation = InferSelectModel<typeof damageSimulation>;
 
-export const forumBoard = mysqlTable(
-  "ForumBoard",
-  {
-    id: varchar("id", { length: 191 }).primaryKey().notNull(),
-    name: varchar("name", { length: 191 }).notNull(),
-    summary: text("summary").notNull(),
-    group: varchar("group", { length: 191 }).notNull(),
-    createdAt: datetime("createdAt", { mode: "date", fsp: 3 })
-      .default(sql`(CURRENT_TIMESTAMP(3))`)
-      .notNull(),
-    updatedAt: datetime("updatedAt", { mode: "date", fsp: 3 })
-      .default(sql`(CURRENT_TIMESTAMP(3))`)
-      .notNull(),
-    nPosts: int("nPosts").default(0).notNull(),
-    nThreads: int("nThreads").default(0).notNull(),
-  },
-  (table) => {
-    return {
-      nameKey: uniqueIndex("ForumBoard_name_key").on(table.name),
-    };
-  },
-);
+/** Forum structure uses stable identifiers; display names never encode hierarchy. */
+export const forumSection = mysqlTable("ForumSection", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  name: varchar("name", { length: 191 }).notNull(),
+  summary: text("summary").notNull(),
+  position: int("position").default(0).notNull(),
+  archived: boolean("archived").default(false).notNull(),
+  policy: json("policy").$type<ForumPolicy>().default({}).notNull(),
+});
+/** A stable hierarchy node with inherited policy overrides and cached visible-topic/post totals. */
+export const forumBoard = mysqlTable("ForumBoard", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  name: varchar("name", { length: 191 }).notNull(),
+  summary: text("summary").notNull(),
+  sectionId: varchar("sectionId", { length: 191 }).notNull(),
+  parentId: varchar("parentId", { length: 191 }),
+  position: int("position").default(0).notNull(),
+  archived: boolean("archived").default(false).notNull(),
+  rules: text("rules").default("").notNull(),
+  policy: json("policy").$type<ForumPolicy>().default({}).notNull(),
+  slowModeSeconds: int("slowModeSeconds").default(0).notNull(),
+  requireApproval: boolean("requireApproval").default(false).notNull(),
+  createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+  updatedAt: datetime("updatedAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+  nPosts: int("nPosts").default(0).notNull(),
+  nThreads: int("nThreads").default(0).notNull(),
+}, (t) => ({ nameKey: uniqueIndex("ForumBoard_name_key").on(t.name), sectionIdx: index("ForumBoard_sectionId_idx").on(t.sectionId) }));
+export const forumBoardRelations = relations(forumBoard, ({ one }) => ({ section: one(forumSection, { fields: [forumBoard.sectionId], references: [forumSection.id] }) }));
 
-export const forumPost = mysqlTable(
-  "ForumPost",
-  {
-    id: varchar("id", { length: 191 }).primaryKey().notNull(),
-    content: text("content").notNull(),
-    createdAt: datetime("createdAt", { mode: "date", fsp: 3 })
-      .default(sql`(CURRENT_TIMESTAMP(3))`)
-      .notNull(),
-    userId: varchar("userId", { length: 191 }).notNull(),
-    threadId: varchar("threadId", { length: 191 }).notNull(),
-    authorId: varchar("authorId", { length: 191 }).notNull(),
-    isReported: boolean("isReported").default(false).notNull(),
-  },
-  (table) => {
-    return {
-      userIdIdx: index("ForumPost_userId_idx").on(table.userId),
-      threadIdIdx: index("ForumPost_threadId_idx").on(table.threadId),
-    };
-  },
-);
-export type ForumPost = InferSelectModel<typeof forumPost>;
-
-export const forumPostRelations = relations(forumPost, ({ one }) => ({
-  user: one(userData, {
-    fields: [forumPost.userId],
-    references: [userData.userId],
-  }),
-  thread: one(forumThread, {
-    fields: [forumPost.threadId],
-    references: [forumThread.id],
-  }),
+/** Keep authorship and moderation state separate from displayed identity; removal preserves recoverable content. */
+export const forumPost = mysqlTable("ForumPost", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  content: text("content").notNull(),
+  createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+  editedAt: datetime("editedAt", { mode: "date", fsp: 3 }),
+  deletedAt: datetime("deletedAt", { mode: "date", fsp: 3 }),
+  removedBy: varchar("removedBy", { length: 191 }),
+  removalReason: text("removalReason"),
+  isLocked: boolean("isLocked").default(false).notNull(),
+  isApproved: boolean("isApproved").default(true).notNull(),
+  /** Retain original opening identity while approval and visibility are deferred. */
+  publicationIntent: json("publicationIntent").$type<{ threadId: string; opening: boolean }>(),
+  userId: varchar("userId", { length: 191 }).notNull(),
+  threadId: varchar("threadId", { length: 191 }).notNull(),
+  authorId: varchar("authorId", { length: 191 }).notNull(),
+  isReported: boolean("isReported").default(false).notNull(),
+}, (t) => ({ userIdIdx: index("ForumPost_userId_idx").on(t.userId), threadIdIdx: index("ForumPost_threadId_idx").on(t.threadId, t.createdAt, t.id) }));
+export const forumPostRelations = relations(forumPost, ({ one, many }) => ({
+  user: one(userData, { fields: [forumPost.userId], references: [userData.userId] }),
+  thread: one(forumThread, { fields: [forumPost.threadId], references: [forumThread.id] }),
+  reactions: many(forumReaction),
 }));
-
-export const forumThread = mysqlTable(
-  "ForumThread",
-  {
-    id: varchar("id", { length: 191 }).primaryKey().notNull(),
-    title: varchar("title", { length: 191 }).notNull(),
-    image: varchar("image", { length: 512 }),
-    createdAt: datetime("createdAt", { mode: "date", fsp: 3 })
-      .default(sql`(CURRENT_TIMESTAMP(3))`)
-      .notNull(),
-    updatedAt: datetime("updatedAt", { mode: "date", fsp: 3 })
-      .default(sql`(CURRENT_TIMESTAMP(3))`)
-      .notNull(),
-    boardId: varchar("boardId", { length: 191 }).notNull(),
-    userId: varchar("userId", { length: 191 }).notNull(),
-    nPosts: int("nPosts").default(0).notNull(),
-    isPinned: boolean("isPinned").default(false).notNull(),
-    isLocked: boolean("isLocked").default(false).notNull(),
-  },
-  (table) => {
-    return {
-      boardIdIdx: index("ForumThread_boardId_idx").on(table.boardId),
-      userIdIdx: index("ForumThread_userId_idx").on(table.userId),
-    };
-  },
-);
-
+/** Store topic metadata and activity derived from visible posts; metadata edits do not advance activity. */
+export const forumThread = mysqlTable("ForumThread", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  title: varchar("title", { length: 191 }).notNull(),
+  image: varchar("image", { length: 512 }),
+  createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+  updatedAt: datetime("updatedAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+  deletedAt: datetime("deletedAt", { mode: "date", fsp: 3 }),
+  boardId: varchar("boardId", { length: 191 }).notNull(),
+  userId: varchar("userId", { length: 191 }).notNull(),
+  nPosts: int("nPosts").default(0).notNull(),
+  isPinned: boolean("isPinned").default(false).notNull(),
+  isLocked: boolean("isLocked").default(false).notNull(),
+  isApproved: boolean("isApproved").default(true).notNull(),
+  kind: mysqlEnum("kind", ["DISCUSSION", "QUESTION", "ANNOUNCEMENT"]).default("DISCUSSION").notNull(),
+  tags: json("tags").$type<string[]>().default([]).notNull(),
+  acceptedPostId: varchar("acceptedPostId", { length: 191 }),
+  lastPostId: varchar("lastPostId", { length: 191 }),
+  pollId: varchar("pollId", { length: 191 }),
+  summary: text("summary"),
+  summaryUpdatedAt: datetime("summaryUpdatedAt", { mode: "date", fsp: 3 }),
+}, (t) => ({ boardIdIdx: index("ForumThread_boardId_idx").on(t.boardId, t.updatedAt, t.id), userIdIdx: index("ForumThread_userId_idx").on(t.userId) }));
 export const forumThreadRelations = relations(forumThread, ({ one, many }) => ({
-  user: one(userData, {
-    fields: [forumThread.userId],
-    references: [userData.userId],
-  }),
+  user: one(userData, { fields: [forumThread.userId], references: [userData.userId] }),
+  board: one(forumBoard, { fields: [forumThread.boardId], references: [forumBoard.id] }),
   posts: many(forumPost),
+  readPositions: many(forumRead),
 }));
+/** One grant/deny set per account and scope; global recovery and purge are evaluated separately. */
+export const forumGrant = mysqlTable("ForumGrant", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  userId: varchar("userId", { length: 191 }).notNull(),
+  scope: mysqlEnum("scope", ["GLOBAL", "SECTION", "BOARD"]).notNull(),
+  scopeId: varchar("scopeId", { length: 191 }).notNull(),
+  permissions: json("permissions").$type<ForumCapability[]>().notNull(),
+  denies: json("denies").$type<ForumCapability[]>().notNull(),
+}, t => ({ userScopeKey: uniqueIndex("ForumGrant_user_scope_key").on(t.userId, t.scope, t.scopeId) }));
+/** Forum-only posting restriction; a null board applies globally without banning the game account. */
+export const forumRestriction = mysqlTable("ForumRestriction", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  userId: varchar("userId", { length: 191 }).notNull(),
+  boardId: varchar("boardId", { length: 191 }),
+  reason: text("reason").notNull(),
+  expiresAt: datetime("expiresAt", { mode: "date", fsp: 3 }).notNull(),
+}, t => ({ userIdx: index("ForumRestriction_userId_idx").on(t.userId) }));
+/** Account-owned resume cursor ordered by post creation time and stable ID, not the visit timestamp. */
+export const forumRead = mysqlTable("ForumRead", {
+  userId: varchar("userId", { length: 191 }).notNull(),
+  threadId: varchar("threadId", { length: 191 }).notNull(),
+  readAt: datetime("readAt", { mode: "date", fsp: 3 }).notNull(),
+  postId: varchar("postId", { length: 191 }).notNull(),
+}, t => ({ pk: primaryKey({ columns: [t.userId, t.threadId] }), threadReadIdx: index("ForumRead_thread_read_idx").on(t.threadId, t.readAt) }));
+export const forumReadRelations = relations(forumRead, ({ one }) => ({
+  thread: one(forumThread, { fields: [forumRead.threadId], references: [forumThread.id] }),
+}));
+/** Account-owned board/topic subscription; push delivery is an optional preference. */
+export const forumWatch = mysqlTable("ForumWatch", {
+  userId: varchar("userId", { length: 191 }).notNull(),
+  scope: mysqlEnum("scope", ["BOARD", "THREAD"]).notNull(),
+  scopeId: varchar("scopeId", { length: 191 }).notNull(),
+  push: boolean("push").default(false).notNull(),
+}, t => ({ pk: primaryKey({ columns: [t.userId, t.scope, t.scopeId] }) }));
+/** One notification per account/post; moves retain its read state and resolve current destination access. */
+export const forumAlert = mysqlTable("ForumAlert", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  userId: varchar("userId", { length: 191 }).notNull(),
+  threadId: varchar("threadId", { length: 191 }).notNull(),
+  postId: varchar("postId", { length: 191 }).notNull(),
+  createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+  readAt: datetime("readAt", { mode: "date", fsp: 3 }),
+}, t => ({ userPostKey: uniqueIndex("ForumAlert_user_post_key").on(t.userId, t.postId), userIdx: index("ForumAlert_user_created_idx").on(t.userId, t.createdAt), postIdx: index("ForumAlert_postId_idx").on(t.postId), threadIdx: index("ForumAlert_threadId_idx").on(t.threadId) }));
+/** Independent reaction choices keyed by account, post and reaction; toggles need no read-modify-write. */
+export const forumReaction = mysqlTable("ForumReaction", {
+  userId: varchar("userId", { length: 191 }).notNull(),
+  postId: varchar("postId", { length: 191 }).notNull(),
+  reaction: varchar("reaction", { length: 32 }).notNull(),
+}, t => ({ pk: primaryKey({ columns: [t.userId, t.postId, t.reaction] }), postIdx: index("ForumReaction_postId_idx").on(t.postId) }));
+/** Preserve the replaced post content with its editing actor and reason in the same commit as the edit. */
+export const forumRevision = mysqlTable("ForumRevision", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  postId: varchar("postId", { length: 191 }).notNull(),
+  actorId: varchar("actorId", { length: 191 }).notNull(),
+  content: text("content").notNull(),
+  reason: text("reason").notNull(),
+  createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+}, t => ({ postIdx: index("ForumRevision_postId_idx").on(t.postId) }));
+/** Append moderation/access evidence independently of content lifetime, including after permanent purge. */
+export const forumAudit = mysqlTable("ForumAudit", {
+  id: varchar("id", { length: 191 }).primaryKey().notNull(),
+  actorId: varchar("actorId", { length: 191 }).notNull(),
+  boardId: varchar("boardId", { length: 191 }),
+  action: varchar("action", { length: 64 }).notNull(),
+  targetId: varchar("targetId", { length: 191 }).notNull(),
+  reason: text("reason").notNull(),
+  before: json("before").$type<unknown>(),
+  after: json("after").$type<unknown>(),
+  createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
+}, t => ({ boardIdx: index("ForumAudit_board_created_idx").on(t.boardId, t.createdAt), targetIdx: index("ForumAudit_target_idx").on(t.targetId) }));
 
 export const historicalAvatar = mysqlTable(
   "HistoricalAvatar",
@@ -7174,3 +7236,8 @@ export const territoryWarReceipt = mysqlTable("TerritoryWarReceipt", {
   battleId: varchar("battleId", { length: 191 }).primaryKey().notNull(),
   warId: varchar("warId", { length: 191 }).notNull(),
 }, table => [index("TerritoryWarReceipt_warId_idx").on(table.warId)]);
+
+export const forumGrantRelations = relations(forumGrant, ({ one }) => ({ user: one(userData, { fields: [forumGrant.userId], references: [userData.userId] }) }));
+export const forumRestrictionRelations = relations(forumRestriction, ({ one }) => ({ user: one(userData, { fields: [forumRestriction.userId], references: [userData.userId] }) }));
+
+export const forumReactionRelations = relations(forumReaction, ({ one }) => ({ post: one(forumPost, { fields: [forumReaction.postId], references: [forumPost.id] }) }));
