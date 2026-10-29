@@ -56,9 +56,34 @@ describe("layout wheel forwarding", () => {
     }
   });
 
-  it("still forwards unhandled vertical wheel input to the document", () => {
+  it("forwards vertical wheel input the browser did not scroll", async () => {
     const view = setup();
     fireEvent.wheel(view.getByTestId("content"), { deltaY: 100 });
+    await nextFrames(3);
     expect(document.scrollingElement?.scrollTop).toBe(600);
   });
+
+  it("does not scroll again when the browser already scrolled the document", async () => {
+    const view = setup();
+    fireEvent.wheel(view.getByTestId("content"), { deltaY: 100 });
+    const page = document.scrollingElement as HTMLElement;
+    page.scrollTop = 540; // Native smooth scroll in progress.
+    await nextFrames(3);
+    expect(page.scrollTop).toBe(540);
+  });
+
+  it("combines rapid wheel input into one forwarded scroll", async () => {
+    const view = setup();
+    const content = view.getByTestId("content");
+    fireEvent.wheel(content, { deltaY: 100 });
+    fireEvent.wheel(content, { deltaY: 100 });
+    await nextFrames(3);
+    expect(document.scrollingElement?.scrollTop).toBe(700);
+  });
 });
+
+const nextFrames = async (count: number) => {
+  for (let i = 0; i < count; i++) {
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
+  }
+};

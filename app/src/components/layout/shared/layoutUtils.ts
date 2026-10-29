@@ -77,14 +77,22 @@ const normalizeWheelDeltaY = (event: React.WheelEvent<HTMLElement>) => {
   }
 };
 
+/** Wheel input waiting to learn whether the browser scrolled the document itself. */
+let pendingWheelForward: { startTop: number; deltaY: number } | null = null;
+
 /**
  * Forwards vertical wheel movement from horizontal layout containers to the page.
  *
  * The in-game content panes need horizontal overflow for wide tables and tools,
  * but those panes can trap vertical wheel events in the Codex embedded browser.
- * This handler keeps horizontal/zoom gestures untouched, allows genuinely
- * scrollable descendants to handle their own vertical scroll, and otherwise
- * applies the vertical delta to `document.scrollingElement`.
+ * This handler keeps horizontal/zoom gestures untouched and allows genuinely
+ * scrollable descendants to handle their own vertical scroll.
+ *
+ * React registers wheel listeners as passive, so the browser's own (smooth)
+ * scroll cannot be cancelled. The delta is therefore applied to
+ * `document.scrollingElement` only when the document has not moved two frames
+ * later; browsers that chain the scroll natively are left alone instead of
+ * scrolling twice. Deltas arriving while that check is pending are combined.
  */
 export const forwardVerticalWheelToDocumentScroll: React.WheelEventHandler<
   HTMLElement
@@ -112,13 +120,27 @@ export const forwardVerticalWheelToDocumentScroll: React.WheelEventHandler<
   const scrollingElement = document.scrollingElement;
   if (!scrollingElement) return;
 
-  const maxScrollTop = scrollingElement.scrollHeight - scrollingElement.clientHeight;
-  const nextScrollTop = Math.min(
-    maxScrollTop,
-    Math.max(0, scrollingElement.scrollTop + deltaY),
-  );
-  if (nextScrollTop === scrollingElement.scrollTop) return;
+  const clampScrollTop = (top: number) =>
+    Math.min(
+      scrollingElement.scrollHeight - scrollingElement.clientHeight,
+      Math.max(0, top),
+    );
+  if (
+    clampScrollTop(scrollingElement.scrollTop + deltaY) === scrollingElement.scrollTop
+  )
+    return;
 
-  event.preventDefault();
-  scrollingElement.scrollTop = nextScrollTop;
+  if (pendingWheelForward) {
+    pendingWheelForward.deltaY += deltaY;
+    return;
+  }
+  pendingWheelForward = { startTop: scrollingElement.scrollTop, deltaY };
+  window.requestAnimationFrame(() =>
+    window.requestAnimationFrame(() => {
+      const pending = pendingWheelForward;
+      pendingWheelForward = null;
+      if (!pending || scrollingElement.scrollTop !== pending.startTop) return;
+      scrollingElement.scrollTop = clampScrollTop(pending.startTop + pending.deltaY);
+    }),
+  );
 };
