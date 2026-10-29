@@ -1,6 +1,14 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
+import {
+  Ban,
+  BarChart3,
+  ChevronRight,
+  ClipboardCheck,
+  FolderTree,
+  ScrollText,
+  Users,
+} from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
@@ -75,36 +83,41 @@ export default function ForumManagement() {
         <p>You do not have permission to manage this forum.</p>
       ) : (
         <>
+          {/* Game sidebars constrain the workspace independently of the viewport. */}
           <nav
             aria-label="Staff tools"
-            className="mb-4 flex flex-wrap gap-2 border-b pb-3"
+            className="@container mb-4 flex gap-2 border-b pb-3"
           >
             {[
-              ["review", "Approvals & recovery"],
+              { key: "review", label: "Approvals", icon: ClipboardCheck },
               ...(data.data.canManage
                 ? [
-                    ["structure", "Boards"],
-                    ["staff", "Staff"],
+                    { key: "structure", label: "Boards", icon: FolderTree },
+                    { key: "staff", label: "Staff", icon: Users },
                   ]
                 : []),
               ...(data.data.canManage ||
               data.data.boards.some((b) => b.permissions.moderate)
-                ? [["restrictions", "Restrictions"]]
+                ? [{ key: "restrictions", label: "Restrictions", icon: Ban }]
                 : []),
-              ["logs", "Audit log"],
+              { key: "logs", label: "Audit log", icon: ScrollText },
               ...(data.data.canManage ||
               data.data.boards.some((b) => b.permissions.moderate)
-                ? [["analytics", "Analytics"]]
+                ? [{ key: "analytics", label: "Analytics", icon: BarChart3 }]
                 : []),
-            ].map(([key, label]) => (
+            ].map(({ key, label, icon: Icon }) => (
               <Button
                 key={key}
                 variant={tab === key ? "default" : "outline"}
                 size="sm"
+                className="h-9 w-9 shrink-0 px-0 @min-[32rem]:h-8 @min-[32rem]:w-auto @min-[32rem]:px-3"
+                aria-label={label}
+                hoverText={label}
                 aria-pressed={tab === key}
-                onClick={() => setTab(key ?? "review")}
+                onClick={() => setTab(key)}
               >
-                {label}
+                <Icon className="h-4 w-4 @min-[32rem]:hidden" aria-hidden />
+                <span className="hidden @min-[32rem]:inline">{label}</span>
               </Button>
             ))}
           </nav>

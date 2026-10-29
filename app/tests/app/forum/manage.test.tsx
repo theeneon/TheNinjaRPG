@@ -77,7 +77,7 @@ async function renderManagement(tab = "Staff") {
   })] });
   const view = render(<testApi.Provider client={trpcClient} queryClient={queryClient}><QueryClientProvider client={queryClient}><ForumManagement /></QueryClientProvider></testApi.Provider>);
   const target = await view.findByRole("button", { name: tab });
-  if (tab !== "Approvals & recovery") fireEvent.click(target);
+  if (tab !== "Approvals") fireEvent.click(target);
   return view;
 }
 
@@ -157,7 +157,7 @@ function queuedPost(id = "post", overrides: Partial<(typeof reviewPosts)[number]
 
 it("shows a compact queue without empty sections, global decision fields or unnecessary pagination", async () => {
   reviewPosts = [queuedPost()];
-  const view = await renderManagement("Approvals & recovery");
+  const view = await renderManagement("Approvals");
   expect(view.queryByRole("navigation", { name: "Approvals and recovery pages" })).toBeNull();
   expect(view.queryByRole("region", { name: "Topics awaiting approval or recovery" })).toBeNull();
   expect(view.getByRole("region", { name: "Posts awaiting approval or recovery" })).toBeTruthy();
@@ -166,12 +166,12 @@ it("shows a compact queue without empty sections, global decision fields or unne
   expect(view.queryByRole("button", { name: "Select player" })).toBeNull();
   expect(view.getByText(/Reported content is handled in Player reports/)).toBeTruthy();
   expect(view.getByRole("link", { name: "Player reports" }).getAttribute("href")).toBe("/reports");
-  expect(view.getByRole("button", { name: "Approvals & recovery" }).getAttribute("aria-pressed")).toBe("true");
+  expect(view.getByRole("button", { name: "Approvals" }).getAttribute("aria-pressed")).toBe("true");
 });
 
 it("keeps decision fields and feedback local to the opened post", async () => {
   reviewPosts = [queuedPost("first"), queuedPost("second")];
-  const view = await renderManagement("Approvals & recovery");
+  const view = await renderManagement("Approvals");
   const first = view.getByText("Review first").closest("details")!;
   const second = view.getByText("Review second").closest("details")!;
   fireEvent.click(first.querySelector("summary")!);
@@ -186,7 +186,7 @@ it("keeps decision fields and feedback local to the opened post", async () => {
 
 it.each(["APPROVE", "RESTORE", "REMOVE"])("retains the %s content action and its existing tRPC contract", async (action) => {
   reviewPosts = [queuedPost("post", action === "APPROVE" ? { isApproved: false } : action === "RESTORE" ? { deletedAt: new Date() } : {})];
-  const view = await renderManagement("Approvals & recovery");
+  const view = await renderManagement("Approvals");
   fireEvent.click(view.getByText("Review post").closest("summary")!);
   fireEvent.change(view.getByLabelText("Action"), { target: { value: action } });
   fireEvent.change(view.getByLabelText("Reason for the audit log"), { target: { value: "Forum policy decision" } });
@@ -197,7 +197,7 @@ it.each(["APPROVE", "RESTORE", "REMOVE"])("retains the %s content action and its
 it("limits approval staff to permitted actions and explains an empty queue", async () => {
   canModerate = false;
   reviewPosts = [queuedPost("post", { isApproved: false })];
-  const view = await renderManagement("Approvals & recovery");
+  const view = await renderManagement("Approvals");
   fireEvent.click(view.getByText("Review post").closest("summary")!);
   expect(view.getAllByRole("option").map((option) => option.textContent)).toEqual(["Approve post"]);
   reviewPosts = [];
@@ -208,7 +208,7 @@ it("limits approval staff to permitted actions and explains an empty queue", asy
 
 it("retains rejected decisions for retry, shows pending state and guards duplicate submissions", async () => {
   reviewPosts = [queuedPost()];
-  const view = await renderManagement("Approvals & recovery");
+  const view = await renderManagement("Approvals");
   fireEvent.click(view.getByText("Review post").closest("summary")!);
   const reason = view.getByLabelText("Reason for the audit log") as HTMLInputElement;
   const form = reason.closest("form")!;
@@ -234,7 +234,7 @@ it("retains rejected decisions for retry, shows pending state and guards duplica
 
 it("keeps paging available when there is another page or a previous page", async () => {
   hasMoreReviews = true;
-  const view = await renderManagement("Approvals & recovery");
+  const view = await renderManagement("Approvals");
   const next = view.getByRole("button", { name: "Next" });
   hasMoreReviews = false;
   fireEvent.click(next);
