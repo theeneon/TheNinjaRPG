@@ -36,6 +36,10 @@ export const serverSchema = z.object({
   DISCORD_CONTENT_UPDATES: z.url().optional(),
   DISCORD_NEWS_UPDATES: z.url().optional(),
   DISCORD_TICKETS: z.url().optional(),
+  DISCORD_EVENT_UPDATES: z.union([z.url(), z.literal("")]).optional(),
+  DISCORD_RAIDS_ROLE_ID: z.union([z.string().regex(/^\d{1,20}$/), z.literal("")]).optional(),
+  DISCORD_WARS_ROLE_ID: z.union([z.string().regex(/^\d{1,20}$/), z.literal("")]).optional(),
+  DISCORD_TERRITORY_WARS_ROLE_ID: z.union([z.string().regex(/^\d{1,20}$/), z.literal("")]).optional(),
   /**
    * Discord account linking with Linked Roles (docs/DiscordLinking.md). Stays off unless
    * DISCORD_LINKING_ENABLED is "true" and the application, bot, guild and encryption key
@@ -138,6 +142,10 @@ export const serverEnv = {
   DISCORD_CONTENT_UPDATES: process.env.DISCORD_CONTENT_UPDATES,
   DISCORD_NEWS_UPDATES: process.env.DISCORD_NEWS_UPDATES,
   DISCORD_TICKETS: process.env.DISCORD_TICKETS,
+  DISCORD_EVENT_UPDATES: process.env.DISCORD_EVENT_UPDATES,
+  DISCORD_RAIDS_ROLE_ID: process.env.DISCORD_RAIDS_ROLE_ID,
+  DISCORD_WARS_ROLE_ID: process.env.DISCORD_WARS_ROLE_ID,
+  DISCORD_TERRITORY_WARS_ROLE_ID: process.env.DISCORD_TERRITORY_WARS_ROLE_ID,
   DISCORD_LINKING_ENABLED: /** @type {"true" | "false" | undefined} */ (
     process.env.DISCORD_LINKING_ENABLED
   ),

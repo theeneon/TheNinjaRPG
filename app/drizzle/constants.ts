@@ -2276,6 +2276,8 @@ export function shrineLobbyFreshAfter(now: Date = new Date()): Date {
 export const RAID_BATTLE_MAX_USERS_PER_TEAM = 3;
 export const RAID_MAX_CONCURRENT_TEAMS = 5;
 export const RAID_BATTLE_LOBBY_SECONDS = 60;
+/** Exclusive raid windows begin when a sector shrine falls. */
+export const EXCLUSIVE_RAID_DURATION_HOURS = 24;
 export const RAID_CLAIMING_TIMEOUT_MS = 30000; // 30 seconds timeout for claiming state
 
 // Clans config
