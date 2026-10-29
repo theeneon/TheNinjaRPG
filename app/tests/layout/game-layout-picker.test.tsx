@@ -1,7 +1,6 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { useState } from "react";
-import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { useSelectGameLayout } from "@/hooks/useGameLayout";
 import { GameLayoutPicker } from "@/layout/GameLayoutPicker";
 import { LAYOUT_PREFERENCE_COOKIE } from "@/libs/layoutPreference";
@@ -10,6 +9,15 @@ import { LayoutContextProvider, useActiveLayout } from "@/utils/LayoutContext";
 import { ensureDom } from "../setup/dom.mjs";
 
 ensureDom();
+
+type PickerRouter = { refresh: ReturnType<typeof vi.fn>; push: ReturnType<typeof vi.fn>; replace: ReturnType<typeof vi.fn> };
+// Module mocks persist across suites, so this file installs its own router.
+function getRouter(): PickerRouter {
+  const globals = globalThis as typeof globalThis & { __layoutPickerRouter?: PickerRouter };
+  globals.__layoutPickerRouter ??= { refresh: vi.fn(), push: vi.fn(), replace: vi.fn() };
+  return globals.__layoutPickerRouter;
+}
+vi.mock("next/navigation", () => ({ useRouter: () => getRouter() }));
 const browserGlobals = ["Event", "CustomEvent"] as const;
 const browserDescriptors = browserGlobals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
 const scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
@@ -46,7 +54,10 @@ const openPicker = async (layout: GameLayoutId = "default") => {
 
 describe("game layout picker", () => {
   it("changes layouts in place and refreshes the router cache without navigating", async () => {
-    const router = { refresh: vi.fn(), push: vi.fn(), replace: vi.fn() };
+    const router = getRouter();
+    router.refresh.mockClear();
+    router.push.mockClear();
+    router.replace.mockClear();
     function ConnectedPicker() {
       const selectLayout = useSelectGameLayout();
       const layout = useActiveLayout();
@@ -55,11 +66,9 @@ describe("game layout picker", () => {
     function LayoutFrame() {
       const [layout, setLayout] = useState<GameLayoutId>("default");
       return (
-        <AppRouterContext.Provider value={router as never}>
-          <LayoutContextProvider value={layout} onLayoutChange={setLayout} isPixelLanding={false}>
-            <ConnectedPicker />
-          </LayoutContextProvider>
-        </AppRouterContext.Provider>
+        <LayoutContextProvider value={layout} onLayoutChange={setLayout} isPixelLanding={false}>
+          <ConnectedPicker />
+        </LayoutContextProvider>
       );
     }
     const view = render(<LayoutFrame />);
