@@ -63,19 +63,11 @@ export const RamenMenu = ({
       showMutationToast(data);
       if (!data.success) setPurchaseError(data.message);
       if (data.success && userData) {
-        await updateUser(
-          (current) => ({
-            curHealth: data.newHealth ?? current.curHealth,
-            curStamina: data.newStamina ?? current.curStamina,
-            curChakra: data.newChakra ?? current.curChakra,
-          }),
-          {
-            revision,
-            delta: Number.isInteger(data.cost ?? 0)
-              ? { money: -(data.cost ?? 0) }
-              : undefined,
-          },
-        );
+        await updateUser(data.userPatch, {
+          revision,
+          delta: data.userDelta,
+          achievementProgress: data.achievementProgress,
+        });
       }
     },
     onError: (error) => setPurchaseError(error.message),

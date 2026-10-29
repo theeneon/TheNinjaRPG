@@ -41,7 +41,7 @@ import {
   updateVillageStructureForRestoreStructurePoints,
 } from "@/queries/village";
 import { createConvo } from "@/routers/comments";
-import { fetchUpdatedUser } from "@/routers/profile";
+import { fetchUpdatedUser, getUserProgressionUpdate } from "@/routers/profile";
 import { updateRequestState } from "@/routers/sparring";
 import {
   baseServerResponse,
@@ -60,6 +60,7 @@ import { canAdministrateWars, canSwapVillage } from "@/utils/permissions";
 import { calcRamenCost, getRamenHealPercentage, ramenOptions } from "@/utils/ramen";
 import { canAccessStructure, getStrucBoost } from "@/utils/village";
 import { idSchema } from "@/validators/misc";
+import { userDeltaResponseSchema } from "@/validators/userCache";
 
 const availRequests = ["SURRENDER", "ALLIANCE"];
 
@@ -137,14 +138,7 @@ export const villageRouter = createTRPCRouter({
   buyFood: protectedProcedure
     .meta({ mcp: { description: "Buy food at ramen shop to heal" } })
     .input(z.object({ ramen: z.enum(ramenOptions), villageId: z.string().nullish() }))
-    .output(
-      baseServerResponse.extend({
-        cost: z.number().optional(),
-        newHealth: z.number().optional(),
-        newStamina: z.number().optional(),
-        newChakra: z.number().optional(),
-      }),
-    )
+    .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
       // Get structures of current (visiting) village or Sydicate if outlaw
       const updatedUser = await fetchUpdatedUser({
@@ -199,9 +193,16 @@ export const villageRouter = createTRPCRouter({
         return {
           success: true,
           message: `You have bought food and healed to ${Math.floor(newStamina)}SP and ${Math.floor(newChakra)}CP`,
-          cost,
-          newStamina,
-          newChakra,
+          ...(!updatedUser.requiresProgressionRefresh
+            ? {
+                ...getUserProgressionUpdate(
+                  { ...user, curStamina: newStamina, curChakra: newChakra },
+                  updatedUser.publishedAchievementIds,
+                ),
+                // MySQL rounds the remaining nonnegative integer balance, including half ryo.
+                userDelta: { money: Math.round(user.money - cost) - user.money },
+              }
+            : {}),
         };
       }
     }),
