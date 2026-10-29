@@ -23,6 +23,9 @@ html[data-game-layout="20-eclipse-observatory"] {
 .theme-side-panel > div > p:first-child {
   margin-bottom: 0.5rem;
 }
+html[data-game-layout="3-sakura-courtyard"] .theme-frame {
+  --theme-main-border-width: 0px;
+}
 html[data-game-layout="3-sakura-courtyard"] .theme-main {
   border: 0;
   background: transparent;
@@ -64,8 +67,8 @@ html[data-game-layout="17-obsidian-council"] :is(.theme-main, .theme-side-panel)
     inset 0 0 0 4px #1e252e,
     inset 0 0 0 5px #6d624c;
 }
-html[data-game-layout="17-obsidian-council"] .theme-main {
-  padding: 1.7rem;
+html[data-game-layout="17-obsidian-council"] .theme-frame {
+  --theme-main-padding: 1.7rem;
 }
 html[data-game-layout="17-obsidian-council"] .theme-main [data-content-box-inner] {
   border: 1px solid #766b53;
@@ -96,6 +99,7 @@ html[data-game-layout="20-eclipse-observatory"] .tnr-theme-game {
 }
 /* Keep compact spacing proportional to the player's chosen font scale. */
 html[data-game-layout="20-eclipse-observatory"] .theme-frame {
+  --theme-main-padding: 0.75rem;
   gap: 0.65rem;
   padding-top: 0.5rem;
 }
@@ -117,7 +121,6 @@ html[data-game-layout="20-eclipse-observatory"] .theme-help > .absolute {
 html[data-game-layout="20-eclipse-observatory"] .theme-main {
   /* Short pages fit their content instead of reserving an empty viewport. */
   min-height: 0;
-  padding: 0.75rem;
   border: 1px solid #8e7db2;
   border-radius: 28px 3px 28px 3px;
   background: #252440;
