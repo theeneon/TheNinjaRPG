@@ -255,7 +255,7 @@ import {
   findRequiredSkillTreeEntry,
 } from "@/queries/skillTree";
 import { fetchStructures } from "@/queries/village";
-import { fetchUpdatedUser } from "@/routers/profile";
+import { fetchUpdatedUser, getUserProgressionUpdate } from "@/routers/profile";
 import {
   baseServerResponse,
   createTRPCRouter,
@@ -327,6 +327,7 @@ import { idSchema } from "@/validators/misc";
 import {
   ObjectiveReward,
   type ObjectiveRewardType,
+  PostProcessedRewardSchema,
   type PostProcessedRewards,
 } from "@/validators/rewards";
 import { userDeltaResponseSchema } from "@/validators/userCache";
@@ -1848,6 +1849,13 @@ export const itemRouter = createTRPCRouter({
   consume: protectedProcedure
     .meta({ mcp: { description: "Consume a consumable item" } })
     .input(consumeItemInputSchema)
+    .output(
+      userDeltaResponseSchema.extend({
+        rewards: PostProcessedRewardSchema.nullish(),
+        cacheRewards: cacheConsumptionResponseSchema.shape.cacheRewards.optional(),
+        petRewards: cacheConsumptionResponseSchema.shape.petRewards,
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       const receiptId = input.requestId
         ? cacheReceiptId(ctx.userId, input.requestId)
@@ -1886,12 +1894,25 @@ export const itemRouter = createTRPCRouter({
       if (!useritem) return errorResponse("User item not found");
       if (useritem.userId !== user.userId) return errorResponse("Not yours to consume");
       if (useritem.item.itemType === "MEAL") {
-        return consumeMeal({
+        const result = await consumeMeal({
           client: ctx.drizzle,
           user,
           owned: useritem,
           expectedQuantity: input.expectedQuantity,
         });
+        if (!("userPatch" in result)) return result;
+        const { userPatch, ...response } = result;
+        if (updatedUser.requiresProgressionRefresh !== false) return response;
+        const progression = getUserProgressionUpdate(
+          user,
+          updatedUser.publishedAchievementIds,
+        );
+        return {
+          ...response,
+          ...progression,
+          userPatch: { ...progression.userPatch, ...userPatch },
+          userDelta: {},
+        };
       }
       if (useritem.isInAuction) {
         return errorResponse("Cannot consume an item listed in an auction");
@@ -2468,6 +2489,30 @@ export const itemRouter = createTRPCRouter({
           grantedRewards.reward_badges = badges.map((i) => i.name);
           grantedRewards.reward_titles = titles.map((i) => i.name);
         }
+        // A plain consumable changes only the claimed scalar fields and its equipped stack.
+        // Grants that select content or reward relations retain profile reconciliation.
+        const canProject =
+          updatedUser.requiresProgressionRefresh === false &&
+          !grantedRewards &&
+          !petReward &&
+          !grantedQuest &&
+          changedBloodlineId === undefined &&
+          !grantedSageModeId;
+        const projection = canProject
+          ? getUserProgressionUpdate(
+              {
+                ...user,
+                ...updates,
+                curHealth: Math.round(updates.curHealth),
+                curStamina: Math.round(updates.curStamina),
+                curChakra: Math.round(updates.curChakra),
+              },
+              updatedUser.publishedAchievementIds,
+            )
+          : undefined;
+        // The joined account update advances its stamp in SQL; keep the cache's stamp
+        // until a response carries that exact bound value.
+        const { updatedAt: _updatedAt, ...userPatch } = projection?.userPatch ?? {};
         // Return
         return {
           success: true as const,
@@ -2477,6 +2522,25 @@ export const itemRouter = createTRPCRouter({
           notifications: messages,
           rewards: grantedRewards,
           cacheRewards,
+          ...(projection
+            ? {
+                ...projection,
+                userDelta: {},
+                userPatch: {
+                  ...userPatch,
+                  items: user.items.flatMap((entry) =>
+                    entry.id !== useritem.id
+                      ? [entry]
+                      : useritem.quantity > 1
+                        ? [{ ...entry, quantity: useritem.quantity - 1 }]
+                        : [],
+                  ),
+                  marriageSlots: Math.round(updates.marriageSlots),
+                  extraReskinSlots: Math.round(updates.extraReskinSlots),
+                  extraJutsuSlots: user.extraJutsuSlots + jutsuSlotIncrease,
+                },
+              }
+            : {}),
           ...(petReward
             ? {
                 petRewards: [

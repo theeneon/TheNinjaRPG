@@ -1,5 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
-import type { Item, UserData, UserItem, UserRaidBuff } from "@/drizzle/schema";
+import type {
+  Item,
+  UserData,
+  UserItem,
+  UserRaidBuff,
+  UserTitle,
+} from "@/drizzle/schema";
+import { getTimedRegeneration } from "@/libs/timedBuffs";
+import { regenerationBuffs } from "@/libs/titles";
 import {
   deleteEmptyUserItem,
   deleteUserCookingJobForSettleCookingExperience,
@@ -8,6 +16,7 @@ import {
   insertUserRaidBuffForConsumeMeal,
 } from "@/queries/item";
 import type { DrizzleClient } from "@/server/db";
+import { getNextUserSnapshotAt } from "@/server/utils/concurrency";
 import { retryOnDeadlock } from "@/server/utils/mysqlErrors";
 
 /**
@@ -69,7 +78,11 @@ export const consumeMeal = async ({
   expectedQuantity,
 }: {
   client: DrizzleClient;
-  user: UserData & { raidBuffs?: UserRaidBuff[] };
+  user: UserData & {
+    raidBuffs?: UserRaidBuff[];
+    titles?: UserTitle[];
+    regenerationWithoutTimedBuffs?: number;
+  };
   owned: UserItem & { item: Item };
   expectedQuantity?: number;
 }) => {
@@ -141,9 +154,29 @@ export const consumeMeal = async ({
       });
     }
   }
+  const raidBuffs = [
+    ...(user.raidBuffs ?? []).filter((buff) => buff.id !== id),
+    {
+      id,
+      userId: user.userId,
+      itemId: owned.itemId,
+      questId: null,
+      effects: owned.item.effects,
+      expiresAt,
+      createdAt: extendsMeal ? previous.createdAt : now,
+    },
+  ];
   return {
     success: true,
     message: `Ate ${owned.item.name}. ${extendsMeal ? "Extended" : "Applied"} its meal effect.`,
-    userRefresh: true,
+    userPatch: {
+      updatedAt: getNextUserSnapshotAt(user.updatedAt, now),
+      raidBuffs,
+      regeneration: getTimedRegeneration(
+        user.regenerationWithoutTimedBuffs ?? user.regeneration,
+        regenerationBuffs({ ...user, raidBuffs }),
+        now,
+      ),
+    },
   };
 };

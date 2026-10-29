@@ -658,11 +658,12 @@ function Travel() {
     });
 
   const { mutate: consume, isPending: isConsuming } = api.item.consume.useMutation({
-    onSuccess: async (data, variables) => {
+    onMutate: prepareUserUpdate,
+    onSuccess: async (data, variables, revision) => {
       finishItemConsumeRequest(userData?.userId ?? "", variables.userItemId);
       if (data.success && "rewards" in data && data.rewards) {
         showRewardToast(
-          data.notifications,
+          data.notifications ?? [],
           data.rewards,
           data.message,
           false,
@@ -677,7 +678,11 @@ function Travel() {
       if (data.success) {
         // The action is complete; keep reconciliation off the dialog's pending path.
         void Promise.allSettled([
-          utils.profile.getUser.invalidate(),
+          updateUser(data.userPatch, {
+            revision,
+            delta: data.userDelta,
+            achievementProgress: data.achievementProgress,
+          }),
           utils.item.getUserItems.invalidate(),
           utils.bloodline.getItemRolls.invalidate(),
           utils.raids.getUserRaidBuffs.invalidate(),

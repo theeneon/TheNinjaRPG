@@ -395,7 +395,7 @@ describeWithDatabase("Cooking production and consumption", () => {
     const failure = new Error("Empty stack cleanup failed");
     const client = beforeStatements(db, userItem, [async () => {}, async () => { throw failure; }]);
     const warning = vi.spyOn(Sentry, "captureException").mockReturnValue("warning-event");
-    expect(await consumeMeal({ ...snapshot, client })).toMatchObject({ success: true, userRefresh: true });
+    expect(await consumeMeal({ ...snapshot, client })).toMatchObject({ success: true, userPatch: { raidBuffs: expect.any(Array) } });
     expect((await db.query.userItem.findFirst({ where: eq(userItem.id, "edible") }))?.quantity).toBe(0);
     const buff = (await db.query.userRaidBuff.findMany())[0]!;
     expect(buff.effects).toEqual(snapshot.owned.item.effects);
