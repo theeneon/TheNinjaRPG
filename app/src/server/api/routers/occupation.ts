@@ -362,7 +362,7 @@ export const occupationRouter = createTRPCRouter({
       // craft CAS below) — NOT from the quest-reward EXP path
       // (quest.ts:367-377), which must stay experience-only to avoid double-counting.
       const previouslyDoneGoals = new Set(
-        user.questData.flatMap((tracker) =>
+        (user.questData ?? []).flatMap((tracker) =>
           tracker.goals
             .filter((goal) => goal.done)
             .map((goal) => `${tracker.id}:${goal.id}`),
@@ -370,7 +370,7 @@ export const occupationRouter = createTRPCRouter({
       );
       // Waiting crafts have not earned their production progress yet.
       const { trackers, consequences } = isQueued
-        ? { trackers: user.questData, consequences: [] }
+        ? { trackers: user.questData ?? [], consequences: [] }
         : getNewTrackers(
             user,
             isMeal

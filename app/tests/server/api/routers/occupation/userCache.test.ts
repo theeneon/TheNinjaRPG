@@ -50,7 +50,7 @@ describeWithDatabase("crafting user cache quest progress", () => {
       await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
       const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
       expect(cached.questData).toEqual(saved.questData);
-      expect(cached.questData.find((tracker) => tracker.id === "craft-goal")?.goals[0]).toMatchObject({ value: scenario === "queued" ? 0 : 1, done: scenario !== "queued" });
+      expect(cached.questData?.find((tracker) => tracker.id === "craft-goal")?.goals[0]).toMatchObject({ value: scenario === "queued" ? 0 : 1, done: scenario !== "queued" });
       expect(cached.craftingExperience).toBe(saved.craftingExperience);
       expect(reads).toBe(0);
     } finally { stop(); client.clear(); }
