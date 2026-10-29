@@ -855,6 +855,13 @@
       "when": 1793095559454,
       "tag": "0122_woozy_valkyrie",
       "breakpoints": false
+    },
+    {
+      "idx": 123,
+      "version": "5",
+      "when": 1793257037373,
+      "tag": "0123_pet_skill_targets",
+      "breakpoints": false
     }
   ]
 }

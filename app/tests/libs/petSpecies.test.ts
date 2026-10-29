@@ -10,7 +10,7 @@ const species = { name: "Mist fox", description: "A fox with silver ears.", rari
 
 describe("authored companion species contracts", () => {
   it("defaults optional behavior without changing the author's species identity", () => {
-    expect(PetSpeciesValidator.parse(species)).toEqual({ ...species, artDirection: null, rankConcepts: [], preferredDamageElement: null, role: "ASSAULT", defaultJutsuIds: [], aiRules: [], includeDefaultRules: true, effects: [], skillTarget: "SELF" });
+    expect(PetSpeciesValidator.parse(species)).toEqual({ ...species, artDirection: null, rankConcepts: [], preferredDamageElement: null, role: "ASSAULT", defaultJutsuIds: [], aiRules: [], includeDefaultRules: true, effects: [] });
   });
 
   it("bounds art direction and per-rank concepts, storing blanks as defaults", () => {
@@ -50,12 +50,20 @@ describe("authored companion species contracts", () => {
       expect(PetSpeciesValidator.safeParse({ ...species, effects: [effect] }).success).toBe(true);
     }
     expect(PetSpeciesValidator.safeParse({ ...species, effects: [IncreaseStatTag.parse({ target: "COORDINATES" })] }).success).toBe(false);
-    expect(PetSpeciesValidator.safeParse({ ...species, skillTarget: "ALLIES" }).success).toBe(false);
+    expect(PetSpeciesValidator.safeParse({ ...species, effects: [{ ...IncreaseStatTag.parse({}), skillTarget: "ALLIES" }] }).success).toBe(false);
+  });
+
+  it("keeps independently selected targets through validation", () => {
+    const effects = [
+      { ...IncreaseStatTag.parse({}), skillTarget: "SELF" as const },
+      { ...IncreaseStatTag.parse({}), skillTarget: "ENEMIES" as const },
+    ];
+    expect(PetSpeciesValidator.parse({ ...species, effects }).effects).toEqual(effects);
   });
 
   it.each(["SELF", "ENEMIES"] as const)("rejects barriers and movement without an empty-ground destination in %s species skills", (skillTarget) => {
     for (const effect of [BarrierTag.parse({ staticAssetPath: "barrier" }), MoveTag.parse({})]) {
-      const parsed = PetSpeciesValidator.safeParse({ ...species, skillTarget, effects: [effect] });
+      const parsed = PetSpeciesValidator.safeParse({ ...species, effects: [{ ...effect, skillTarget }] });
       expect(parsed.success).toBe(false);
       if (!parsed.success) expect(parsed.error.issues).toContainEqual(expect.objectContaining({
         path: ["effects", 0, "type"],

@@ -853,21 +853,27 @@ export function PetProfile() {
               Species skills · {pet.species.effects.length}{" "}
               {pet.species.effects.length === 1 ? "tag" : "tags"}
             </summary>
-            <div className="mt-2">
-              <ItemWithEffects
-                hideDates
-                item={{
-                  id: `species:${pet.species.id}`,
-                  name: `${pet.species.name} skills`,
-                  description:
-                    pet.species.skillTarget === "ENEMIES"
-                      ? "Triggers on enemies reached by the companion's or owner's accepted actions in eligible battles."
-                      : "Applies to the companion and its owner while the companion participates in an eligible battle.",
-                  effects: pet.species.effects,
-                  createdAt: pet.species.createdAt,
-                  updatedAt: pet.species.updatedAt,
-                }}
-              />
+            <div className="mt-2 space-y-2">
+              <p>
+                Applies once at battle start when this companion participates in an
+                eligible battle.
+              </p>
+              {pet.species.effects.map((effect, index) => (
+                <ItemWithEffects
+                  key={`${effect.type}-${index}`}
+                  hideDates
+                  hideImage
+                  hideData
+                  item={{
+                    id: `species:${pet.species!.id}:${index}`,
+                    name: `Tag ${index + 1} · ${effect.skillTarget === "ENEMIES" ? "Enemies" : "Companion and owner"}`,
+                    description: "",
+                    effects: [effect],
+                    createdAt: pet.species!.createdAt,
+                    updatedAt: pet.species!.updatedAt,
+                  }}
+                />
+              ))}
             </div>
           </details>
         )}

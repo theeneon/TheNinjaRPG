@@ -14,7 +14,7 @@ import { processUsersForBattle } from "@/server/api/routers/combat";
 import type { DrizzleClient } from "@/server/db";
 import { makeBattleUser, makeBattleUserItem, makeCompleteBattle, makeEffect } from "./helpers/battleScenario";
 import { AiRule } from "@/validators/ai";
-import { BarrierTag, CloneTag, DamageTag, IncreaseMaxPoolsTag, InjectJutsusTag, MoveTag, PoisonTag, ShieldTag, SummonTag, VisualTag } from "@/validators/combat";
+import { BarrierTag, CloneTag, DamageTag, IncreaseMaxPoolsTag, InjectJutsusTag, IncreaseStatTag, DecreaseStatTag, MoveTag, PoisonTag, ShieldTag, SummonTag, VisualTag } from "@/validators/combat";
 import { updatePetAiSchema } from "@/validators/pets";
 import { ownedPetSkill, petJutsuFixture, petSkillFixture } from "../pets/helpers/abilities";
 import { petSpeciesFixture } from "../pets/helpers/species";
@@ -428,23 +428,68 @@ describe("owned pets in combat", () => {
     expect(battle.usersEffects.some((effect) => effect.targetId === "ally")).toBe(false);
   });
 
-  it("uses frozen enemy bonuses on accepted attacks by both owner and pet", () => {
+  it("applies mixed innate targets once at initiation and never attaches them to actions", () => {
     const battle = scenario();
     battle.usersState[1]!.longitude = 4;
-    const species = petSpeciesFixture({ skillTarget: "ENEMIES", effects: [DamageTag.parse({ power: 20, rounds: 3 })] });
+    battle.usersState.push(
+      makeBattleUser("ally", { direction: "left", longitude: 1, latitude: 1 }),
+      makeBattleUser("enemy-two", { direction: "right", longitude: 8, latitude: 1 }),
+      makeBattleUser("template", { direction: "right", isSummonTemplate: true, curHealth: 0 }),
+      makeBattleUser("defeated", { direction: "right", curHealth: 0 }),
+      makeBattleUser("fled", { direction: "right", fledBattle: true }),
+    );
+    const species = petSpeciesFixture({ effects: [
+      { ...IncreaseStatTag.parse({ generalTypes: ["Strength"], power: 30 }), skillTarget: "SELF" },
+      { ...DecreaseStatTag.parse({ generalTypes: ["Strength"], power: 25 }), skillTarget: "ENEMIES" },
+    ] });
     add(battle, [petFixture({ species })]);
     const actor = battle.usersState.find((user) => user.petId)!;
-    Object.assign(species.effects[0]!, { power: 999 });
+    const passives = battle.usersEffects.filter((effect) => effect.fromType === "skill");
+    expect(passives).toHaveLength(4);
+    expect(passives.filter((effect) => effect.type === "increasestat").map((effect) => effect.targetId))
+      .toEqual(["owner", actor.userId]);
+    expect(passives.filter((effect) => effect.type === "decreasestat").map((effect) => effect.targetId))
+      .toEqual(["enemy", "enemy-two"]);
+    expect(passives.every((effect) => !effect.isNew && !effect.castThisRound)).toBe(true);
+    expect(battle.extraState.enemySkills ?? {}).toEqual({});
+    expect(actor.enemySkillIds ?? []).toEqual([]);
+    Object.assign(species.effects[1]!, { power: 999 });
+    expect(passives.filter((effect) => effect.type === "decreasestat").every((effect) => effect.power === 25)).toBe(true);
     const action = { id: "basicAttack", name: "Attack", type: "basic", target: "OTHER_USER", method: "SINGLE", range: 5,
       battleDescription: "", healthCost: 0, chakraCost: 0, staminaCost: 0, actionCostPerc: 10,
       cooldown: 0, originalCooldown: 0, level: 1, effects: [DamageTag.parse({ power: 10 })] } as CombatAction;
-    for (const actorId of ["owner", actor.userId]) {
-      expect(insertAction({ battle, grid: getBattleGrid(20, battle as unknown as ReturnedBattle), action, actorId, longitude: 4, latitude: 3 })).toBe(true);
+    for (const actorId of ["owner", actor.userId, "owner", actor.userId]) {
+      expect(insertAction({ battle, grid: getBattleGrid(20, battle), action, actorId, longitude: 4, latitude: 3 })).toBe(true);
     }
-    const bonuses = battle.usersEffects.filter((effect) => effect.fromType === "skill");
-    expect(bonuses).toHaveLength(2);
-    expect(bonuses.map((effect) => effect.creatorId)).toEqual(["owner", actor.userId]);
-    expect(bonuses.every((effect) => effect.targetId === "enemy" && "power" in effect && effect.power === 20)).toBe(true);
+    expect(battle.usersEffects.filter((effect) => effect.fromType === "skill")).toEqual(passives);
+    const resolved = applyEffects(battle, "owner");
+    expect(resolved.actionEffects.some((effect) => /Strength.*(increased|decreased)/.test(effect.txt))).toBe(false);
+    expect(battle.usersState.find((user) => user.userId === "enemy")!.strength).toBeLessThan(
+      resolved.newBattle.usersState.find((user) => user.userId === "enemy")!.strength,
+    );
+  });
+
+  it.each(["SELF", "ENEMIES"] as const)("respects friendly-fire filters for %s innate passives", (skillTarget) => {
+    const battle = scenario();
+    const matching = skillTarget === "SELF" ? "FRIENDLY" : "ENEMIES";
+    const blocked = skillTarget === "SELF" ? "ENEMIES" : "FRIENDLY";
+    add(battle, [petFixture({ species: petSpeciesFixture({ effects: [
+      { ...IncreaseStatTag.parse({ power: 20, friendlyFire: matching }), skillTarget },
+      { ...IncreaseStatTag.parse({ power: 99, friendlyFire: blocked }), skillTarget },
+    ] }) })]);
+    expect(battle.usersEffects).toHaveLength(skillTarget === "SELF" ? 2 : 1);
+    expect(battle.usersEffects.every((effect) => effect.power === 20)).toBe(true);
+  });
+
+  it.each([false, true])("includes opposing companions independent of pet preload order (reversed=%s)", (reverse) => {
+    const battle = scenario();
+    Object.assign(battle.usersState[1]!, { isAi: false, activePetId: "enemy-pet" });
+    const pets = [petFixture({ species: petSpeciesFixture({ effects: [
+      { ...DecreaseStatTag.parse({}), skillTarget: "ENEMIES" },
+    ] }) }), petFixture({ id: "enemy-pet", userId: "enemy" })];
+    add(battle, reverse ? pets.reverse() : pets);
+    const enemyPet = battle.usersState.find((user) => user.petId === "enemy-pet")!;
+    expect(battle.usersEffects.map((effect) => effect.targetId)).toEqual(["enemy", enemyPet.userId]);
   });
 
   it.each([MoveTag.parse({}), SummonTag.parse({ aiId: "summoned-ai" }), CloneTag.parse({}), VisualTag.parse({})])("queues innate $type effects on the owner's and companion's cells", (effect) => {
@@ -489,7 +534,7 @@ describe("owned pets in combat", () => {
       battle.groundEffects.push({ ...makeEffect("barrier", BarrierTag.parse({ staticAssetPath: "barrier" }), {
         creatorId: "enemy", longitude: 3, latitude: 2, rounds: 3,
       }) });
-      add(battle, [petFixture({ species: petSpeciesFixture({ skillTarget, effects: [tag, tag] }) })]);
+      add(battle, [petFixture({ species: petSpeciesFixture({ effects: [tag, tag].map(effect => ({ ...effect, skillTarget })) }) })]);
       const pet = battle.usersState.find((user) => user.petId)!;
       if (skillTarget === "ENEMIES") {
         for (const actorId of ["owner", pet.userId]) {
@@ -500,7 +545,7 @@ describe("owned pets in combat", () => {
       }
       const resolved = applyEffects(battle, "owner").newBattle;
       const spawned = resolved.usersState.filter((user) => isClone(user) || user.summonSourceId === "summoned-ai");
-      expect(spawned).toHaveLength(tag.type === "clone" ? 4 : 2);
+      expect(spawned).toHaveLength(skillTarget === "SELF" ? tag.type === "clone" ? 4 : 2 : tag.type === "clone" ? 2 : 1);
       const living = resolved.usersState.filter((user) => user.curHealth > 0);
       expect(new Set(living.map((user) => `${user.longitude},${user.latitude}`)).size).toBe(living.length);
       expect(spawned.some((user) => user.longitude === 3 && user.latitude === 2)).toBe(false);
@@ -529,7 +574,7 @@ describe("owned pets in combat", () => {
   it.each(["SELF", "ENEMIES"] as const)("keeps enemies targetable when a saved %s innate skill contains movement", (skillTarget) => {
     const battle = scenario();
     battle.usersState[1]!.longitude = 4;
-    add(battle, [petFixture({ species: petSpeciesFixture({ skillTarget, effects: [MoveTag.parse({})] }) })]);
+    add(battle, [petFixture({ species: petSpeciesFixture({ effects: [{ ...MoveTag.parse({}), skillTarget }] }) })]);
     battle.usersState[0]!.latitude = 4;
     const action = availableUserActions(battle, "owner").find((action) => action.id === "basicAttack")!;
     action.actionCostPerc = 10;
@@ -554,12 +599,12 @@ describe("owned pets in combat", () => {
     if (action) expect(insertAction({ battle, grid: getBattleGrid(20, battle), action, actorId: actor.userId, longitude: 4, latitude: 3 })).toBe(true);
   });
 
-  it("keeps clones from recursively triggering innate clone tags while preserving their other passives", () => {
+  it("does not let clones recast their companion's innate passives", () => {
     const battle = scenario();
     battle.usersState[1]!.longitude = 4;
     battle.extraState.aiProfiles.Default = { id: "Default", userId: "owner", includeDefaultRules: false,
       rules: [AiRule.parse({ conditions: [], action: { type: "use_highest_power_action", effect: "damage", target: "CLOSEST_OPPONENT" } })] };
-    add(battle, [petFixture({ species: petSpeciesFixture({ skillTarget: "ENEMIES", effects: [CloneTag.parse({ power: 100 }), PoisonTag.parse({ power: 1, rounds: 3 })] }) })]);
+    add(battle, [petFixture({ species: petSpeciesFixture({ effects: [CloneTag.parse({ power: 100 }), PoisonTag.parse({ power: 1, rounds: 3 })].map(effect => ({ ...effect, skillTarget: "ENEMIES" })) }) })]);
     const action = availableUserActions(battle, "owner").find((action) => action.id === "basicAttack")!;
     expect(insertAction({ battle, grid: getBattleGrid(20, battle), action, actorId: "owner", longitude: 4, latitude: 3 })).toBe(true);
     const resolved = applyEffects(battle, "owner").newBattle;
@@ -570,7 +615,7 @@ describe("owned pets in combat", () => {
     const result = performAIaction(resolved, getBattleGrid(20, resolved), clone.userId);
     expect(result.nextActionId).toBe("basicAttack");
     expect(result.nextBattle.usersState.filter(isClone)).toHaveLength(1);
-    expect(result.nextBattle.usersEffects.some((effect) => effect.type === "poison" && effect.creatorId === clone.userId)).toBe(true);
+    expect(result.nextBattle.usersEffects.some((effect) => effect.type === "poison" && effect.creatorId === clone.userId)).toBe(false);
   });
 
   it.each(["SELF", "ENEMIES"] as const)("preloads species summons and returns %s effects from battle initiation", async (skillTarget) => {
@@ -584,8 +629,8 @@ describe("owned pets in combat", () => {
       users: [participant("owner", false)], battleType: "QUEST", leftSideUserIds: ["owner"],
       hide: false, isSummon: false, width: 13, height: 9, settings: [], relations: [], wars: [], villages: [],
       defaultProfile: { id: "Default" } as AiProfile,
-      petPreload: { pets: [petFixture({ species: petSpeciesFixture({ skillTarget,
-        effects: [SummonTag.parse({ aiId: "summoned-ai" })],
+      petPreload: { pets: [petFixture({ species: petSpeciesFixture({
+        effects: [{ ...SummonTag.parse({ aiId: "summoned-ai" }), skillTarget }],
       }) })] },
     });
     expect(findMany).toHaveBeenCalledTimes(1);
@@ -594,8 +639,7 @@ describe("owned pets in combat", () => {
     expect(processed.groundEffects).toHaveLength(skillTarget === "SELF" ? 2 : 0);
     expect(processed.userEffects.some((effect) => effect.type === "summon")).toBe(false);
     if (skillTarget === "ENEMIES") {
-      expect(processed.extraState.enemySkills?.["pet:pet-1:species"])
-        .toMatchObject([{ type: "summon", aiId: "summoned-ai" }]);
+      expect(processed.extraState.enemySkills ?? {}).toEqual({});
     }
   });
 

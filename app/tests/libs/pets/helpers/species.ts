@@ -88,6 +88,6 @@ export const initialPetSpecies: (PetSpeciesOption & Pick<PetSpecies, "artDirecti
 /** Complete authored species for loadout, grant and battle tests. */
 export const petSpeciesFixture = (patch: Partial<PetSpecies> = {}): PetSpecies => ({
   ...initialPetSpecies[0]!, rarity: "COMMON", role: "ASSAULT", preferredDamageElement: null, defaultJutsuIds: [],
-  aiRules: [], includeDefaultRules: true, effects: [], skillTarget: "SELF",
+  aiRules: [], includeDefaultRules: true, effects: [],
   createdAt: new Date(0), updatedAt: new Date(0), ...patch,
 });
