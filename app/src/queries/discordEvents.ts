@@ -3,6 +3,7 @@ import {
   eq,
   getTableColumns,
   gte,
+  inArray,
   isNull,
   like,
   lt,
@@ -10,8 +11,14 @@ import {
   type SQL,
   sql,
 } from "drizzle-orm";
-import { gameSetting, quest, territoryWar, war } from "@/drizzle/schema";
-import type { DiscordEventCategory } from "@/libs/discordEvents";
+import {
+  discordEventDelivery,
+  gameSetting,
+  quest,
+  territoryWar,
+  war,
+} from "@/drizzle/schema";
+import type { DiscordEvent, DiscordEventCategory } from "@/libs/discordEvents";
 import type { DrizzleClient } from "@/server/db";
 
 export const DISCORD_EVENT_PREFIX = "discord-event:";
@@ -35,28 +42,30 @@ export const initializeDiscordEvents = (
       })),
     );
 
-/** Retain activation, pending and live-event starts; terminal history stays out of minute polling. */
-export const listDiscordEventMarkers = (client: DrizzleClient, now: Date) =>
+export const listDiscordEventMarkers = (client: DrizzleClient) =>
   client
     .select()
     .from(gameSetting)
+    .where(like(gameSetting.id, `${DISCORD_EVENT_PREFIX}%:enabled`));
+
+/** Retain pending and live-event starts; terminal history stays out of minute polling. */
+export const listDiscordEventReceipts = (client: DrizzleClient, now: Date) =>
+  client
+    .select({ id: discordEventDelivery.id, delivered: discordEventDelivery.delivered })
+    .from(discordEventDelivery)
     .where(
-      and(
-        like(gameSetting.id, `${DISCORD_EVENT_PREFIX}%`),
-        or(
-          eq(gameSetting.value, 0),
-          gte(gameSetting.time, new Date(now.getTime() - 86_400_000)),
-          like(gameSetting.id, "%:enabled"),
-          and(
-            like(gameSetting.id, "%:start"),
-            sql`NOT EXISTS (SELECT 1 FROM GameSetting finished WHERE finished.id = CONCAT(LEFT(${gameSetting.id}, LENGTH(${gameSetting.id}) - 5), 'end') AND finished.value = 1)`,
-          ),
+      or(
+        eq(discordEventDelivery.delivered, false),
+        gte(discordEventDelivery.createdAt, new Date(now.getTime() - 86_400_000)),
+        and(
+          like(discordEventDelivery.id, "%:start"),
+          sql`NOT EXISTS (SELECT 1 FROM DiscordEventDelivery finished WHERE finished.id = CONCAT(LEFT(${discordEventDelivery.id}, LENGTH(${discordEventDelivery.id}) - 5), 'end') AND finished.delivered = true)`,
         ),
       ),
     );
 
 const undeliveredEnd = (category: DiscordEventCategory, identity: SQL) =>
-  sql`NOT EXISTS (SELECT 1 FROM GameSetting finished WHERE finished.id = CONCAT(${`${DISCORD_EVENT_PREFIX}${category}:`}, SHA2(${identity}, 256), ':end') AND finished.value = 1)`;
+  sql`NOT EXISTS (SELECT 1 FROM DiscordEventDelivery finished WHERE finished.id = CONCAT(${`${category}:`}, SHA2(${identity}, 256), ':end') AND finished.delivered = true)`;
 
 export const listDiscordRaids = (client: DrizzleClient) =>
   client.query.quest.findMany({
@@ -66,6 +75,7 @@ export const listDiscordRaids = (client: DrizzleClient) =>
       createdAt: true,
       hidden: true,
       raidBossCurrentHealth: true,
+      raidStartedAt: true,
       raidEndsAt: true,
     },
     extras: {
@@ -79,7 +89,7 @@ export const listDiscordRaids = (client: DrizzleClient) =>
       eq(quest.hidden, false),
       undeliveredEnd(
         "raids",
-        sql`CONCAT(${quest.id}, ':', CAST(ROUND(UNIX_TIMESTAMP(COALESCE(${quest.raidEndsAt}, ${quest.createdAt})) * 1000) AS CHAR))`,
+        sql`CONCAT(${quest.id}, ':', CAST(ROUND(UNIX_TIMESTAMP(COALESCE(${quest.raidEndsAt}, ${quest.raidStartedAt}, ${quest.createdAt})) * 1000) AS CHAR))`,
       ),
     ),
   });
@@ -129,11 +139,37 @@ export const listDiscordTerritoryWars = (client: DrizzleClient) =>
       ),
     );
 
-export const initializeDiscordEventDelivery = (client: DrizzleClient, id: string) =>
+/** INSERT IGNORE preserves the first committed message for each activation. */
+export const initializeDiscordEventDeliveries = (
+  client: DrizzleClient,
+  events: DiscordEvent[],
+  now: Date,
+) =>
   client
-    .insert(gameSetting)
+    .insert(discordEventDelivery)
     .ignore()
-    .values({ id, name: id, time: new Date(0), value: 0 });
+    .values(events.map((event) => ({ ...event, createdAt: now })));
+
+export const listPendingDiscordEvents = (
+  client: DrizzleClient,
+  categories: DiscordEventCategory[],
+) =>
+  client
+    .select()
+    .from(discordEventDelivery)
+    .where(
+      and(
+        eq(discordEventDelivery.delivered, false),
+        inArray(discordEventDelivery.category, categories),
+      ),
+    )
+    // A tick can stage both phases together; send starts before their ends.
+    .orderBy(
+      discordEventDelivery.createdAt,
+      sql`${discordEventDelivery.id} LIKE '%:end'`,
+      discordEventDelivery.id,
+    )
+    .limit(20);
 
 export const claimDiscordEventDelivery = (
   client: DrizzleClient,
@@ -142,13 +178,16 @@ export const claimDiscordEventDelivery = (
   leaseMs: number,
 ) =>
   client
-    .update(gameSetting)
-    .set({ time: now })
+    .update(discordEventDelivery)
+    .set({ claimedAt: now })
     .where(
       and(
-        eq(gameSetting.id, id),
-        eq(gameSetting.value, 0),
-        lt(gameSetting.time, new Date(now.getTime() - leaseMs)),
+        eq(discordEventDelivery.id, id),
+        eq(discordEventDelivery.delivered, false),
+        or(
+          isNull(discordEventDelivery.claimedAt),
+          lt(discordEventDelivery.claimedAt, new Date(now.getTime() - leaseMs)),
+        ),
       ),
     );
 
@@ -159,8 +198,12 @@ export const finishDiscordEventDelivery = (
   delivered: boolean,
 ) =>
   client
-    .update(gameSetting)
-    .set(delivered ? { value: 1 } : { time: new Date(0) })
+    .update(discordEventDelivery)
+    .set(delivered ? { delivered: true } : { claimedAt: null })
     .where(
-      and(eq(gameSetting.id, id), eq(gameSetting.time, now), eq(gameSetting.value, 0)),
+      and(
+        eq(discordEventDelivery.id, id),
+        eq(discordEventDelivery.claimedAt, now),
+        eq(discordEventDelivery.delivered, false),
+      ),
     );

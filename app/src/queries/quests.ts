@@ -42,6 +42,7 @@ import {
   jutsu,
   overworldAiPlacement,
   overworldAiPlacementQuest,
+  type Quest,
   quest,
   questHistory,
   raidDamageThreshold,
@@ -602,12 +603,34 @@ export const updateQuestForUpdate = (
   client: Pick<DrizzleClient, "update">,
   input: { data: import("@/validators/objectives").ZodQuestType },
   updatedAt: Date,
-  entry: { id: string; updatedAt: Date },
-) =>
-  client
+  entry: Pick<Quest, "id" | "updatedAt" | "raidBossCurrentHealth">,
+) => {
+  const restoresOpenRaid =
+    input.data.questType === "raid" &&
+    input.data.content.objectives[0]?.task === "open_raid" &&
+    (input.data.raidBossCurrentHealth ?? 0) > 0;
+  return client
     .update(quest)
-    .set({ ...input.data, updatedAt })
-    .where(and(eq(quest.id, entry.id), eq(quest.updatedAt, entry.updatedAt)));
+    .set({
+      ...input.data,
+      updatedAt,
+      ...(restoresOpenRaid &&
+      entry.raidBossCurrentHealth !== null &&
+      entry.raidBossCurrentHealth <= 0
+        ? { raidStartedAt: updatedAt }
+        : {}),
+    })
+    .where(
+      and(
+        eq(quest.id, entry.id),
+        eq(quest.updatedAt, entry.updatedAt),
+        // Combat changes HP without changing the content revision. Pin the restart decision.
+        restoresOpenRaid
+          ? sql`${quest.raidBossCurrentHealth} <=> ${entry.raidBossCurrentHealth}`
+          : undefined,
+      ),
+    );
+};
 
 /** Build the `questHistory` update for `update`, setting `endAt`, using predicates on `questId`, `completed`, `endAt`. */
 export const updateQuestHistoryForUpdate = (

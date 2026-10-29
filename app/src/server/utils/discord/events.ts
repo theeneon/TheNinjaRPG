@@ -3,12 +3,14 @@ import { isExternalPostingDisabled, isValidDiscordWebhook } from "@/libs/socials
 import {
   claimDiscordEventDelivery,
   finishDiscordEventDelivery,
-  initializeDiscordEventDelivery,
+  initializeDiscordEventDeliveries,
   initializeDiscordEvents,
   listDiscordEventMarkers,
+  listDiscordEventReceipts,
   listDiscordRaids,
   listDiscordTerritoryWars,
   listDiscordWars,
+  listPendingDiscordEvents,
   DISCORD_EVENT_PREFIX as PREFIX,
 } from "@/queries/discordEvents";
 import type { DrizzleClient } from "@/server/db";
@@ -42,8 +44,8 @@ export const discordEventPayload = (roleId: string, message: string) => ({
 });
 
 /**
- * Poll committed state, outside combat and settlement transactions. Deterministic
- * GameSetting IDs provide receipts, as they do for war delivery. A timestamp CAS
+ * Poll committed state, outside combat and settlement transactions.
+ * Immutable messages persist independently of their game rows. A timestamp CAS
  * leases each post so overlapping ticks cannot both send it. Discord has no webhook
  * idempotency key: a crash after acceptance but before saving the receipt can repeat a post.
  */
@@ -53,33 +55,37 @@ export const syncDiscordEvents = async (client: DrizzleClient, now = new Date())
   const categories = Object.keys(config.roles) as DiscordEventCategory[];
   // Per-category activation markers prevent completed history from being replayed.
   await initializeDiscordEvents(client, categories, now);
-  const [markers, raids, wars, territories] = await Promise.all([
-    listDiscordEventMarkers(client, now),
+  const [markers, receipts, raids, wars, territories] = await Promise.all([
+    listDiscordEventMarkers(client),
+    listDiscordEventReceipts(client, now),
     config.roles.raids ? listDiscordRaids(client) : [],
     config.roles.wars ? listDiscordWars(client) : [],
     config.roles.territory ? listDiscordTerritoryWars(client) : [],
   ]);
-  const receipts = new Map(
-    markers.map((marker) => [marker.id.slice(PREFIX.length), marker]),
+  const activations = new Map(
+    markers.map((marker) => [marker.id.slice(PREFIX.length), marker.time]),
   );
   const enabledAt = Object.fromEntries(
-    categories.map((category) => [category, receipts.get(`${category}:enabled`)?.time]),
+    categories.map((category) => [category, activations.get(`${category}:enabled`)]),
   );
   const events = buildDiscordEvents({
     raids,
     wars,
     territories,
     enabledAt,
-    observed: new Set(receipts.keys()),
+    observed: new Set(receipts.map((receipt) => receipt.id)),
     now,
   });
-  let sent = 0;
-  for (const event of events) {
-    if (sent >= 20) break;
+  const delivered = new Set(
+    receipts.filter((receipt) => receipt.delivered).map((receipt) => receipt.id),
+  );
+  const pending = events.filter((event) => !delivered.has(event.id));
+  // Stage every observed message before HTTP or the batch limit can interrupt delivery.
+  if (pending.length) await initializeDiscordEventDeliveries(client, pending, now);
+  for (const event of await listPendingDiscordEvents(client, categories)) {
     const role = config.roles[event.category];
-    if (!role || receipts.get(event.id)?.value === 1) continue;
-    const id = `${PREFIX}${event.id}`;
-    await initializeDiscordEventDelivery(client, id);
+    if (!role) continue;
+    const id = event.id;
     const claimedAt = new Date();
     const claimed = await claimDiscordEventDelivery(client, id, claimedAt, LEASE_MS);
     if (!claimed.rowsAffected) continue;
@@ -94,7 +100,6 @@ export const syncDiscordEvents = async (client: DrizzleClient, now = new Date())
         signal: AbortSignal.timeout(10_000),
         redirect: "error",
       });
-      sent++;
       if (!response.ok)
         throw new Error(`Discord event webhook returned ${response.status}`);
       await finishDiscordEventDelivery(client, id, claimedAt, true);

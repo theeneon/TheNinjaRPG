@@ -3,13 +3,19 @@ import {
   EXCLUSIVE_RAID_DURATION_HOURS,
   TERRITORY_WAR_INTERVAL_HOURS,
 } from "@/drizzle/constants";
-import type { Quest, TerritoryWar, War } from "@/drizzle/schema";
+import type { DiscordEventDelivery, Quest, TerritoryWar, War } from "@/drizzle/schema";
 
-export type DiscordEventCategory = "raids" | "wars" | "territory";
-type Event = { id: string; category: DiscordEventCategory; message: string };
+export type DiscordEventCategory = DiscordEventDelivery["category"];
+export type DiscordEvent = Pick<DiscordEventDelivery, "id" | "category" | "message">;
 type Raid = { isExclusive: boolean } & Pick<
   Quest,
-  "id" | "name" | "createdAt" | "hidden" | "raidBossCurrentHealth" | "raidEndsAt"
+  | "id"
+  | "name"
+  | "createdAt"
+  | "hidden"
+  | "raidBossCurrentHealth"
+  | "raidStartedAt"
+  | "raidEndsAt"
 >;
 type Conflict = Pick<
   War,
@@ -34,8 +40,8 @@ export const buildDiscordEvents = ({
   enabledAt: Partial<Record<DiscordEventCategory, Date>>;
   observed: Set<string>;
   now: Date;
-}): Event[] => {
-  const events: Event[] = [];
+}): DiscordEvent[] => {
+  const events: DiscordEvent[] = [];
   if (enabledAt.raids)
     for (const raid of raids) {
       if (
@@ -49,11 +55,11 @@ export const buildDiscordEvents = ({
           ? new Date(
               raid.raidEndsAt.getTime() - EXCLUSIVE_RAID_DURATION_HOURS * 3_600_000,
             )
-          : raid.createdAt;
+          : (raid.raidStartedAt ?? raid.createdAt);
       if (starts > now) continue;
       const id = discordEventKey(
         "raids",
-        `${raid.id}:${raid.raidEndsAt?.getTime() ?? raid.createdAt.getTime()}`,
+        `${raid.id}:${(raid.raidEndsAt ?? raid.raidStartedAt ?? raid.createdAt).getTime()}`,
       );
       const defeated = raid.raidBossCurrentHealth <= 0;
       const expired = !!raid.raidEndsAt && raid.raidEndsAt <= now;

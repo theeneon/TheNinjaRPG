@@ -6,6 +6,9 @@ The game posts alerts through one incoming webhook; it does not assign these rol
 
 ## Discord server setup
 
+Apply the schema migration creating `DiscordEventDelivery` and adding `Quest.raidStartedAt`
+before deploying the minute job.
+
 1. Create three roles without administrative permissions. Expose them as optional choices
    in Discord's Channels & Roles onboarding, or the server's existing self-role system.
    Do not assign them automatically to all members.
@@ -40,8 +43,10 @@ and [allowed mentions](https://docs.discord.com/developers/resources/message#all
   The initial event has no predecessor from which to calculate a warning.
 
 The minute job reads committed state after territory maintenance. It uses deterministic
-`GameSetting` IDs prefixed with `discord-event:` for activation markers and delivery receipts,
-following the existing war delivery marker pattern. Completed history predating activation
+`GameSetting` IDs prefixed with `discord-event:` for category activation markers. Immutable
+`DiscordEventDelivery` messages and receipts retain retries when a raid quest is reused.
+Open raids restored after defeat receive a new activation timestamp; ordinary content edits
+retain the current run. Completed history predating activation
 is not replayed. Ongoing events are announced once when alerts are enabled.
 
 Each delivery uses a two-minute timestamp lease and a ten-second HTTP timeout. Confirmed

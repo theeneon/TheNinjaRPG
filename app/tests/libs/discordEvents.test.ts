@@ -5,7 +5,7 @@ import { buildDiscordEvents, discordEventKey } from "@/libs/discordEvents";
 const now = new Date("2026-10-29T12:00:00Z");
 const earlier = new Date(now.getTime() - 60_000);
 const input = () => ({ raids: [], wars: [], territories: [], enabledAt: { raids: earlier, wars: earlier, territory: earlier }, observed: new Set<string>(), now });
-const raid = () => ({ id: "raid", name: "Boss", createdAt: now, startsAt: null, endsAt: null, hidden: false, raidBossCurrentHealth: 100, raidEndsAt: new Date(now.getTime() + 60_000), isExclusive: false });
+const raid = () => ({ id: "raid", name: "Boss", createdAt: now, raidStartedAt: null, startsAt: null, endsAt: null, hidden: false, raidBossCurrentHealth: 100, raidEndsAt: new Date(now.getTime() + 60_000), isExclusive: false });
 const war = () => ({ id: "war", startedAt: earlier, endedAt: null as Date | null, type: "VILLAGE_WAR" as const, status: "ACTIVE" as const, sector: 42, combatStartedAt: null, attackerVillage: { name: "Akikaze" }, defenderVillage: { name: "Hyorin" } });
 const territory = () => ({ id: "territory", predecessorId: "previous", sector: 42, guardianId: "guardian", startsAt: earlier, endsAt: new Date(now.getTime() + 60_000), resolvedAt: null as Date | null, version: 0, winners: [] as string[] });
 
