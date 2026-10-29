@@ -683,7 +683,8 @@ export const travelRouter = createTRPCRouter({
           regeneration:
             updated.user.regenerationWithoutTimedBuffs ?? updated.user.regeneration,
         };
-        canProject = !updated.requiresProgressionRefresh;
+        // Hydration can settle profile fields beyond the arrival projection.
+        canProject = false;
       }
       if (!["TRAVEL", "AWAKE"].includes(user.status))
         return errorResponse(
@@ -721,7 +722,9 @@ export const travelRouter = createTRPCRouter({
           (entry) =>
             entry.questType === "war" ||
             entry.quest.content.objectives.some(
-              (objective) => objective.task === "deliver_item",
+              (objective) =>
+                objective.task === "deliver_item" ||
+                ("sectorType" in objective && objective.sectorType === "enemy_village"),
             ),
         );
       canProject &&= canEvaluate;
@@ -734,7 +737,15 @@ export const travelRouter = createTRPCRouter({
       );
       const progress =
         wasTravelling && canEvaluate
-          ? getNewTrackers(arrival, [{ task: "any" }])
+          ? getNewTrackers(
+              arrival,
+              [{ task: "any" }],
+              undefined,
+              undefined,
+              undefined,
+              // Pending personal receipts need the authoritative consequence handler.
+              true,
+            )
           : { trackers: arrival.questData, consequences: [], notifications: [] };
       canProject &&= progress.consequences.every(
         (entry) => entry.type === "update_user",
@@ -793,7 +804,6 @@ export const travelRouter = createTRPCRouter({
                 status: "AWAKE" as const,
                 travelFinishAt: null,
                 ...(claim.success ? { updatedAt: claim.claimedAt } : {}),
-                ...claim.userPatch,
                 userQuests: publicArrival.userQuests,
                 questData: publicArrival.questData,
               },
@@ -1214,7 +1224,7 @@ const completeGlobalTravel = async (
     recoveryTicks,
     REGEN_SECONDS,
   );
-  const claim = await retryOnDeadlock(() =>
+  return retryOnDeadlock(() =>
     claimUserSnapshot({
       client,
       userId: user.userId,
@@ -1237,23 +1247,6 @@ const completeGlobalTravel = async (
       },
     }),
   );
-  return {
-    ...claim,
-    userPatch:
-      claim.success && hasEnergyQueue(user)
-        ? {
-            curEnergy: Math.min(user.maxEnergy, user.curEnergy + recovery),
-            curHealth: Math.round(Math.min(user.maxHealth, user.curHealth + recovery)),
-            curChakra: Math.round(Math.min(user.maxChakra, user.curChakra + recovery)),
-            curStamina: Math.round(
-              Math.min(user.maxStamina, user.curStamina + recovery),
-            ),
-            regenAt: new Date(
-              user.regenAt.getTime() + recoveryTicks * REGEN_SECONDS * 1000,
-            ),
-          }
-        : {},
-  };
 };
 
 /** The hourly cleaner shares the endpoint's recovery and snapshot guards. */

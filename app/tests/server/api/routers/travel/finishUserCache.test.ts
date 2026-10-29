@@ -1,7 +1,7 @@
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import { eq } from "drizzle-orm";
-import { bloodline, item, quest, questHistory, skillTree, userData, userItem, userQueue, userSkill, userTitle, userVote } from "@/drizzle/schema";
+import { bloodline, item, quest, questHistory, skillTree, userCookingJob, userData, userItem, userQueue, userSkill, userTitle, userVote, village, war, warAlly, warMercenary } from "@/drizzle/schema";
 import { globalTravelFinishPatch } from "@/libs/travel";
 import { Pusher } from "@/libs/pusher";
 import { profileRouter } from "@/server/api/routers/profile";
@@ -11,6 +11,7 @@ import { AllObjectives, QuestTracker } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import { insertItems, insertQuestHistory, insertQuests, insertUserItems, insertUsers } from "../../../../setup/factories";
+import { queueEnergy } from "../../../../setup/queues";
 import { callerFor, describeWithDatabase, getTestDatabase, resetTables } from "../../../../setup/testDatabase";
 
 const userId = "arrival-cache-player";
@@ -18,7 +19,7 @@ const key = [["profile", "getUser"], { type: "query" }];
 describeWithDatabase("confirmed arrival profile updates", () => {
   beforeEach(async () => {
     vi.spyOn(Pusher.prototype, "trigger").mockResolvedValue(undefined);
-    await resetTables(userQueue, userVote, questHistory, quest, userData, bloodline, userSkill, skillTree, userTitle, item, userItem);
+    await resetTables(userCookingJob, warAlly, warMercenary, war, village, userQueue, userVote, questHistory, quest, userData, bloodline, userSkill, skillTree, userTitle, item, userItem);
     await insertUsers([{ userId, username: "ArrivalCache", rank: "JONIN", primaryElement: "Fire", secondaryElement: "Water", level: 50, isOutlaw: true, status: "TRAVEL", sector: 1, longitude: 4, latitude: 5, regeneration: 0, travelFinishAt: new Date(Date.now() + 60000) }]);
     await insertQuests([2, 3].map((sector) => ({ id: `hidden-${sector}`, name: `Hidden ${sector}`, questType: "story", maxCompletes: 10, content: {
       objectives: [AllObjectives.parse({ id: "target", task: "move_to_location", sector, longitude: 4, latitude: 5, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: true })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [],
@@ -63,6 +64,65 @@ describeWithDatabase("confirmed arrival profile updates", () => {
       if (task === "move_to_location") expect(goal?.done).toBe(true);
       else expect(new Date(goal!.collectDeadline!).getTime() - new Date(goal!.timestamp!).getTime()).toBe(60_000);
     } finally { stop(); client.clear(); }
+  });
+
+  it("reconciles Cooking XP settled by the Energy queue fallback", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ longitude: 6 }).where(eq(userData.userId, userId));
+    await queueEnergy(userId, [{ stat: "offence", energy: 100 }]);
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    expect(profile.userData?.cookingExperience).toBe(0);
+    await db.insert(userCookingJob).values({ id: "arrival-cooking", userId, experience: 30, finishesAt: new Date(Date.now() - 1) });
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1) }).where(eq(userData.userId, userId));
+    const { cached, reads } = await finishAndReconcile(profile);
+    expect((await db.query.userData.findFirst({ where: eq(userData.userId, userId) }))?.cookingExperience).toBe(30);
+    expect(cached?.cookingExperience).toBe(30);
+    expect(reads).toBe(1);
+    expect(await db.query.userCookingJob.findMany()).toEqual([]);
+  });
+
+  it.each([undefined, 1337])("resolves an ordinary quest's recovered enemy-village target (stored sector=%s)", async (sector) => {
+    const db = await getTestDatabase();
+    await db.insert(village).values([
+      { id: "arrival-home", name: "Home", sector: 1, kageId: "home-kage" },
+      { id: "arrival-enemy", name: "Enemy", sector: 47, kageId: "enemy-kage" },
+    ]);
+    await db.insert(war).values({ id: "arrival-war", attackerVillageId: "arrival-home", defenderVillageId: "arrival-enemy", status: "ACTIVE", type: "VILLAGE_WAR" });
+    await db.update(userData).set({ villageId: "arrival-home", isOutlaw: false }).where(eq(userData.userId, userId));
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    const objective = AllObjectives.parse({ id: "target", task: "move_to_location", sectorType: "enemy_village", locationType: "specific", longitude: 4, latitude: 5, hideLocation: true });
+    await db.update(quest).set({ content: { objectives: [objective], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }).where(eq(quest.id, "hidden-2"));
+    await db.update(userData).set({ sector: 2, travelFinishAt: new Date(Date.now() - 1), questData: [QuestTracker.parse({ id: "hidden-2", goals: [{ id: "target", sector, longitude: 4, latitude: 5 }] })] }).where(eq(userData.userId, userId));
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const { result, reads } = await finishAndReconcile(profile);
+    const stored = await db.query.userData.findFirst({ where: eq(userData.userId, userId) });
+    expect(stored?.questData?.find((tracker) => tracker.id === "hidden-2")?.goals[0]?.sector).toBe(47);
+    expect(reads).toBe(1);
+    expect(result.userDelta).toBeUndefined();
+  });
+
+  it.each(["new_quest", "collect_item"] as const)("reconciles a detached party's pending %s receipt", async (task) => {
+    const db = await getTestDatabase();
+    await insertItems([{ id: "arrival-parcel" }]);
+    await insertQuests([{ id: "arrival-next", questType: "story", maxCompletes: 10, content: { objectives: [AllObjectives.parse({ id: "wait", task: "stats_trained", value: 100 })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }]);
+    const definition = (await db.query.quest.findFirst({ where: eq(quest.id, "hidden-2") }))!;
+    const objectives = [
+      AllObjectives.parse({ id: "shared", task: "stats_trained", value: 100, nextObjectiveId: "receipt" }),
+      AllObjectives.parse({ id: "receipt", task, nextObjectiveId: "target", newQuestIds: ["arrival-next"], collectItemIds: ["arrival-parcel"], item_name: "Parcel", sector: 2, longitude: 4, latitude: 5, sectorType: "specific", locationType: "specific", hideLocation: true }),
+      ...definition.content.objectives,
+    ];
+    await db.update(quest).set({ teamEnabled: true, content: { ...definition.content, objectives } }).where(eq(quest.id, "hidden-2"));
+    const profile = await (await callerFor(profileRouter, userId)).getUser();
+    const detached = QuestTracker.parse({ id: "hidden-2", goals: [{ id: "shared", done: true, selectedNextObjectiveId: "receipt" }, { id: "receipt", done: true, selectedNextObjectiveId: "target", partyEffectsApplied: false, ...(task === "collect_item" ? { sector: 2, longitude: 4, latitude: 5 } : {}) }, { id: "target", sector: 2, longitude: 4, latitude: 5, locationChecked: true }] });
+    await db.update(userData).set({ sector: 2, questPartyId: null, travelFinishAt: new Date(Date.now() - 1), questData: [detached] }).where(eq(userData.userId, userId));
+    const { cached, reads } = await finishAndReconcile(profile);
+    expect(cached?.questData?.find((tracker) => tracker.id === "hidden-2")?.goals.find((goal) => goal.id === "receipt")?.partyEffectsApplied).toBe(true);
+    expect(reads).toBe(1);
+    if (task === "new_quest") expect(cached?.userQuests.some((entry) => entry.questId === "arrival-next")).toBe(true);
+    else expect((await db.query.userItem.findMany()).filter((entry) => entry.itemId === "arrival-parcel")).toHaveLength(1);
+    await (await callerFor(profileRouter, userId)).getUser();
+    if (task === "new_quest") expect((await db.query.questHistory.findMany()).filter((entry) => entry.questId === "arrival-next")).toHaveLength(1);
+    else expect((await db.query.userItem.findMany()).filter((entry) => entry.itemId === "arrival-parcel")).toHaveLength(1);
   });
 
   it("preserves a hidden Pyramid checkpoint without evaluating its objectives", async () => {
@@ -203,3 +263,21 @@ describeWithDatabase("confirmed arrival profile updates", () => {
     } finally { stop(); client.clear(); }
   });
 });
+
+const finishAndReconcile = async (profile: Awaited<ReturnType<ReturnType<typeof profileRouter.createCaller>["getUser"]>>) => {
+  const client = new QueryClient();
+  client.setQueryData(key, { ...profile, userData: { ...profile.userData!, sector: 2 } });
+  let reads = 0;
+  const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => {
+    reads++;
+    return (await callerFor(profileRouter, userId)).getUser();
+  } });
+  const stop = observer.subscribe(() => undefined);
+  try {
+    const revision = prepareUserUpdate(client, key);
+    const result = await (await callerFor(travelRouter, userId)).finishGlobalMove();
+    expect(result.success).toBe(true);
+    await updateUserCache(client, key, (current) => globalTravelFinishPatch(current, result.userPatch!, result.projectedQuestIds), { revision, delta: result.userDelta });
+    return { result, cached: client.getQueryData<typeof profile>(key)?.userData, reads };
+  } finally { stop(); client.clear(); }
+};
