@@ -1,3 +1,4 @@
+import { EXCLUSIVE_RAID_DURATION_HOURS } from "@/drizzle/constants";
 import type { Quest } from "@/drizzle/schema";
 import type { RaidObjectiveType } from "@/validators/objectives";
 import { RaidObjective } from "@/validators/objectives";
@@ -196,9 +197,11 @@ export const prepareExclusiveRaidActivation = (
     return { activated: false, mutations: [] };
   }
 
-  // Calculate raid time limits (24 hours from now)
+  // The activation deadline also identifies each run of this reusable quest.
   const now = new Date();
-  const raidEndsAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const raidEndsAt = new Date(
+    now.getTime() + EXCLUSIVE_RAID_DURATION_HOURS * 60 * 60 * 1000,
+  );
   const raidCaptureDeadline = raidEndsAt;
 
   return {

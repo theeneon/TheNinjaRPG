@@ -4334,6 +4334,8 @@ export const quest = mysqlTable(
     // Raid-specific fields (AI and sector are stored in the objective, not here)
     raidBossMaxHealth: bigint("raidBossMaxHealth", { mode: "number" }),
     raidBossCurrentHealth: bigint("raidBossCurrentHealth", { mode: "number" }),
+    /** Open raid runs advance only when a defeated boss is restored. */
+    raidStartedAt: datetime("raidStartedAt", { mode: "date", fsp: 3 }),
     raidEndsAt: datetime("raidEndsAt", { mode: "date", fsp: 3 }),
     raidCaptureDeadline: datetime("raidCaptureDeadline", { mode: "date", fsp: 3 }),
     raidGracePeriodEnd: datetime("raidGracePeriodEnd", { mode: "date", fsp: 3 }),
@@ -4656,6 +4658,21 @@ export const gameSetting = mysqlTable(
   },
 );
 export type GameSetting = InferSelectModel<typeof gameSetting>;
+
+/** Immutable event messages remain retryable after reusable game rows change. */
+export const discordEventDelivery = mysqlTable(
+  "DiscordEventDelivery",
+  {
+    id: varchar("id", { length: 191 }).primaryKey().notNull(),
+    category: mysqlEnum("category", ["raids", "wars", "territory"]).notNull(),
+    message: text("message").notNull(),
+    createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).notNull(),
+    claimedAt: datetime("claimedAt", { mode: "date", fsp: 3 }),
+    delivered: boolean("delivered").default(false).notNull(),
+  },
+  (table) => ({ pendingIdx: index("DiscordEventDelivery_delivered_createdAt_idx").on(table.delivered, table.createdAt) }),
+);
+export type DiscordEventDelivery = InferSelectModel<typeof discordEventDelivery>;
 
 export const userLikes = mysqlTable(
   "UserLikes",

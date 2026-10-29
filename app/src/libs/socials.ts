@@ -23,7 +23,7 @@ export const isExternalPostingDisabled = () => process.env.NODE_ENV === "test";
  * Validates that a webhook URL is a legitimate Discord webhook.
  * Prevents data exfiltration if environment variables are accidentally set to attacker-controlled URLs.
  */
-const isValidDiscordWebhook = (url: string | undefined): boolean => {
+export const isValidDiscordWebhook = (url: string | undefined): boolean => {
   if (!url) return false;
   try {
     const parsed = new URL(url);
