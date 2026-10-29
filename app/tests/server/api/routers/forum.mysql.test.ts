@@ -11,7 +11,7 @@ import { listForumAudit } from "@/queries/forum";
 import type { DrizzleClient } from "@/server/db";
 import { insertUsers } from "../../../setup/factories";
 import { stubRateLimitTransport } from "../../../setup/rateLimit";
-import { callerForDatabase, describeWithDatabase, getTestDatabase, resetTables } from "../../../setup/testDatabase";
+import { callerForDatabase, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../../setup/testDatabase";
 
 const playerId = "forum-player"; const adminId = "forum-admin"; const moderatorId = "forum-scoped-moderator";
 const topicInput = (board_id = "general") => ({ board_id, title: "Learning the shinobi arts", content: "<p>A useful game discussion.</p>", senderId: null, image: null });
@@ -82,6 +82,57 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     expect((await (await client(moderatorId)).moderatePost({ postId: post.id, action: "RESTORE", reason: "Restore review evidence" })).success).toBe(true);
     expect((await db.query.forumThread.findFirst())?.nPosts).toBe(5);
     expect((await db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) }))?.deletedAt).toBeNull();
+  });
+  it.each(["LOCK", "UNLOCK", "DISMISS_REPORT"] as const)("audits post %s without recounting unchanged visibility", async (action) => {
+    const id = await create(); const db = await getTestDatabase();
+    await (await comments()).createForumComment(commentInput(id));
+    const post = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) })).at(-1)!;
+    await db.update(forumPost).set({ isLocked: action === "UNLOCK", isReported: true }).where(eq(forumPost.id, post.id));
+    const [before, thread, board] = await Promise.all([
+      db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) }),
+      db.query.forumThread.findFirst({ where: eq(forumThread.id, id) }),
+      db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") }),
+    ]);
+    expect(thread?.nPosts).toBe(2); expect(board).toMatchObject({ nThreads: 1, nPosts: 2 });
+    const api = await client(moderatorId); const reason = "Review this post flag";
+    const { result, statements } = await recordQueries(() => api.moderatePost({ postId: post.id, action, reason }));
+    expect(result.success).toBe(true);
+    expect(statements.filter(s => /^update `Forum(?:Thread|Board)` /i.test(s))).toEqual([]);
+    const values = action === "DISMISS_REPORT" ? { isReported: false } : { isLocked: action === "LOCK" };
+    expect(await db.query.forumPost.findFirst({ where: eq(forumPost.id, post.id) })).toEqual({ ...before!, ...values });
+    expect(await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) })).toEqual(thread);
+    expect(await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") })).toEqual(board);
+    const audit = await db.query.forumAudit.findMany(); expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatchObject({ actorId: moderatorId, boardId: "general", targetId: post.id, action: `post.${action.toLowerCase()}`, reason, before: { id: post.id, isLocked: action === "UNLOCK", isReported: true }, after: values });
+  });
+  it.each(["PIN", "UNPIN", "LOCK", "UNLOCK", "UPDATE"] as const)("audits bulk topic %s without recounting unchanged visibility", async (action) => {
+    const db = await getTestDatabase(); const player = await client(); const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const created = await player.createThread({ ...topicInput(), kind: "QUESTION", tags: ["healing"] });
+      expect(created.success).toBe(true); const id = created.threadId!; ids.push(id);
+      await (await comments(moderatorId)).createForumComment(commentInput(id));
+      const reply = (await db.query.forumPost.findMany({ where: eq(forumPost.threadId, id) })).find(p => p.authorId === moderatorId)!;
+      expect((await player.acceptAnswer({ threadId: id, postId: reply.id })).success).toBe(true);
+      await db.update(forumThread).set({ isPinned: action === "UNPIN", isLocked: action === "UNLOCK" }).where(eq(forumThread.id, id));
+    }
+    const [threads, board] = await Promise.all([
+      db.query.forumThread.findMany(),
+      db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") }),
+    ]);
+    expect(threads.every(t => t.nPosts === 2 && !!t.acceptedPostId)).toBe(true);
+    expect(board).toMatchObject({ nThreads: 2, nPosts: 4 });
+    const api = await client(moderatorId); const reason = "Organize reviewed topics";
+    const metadata = { title: "Reviewed healing discussion", kind: "DISCUSSION" as const, tags: ["strategy"] };
+    const { result, statements } = await recordQueries(() => api.moderateThreads({ ids, action, reason, ...(action === "UPDATE" ? metadata : {}) }));
+    expect(result.success).toBe(true);
+    expect(statements.filter(s => /^update `ForumBoard` /i.test(s))).toEqual([]);
+    expect(statements.filter(s => /^update `ForumThread` /i.test(s))).toHaveLength(ids.length);
+    const values = action === "UPDATE" ? { ...metadata, acceptedPostId: null }
+      : action === "PIN" || action === "UNPIN" ? { isPinned: action === "PIN" } : { isLocked: action === "LOCK" };
+    for (const thread of threads) expect(await db.query.forumThread.findFirst({ where: eq(forumThread.id, thread.id) })).toEqual({ ...thread, ...values });
+    expect(await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") })).toEqual(board);
+    const audit = await db.query.forumAudit.findMany(); expect(audit).toHaveLength(ids.length);
+    for (const thread of threads) expect(audit.find(a => a.targetId === thread.id)).toMatchObject({ actorId: moderatorId, boardId: "general", action: `topic.${action.toLowerCase()}`, reason, before: { id: thread.id, acceptedPostId: thread.acceptedPostId, kind: "QUESTION", tags: ["healing"] }, after: values });
   });
   it("keeps private content out of listings, search, direct posts and server-rendered guest payloads", async () => {
     const id = await create("private-board", adminId); const db = await getTestDatabase(); const post = (await db.query.forumPost.findMany())[0]!;
@@ -815,6 +866,8 @@ describeWithDatabase("forum authorization, administration and discussion lifecyc
     await player.acceptAnswer({ threadId: id, postId: reply.id });
     expect((await (await client(adminId)).moderateThreads({ ids: [id], action: "UPDATE", boardId: "other", reason: "Move without changing topic metadata" })).success).toBe(true);
     expect(await db.query.forumThread.findFirst({ where: eq(forumThread.id, id) })).toMatchObject({ boardId: "other", kind: "QUESTION", tags: ["healing"], acceptedPostId: reply.id });
+    expect((await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "general") }))).toMatchObject({ nThreads: 0, nPosts: 0 });
+    expect((await db.query.forumBoard.findFirst({ where: eq(forumBoard.id, "other") }))).toMatchObject({ nThreads: 1, nPosts: 2 });
   });
 
 });

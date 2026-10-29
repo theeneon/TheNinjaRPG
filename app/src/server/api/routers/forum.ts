@@ -51,10 +51,16 @@ import {
 // Built-in game pages resolve these boards by name.
 const gameDestinationBoards = new Set(["News", "History", "ANBU HQ"]);
 
+/**
+ * Serve discussions through effective board access, with scoped moderation and audited administration.
+ * Expected access/state rejections return the mutation response contract before side effects.
+ */
 export const forumRouter = createTRPCRouter({
+  /** List the signed-in account's managed attachments for reuse in forum composers. */
   uploads: protectedProcedure.query(({ ctx }) =>
     q.listForumUploads(ctx.drizzle, ctx.userId),
   ),
+  /** Return a readable published topic's shared public poll and caller vote, or null when unavailable. */
   threadPoll: publicProcedure
     .input(z.object({ threadId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -89,6 +95,7 @@ export const forumRouter = createTRPCRouter({
           }
         : null;
     }),
+  /** Apply topic voting access, then delegate to the poll's shared vote/retraction contract. */
   votePoll: protectedProcedure
     .input(z.object({ threadId: z.string(), optionId: z.string().nullable() }))
     .output(baseServerResponse)
@@ -111,6 +118,7 @@ export const forumRouter = createTRPCRouter({
         ? caller.vote({ pollId: thread.pollId, optionId: input.optionId })
         : caller.retractVote({ pollId: thread.pollId });
     }),
+  /** Let board moderators link an existing shared poll and save a validated, audited summary. */
   saveTopicExtras: protectedProcedure
     .input(
       z.object({
@@ -133,7 +141,7 @@ export const forumRouter = createTRPCRouter({
         return errorResponse("You cannot manage this topic");
       if (input.pollId && !selectedPoll) return errorResponse("Poll no longer exists");
       if (!summaryCheck.success) return summaryCheck;
-      // Topic metadata and its audit evidence require two statements and must commit together.
+      // MySQL UPDATE cannot append an audit event; metadata and its retained evidence need separate writes.
       return retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.lockForumSection(tx, board.sectionId);
@@ -165,6 +173,7 @@ export const forumRouter = createTRPCRouter({
         }),
       );
     }),
+  /** Return activity and review metrics only for boards the caller moderates or manages. */
   analytics: protectedProcedure
     .input(
       z.object({
@@ -210,11 +219,13 @@ export const forumRouter = createTRPCRouter({
       };
     }),
 
+  /** List boards the caller may discover, including boards whose content requires further access. */
   getAll: publicProcedure.query(async ({ ctx }) =>
     (await getForumContext(ctx.drizzle, ctx.userId)).boards.filter(
       (b) => b.permissions.view,
     ),
   ),
+  /** Expose discoverable boards and effective staff capabilities for forum navigation. */
   getContext: publicProcedure.query(async ({ ctx }) => {
     const context = await getForumContext(ctx.drizzle, ctx.userId);
     return {
@@ -229,6 +240,7 @@ export const forumRouter = createTRPCRouter({
     await q.readNews(ctx.drizzle, ctx.userId);
     return { success: true, message: "News marked as read" };
   }),
+  /** Page readable topics and personal views without exposing pending or removed content to readers. */
   getThreads: publicProcedure
     .input(
       z.object({
@@ -252,9 +264,11 @@ export const forumRouter = createTRPCRouter({
         highlightPinned: !!(input.boardId || input.boardName),
       }),
     ),
+  /** Return only the caller's watch preferences and read positions. */
   personal: protectedProcedure.query(async ({ ctx }) =>
     forumPersonalState(ctx.drizzle, ctx.userId),
   ),
+  /** Resolve an accessible visible post to its current board, topic and page, or null. */
   resolvePost: publicProcedure
     .input(z.object({ postId: z.string() }))
     .query(async ({ ctx, input }) =>
@@ -264,6 +278,7 @@ export const forumRouter = createTRPCRouter({
         await getForumContext(ctx.drizzle, ctx.userId),
       ),
     ),
+  /** Advance the caller's read position and clear alerts through an accessible visible post. */
   markRead: protectedProcedure
     .input(z.object({ postId: z.string() }))
     .output(baseServerResponse)
@@ -278,6 +293,7 @@ export const forumRouter = createTRPCRouter({
       ]);
       return { success: true, message: "Reading position saved" };
     }),
+  /** Save a readable discussion's watch preferences; callers may always remove their own watch. */
   watch: protectedProcedure
     .input(
       z.object({
@@ -315,6 +331,7 @@ export const forumRouter = createTRPCRouter({
         message: input.active ? "Watch preferences saved" : "Watch removed",
       };
     }),
+  /** Return the caller's alerts only while their current board access permits reading. */
   alerts: protectedProcedure.query(async ({ ctx }) => {
     const [context, alerts] = await Promise.all([
       getForumContext(ctx.drizzle, ctx.userId),
@@ -324,12 +341,14 @@ export const forumRouter = createTRPCRouter({
       (a) => context.boards.find((b) => b.id === a.boardId)?.permissions.read,
     );
   }),
+  /** Mark only the caller's forum alerts as read. */
   readAlerts: protectedProcedure
     .output(baseServerResponse)
     .mutation(async ({ ctx }) => {
       await q.readForumAlerts(ctx.drizzle, ctx.userId);
       return { success: true, message: "Forum alerts marked as read" };
     }),
+  /** Create a moderated opening post and topic together; pending topics return no navigable ID. */
   createThread: protectedProcedure
     .use(ratelimitMiddleware)
     .input(
@@ -377,7 +396,7 @@ export const forumRouter = createTRPCRouter({
       const threadId = nanoid();
       const postId = nanoid();
       const { processedContent: content } = processMentions(moderated.sanitized);
-      // Topic, opening post and counters require separate INSERT/UPDATE statements and must commit together.
+      // MySQL INSERT has one target: topic/opening-post creation and board/News UPDATEs need separate writes.
       const saved = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.lockForumSection(tx, board.sectionId);
@@ -479,6 +498,7 @@ export const forumRouter = createTRPCRouter({
         reason: "Moderator removal",
       }),
     ),
+  /** Apply one audited change to at most 50 topics after checking every source and destination scope. */
   moderateThreads: protectedProcedure
     .input(
       z.object({
@@ -502,6 +522,7 @@ export const forumRouter = createTRPCRouter({
     )
     .output(baseServerResponse)
     .mutation(({ ctx, input }) => moderateForumThreads(ctx.drizzle, ctx.userId, input)),
+  /** Edit as author or moderator through the shared revision/CAS contract, retaining actor identity. */
   editPost: protectedProcedure
     .input(
       z.object({
@@ -518,6 +539,7 @@ export const forumRouter = createTRPCRouter({
         quoteIds: null,
       }),
     ),
+  /** Apply scoped post moderation with retained evidence and conditional first-publication delivery. */
   moderatePost: protectedProcedure
     .input(
       z.object({
@@ -552,7 +574,7 @@ export const forumRouter = createTRPCRouter({
           : board.permissions.moderate)
       )
         return errorResponse("You cannot moderate this post");
-      // Visibility changes, their counters and evidence must commit together.
+      // MySQL cannot append audit INSERTs to flag UPDATEs; publication also rewinds readers with UPDATE/DELETE.
       const saved = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.lockForumSection(tx, board.sectionId);
@@ -601,8 +623,10 @@ export const forumRouter = createTRPCRouter({
             input.action === "APPROVE" || input.action === "RESTORE"
               ? await prepareForumPublication(tx, current, board, post.id)
               : { approvedPosts: [], approvedNews: [] };
-          await q.repairForumThread(tx, thread.id);
-          await q.repairForumBoard(tx, board.id);
+          if (input.action === "APPROVE" || input.action === "RESTORE") {
+            await q.repairForumThread(tx, thread.id);
+            await q.repairForumBoard(tx, board.id);
+          }
           await q.insertForumAudit(tx, {
             actorId: ctx.userId,
             boardId: board.id,
@@ -623,6 +647,7 @@ export const forumRouter = createTRPCRouter({
       if ("approvedPosts" in saved) deferForumPublication(ctx.drizzle, saved);
       return { success: true, message: saved.message };
     }),
+  /** Return edit history to board moderators or the author of a still-readable, nonremoved post. */
   revisions: protectedProcedure
     .input(z.object({ postId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -641,6 +666,7 @@ export const forumRouter = createTRPCRouter({
         return [];
       return q.listForumRevisions(ctx.drizzle, input.postId);
     }),
+  /** Atomically select a visible same-topic answer for the question owner or a board moderator. */
   acceptAnswer: protectedProcedure
     .input(z.object({ threadId: z.string(), postId: z.string().nullable() }))
     .output(baseServerResponse)
@@ -681,6 +707,7 @@ export const forumRouter = createTRPCRouter({
         message: input.postId ? "Answer accepted" : "Accepted answer cleared",
       };
     }),
+  /** Save the caller's idempotent reaction only when the visible post permits voting. */
   react: protectedProcedure
     .input(
       z.object({
@@ -705,6 +732,7 @@ export const forumRouter = createTRPCRouter({
       );
       return { success: true, message: "Reaction saved" };
     }),
+  /** Copy/merge up to 1,000 posts or split up to 100 with moderated destination access and consistent counts. */
   restructureTopic: protectedProcedure
     .input(
       z.object({
@@ -751,7 +779,8 @@ export const forumRouter = createTRPCRouter({
       if (input.action !== "MERGE" && !input.title)
         return errorResponse("A title is required for the new topic");
       const id = input.action === "MERGE" && target ? target.id : nanoid();
-      // Moving/copying posts, creating the destination, counters and the audit record need one commit.
+      // COPY/SPLIT need INSERT plus post writes; MERGE needs UPDATE and possible read DELETE.
+      // MySQL cannot include the appended audit INSERT in those content statements.
       const result = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           for (const sectionId of [
@@ -874,6 +903,7 @@ export const forumRouter = createTRPCRouter({
       );
       return result;
     }),
+  /** Require explicit purge capability and exact title confirmation to erase a removed topic, retaining audit. */
   purgeTopic: protectedProcedure
     .input(
       z.object({
@@ -899,7 +929,7 @@ export const forumRouter = createTRPCRouter({
         );
       if (input.confirmTitle !== thread.title)
         return errorResponse("Type the exact topic title to confirm permanent removal");
-      // Permanent removal, related personal state and its retained audit record must commit together.
+      // MySQL multi-table DELETE cannot recount the surviving board or INSERT retained purge evidence.
       return retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.lockForumSection(tx, board.sectionId);
@@ -942,6 +972,7 @@ export const forumRouter = createTRPCRouter({
         }),
       );
     }),
+  /** Assign a board moderator and record a review decision, clearing the report flag on resolution. */
   reviewCase: protectedProcedure
     .input(
       z.object({
@@ -969,7 +1000,7 @@ export const forumRouter = createTRPCRouter({
         if (!assignee.boards.find((b) => b.id === thread.boardId)?.permissions.moderate)
           return errorResponse("The assignee must moderate this board");
       }
-      // A review decision, resolved forum flag and audit evidence must commit together.
+      // Case upsert and audit INSERT have different MySQL targets; resolution also UPDATEs the report flag.
       const result = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.lockForumSection(tx, board.sectionId);
@@ -1006,6 +1037,7 @@ export const forumRouter = createTRPCRouter({
       );
       return result;
     }),
+  /** Let forum managers inspect an existing account's effective board capabilities, or return null. */
   effectivePermissions: protectedProcedure
     .input(z.object({ userId: z.string() }))
     .query(async ({ ctx, input }) => {
@@ -1023,6 +1055,7 @@ export const forumRouter = createTRPCRouter({
         })),
       };
     }),
+  /** Return scoped review pages and audit evidence; grants and structure remain manager-only. */
   administration: protectedProcedure
     .input(
       z.object({
@@ -1095,6 +1128,7 @@ export const forumRouter = createTRPCRouter({
         ),
       };
     }),
+  /** Let forum managers save section policy, ordering and archive state with attributable evidence. */
   saveSection: protectedProcedure
     .input(forumSectionSchema)
     .output(baseServerResponse)
@@ -1105,7 +1139,7 @@ export const forumRouter = createTRPCRouter({
       const { reason, ...values } = input;
       const id = input.id ?? nanoid();
       const before = context.sections.find((s) => s.id === id);
-      // Structural writes and their audit evidence must commit together.
+      // The section upsert and independent audit INSERT cannot share MySQL's single INSERT target.
       await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.saveForumSection(tx, { ...values, id });
@@ -1121,6 +1155,7 @@ export const forumRouter = createTRPCRouter({
       );
       return { success: true, message: "Section saved" };
     }),
+  /** Save an acyclic same-section board hierarchy, preserving built-in game destinations and audit. */
   saveBoard: protectedProcedure
     .input(forumStructureBoardSchema)
     .output(baseServerResponse)
@@ -1152,7 +1187,7 @@ export const forumRouter = createTRPCRouter({
       )
         return errorResponse("Move nested boards to the destination section first");
       try {
-        // Section locks serialize hierarchy validation with all structural writes.
+        // Section locks prevent concurrent reparenting cycles; MySQL board INSERT/UPDATE cannot append audit rows.
         return await retryOnDeadlock(() =>
           ctx.drizzle.transaction(async (tx) => {
             for (const sectionId of [
@@ -1215,6 +1250,7 @@ export const forumRouter = createTRPCRouter({
         throw error;
       }
     }),
+  /** Remove an empty container or move its children to a validated destination, retaining removal evidence. */
   removeStructure: protectedProcedure
     .input(
       z.object({
@@ -1244,7 +1280,8 @@ export const forumRouter = createTRPCRouter({
         )
       )
         return errorResponse("Destination not found");
-      // Moving children, removing their container, counters and evidence span multiple tables.
+      // Child migration needs UPDATE then container DELETE; empty removals still need DELETE plus audit INSERT.
+      // MySQL cannot express those writes as one guarded statement.
       try {
         return await retryOnDeadlock(() =>
           ctx.drizzle.transaction(async (tx) => {
@@ -1329,6 +1366,7 @@ export const forumRouter = createTRPCRouter({
         throw error;
       }
     }),
+  /** Let managers grant or deny capabilities; administration and purge require global scope. */
   saveGrant: protectedProcedure
     .input(
       z.object({
@@ -1364,7 +1402,7 @@ export const forumRouter = createTRPCRouter({
       )
         return errorResponse("Scope not found");
       const id = input.id ?? nanoid();
-      // Privilege grants require durable evidence in the same commit.
+      // MySQL grant upsert has one INSERT target; revocation DELETE cannot also INSERT retained evidence.
       await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await (input.remove
@@ -1388,6 +1426,7 @@ export const forumRouter = createTRPCRouter({
       );
       return { success: true, message: "Forum permissions saved" };
     }),
+  /** Change forum-only posting restrictions after authorizing both stored and requested scopes. */
   restrict: protectedProcedure
     .input(
       z.object({
@@ -1427,7 +1466,7 @@ export const forumRouter = createTRPCRouter({
       )
         return errorResponse("Choose an expiry within the next 90 days");
       const id = input.id ?? nanoid();
-      // Restrictions and their audit evidence must be committed together.
+      // Restriction upsert cannot INSERT into both its row and audit target; revocation needs DELETE plus INSERT.
       await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await (input.remove
@@ -1451,6 +1490,7 @@ export const forumRouter = createTRPCRouter({
       );
       return { success: true, message: "Forum restriction saved" };
     }),
+  /** Let managers rebuild visible counts/activity and accepted-answer validity with an audit event. */
   repairCounters: protectedProcedure
     .input(z.object({ boardId: z.string() }))
     .output(baseServerResponse)
@@ -1458,7 +1498,7 @@ export const forumRouter = createTRPCRouter({
       const context = await getForumContext(ctx.drizzle, ctx.userId);
       if (!context.canManage)
         return errorResponse("Forum administration permission required");
-      // Repair runs under the board lock so concurrent posts cannot be lost from the recount.
+      // The board lock excludes posting during dependent recounts; their UPDATEs cannot append the audit INSERT.
       await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
           await q.lockForumBoard(tx, input.boardId);
@@ -1477,6 +1517,10 @@ export const forumRouter = createTRPCRouter({
     }),
 });
 
+/**
+ * Revalidate every selected topic under sorted section/board/topic locks before applying audited changes.
+ * Visibility and board moves repair activity; committed publication claims alone trigger delivery.
+ */
 async function moderateForumThreads(
   db: DrizzleClient,
   userId: string,
@@ -1534,7 +1578,12 @@ async function moderateForumThreads(
     !input.tags
   )
     return errorResponse("Choose a change to apply");
-  // Bulk topic changes, counters and audit records must succeed or roll back as a unit.
+  const needsRecount =
+    input.action === "REMOVE" ||
+    input.action === "RESTORE" ||
+    input.action === "APPROVE" ||
+    (input.action === "UPDATE" && !!input.boardId);
+  // A bulk MySQL UPDATE can change existing topics but cannot INSERT their per-topic audit events.
   const saved = await retryOnDeadlock(() =>
     db.transaction(async (tx) => {
       const approvedPosts: Parameters<typeof deferForumAlerts>[1][] = [];
@@ -1608,7 +1657,7 @@ async function moderateForumThreads(
           approvedPosts.push(...publication.approvedPosts);
           approvedNews.push(...publication.approvedNews);
         }
-        await q.repairForumThread(tx, thread.id);
+        if (needsRecount) await q.repairForumThread(tx, thread.id);
         await q.insertForumAudit(tx, {
           actorId: userId,
           boardId: thread.boardId,
@@ -1619,7 +1668,7 @@ async function moderateForumThreads(
           after: values,
         });
       }
-      for (const id of boardIds) await q.repairForumBoard(tx, id);
+      if (needsRecount) for (const id of boardIds) await q.repairForumBoard(tx, id);
       return {
         success: true,
         message: "Topic changes saved",
@@ -1689,6 +1738,7 @@ async function prepareForumPublication(
   return { approvedPosts, approvedNews };
 }
 
+/** Deliver only transaction-committed publication claims; public News additionally reaches social/push subscribers. */
 function deferForumPublication(
   db: DrizzleClient,
   publication: Awaited<ReturnType<typeof prepareForumPublication>>,
