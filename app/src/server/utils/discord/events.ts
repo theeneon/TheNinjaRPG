@@ -88,7 +88,8 @@ export const syncDiscordEvents = async (client: DrizzleClient, now = new Date())
     const id = event.id;
     const claimedAt = new Date();
     const claimed = await claimDiscordEventDelivery(client, id, claimedAt, LEASE_MS);
-    if (!claimed.rowsAffected) continue;
+    // An earlier leased message must finish before a later lifecycle phase can post.
+    if (!claimed.rowsAffected) break;
     try {
       const url = new URL(config.webhook);
       // wait=true makes Discord confirm message creation before we persist delivery.

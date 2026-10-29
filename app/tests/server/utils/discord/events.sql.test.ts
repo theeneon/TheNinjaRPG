@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, expect, it, setSystemTime, vi } from "bun:test";
 import { eq } from "drizzle-orm";
 import { discordEventDelivery, gameSetting, quest, territoryWar, territoryWarScore, war, village, userData } from "@/drizzle/schema";
 import { claimDiscordEventDelivery, finishDiscordEventDelivery, initializeDiscordEventDeliveries, listDiscordRaids, listDiscordEventReceipts, listDiscordTerritoryWars } from "@/queries/discordEvents";
@@ -14,6 +14,7 @@ import { updateQuestForUpdate } from "@/queries/quests";
 import { questsRouter } from "@/server/api/routers/quests";
 import { QuestValidator, RaidObjective } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
+import { actualGameSettings } from "../../../setup/preload";
 
 const env = process.env as Record<string, string | undefined>;
 const keys = ["NODE_ENV", "DISCORD_EVENT_UPDATES", "DISCORD_RAIDS_ROLE_ID", "DISCORD_WARS_ROLE_ID", "DISCORD_TERRITORY_WARS_ROLE_ID"];
@@ -83,6 +84,64 @@ describeWithDatabase("Discord event delivery receipts", () => {
     expect((await claimDiscordEventDelivery(db, id, later, 120_000)).rowsAffected).toBe(1);
     expect((await finishDiscordEventDelivery(db, id, now, true)).rowsAffected).toBe(0);
     expect((await finishDiscordEventDelivery(db, id, later, true)).rowsAffected).toBe(1);
+  });
+  it("keeps an end behind a pending start across overlapping minute ticks", async () => {
+    const db = await seed();
+    setSystemTime(new Date("2026-10-29T12:00:55Z"));
+    let release!: () => void;
+    let entered!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const accepted: string[] = [];
+    posts.mockImplementation(async (_url, options) => {
+      const message = JSON.parse(String(options?.body)).content as string;
+      if (message.includes("Raid started")) { entered(); await blocked; }
+      accepted.push(message.includes("Raid started") ? "start" : "end");
+      return new Response('{"id":"confirmed"}');
+    });
+    const tick = async () => {
+      expect((await actualGameSettings.lockWithMinuteTimer(db, "territory-war-maintenance")).isNewMinute).toBe(true);
+      await syncDiscordEvents(db);
+    };
+    const first = tick();
+    try {
+      await started;
+      await db.update(quest).set({ raidBossCurrentHealth: 0 });
+      setSystemTime(new Date("2026-10-29T12:01:00Z"));
+      await tick();
+      expect(accepted).toEqual([]);
+      expect(posts).toHaveBeenCalledTimes(1);
+      release();
+      await first;
+      setSystemTime(new Date("2026-10-29T12:02:00Z"));
+      await tick();
+      expect(accepted).toEqual(["start", "end"]);
+      expect((await db.query.discordEventDelivery.findMany()).every(receipt => receipt.delivered)).toBe(true);
+    } finally {
+      release();
+      await first;
+      setSystemTime();
+    }
+  });
+  it("retries a stale start lease before its queued end", async () => {
+    setSystemTime(now);
+    try {
+      const db = await seed();
+      await db.update(quest).set({ raidBossCurrentHealth: 0 });
+      posts.mockResolvedValueOnce(new Response("limited", { status: 429 }));
+      await syncDiscordEvents(db, now);
+      const id = `${discordEventKey("raids", `raid:${now.getTime() + 600_000}`)}:start`;
+      expect((await claimDiscordEventDelivery(db, id, now, 120_000)).rowsAffected).toBe(1);
+      await syncDiscordEvents(db, now);
+      expect(posts).toHaveBeenCalledTimes(1);
+      setSystemTime(new Date(now.getTime() + 180_000));
+      await syncDiscordEvents(db);
+      const phases = posts.mock.calls.map(call => JSON.parse(String(call[1]?.body)).content.includes("Raid started") ? "start" : "end");
+      expect(phases).toEqual(["start", "start", "end"]);
+      expect((await db.query.discordEventDelivery.findMany()).every(receipt => receipt.delivered)).toBe(true);
+    } finally {
+      setSystemTime();
+    }
   });
   it("announces restored open raids without treating content edits as activations", async () => {
     const db = await getTestDatabase();

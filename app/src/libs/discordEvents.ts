@@ -7,7 +7,7 @@ import type { DiscordEventDelivery, Quest, TerritoryWar, War } from "@/drizzle/s
 
 export type DiscordEventCategory = DiscordEventDelivery["category"];
 export type DiscordEvent = Pick<DiscordEventDelivery, "id" | "category" | "message">;
-type Raid = { isExclusive: boolean } & Pick<
+type Raid = { isExclusive: number | string } & Pick<
   Quest,
   | "id"
   | "name"
@@ -44,14 +44,16 @@ export const buildDiscordEvents = ({
   const events: DiscordEvent[] = [];
   if (enabledAt.raids)
     for (const raid of raids) {
+      // PlanetScale returns relational SQL expressions as numeric strings.
+      const isExclusive = Number(raid.isExclusive) === 1;
       if (
         raid.hidden ||
         raid.raidBossCurrentHealth === null ||
-        (raid.isExclusive && !raid.raidEndsAt)
+        (isExclusive && !raid.raidEndsAt)
       )
         continue;
       const starts =
-        raid.isExclusive && raid.raidEndsAt
+        isExclusive && raid.raidEndsAt
           ? new Date(
               raid.raidEndsAt.getTime() - EXCLUSIVE_RAID_DURATION_HOURS * 3_600_000,
             )

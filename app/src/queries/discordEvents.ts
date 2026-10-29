@@ -79,10 +79,11 @@ export const listDiscordRaids = (client: DrizzleClient) =>
       raidEndsAt: true,
     },
     extras: {
-      isExclusive:
-        sql<boolean>`COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${quest.content}, '$.objectives[0].task')) = 'exclusive_raid', false)`
-          .mapWith(Boolean)
-          .as("isExclusive"),
+      isExclusive: sql<
+        number | string
+      >`COALESCE(JSON_UNQUOTE(JSON_EXTRACT(${quest.content}, '$.objectives[0].task')) = 'exclusive_raid', false)`.as(
+        "isExclusive",
+      ),
     },
     where: and(
       eq(quest.questType, "raid"),
