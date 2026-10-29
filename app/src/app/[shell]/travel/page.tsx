@@ -97,7 +97,6 @@ import Modal from "@/layout/Modal";
 import NavTabs from "@/layout/NavTabs";
 import { WarFieldActions } from "@/layout/WarFieldActions";
 import { nonCombatConsume } from "@/libs/item";
-import {} from "@/libs/quest";
 import {
   findNearestWalkableCoordinate,
   isReachableCoordinate,
