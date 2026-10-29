@@ -1,16 +1,18 @@
 import { eq } from "drizzle-orm";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
-import { item, quest, questHistory, userCookingJob, userData, userItem, userQueue, userVote } from "@/drizzle/schema";
+import { SECTOR_MAP_VERSION } from "@/drizzle/constants";
+import { item, quest, questHistory, sectorMap, userCookingJob, userData, userItem, userQueue, userVote } from "@/drizzle/schema";
 import { questsRouter } from "@/server/api/routers/quests";
 import { profileRouter } from "@/server/api/routers/profile";
 import { getEnergyQueue } from "@/libs/queue";
+import { invalidatePublishedMapCache } from "@/server/utils/sectorMap";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import { AllObjectives, CollectItem, InstantNewQuestObjective, InstantStartBattleObjective, SimpleObjective } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
-import { insertItems, insertQuestHistory, insertQuests, insertUsers } from "../../../../setup/factories";
+import { insertItems, insertQuestHistory, insertQuests, insertUserItems, insertUsers } from "../../../../setup/factories";
 import { queueEnergy } from "../../../../setup/queues";
-import { callerFor, describeWithDatabase, getTestDatabase, resetTables } from "../../../../setup/testDatabase";
+import { callerFor, describeWithDatabase, getTestDatabase, recordQueries, resetTables } from "../../../../setup/testDatabase";
 
 const playerId = "quest-cache-player";
 const missionId = "quest-cache-mission";
@@ -40,7 +42,8 @@ const countProfileReads = async () => {
 
 describeWithDatabase("confirmed quest cache responses", () => {
   beforeEach(async () => {
-    await resetTables(userCookingJob, userItem, item, userQueue, questHistory, quest, userVote, userData);
+    await resetTables(userCookingJob, userItem, item, userQueue, questHistory, quest, sectorMap, userVote, userData);
+    invalidatePublishedMapCache();
     await insertUsers([{ userId: playerId, username: "questcache", rank: "JONIN", level: 50,
       primaryElement: "Fire", secondaryElement: "Water", isOutlaw: true, status: "AWAKE",
       sector: 0, money: 1000, earnedExperience: 0, curEnergy: 30, regeneration: 0,
@@ -52,7 +55,7 @@ describeWithDatabase("confirmed quest cache responses", () => {
     await insertQuestHistory([{ userId: playerId, questId: "cache-tier", questType: "tier" }]);
     await (await getTestDatabase()).insert(userVote).values({ id: "cache-vote", userId: playerId, secret: "secret01", lastVoteAt: new Date() });
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); invalidatePublishedMapCache(); });
 
   it.each(["event", "story", "mastery"] as const)(
     "claims a %s mastery reward once despite history for a deleted achievement",
@@ -149,6 +152,58 @@ describeWithDatabase("confirmed quest cache responses", () => {
       // Cooking settlement reloads its committed receipt; the response adds no read.
       expect(readsBefore()).toBe(settleCooking ? 2 : 1);
     } finally { stop(); client.clear(); }
+  });
+
+  it.each([
+    { questType: "mission", isolated: false },
+    { questType: "battlepyramid", isolated: true },
+  ] as const)("reconciles located paid $questType targets after its assignment transaction", async ({ questType, isolated }) => {
+    const database = await getTestDatabase();
+    await insertItems([{ id: "cache-ticket" }]);
+    await insertUserItems([{ id: "cache-tickets", userId: playerId, itemId: "cache-ticket", quantity: 2 }]);
+    await database.update(quest).set({
+      questType,
+      consecutiveObjectives: false,
+      content: {
+        ...content(10), isolated, entryItems: [{ ids: ["cache-ticket"], number: 1 }],
+        objectives: [2, 3].map((sector) => AllObjectives.parse({
+          id: `located-${sector}`, task: "defeat_opponents", opponentAIs: [{ ids: ["cache-opponent"], number: 1 }],
+          sector, longitude: 10, latitude: 7, sectorType: "specific", locationType: "specific",
+        })),
+      },
+    }).where(eq(quest.id, missionId));
+    for (const sector of [2, 3]) await database.insert(sectorMap).values({
+      id: `cache-map-${sector}`, sector, name: "Target map", width: 1, height: 1, status: "PUBLISHED",
+      normalizedJson: {
+        formatVersion: SECTOR_MAP_VERSION, sector, name: "Target map", width: 1, height: 1,
+        tiles: [{ x: 0, y: 0, terrain: "ground", walkCost: 1, blocked: false, zone: "wilderness", battleBiome: "ground" }],
+        objects: [], anchors: [], exits: [], metadata: { importedAt: new Date().toISOString(), source: "tiled" },
+      },
+    });
+
+    const api = await callerFor(questsRouter, playerId);
+    const { result, statements } = await recordQueries(() => api.startQuest({ questId: missionId, userSector: 0 }));
+    expect(result.success).toBe(true);
+    expect(result.userPatch).toBeUndefined();
+    expect(result.achievementProgress).toBeUndefined();
+    expect(statements.some((statement) => /from `SectorMap`/i.test(statement))).toBe(false);
+    const accepted = await readPlayer();
+    expect(accepted?.status).toBe(isolated ? "BATTLE" : "AWAKE");
+    expect(accepted?.questData?.find((entry) => entry.id === missionId)?.goals).toMatchObject([
+      { sector: 2, longitude: 10, latitude: 7 },
+      { sector: 3, longitude: 10, latitude: 7 },
+    ]);
+    expect(await database.query.questHistory.findFirst({ where: eq(questHistory.questId, missionId) })).toMatchObject({ entryPaid: true, isolated });
+    expect(await database.query.userItem.findFirst({ where: eq(userItem.id, "cache-tickets") })).toMatchObject({ quantity: 1 });
+
+    const reconciled = await (await callerFor(profileRouter, playerId)).getUser();
+    const saved = (await readPlayer())?.questData?.find((entry) => entry.id === missionId)?.goals;
+    expect(saved).toMatchObject([
+      { sector: 2, longitude: 0, latitude: 0, locationChecked: true },
+      { sector: 3, longitude: 0, latitude: 0, locationChecked: true },
+    ]);
+    expect(reconciled.userData?.questData?.find((entry) => entry.id === missionId)?.goals).toEqual(saved);
+    expect(await database.query.userItem.findFirst({ where: eq(userItem.id, "cache-tickets") })).toMatchObject({ quantity: 1 });
   });
 
   it("returns the accepted specific mission, counter and trackers using its existing profile read", async () => {

@@ -3151,8 +3151,9 @@ export const upsertQuestEntry = async (
   ]);
   // Target sectors depend on the rolled trackers, so their cached map read follows
   // tracker creation and precedes the same write that publishes the quest attempt.
+  // The map loader runs independent reads; transaction starts reconcile through the profile.
   const targetSectors = getQuestTargetSectorsToCheck(user, trackers, true);
-  if (targetSectors.length > 0) {
+  if (targetSectors.length > 0 && !inTransaction) {
     const maps = await fetchPublishedSectorMaps(client, targetSectors).catch(
       (error: unknown) => {
         Sentry.captureException(error, {
@@ -3188,6 +3189,7 @@ export const upsertQuestEntry = async (
   // effects also require reconciliation beyond the tracker-only assignment write.
   // Team assignments change navigation derived by the profile query.
   let userCacheEligible =
+    !(inTransaction && targetSectors.length > 0) &&
     !quest.teamEnabled &&
     !professionContract &&
     consequences.every((entry) => entry.type === "update_user") &&
