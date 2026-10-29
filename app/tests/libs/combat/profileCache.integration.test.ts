@@ -48,7 +48,7 @@ describeWithDatabase("combat profile cache inventory confirmation", () => {
     expect((await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))?.battleId).toBeNull();
   });
 
-  it.each(["ready", "disabled", "changed selection", "changed rank"])("confirms companion XP atomically and preserves player rewards when eligibility changes (%s)", async (condition) => {
+  it.each(["ready", "disabled", "changed selection", "changed rank", "disabled without recovery"])("confirms companion XP atomically and preserves player rewards when eligibility changes (%s)", async (condition) => {
     const eligible = condition === "ready";
     const database = await getTestDatabase();
     await database.update(userData).set({ rank: "GENIN", activePetId: "cache-pet", petExperience: 40 }).where(eq(userData.userId, "cache-player"));
@@ -62,11 +62,13 @@ describeWithDatabase("combat profile cache inventory confirmation", () => {
     const result = calcBattleResult(state, "cache-player", [])!;
     result.experience = 5.49; result.earnedExperience = 7.49;
     result.villagePrestige = 0; result.villageTokens = 0; result.anbuPoints = 0; result.clanPoints = 0;
-    if (condition === "disabled") await database.update(userPet).set({ battleEnabled: false }).where(eq(userPet.id, "cache-pet"));
+    if (condition === "disabled without recovery") delete state.extraState.energyCapacity;
+    if (condition.startsWith("disabled")) await database.update(userPet).set({ battleEnabled: false }).where(eq(userPet.id, "cache-pet"));
     if (condition === "changed selection") await database.update(userData).set({ activePetId: null }).where(eq(userData.userId, "cache-player"));
     if (condition === "changed rank") await database.update(userData).set({ rank: "NONE" }).where(eq(userData.userId, "cache-player"));
     const { statements } = await recordQueries(() => updateUser(database, { trigger: async () => {} } as unknown as PusherClient, state, result, "cache-player"));
     expect(statements.some((statement) => /^select\b/i.test(statement))).toBe(false);
+    expect(statements.filter((statement) => /^update `UserData` /i.test(statement))).toHaveLength(eligible || condition === "disabled without recovery" ? 1 : 2);
     const saved = (await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))!;
     expect(saved).toMatchObject({ experience: original.experience + 5, earnedExperience: original.earnedExperience + 7, battleId: null, petExperience: eligible ? 52 : 40 });
     if (!eligible) expect(result.profileUpdate).toBeUndefined();

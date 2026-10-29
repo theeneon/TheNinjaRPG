@@ -1323,13 +1323,6 @@ export const updateUser = async (
     // An isolated defeat stays in the run so its authored checkpoint remains playable.
     if (getIsolatedPyramid(hydratedUser))
       result.curHealth = Math.max(1, result.curHealth);
-    const previouslyDoneGoals = new Set(
-      hydratedUser.questData.flatMap((tracker) =>
-        tracker.goals
-          .filter((goal) => goal.done)
-          .map((goal) => `${tracker.id}:${goal.id}`),
-      ),
-    );
     const { trackers, notifications, questIdsUpdated, consequences } = getNewTrackers(
       hydratedUser,
       trackerTasks,
@@ -1502,6 +1495,31 @@ export const updateUser = async (
       }
     }
 
+    const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
+    const capacity = curBattle.extraState.energyCapacity?.[userId];
+    const regeneration = curBattle.extraState.energyRegeneration?.[userId];
+    // Passive completions can award progression, and shared completions must publish
+    // their personal contributions before the party can advance or claim rewards.
+    const hasUnprojectedQuestCompletion = trackers.some(
+      (tracker) =>
+        questIdsUpdated.includes(tracker.id) &&
+        (!!tracker.party ||
+          hydratedUser.userQuests.some(
+            (entry) =>
+              entry.questId === tracker.id &&
+              ["tier", "daily", "achievement"].includes(entry.quest.questType),
+          )),
+    );
+    const canProjectProfileUpdate =
+      !!baseline &&
+      capacity !== undefined &&
+      regeneration !== undefined &&
+      canCacheCombatCompletion(curBattle, result, userId) &&
+      consequences.length === 0 &&
+      !hasUnprojectedQuestCompletion &&
+      iExp === 0 &&
+      user.items.every((item) => !item.progressionRowId) &&
+      result.droppedItems.length === 0;
     // Use one timestamp for persisted recovery and its compact completion response.
     const settledAt = new Date();
     let userSettlementCommitted = false;
@@ -1512,9 +1530,7 @@ export const updateUser = async (
       Math.round(result.experience) + Math.round(result.earnedExperience),
     );
     const confirmPetReward =
-      !!rewardPetId &&
-      petExperience > 0 &&
-      canCacheCombatCompletion(curBattle, result, userId);
+      !!rewardPetId && petExperience > 0 && canProjectProfileUpdate;
     let petRewardConfirmed = !rewardPetId || petExperience === 0;
     // Defer execution so a hunting transaction never overlaps requests on its session.
     const settlementWrites: (() => PromiseLike<unknown>)[] = [
@@ -1645,36 +1661,11 @@ export const updateUser = async (
       if (!userSettlementCommitted || !itemSettlementCommitted)
         throw new Error("Hunting character or inventory changed during settlement");
     } else await Promise.all(settlementWrites.map((write) => write()));
-    const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
-    const capacity = curBattle.extraState.energyCapacity?.[userId];
-    const regeneration = curBattle.extraState.energyRegeneration?.[userId];
-    // Passive completions can award progression, and shared completions must publish
-    // their personal contributions before the party can advance or claim rewards.
-    const hasUnprojectedQuestCompletion = trackers.some(
-      (tracker) =>
-        (!!tracker.party ||
-          hydratedUser.userQuests.some(
-            (entry) =>
-              entry.questId === tracker.id &&
-              ["tier", "daily", "achievement"].includes(entry.quest.questType),
-          )) &&
-        tracker.goals.some(
-          (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
-        ),
-    );
     if (
+      canProjectProfileUpdate &&
       userSettlementCommitted &&
       itemSettlementCommitted &&
-      petRewardConfirmed &&
-      baseline &&
-      capacity !== undefined &&
-      regeneration !== undefined &&
-      canCacheCombatCompletion(curBattle, result, userId) &&
-      consequences.length === 0 &&
-      !hasUnprojectedQuestCompletion &&
-      iExp === 0 &&
-      user.items.every((item) => !item.progressionRowId) &&
-      result.droppedItems.length === 0
+      petRewardConfirmed
     ) {
       const publicUser = getPublicQuestUser({
         ...hydratedUser,
