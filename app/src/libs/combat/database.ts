@@ -1648,15 +1648,16 @@ export const updateUser = async (
     const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
     const capacity = curBattle.extraState.energyCapacity?.[userId];
     const regeneration = curBattle.extraState.energyRegeneration?.[userId];
-    // Tier/daily/achievement completion can award passive progression on the next
-    // profile read. Ordinary quest objectives wait for their explicit reward claim.
-    const newlyDoneGoal = trackers.some(
+    // Passive completions can award progression, and shared completions must publish
+    // their personal contributions before the party can advance or claim rewards.
+    const hasUnprojectedQuestCompletion = trackers.some(
       (tracker) =>
-        hydratedUser.userQuests.some(
-          (entry) =>
-            entry.questId === tracker.id &&
-            ["tier", "daily", "achievement"].includes(entry.quest.questType),
-        ) &&
+        (!!tracker.party ||
+          hydratedUser.userQuests.some(
+            (entry) =>
+              entry.questId === tracker.id &&
+              ["tier", "daily", "achievement"].includes(entry.quest.questType),
+          )) &&
         tracker.goals.some(
           (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
         ),
@@ -1670,7 +1671,7 @@ export const updateUser = async (
       regeneration !== undefined &&
       canCacheCombatCompletion(curBattle, result, userId) &&
       consequences.length === 0 &&
-      !newlyDoneGoal &&
+      !hasUnprojectedQuestCompletion &&
       iExp === 0 &&
       user.items.every((item) => !item.progressionRowId) &&
       result.droppedItems.length === 0
