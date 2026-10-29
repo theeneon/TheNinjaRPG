@@ -546,7 +546,7 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
     await parkedPet(database, { id: "parked", storedExperience: 20 });
     await database.update(userData).set({ petExperience: 99 }).where(eq(userData.userId, userId));
     const caller = callerForDatabase(petsRouter, userId, database);
-    expect(await caller.assignExperience({ ...stats, petId: "parked" })).toMatchObject({ success: true, userDelta: {} });
+    expect(await caller.assignExperience({ ...stats, petId: "parked" })).toMatchObject({ success: true, userDelta: {}, userPatch: {} });
     expect(await readPet(database, "parked")).toMatchObject({ storedExperience: 10, experience: 10, offence: 20 });
     expect((await caller.assignExperience({ ...stats, offence: 11, petId: "parked" })).success).toBe(false);
     expect((await caller.releasePet({ petId: "parked" })).success).toBe(true);
@@ -992,8 +992,9 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
     const caller = callerForDatabase(petsRouter, userId, holdOwnerSnapshots(database, 2));
     const results = await Promise.all([caller.assignExperience({ ...stats, petId }), caller.assignExperience({ ...stats, petId })]);
     expect(results.filter((result) => result.success)).toHaveLength(1);
-    expect(results.find((result) => result.success)?.userDelta).toEqual({ petExperience: -10 });
+    expect(results.find((result) => result.success)).toMatchObject({ userDelta: {}, userPatch: { petExperience: 0 } });
     expect(results.find((result) => !result.success)?.userDelta).toBeUndefined();
+    expect(results.find((result) => !result.success)?.userPatch).toBeUndefined();
     expect((await readOwner(database))?.petExperience).toBe(0);
     const pet = await readPet(database);
     expect(pet?.offence).toBe(20);
@@ -1011,6 +1012,43 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
     expect((await readOwner(database))?.petExperience).toBe(50);
     expect((await readPet(database))?.offence).toBe(10);
     expect((await readPet(database))?.experience).toBe(0);
+  });
+
+  it("returns the authoritative active bank after allocating newly earned experience", async () => {
+    const database = await getTestDatabase();
+    await readyPet(database);
+    await database.update(userData).set({ petExperience: 100.5 }).where(eq(userData.userId, userId));
+    const result = await callerForDatabase(petsRouter, userId, database).assignExperience({ ...stats, petId });
+    expect(result).toMatchObject({ success: true, userDelta: {}, userPatch: { petExperience: 90.5 } });
+    expect((await readOwner(database))?.petExperience).toBe(90.5);
+    expect(await readPet(database)).toMatchObject({ offence: 20, experience: 10 });
+  });
+
+  it.each([true, false])("rejects a changed XP bank without spending it or returning a stale balance, active: %s", async (isActive) => {
+    const database = await getTestDatabase();
+    await readyPet(database);
+    if (!isActive) await parkedPet(database, { storedExperience: 50 });
+    await database.update(userData).set({ petExperience: 50 }).where(eq(userData.userId, userId));
+    const selectedPetId = isActive ? petId : "parked";
+    const hooked = beforeStatements(database, userData, [async () => {
+      // Reward grants can increment the bank without advancing either snapshot revision.
+      if (isActive) {
+        await database.update(userData).set({ petExperience: sql`${userData.petExperience} + 5` }).where(eq(userData.userId, userId));
+      } else {
+        await database.update(userPet).set({ storedExperience: sql`${userPet.storedExperience} + 5` }).where(eq(userPet.id, selectedPetId));
+      }
+    }]);
+    const rejected = await callerForDatabase(petsRouter, userId, hooked).assignExperience({ ...stats, petId: selectedPetId });
+    expect(rejected.success).toBe(false);
+    expect(rejected.userPatch).toBeUndefined();
+    expect(rejected.userDelta).toBeUndefined();
+    expect((await readOwner(database))?.petExperience).toBe(isActive ? 55 : 50);
+    expect(await readPet(database, selectedPetId)).toMatchObject({ offence: 10, experience: 0, storedExperience: isActive ? 0 : 55 });
+
+    const accepted = await callerForDatabase(petsRouter, userId, database).assignExperience({ ...stats, petId: selectedPetId });
+    expect(accepted).toMatchObject({ success: true, userDelta: {}, userPatch: isActive ? { petExperience: 45 } : {} });
+    expect((await readOwner(database))?.petExperience).toBe(isActive ? 45 : 50);
+    expect(await readPet(database, selectedPetId)).toMatchObject({ offence: 20, experience: 10, storedExperience: isActive ? 0 : 45 });
   });
 
   it("uses allocated XP and owner rank for evolution and requires finished art before another", async () => {

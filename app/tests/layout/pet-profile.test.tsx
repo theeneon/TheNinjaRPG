@@ -23,6 +23,7 @@ import { getPetAbilityCapacity } from "@/libs/pets/abilities";
 import { getDailyPetOptions, PET_PALETTES } from "@/libs/pets/catalogue";
 import * as toast from "@/libs/toast";
 import * as UserContext from "@/utils/UserContext";
+import { prepareUserUpdate as captureUserUpdate, updateUserCache, type UserPatch, type UserUpdateOptions } from "@/utils/userCache";
 import { petSpeciesFixture } from "../libs/pets/helpers/species";
 import { petJutsuFixture, petSkillFixture } from "../libs/pets/helpers/abilities";
 import { IncreaseStatTag } from "@/validators/combat";
@@ -49,22 +50,23 @@ let saveAbilities: ReturnType<typeof vi.fn>;
 let feed: ReturnType<typeof vi.fn>;
 let saveAi: ReturnType<typeof vi.fn>;
 let getPet: ReturnType<typeof vi.fn>;
+let getUser: ReturnType<typeof vi.fn>;
 let unlockSlot: ReturnType<typeof vi.fn>;
 let generate: ReturnType<typeof vi.fn>;
 let assign: ReturnType<typeof vi.fn>;
 let evolve: ReturnType<typeof vi.fn>;
 let timeDiff: number;
 let previousBattleEnabled: boolean;
-const prepareUserUpdate = vi.fn(() => 17);
-const updateUser = vi.fn(async () => undefined);
+const prepareUserUpdate = vi.fn<() => number | undefined>(() => 17);
+const updateUser = vi.fn<(patch: UserPatch | undefined, mutation?: UserUpdateOptions) => Promise<void>>(async () => undefined);
 let scrollDescriptor: PropertyDescriptor | undefined;
 
 const browserGlobals = ["Event", "CustomEvent", "ResizeObserver"] as const;
 const browserDescriptors = browserGlobals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
 
 beforeEach(() => {
-  prepareUserUpdate.mockClear();
-  updateUser.mockClear();
+  prepareUserUpdate.mockReset().mockReturnValue(17);
+  updateUser.mockReset().mockResolvedValue(undefined);
   ensureDom();
   scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => undefined });
@@ -116,9 +118,10 @@ beforeEach(() => {
   feed = vi.fn(() => ({ success: true, message: "Fed" }));
   saveAi = vi.fn(() => ({ success: true, message: "Rules saved" }));
   getPet = vi.fn(() => data);
+  getUser = vi.fn(() => ({ userData: owner }));
   unlockSlot = vi.fn(() => ({ success: true, message: "Slot unlocked" }));
   generate = vi.fn(() => ({ success: false, message: "Please retry your image." }));
-  assign = vi.fn(() => ({ success: true, message: "Experience assigned", userDelta: { petExperience: -1 } }));
+  assign = vi.fn(() => ({ success: true, message: "Experience assigned", userDelta: {}, userPatch: { petExperience: 99 } }));
   evolve = vi.fn(() => ({ success: true, message: "Evolved" }));
   Object.assign(vi.spyOn(client, "api" as never), { pets: testApi.pets, ai: testApi.ai, useUtils: testApi.useUtils });
   vi.spyOn(navigation, "useSearchParams").mockImplementation(() => new URLSearchParams(requestedPetId ? { petId: requestedPetId } : {}) as never);
@@ -155,6 +158,7 @@ afterEach(() => {
 const mount = (strictMode = false) => {
   const trpcClient = testApi.createClient({ links: [() => ({ op }) => observable((observer) => {
     const respond = async () => {
+      if (op.path === "profile.getUser") return getUser();
       if (op.path === "pets.getPet") {
         return getPet(op.input);
       }
@@ -185,6 +189,19 @@ const confirmMeal = async (view: ReturnType<typeof mount>) => {
 const openSlotDialog = async (view: ReturnType<typeof mount>) => {
   fireEvent.click(await view.findByRole("button", { name: "Add slot" }));
   return view.findByRole("dialog", { name: "Add a companion slot" });
+};
+
+/** Exercise the real profile revision/merge path while retaining the surrounding pet UI fixtures. */
+const observeProfileCache = () => {
+  const key = getQueryKey(testApi.profile.getUser, undefined, "query");
+  queryClient.setQueryData(key, { userData: owner });
+  prepareUserUpdate.mockImplementation(() => captureUserUpdate(queryClient, key));
+  updateUser.mockImplementation((patch, mutation) => updateUserCache(queryClient, key, patch, mutation));
+  vi.spyOn(UserContext, "useRequiredUserData").mockImplementation(() => {
+    const { data: cached } = testApi.profile.getUser.useQuery(undefined, { staleTime: Infinity });
+    return { data: cached?.userData, timeDiff, prepareUserUpdate, updateUser } as never;
+  });
+  return () => queryClient.getQueryData<{ userData: typeof owner }>(key)?.userData;
 };
 
 it.each([false, true])("refreshes cached companions once on remount with StrictMode %s", async (strictMode) => {
@@ -1042,14 +1059,74 @@ it.each([
   await expect(PetProfilePage({ searchParams: Promise.resolve(params as { petId?: string | string[] }) })).rejects.toThrow(expected);
   expect(redirect).toHaveBeenCalledWith(expected);
 });
-
-
-it("applies confirmed pet XP without invalidating the profile", async () => {
+it.each([true, false])("applies the confirmed bank without refetching the profile, active: %s", async (isActive) => {
+  owner.petExperience = isActive ? 0 : 50;
+  if (!isActive) data = { ...data, activePetId: "another-companion" };
+  assign.mockImplementation(() => {
+    data = { ...data, unusedExperience: 99 };
+    return { success: true, message: "Experience assigned", userDelta: {}, userPatch: isActive ? { petExperience: 99 } : {} };
+  });
+  const cachedOwner = observeProfileCache();
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
   const view = mount();
   await view.findByRole("tab", { name: "Training" });
   selectTab(view, "Training");
   fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
-  await waitFor(() => expect(updateUser).toHaveBeenCalledWith(undefined, { revision: 17, delta: { petExperience: -1 } }));
+  await waitFor(() => expect(cachedOwner()?.petExperience).toBe(isActive ? 99 : 50));
+  await view.findByText("99 training points available");
+  expect(updateUser).toHaveBeenCalledWith(isActive ? { petExperience: 99 } : {}, { revision: expect.any(Number), delta: {} });
+  expect(getUser).not.toHaveBeenCalled();
   expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters?.queryKey).includes('"profile"'))).toBe(false);
+});
+
+it("refreshes rejected allocation snapshots without erasing the error and allows a retry", async () => {
+  const cachedOwner = observeProfileCache();
+  const rejection = "Your character or companion changed. Refresh and try again.";
+  assign.mockImplementationOnce(() => {
+    owner = { ...owner, petExperience: 90 };
+    const pet = { ...data.pet!, name: "Updated Miso", offence: 20, experience: 10 };
+    data = { ...data, pet, pets: [pet], unusedExperience: 90 };
+    return { success: false, message: rejection };
+  });
+  const view = mount();
+  await view.findByRole("tab", { name: "Training" });
+  selectTab(view, "Training");
+  fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
+  await view.findByText("90 training points available");
+  await waitFor(() => expect(cachedOwner()?.petExperience).toBe(90));
+  expect(getUser).toHaveBeenCalledTimes(1);
+  expect(updateUser).not.toHaveBeenCalled();
+  expect(view.getByRole("alert").textContent).toBe(rejection);
+  expect(view.getByRole("img", { name: "Updated Miso" })).toBeTruthy();
+  await waitFor(() => expect((view.getByRole("button", { name: "Assign experience" }) as HTMLButtonElement).disabled).toBe(false));
+
+  assign.mockImplementationOnce(() => {
+    data = { ...data, unusedExperience: 89 };
+    return { success: true, message: "Experience assigned", userDelta: {}, userPatch: { petExperience: 89 } };
+  });
+  fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
+  await view.findByText("89 training points available");
+  expect(cachedOwner()?.petExperience).toBe(89);
+  expect(view.queryByRole("alert")).toBeNull();
+  expect(getUser).toHaveBeenCalledTimes(1);
+});
+
+it("reconciles a late allocation response after a newer profile revision", async () => {
+  const cachedOwner = observeProfileCache();
+  let finishAssignment!: (result: RouterOutputs["pets"]["assignExperience"]) => void;
+  assign.mockImplementationOnce(() => new Promise((resolve) => { finishAssignment = resolve; }));
+  const view = mount();
+  await view.findByRole("tab", { name: "Training" });
+  selectTab(view, "Training");
+  fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
+  await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+  owner = { ...owner, petExperience: 80 };
+  data = { ...data, unusedExperience: 80 };
+  await act(async () => {
+    queryClient.setQueryData(getQueryKey(testApi.profile.getUser, undefined, "query"), { userData: owner });
+    finishAssignment({ success: true, message: "Experience assigned", userDelta: {}, userPatch: { petExperience: 99 } });
+  });
+  await waitFor(() => expect(getUser).toHaveBeenCalledTimes(1));
+  expect(cachedOwner()?.petExperience).toBe(80);
+  await view.findByText("80 training points available");
 });

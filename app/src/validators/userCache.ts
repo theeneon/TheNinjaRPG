@@ -50,7 +50,6 @@ export const userDeltaSchema = z.object({
   dailySageActivations: z.number().optional(),
 
   money: z.number().optional(),
-  petExperience: z.number().optional(),
   earnedExperience: z.number().optional(),
   reputationPoints: z.number().optional(),
   seichiSilver: z.number().optional(),
@@ -98,6 +97,7 @@ export const userPatchSchema = z.object({
   pvpStreak: z.number().optional(),
 
   updatedAt: z.date().optional(),
+  petExperience: z.number().optional(),
   experience: z.number().optional(),
   earnedExperience: z.number().optional(),
   level: z.number().optional(),

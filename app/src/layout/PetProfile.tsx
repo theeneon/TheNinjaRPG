@@ -162,6 +162,7 @@ export function PetProfile() {
 
   useEffect(() => {
     setSelectedPetId(requestedPetId);
+    setMessage(null);
   }, [requestedPetId]);
   useEffect(() => {
     if (selectedPetId && data && !data.pets.some((entry) => entry.id === selectedPetId))
@@ -193,7 +194,6 @@ export function PetProfile() {
   ]);
   useEffect(() => {
     nameForm.reset({ name: pet?.name ?? "" });
-    setMessage(null);
   }, [pet?.id, pet?.name, nameForm]);
   useEffect(() => {
     setGenderDraft(pet?.gender ?? null);
@@ -258,10 +258,12 @@ export function PetProfile() {
       showMutationToast(result);
       if (result.success) {
         await Promise.all([
-          updateUser(undefined, { revision, delta: result.userDelta }),
+          updateUser(result.userPatch, { revision, delta: result.userDelta }),
           utils.pets.getPet.invalidate(),
           utils.pets.getCollection.invalidate(),
         ]);
+      } else {
+        await invalidatePetData();
       }
     },
     onError: failMutation,
@@ -454,7 +456,10 @@ export function PetProfile() {
               <Select
                 value={pet?.id ?? ""}
                 disabled={isBusy}
-                onValueChange={setSelectedPetId}
+                onValueChange={(petId) => {
+                  setSelectedPetId(petId);
+                  setMessage(null);
+                }}
               >
                 <SelectTrigger
                   id="pet-collection"

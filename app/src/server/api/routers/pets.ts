@@ -649,7 +649,8 @@ export const petsRouter = createTRPCRouter({
       }
       const spent = getAssignedCombatStatTotal(stats) - getAssignedCombatStatTotal(pet);
       const isActive = user.activePetId === pet.id;
-      if (spent > (isActive ? user.petExperience : pet.storedExperience))
+      const availableExperience = isActive ? user.petExperience : pet.storedExperience;
+      if (spent > availableExperience)
         return errorResponse("Not enough unused companion experience.");
       const now = new Date();
       const bank = isActive ? userData.petExperience : userPet.storedExperience;
@@ -661,6 +662,7 @@ export const petsRouter = createTRPCRouter({
           user,
           now,
           bank,
+          availableExperience,
           spent,
           stats,
           ownerSnapshotWhere,
@@ -672,7 +674,8 @@ export const petsRouter = createTRPCRouter({
         ? {
             success: true,
             message: `${spent.toLocaleString("en-US")} companion experience assigned.`,
-            userDelta: isActive ? { petExperience: -spent } : {},
+            userDelta: {},
+            userPatch: isActive ? { petExperience: availableExperience - spent } : {},
           }
         : changedResponse();
     }),
