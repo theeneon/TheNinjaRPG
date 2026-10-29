@@ -403,11 +403,12 @@ export const occupationRouter = createTRPCRouter({
               consequence.type !== "update_user" ||
               consequence.ids.some((id) => id !== "activity_completion"),
           ) ||
-          // Passive rewards are settled by the authoritative profile flow.
+          // Passive rewards and team quest navigation use the authoritative profile flow.
           user.userQuests.some(
             (entry) =>
               questIdsUpdated.some((id) => id === entry.questId) &&
-              ["tier", "daily", "achievement"].includes(entry.quest.questType),
+              (entry.quest.teamEnabled ||
+                ["tier", "daily", "achievement"].includes(entry.quest.questType)),
           ) ||
           allConsumptions.some((consumption) =>
             user.items.some((entry) => entry.id === consumption.userItemId),

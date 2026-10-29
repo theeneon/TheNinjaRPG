@@ -3,7 +3,7 @@ import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { eq } from "drizzle-orm";
 import { craftingRequirement, item, quest, questHistory, userCookingJob, userData, userItem, userQueue, userVote } from "@/drizzle/schema";
 import { occupationRouter } from "@/server/api/routers/occupation";
-import { fetchUpdatedUser } from "@/server/api/routers/profile";
+import { fetchUpdatedUser, profileRouter } from "@/server/api/routers/profile";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import { AllObjectives, QuestTracker } from "@/validators/objectives";
 import { ObjectiveReward } from "@/validators/rewards";
@@ -93,6 +93,36 @@ describeWithDatabase("crafting user cache quest progress", () => {
       expect(cached.craftingExperience).toBe(saved.craftingExperience);
       expect(cached.questData).toEqual(saved.questData);
       expect(reads).toBe(questType === "achievement" ? 1 : 0);
+    } finally { stop(); client.clear(); }
+  });
+
+  it.each(["story", "event", "anbu"] as const)("reconciles navigation after completing a team-enabled %s quest", async (questType) => {
+    const db = await getTestDatabase();
+    await insertQuests([{ id: "team-craft", questType, teamEnabled: true, maxAttempts: 100, maxCompletes: 100, content: { objectives: [AllObjectives.parse({ id: "make-one", task: "items_crafted", value: 1 })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] } }]);
+    await insertQuestHistory([{ userId: "crafter", questId: "team-craft", questType }]);
+    await db.update(userData).set({ questData: [QuestTracker.parse({ id: "team-craft", goals: [{ id: "make-one", value: 0, done: false }] })] }).where(eq(userData.userId, "crafter"));
+    const profile = await callerFor(profileRouter, "crafter");
+    const initial = await profile.getUser();
+    expect(initial.notifications).toContainEqual(expect.objectContaining({ name: "Quest Teams" }));
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, initial);
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return profile.getUser(); } });
+    const stop = observer.subscribe(() => undefined);
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await (await callerFor(occupationRouter, "crafter")).craftItem({ itemId: "crafted", quantity: 1 });
+      expect(result.success).toBe(true);
+      await updateUserCache(client, key, result.userPatch, { revision, achievementProgress: result.achievementProgress });
+      const authoritative = await profile.getUser();
+      expect(authoritative.notifications).toContainEqual(expect.objectContaining({ name: "Quest rewards waiting: open your Logbook", notificationCount: 1 }));
+      expect(authoritative.notifications.some((entry) => entry.href === "/questteams")).toBe(false);
+      const cached = client.getQueryData<typeof initial>(key)!;
+      expect(cached.notifications).toEqual(authoritative.notifications);
+      expect(cached.userData?.questData).toEqual(authoritative.userData?.questData);
+      expect(reads).toBe(1);
+      expect(result.userPatch).toBeUndefined();
     } finally { stop(); client.clear(); }
   });
 });
