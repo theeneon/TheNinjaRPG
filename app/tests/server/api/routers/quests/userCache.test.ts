@@ -6,6 +6,7 @@ import { item, quest, questHistory, sectorMap, userCookingJob, userData, userIte
 import { questsRouter } from "@/server/api/routers/quests";
 import { profileRouter } from "@/server/api/routers/profile";
 import { getEnergyQueue } from "@/libs/queue";
+import * as questQueries from "@/queries/quests";
 import { invalidatePublishedMapCache } from "@/server/utils/sectorMap";
 import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import { AllObjectives, CollectItem, InstantNewQuestObjective, InstantStartBattleObjective, SimpleObjective } from "@/validators/objectives";
@@ -336,6 +337,81 @@ describeWithDatabase("confirmed quest cache responses", () => {
     expect(secondResult.userPatch?.skillPoints).toBe(8);
     expect(reads()).toBe(2);
     for (const client of clients) client.clear();
+  });
+
+  it("keeps a paid claim successful and refetches when skill-point confirmation fails", async () => {
+    const db = await getTestDatabase();
+    await db.update(quest).set({
+      content: {
+        ...content(10),
+        objectives: [SimpleObjective.parse({ id: "level", task: "user_level", value: 50 })],
+        reward: ObjectiveReward.parse({ reward_money: 100, reward_skillpoints: 3 }),
+      },
+    }).where(eq(quest.id, missionId));
+    await db.update(userData).set({ skillPoints: 2 }).where(eq(userData.userId, playerId));
+    const api = await callerFor(questsRouter, playerId);
+    expect((await api.startQuest({ questId: missionId, userSector: 0 })).success).toBe(true);
+    const profileApi = await callerFor(profileRouter, playerId);
+    const profile = await profileApi.getUser();
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, profile);
+    let refetches = 0;
+    const observer = new QueryObserver(client, {
+      queryKey: key,
+      staleTime: Infinity,
+      queryFn: async () => {
+        refetches++;
+        return await profileApi.getUser();
+      },
+    });
+    const stop = observer.subscribe(() => undefined);
+    const confirmation = vi.spyOn(questQueries, "findQuestRewardSkillPoints")
+      .mockRejectedValueOnce(new Error("Skill-point confirmation unavailable"));
+    try {
+      const revision = prepareUserUpdate(client, key);
+      const result = await api.checkRewards({ questId: missionId });
+      expect(confirmation).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ success: true, resolved: true });
+      expect(result.userPatch).toBeUndefined();
+      expect(result.userDelta).toBeUndefined();
+      expect(result.achievementProgress).toBeUndefined();
+      await updateUserCache(client, key, result.userPatch, {
+        revision, delta: result.userDelta, achievementProgress: result.achievementProgress,
+      });
+      expect(refetches).toBe(1);
+      expect(client.getQueryData<typeof profile>(key)?.userData).toMatchObject({ money: 1100, skillPoints: 5 });
+      expect((await api.checkRewards({ questId: missionId })).success).toBe(true);
+      expect(confirmation).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+      client.clear();
+      // The confirmation is optional cache data; the SQL payout and receipt stay committed.
+      expect(await readPlayer()).toMatchObject({ money: 1100, skillPoints: 5 });
+      expect(await db.query.questHistory.findFirst({ where: eq(questHistory.questId, missionId) }))
+        .toMatchObject({ completed: 1, previousCompletes: 1, endAt: expect.any(Date) });
+    }
+  });
+
+  it("rejects a failed skill-point payout before attempting balance confirmation", async () => {
+    const db = await getTestDatabase();
+    await db.update(quest).set({
+      content: {
+        ...content(10),
+        objectives: [SimpleObjective.parse({ id: "level", task: "user_level", value: 50 })],
+        reward: ObjectiveReward.parse({ reward_money: 100, reward_skillpoints: 3 }),
+      },
+    }).where(eq(quest.id, missionId));
+    await db.update(userData).set({ skillPoints: 2 }).where(eq(userData.userId, playerId));
+    const api = await callerFor(questsRouter, playerId);
+    expect((await api.startQuest({ questId: missionId, userSector: 0 })).success).toBe(true);
+    const payout = vi.spyOn(questQueries, "updateUserDataForUpdateRewards")
+      .mockRejectedValueOnce(new Error("Reward payout unavailable"));
+    const confirmation = vi.spyOn(questQueries, "findQuestRewardSkillPoints");
+    await expect(api.checkRewards({ questId: missionId })).rejects.toThrow("Reward payout unavailable");
+    expect(payout).toHaveBeenCalledTimes(1);
+    expect(confirmation).not.toHaveBeenCalled();
+    expect(await readPlayer()).toMatchObject({ money: 1000, skillPoints: 2 });
   });
 
   it.each(["event", "story"] as const)("reconciles completed %s team navigation after disbanding", async (questType) => {

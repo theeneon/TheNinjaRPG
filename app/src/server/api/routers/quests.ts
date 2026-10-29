@@ -3824,7 +3824,10 @@ export const commitQuestObjectiveRewards = async (info: {
     // The account claim precedes this atomic payout; another claim may have read its
     // advanced snapshot before either payout. Return the saved capped balance instead.
     needsConfirmedSkillPoints
-      ? rewardPromise.then(() => findQuestRewardSkillPoints(client, userId))
+      ? rewardPromise.then(() =>
+          // A missing confirmation reconciles the profile without rejecting a paid claim.
+          findQuestRewardSkillPoints(client, userId).catch(() => undefined),
+        )
       : undefined,
     resolved && userQuest
       ? rewardPromise.then(() =>
