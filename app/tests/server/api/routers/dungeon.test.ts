@@ -302,6 +302,29 @@ describeWithDatabase("Dungeon parties and settlement", () => {
     expect((await db.query.dungeonMember.findFirst())?.reward).toMatchObject({items:["drop"], jutsus:["technique"]});
     expect((await db.query.userData.findFirst({where:eq(userData.userId,"a")}))?.money).toBe(100);
   });
+  it("keeps owned jutsu eligible until delivered after forgetting", async () => {
+    const db = await getTestDatabase();
+    await db.insert(jutsu).values({id: "technique", name: "Technique", description: "Technique", battleDescription: "Technique", image: "/jutsu.png", effects: [], target: "SELF", range: 0, requiredRank: "STUDENT", jutsuType: "NORMAL"});
+    await db.insert(userJutsu).values({id: "owned", userId: "a", jutsuId: "technique"});
+    const content = dungeonContent();
+    content.rewards.drops = [{type: "jutsu", id: "technique", chance: 100, quantity: 1, onlyOnce: true}];
+    const completed = async (id: string) => {
+      await db.insert(dungeonRun).values({id, dungeonId: "definition", leaderId: "a", content, status: "COMPLETED", createdAt: new Date(), state: {...dungeonBattleState().runState, memberIds: ["a"], floor: 5, clearedFloors: [0,1,2,3,4]}});
+      await db.insert(dungeonMember).values({runId: id, userId: "a"});
+    };
+    const a = await callerFor(dungeonRouter, "a");
+    await completed("owned");
+    const skipped = await a.claim({id: "owned"});
+    expect(skipped).toMatchObject({success: true, reward: {jutsus: [], grantedDrops: [], rewards: {reward_jutsus: []}}});
+    expect(await a.claim({id: "owned"})).toEqual({...skipped, message: "Rewards already delivered."});
+    await db.delete(userJutsu).where(eq(userJutsu.userId, "a"));
+    await completed("forgotten");
+    expect(await a.claim({id: "forgotten"})).toMatchObject({success: true, reward: {jutsus: ["technique"], grantedDrops: [JSON.stringify(["jutsu", "technique"])], rewards: {reward_jutsus: ["technique"]}}});
+    await db.delete(userJutsu).where(eq(userJutsu.userId, "a"));
+    await completed("delivered-before");
+    expect(await a.claim({id: "delivered-before"})).toMatchObject({success: true, reward: {jutsus: [], grantedDrops: []}});
+    expect(await db.query.userJutsu.findMany()).toHaveLength(0);
+  });
   it("settles a party floor once, revives everyone and preserves incomplete reward gates", async () => {
     const db = await getTestDatabase();
     const meta = dungeonBattleState();

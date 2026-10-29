@@ -2,7 +2,11 @@ import { nanoid } from "nanoid";
 import { DUNGEON_RUN_SECONDS } from "@/drizzle/constants";
 import { transitionCoopParty } from "@/libs/coop";
 import { dungeonFloorAt } from "@/libs/dungeon";
-import { dungeonRewardError, rollDungeonRewards } from "@/libs/dungeonRewards";
+import {
+  dungeonDropKey,
+  dungeonRewardError,
+  rollDungeonRewards,
+} from "@/libs/dungeonRewards";
 import { listAiUserIds } from "@/queries/ai";
 import {
   clearDungeonActiveUsers,
@@ -32,6 +36,7 @@ import {
   selectCandidatesForGetState,
   selectDungeonMemberForGetState,
   updateDungeonMemberForClaim,
+  updateDungeonRewardReceipt,
   updateDungeonRunForReserve,
   updateDungeonRunForUpdateParty,
 } from "@/queries/dungeon";
@@ -458,7 +463,7 @@ export const dungeonRouter = createTRPCRouter({
           const claim = await updateDungeonMemberForClaim(tx, receipt, run, ctx);
           if (claim.rowsAffected === 0) return null;
           // Reward tasks execute serially inside the driver's rotating transaction session.
-          await updateRewards({
+          const delivered = await updateRewards({
             client: tx as unknown as DrizzleClient,
             user,
             rewards: rolled,
@@ -467,6 +472,23 @@ export const dungeonRouter = createTRPCRouter({
             persistQuestData: false,
             pvpBoostApplied: true,
           });
+          // Ownership filtering happens in updateRewards. A skipped jutsu must not
+          // consume its one-time eligibility or appear in the delivered receipt.
+          if (rolled.reward_jutsus.length > 0) {
+            const skippedKeys = new Set(
+              rolled.reward_jutsus
+                .filter((id) => !delivered.jutsus.some((jutsu) => jutsu.id === id))
+                .map((id) => dungeonDropKey({ type: "jutsu", id })),
+            );
+            if (skippedKeys.size > 0) {
+              receipt.jutsus = delivered.jutsus.map((jutsu) => jutsu.id);
+              receipt.rewards.reward_jutsus = receipt.jutsus;
+              receipt.grantedDrops = grantedDrops.filter(
+                (key) => !skippedKeys.has(key),
+              );
+              await updateDungeonRewardReceipt(tx, run.id, ctx.userId, receipt);
+            }
+          }
           return receipt;
         }),
       );

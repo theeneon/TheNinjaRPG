@@ -433,6 +433,18 @@ export const updateDungeonMemberForClaim = (
       ),
     );
 
+/** Finalize the reserved receipt with actual delivery inside the claim transaction. */
+export const updateDungeonRewardReceipt = (
+  client: Pick<DrizzleClient, "update">,
+  runId: string,
+  userId: string,
+  receipt: import("@/validators/dungeon").DungeonRewardReceipt,
+) =>
+  client
+    .update(dungeonMember)
+    .set({ reward: receipt })
+    .where(and(eq(dungeonMember.runId, runId), eq(dungeonMember.userId, userId)));
+
 /** Build the `dungeonRun` update for `rollbackDungeonStart`, using predicates on `id`, `battleId`, `version`. */
 export const updateDungeonRunForRollbackDungeonStart = (
   client: Pick<DrizzleClient, "update">,

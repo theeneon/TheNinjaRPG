@@ -68,3 +68,20 @@ it("uses reward identity across row reorderings and suppresses duplicate one-tim
   rewards.drops.reverse();
   expect(rollDungeonRewards(rewards, new Set(first.grantedDrops)).reward_items).toEqual([]);
 });
+
+it.each([false, true])("grants repeatable and one-time rows sharing a key in either order (reverse: %s)", (reverse) => {
+  const rewards = dungeonContent().rewards;
+  rewards.drops = [
+    { type: "item", id: "shared", chance: 100, quantity: 2 },
+    { type: "item", id: "shared", chance: 100, quantity: 3, onlyOnce: true },
+    { type: "item", id: "shared", chance: 100, quantity: 3, onlyOnce: true },
+  ];
+  if (reverse) rewards.drops.reverse();
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const first = rollDungeonRewards(rewards);
+  expect(first.reward_items).toEqual(Array(5).fill("shared"));
+  expect(first.grantedDrops).toEqual([JSON.stringify(["item", "shared"])]);
+  const repeated = rollDungeonRewards(rewards, new Set(first.grantedDrops));
+  expect(repeated.reward_items).toEqual(["shared", "shared"]);
+  expect(repeated.grantedDrops).toEqual(first.grantedDrops);
+});

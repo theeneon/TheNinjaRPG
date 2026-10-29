@@ -8,8 +8,9 @@ import type { DungeonContent } from "@/validators/dungeon";
 import { ObjectiveReward, REWARD_CHOICE_AMOUNT_FIELDS } from "@/validators/rewards";
 
 /** Reward identity survives row reordering and quantity or chance edits. */
-export const dungeonDropKey = (drop: DungeonContent["rewards"]["drops"][number]) =>
-  JSON.stringify([drop.type, drop.id]);
+export const dungeonDropKey = (
+  drop: Pick<DungeonContent["rewards"]["drops"][number], "type" | "id">,
+) => JSON.stringify([drop.type, drop.id]);
 
 /**
  * Roll each completion drop once, granting its entire quantity on success.
@@ -25,11 +26,14 @@ export const rollDungeonRewards = (
   claimedDrops: ReadonlySet<string> = new Set(),
 ) => {
   const grantedDrops = new Set<string>();
+  const grantedOnlyOnceDrops = new Set<string>();
   const drops = rewards.drops.filter((drop) => {
     const key = dungeonDropKey(drop);
-    if (drop.onlyOnce && (claimedDrops.has(key) || grantedDrops.has(key))) return false;
+    if (drop.onlyOnce && (claimedDrops.has(key) || grantedOnlyOnceDrops.has(key)))
+      return false;
     if (Math.random() * 100 >= drop.chance) return false;
     grantedDrops.add(key);
+    if (drop.onlyOnce) grantedOnlyOnceDrops.add(key);
     return true;
   });
   const rolled = postProcessRewards(
