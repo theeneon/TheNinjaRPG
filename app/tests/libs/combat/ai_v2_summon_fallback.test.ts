@@ -4,6 +4,7 @@ import { performAIaction } from "@/libs/combat/ai_v2";
 import type { BattleUserState, CompleteBattle } from "@/libs/combat/types";
 import { TerrainHex } from "@/libs/hexgrid";
 import { ActionEndTurn, AiRule } from "@/validators/ai";
+import { makeEffect } from "./helpers/battleScenario";
 
 /**
  * Safety nets for summons whose AI cannot pick an action. A summon is the
@@ -112,6 +113,35 @@ describe("performAIaction for a summon", () => {
     expect(aiDescriptions).toEqual(["Tor Tor hesitates and ends its turn"]);
     const boss = nextBattle.usersState.find((u) => u.userId === "summon");
     expect(boss?.curHealth).toBe(5000);
+    expect(boss?.actionPoints).toBe(0);
+  });
+
+  it("still ticks damage over time on a stuck raid boss", () => {
+    const grid = new Grid(TerrainHex, rectangle({ width: WIDTH, height: HEIGHT }));
+    const dot = makeEffect(
+      "damage",
+      { power: 100, calculation: "static", rounds: 3 },
+      {
+        id: "dot",
+        creatorId: "user_foe",
+        targetId: "summon",
+        targetType: "user",
+        isNew: false,
+        createdRound: 0,
+        timeTracker: {},
+        fromType: "jutsu",
+      },
+    );
+    const battle = {
+      ...mkBattle({ isSummon: false, aiProfileId: "missing-profile" }, {}),
+      battleType: "RAID",
+    } as CompleteBattle;
+    battle.usersEffects = [dot];
+    const { nextBattle, aiDescriptions } = performAIaction(battle, grid, "summon");
+    expect(aiDescriptions).toEqual(["Tor Tor hesitates and ends its turn"]);
+    const boss = nextBattle.usersState.find((u) => u.userId === "summon");
+    expect(boss?.curHealth).toBeLessThan(5000);
+    expect(boss?.curHealth).toBeGreaterThan(0);
     expect(boss?.actionPoints).toBe(0);
   });
 });

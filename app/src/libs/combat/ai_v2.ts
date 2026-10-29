@@ -8,6 +8,7 @@ import {
   stillInBattle,
 } from "@/libs/combat/actions";
 import { areBattleAllies } from "@/libs/combat/participants";
+import { applyEffects } from "@/libs/combat/process";
 import { hasLiveSummon, isSummonActionCastable } from "@/libs/combat/summon";
 import type {
   ActionEffect,
@@ -612,7 +613,13 @@ export const performAIaction = (
     if (!nextAction && !user.isPiloted && !user.isAutoCombat) {
       if (user.isSummon || battle.battleType === "RAID") {
         aiDescriptions.push(`${user.username} hesitates and ends its turn`);
-        user.actionPoints = 0;
+        // Still resolve the effects a normal action would have ticked on this
+        // actor (e.g. damage over time); applyEffects guards repeats per round.
+        const ticked = applyEffects(nextBattle, user.userId);
+        nextBattle = ticked.newBattle;
+        nextActionEffects.push(...ticked.actionEffects);
+        const stuckUser = nextBattle.usersState.find((u) => u.userId === user.userId);
+        if (stuckUser) stuckUser.actionPoints = 0;
       } else {
         aiDescriptions.push(`${user.username} is exhausted and has to give up`);
         user.curHealth = 0;

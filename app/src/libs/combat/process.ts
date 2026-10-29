@@ -1463,6 +1463,13 @@ export const applySingleEffect = (
           } else if (effect.type === "onehitkill") {
             const healthBefore = newTarget.curHealth;
             info = onehitkill(effect, getPreventionEffects(), newTarget);
+            // Count the HP an instant kill removes as damage dealt, so raid
+            // progress (capped at the attackers' damageDealt) includes it.
+            creditDamageDealt(
+              resolveDamageCreditUser(newUsersState, newUser),
+              newTarget,
+              healthBefore - newTarget.curHealth,
+            );
             creditDamageEnmity(
               newUser,
               newTarget,
