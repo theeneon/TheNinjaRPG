@@ -115,9 +115,14 @@ describeWithDatabase("confirmed quest cache responses", () => {
     },
   );
 
-  it.each([false, true])("forwards a located mission start without refetching the profile (settled cooking=%s)", async (settleCooking) => {
+  it.each([
+    { method: "startQuest", settleCooking: false },
+    { method: "startQuest", settleCooking: true },
+    { method: "startRandom", settleCooking: false },
+    { method: "startRandom", settleCooking: true },
+  ] as const)("forwards a located $method result without refetching the profile (settled cooking=$settleCooking)", async ({ method, settleCooking }) => {
     const db = await getTestDatabase();
-    await db.update(quest).set({ content: { ...content(10), objectives: [AllObjectives.parse({ id: "located", task: "move_to_location", sector: 2, longitude: 10, latitude: 7, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: false })] } }).where(eq(quest.id, missionId));
+    await db.update(quest).set({ questType: method === "startRandom" ? "crime" : "mission", content: { ...content(10), objectives: [AllObjectives.parse({ id: "located", task: "move_to_location", sector: 2, longitude: 10, latitude: 7, sectorType: "specific", sectorList: [], locationType: "specific", hideLocation: false })] } }).where(eq(quest.id, missionId));
     if (settleCooking) await db.insert(userCookingJob).values({ id: "completed-cooking", userId: playerId, experience: 23, finishesAt: new Date(Date.now() + 60000) });
     const profile = await (await callerFor(profileRouter, playerId)).getUser();
     if (settleCooking) await db.update(userCookingJob).set({ finishesAt: new Date(Date.now() - 1000) }).where(eq(userCookingJob.id, "completed-cooking"));
@@ -130,7 +135,10 @@ describeWithDatabase("confirmed quest cache responses", () => {
     try {
       const revision = prepareUserUpdate(client, key);
       const readsBefore = await countProfileReads();
-      const result = await (await callerFor(questsRouter, playerId)).startQuest({ questId: missionId, userSector: 0 });
+      const caller = await callerFor(questsRouter, playerId);
+      const result = method === "startQuest"
+        ? await caller.startQuest({ questId: missionId, userSector: 0 })
+        : await caller.startRandom({ type: "crime", rank: "A", userLevel: 50, userSector: 0, userVillageId: null });
       expect(result.success).toBe(true);
       expect(result.userPatch).toBeDefined();
       await updateUserCache(client, key, result.userPatch, { revision, achievementProgress: result.achievementProgress });
@@ -155,12 +163,13 @@ describeWithDatabase("confirmed quest cache responses", () => {
     expect(reads()).toBe(1);
   });
 
-  it("reconciles collection effects unlocked by a consecutive quest assignment", async () => {
+  it.each(["startQuest", "startRandom"] as const)("reconciles collection effects unlocked by a consecutive %s assignment", async (method) => {
     const database = await getTestDatabase();
     const collectionItemId = "cache-consecutive-item";
     await insertItems([{ id: collectionItemId }]);
     await database.update(userData).set({ longitude: 10, latitude: 7 }).where(eq(userData.userId, playerId));
     await database.update(quest).set({
+      questType: method === "startRandom" ? "crime" : "mission",
       consecutiveObjectives: true,
       content: {
         ...content(10),
@@ -171,7 +180,10 @@ describeWithDatabase("confirmed quest cache responses", () => {
       },
     }).where(eq(quest.id, missionId));
 
-    const result = await (await callerFor(questsRouter, playerId)).startQuest({ questId: missionId, userSector: 0 });
+    const api = await callerFor(questsRouter, playerId);
+    const result = method === "startQuest"
+      ? await api.startQuest({ questId: missionId, userSector: 0 })
+      : await api.startRandom({ type: "crime", rank: "A", userLevel: 50, userSector: 0, userVillageId: null });
     expect(result.success).toBe(true);
     expect(result.userPatch).toBeUndefined();
     expect(result.achievementProgress).toBeUndefined();
