@@ -1,5 +1,6 @@
 "use client";
 
+import { ChevronRight } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import type { z } from "zod";
@@ -79,27 +80,28 @@ export default function ForumManagement() {
             className="mb-4 flex flex-wrap gap-2 border-b pb-3"
           >
             {[
-              ["review", "Review & recovery"],
+              ["review", "Review queue"],
               ...(data.data.canManage
                 ? [
-                    ["structure", "Sections & boards"],
-                    ["staff", "Staff & permissions"],
+                    ["structure", "Boards"],
+                    ["staff", "Staff"],
                   ]
                 : []),
               ...(data.data.canManage ||
               data.data.boards.some((b) => b.permissions.moderate)
-                ? [["restrictions", "Posting restrictions"]]
+                ? [["restrictions", "Restrictions"]]
                 : []),
               ["logs", "Audit log"],
               ...(data.data.canManage ||
               data.data.boards.some((b) => b.permissions.moderate)
-                ? [["analytics", "Community analytics"]]
+                ? [["analytics", "Analytics"]]
                 : []),
             ].map(([key, label]) => (
               <Button
                 key={key}
                 variant={tab === key ? "default" : "outline"}
                 size="sm"
+                aria-pressed={tab === key}
                 onClick={() => setTab(key ?? "review")}
               >
                 {label}
@@ -113,27 +115,34 @@ export default function ForumManagement() {
           )}
           {tab === "review" && (
             <>
-              <nav aria-label="Review pages" className="mb-4 flex items-center gap-3">
-                <Button
-                  variant="outline"
-                  disabled={reviewPage === 0 || data.isFetching}
-                  onClick={() => setReviewPage((page) => page - 1)}
-                >
-                  Previous
-                </Button>
-                <span className="text-sm">Page {reviewPage + 1}</span>
-                <Button
-                  variant="outline"
-                  disabled={!data.data.hasMoreReviews || data.isFetching}
-                  onClick={() => setReviewPage((page) => page + 1)}
-                >
-                  Next
-                </Button>
-              </nav>
               {data.isPlaceholderData ? (
                 <Loader explanation="Loading review page…" />
               ) : (
                 <ForumReview key={reviewPage} data={data.data} refresh={refresh} />
+              )}
+              {(reviewPage > 0 || data.data.hasMoreReviews) && (
+                <nav
+                  aria-label="Review pages"
+                  className="mt-4 flex items-center justify-end gap-3"
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={reviewPage === 0 || data.isFetching}
+                    onClick={() => setReviewPage((page) => page - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-sm">Page {reviewPage + 1}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!data.data.hasMoreReviews || data.isFetching}
+                    onClick={() => setReviewPage((page) => page + 1)}
+                  >
+                    Next
+                  </Button>
+                </nav>
               )}
             </>
           )}
@@ -1233,7 +1242,7 @@ function ForumRestrictions({
     </div>
   );
 }
-/** Review only the returned staff scope, expanding evidence in place and preserving retryable decisions. */
+/** Keep the scoped queue compact; topic tools and post decisions open only for the selected content. */
 function ForumReview({
   data,
   refresh,
@@ -1241,242 +1250,327 @@ function ForumReview({
   data: Administration;
   refresh: () => Promise<void>;
 }) {
-  const { data: user } = useUserData();
-  const [assigneeId, setAssigneeId] = useState<string | null>(null);
-  const reviewCase = api.forum.reviewCase.useMutation();
-  const [reason, setReason] = useState("");
-  const [error, setError] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const moderate = api.forum.moderatePost.useMutation();
+  const itemCount = data.threads.length + data.posts.length;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="mr-auto text-sm">
-          {data.threads.length} topics and {data.posts.length} posts need review or can
-          be recovered.
-        </p>
-        <Link
-          href="/reports"
-          className="hover:bg-accent rounded-md border px-3 py-2 text-sm"
-        >
-          Open linked report workflow
-        </Link>
+        <div className="mr-auto">
+          <h2 className="font-semibold">Review queue</h2>
+          <p className="text-muted-foreground text-xs">
+            {itemCount} {itemCount === 1 ? "item" : "items"} on this page
+          </p>
+        </div>
+        <Button asChild variant="outline" size="sm">
+          <Link href="/reports">Player reports</Link>
+        </Button>
       </div>
       <p className="text-muted-foreground text-xs">
-        Reports keep their existing evidence, decisions and game enforcement workflow.
-        Forum restrictions are managed separately here. Each page shows up to 100 topics
-        and 100 posts.
+        Open a post to review it, or select topics for a bulk action. Game reports are
+        handled in Player reports.
       </p>
-      <details className="rounded-md border p-3">
-        <summary className="cursor-pointer text-sm font-medium">
-          Choose a reviewer
-        </summary>
-        <ForumPlayerSelect onSelect={setAssigneeId} />
-      </details>
-      <Reason value={reason} setValue={setReason} />
-      {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
+      {data.threads.length > 0 && (
+        <section className="space-y-2" aria-label="Topics to review">
+          <h3 className="text-sm font-semibold">Topics ({data.threads.length})</h3>
+          {selected.length > 0 && (
+            <ForumTopicTools
+              ids={selected}
+              onlyApprove={
+                !selected.every(
+                  (id) =>
+                    data.boards.find(
+                      (b) => b.id === data.threads.find((t) => t.id === id)?.boardId,
+                    )?.permissions.moderate,
+                )
+              }
+              onDone={() => setSelected([])}
+            />
+          )}
+          {data.threads.map((thread) => (
+            <div key={thread.id} className="rounded-md border">
+              <label className="flex cursor-pointer items-start gap-3 p-3 text-sm">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={selected.includes(thread.id)}
+                  onChange={(e) =>
+                    setSelected((current) =>
+                      e.target.checked
+                        ? [...current, thread.id]
+                        : current.filter((id) => id !== thread.id),
+                    )
+                  }
+                />
+                <span className="min-w-0 break-words">
+                  <b>{thread.title}</b>
+                  <span className="text-muted-foreground block text-xs">
+                    {data.boards.find((b) => b.id === thread.boardId)?.name} ·{" "}
+                    {thread.deletedAt ? "Removed" : "Awaiting approval"}
+                  </span>
+                </span>
+              </label>
+              {thread.deletedAt &&
+                data.boards.find((b) => b.id === thread.boardId)?.permissions.purge && (
+                  <div className="px-3 pb-3">
+                    <PurgeTopic thread={thread} done={refresh} />
+                  </div>
+                )}
+            </div>
+          ))}
+        </section>
+      )}
+      {data.posts.length > 0 && (
+        <section className="space-y-2" aria-label="Posts to review">
+          <h3 className="text-sm font-semibold">Posts ({data.posts.length})</h3>
+          {data.posts.map((entry) => (
+            <ForumPostReview
+              key={entry.post.id}
+              entry={entry}
+              data={data}
+              refresh={refresh}
+            />
+          ))}
+        </section>
+      )}
+      {!data.threads.length && !data.posts.length && (
+        <p className="rounded-md border p-6 text-sm">
+          No topics or posts to review on this page.
         </p>
       )}
-      <h2 className="font-semibold">Topics</h2>
-      {selected.length > 0 && (
-        <ForumTopicTools
-          ids={selected}
-          onlyApprove={
-            !selected.every(
-              (id) =>
-                data.boards.find(
-                  (b) => b.id === data.threads.find((t) => t.id === id)?.boardId,
-                )?.permissions.moderate,
-            )
-          }
-          onDone={() => {
-            setSelected([]);
-          }}
+    </div>
+  );
+}
+
+/** Keep evidence, assignment and audit reasons beside the post; retain rejected decisions for retry. */
+function ForumPostReview({
+  entry: { post, thread, review, assigneeName },
+  data,
+  refresh,
+}: {
+  entry: Administration["posts"][number];
+  data: Administration;
+  refresh: () => Promise<void>;
+}) {
+  const fieldPrefix = useId();
+  const { data: user } = useUserData();
+  const [action, setAction] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const reviewCase = api.forum.reviewCase.useMutation();
+  const moderate = api.forum.moderatePost.useMutation();
+  const board = data.boards.find((b) => b.id === thread.boardId);
+  const actions = [
+    ...(!post.isApproved && thread.isApproved && board?.permissions.approve
+      ? (["APPROVE"] as const)
+      : []),
+    ...(post.deletedAt && board?.permissions.moderate ? (["RESTORE"] as const) : []),
+    ...(board?.permissions.moderate
+      ? ([
+          "CLAIM",
+          "ASSIGN",
+          review?.status === "RESOLVED" ? "REOPEN" : "RESOLVE",
+        ] as const)
+      : []),
+    ...(post.isReported && board?.permissions.moderate
+      ? (["DISMISS_REPORT"] as const)
+      : []),
+    ...(!post.deletedAt && board?.permissions.removeOthers
+      ? (["REMOVE"] as const)
+      : []),
+  ];
+  const labels = {
+    APPROVE: "Approve post",
+    RESTORE: "Restore post",
+    CLAIM: "Claim review",
+    ASSIGN: "Assign reviewer",
+    REOPEN: "Reopen review",
+    RESOLVE: "Resolve review",
+    DISMISS_REPORT: "Clear forum flag",
+    REMOVE: "Remove post",
+  };
+  const selectedAction = actions.find((value) => value === action) ?? actions[0];
+  const isPending = reviewCase.isPending || moderate.isPending;
+  const disabledReason =
+    selectedAction === "ASSIGN" && !assigneeId
+      ? "Select a reviewer to continue."
+      : reason.trim().length < 3
+        ? "Enter an audit reason with at least 3 characters."
+        : "";
+  return (
+    <details className="group overflow-hidden rounded-md border">
+      <summary className="flex cursor-pointer list-none items-center gap-3 p-3 [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          aria-hidden="true"
+          className="h-4 w-4 shrink-0 transition-transform group-open:rotate-90"
         />
-      )}
-      {data.threads.map((t) => (
-        <label
-          key={t.id}
-          className="flex items-start gap-3 rounded-md border p-3 text-sm"
-        >
-          <input
-            className="mt-1"
-            type="checkbox"
-            checked={selected.includes(t.id)}
-            onChange={(e) =>
-              setSelected((s) =>
-                e.target.checked ? [...s, t.id] : s.filter((id) => id !== t.id),
-              )
-            }
-          />
-          <span>
-            <b>{t.title}</b>
-            <span className="text-muted-foreground block text-xs">
-              {data.boards.find((b) => b.id === t.boardId)?.name} ·{" "}
-              {t.deletedAt ? "Removed" : "Awaiting approval"}
-            </span>
+        <span className="min-w-0 flex-1 text-sm">
+          <span className="block font-semibold break-words">{thread.title}</span>
+          <span className="text-muted-foreground block text-xs">
+            {board?.name} · {assigneeName ?? "Unassigned"}
+            {review?.status === "IN_REVIEW"
+              ? " · In review"
+              : review?.status === "RESOLVED"
+                ? " · Resolved"
+                : ""}
           </span>
-        </label>
-      ))}
-      {data.threads
-        .filter(
-          (t) =>
-            t.deletedAt &&
-            data.boards.find((b) => b.id === t.boardId)?.permissions.purge,
-        )
-        .map((t) => (
-          <PurgeTopic key={t.id} thread={t} done={refresh} />
-        ))}
-      {!data.threads.length && (
-        <p className="text-muted-foreground text-sm">No topics waiting for review.</p>
-      )}
-      <h2 className="font-semibold">Posts</h2>
-      {data.posts.map(({ post, thread, review, assigneeName }) => (
-        <div key={post.id} className="space-y-2 rounded-md border p-4">
-          <p className="text-sm">
-            <b>{thread.title}</b> ·{" "}
-            {post.deletedAt
-              ? "Removed"
-              : !post.isApproved
-                ? "Awaiting approval"
-                : "Reported"}
-          </p>
-          <p className="text-muted-foreground text-xs">
-            {review?.status ?? "OPEN"} · {assigneeName ?? "Unassigned"}
-            {review?.decision ? ` · ${review.decision}` : ""}
-          </p>
+        </span>
+        <span className="bg-muted shrink-0 rounded px-2 py-1 text-xs">
+          {post.deletedAt
+            ? "Removed"
+            : !post.isApproved
+              ? "Needs approval"
+              : "Reported"}
+        </span>
+      </summary>
+      <div className="space-y-3 border-t p-3">
+        <div className="flex flex-wrap gap-3 text-xs">
+          <Link
+            href={`/forum/${thread.boardId}/${thread.id}?post=${post.id}`}
+            className="underline"
+          >
+            View discussion
+          </Link>
           {data.linkedReports
             .filter((r) => r.postId === post.id)
-            .map((r) => (
+            .map((report) => (
               <Link
-                key={r.id}
-                href={`/reports/${r.id}`}
-                className="inline-block text-xs underline"
+                key={report.id}
+                href={`/reports/${report.id}`}
+                className="underline"
               >
-                Linked report ({r.status})
+                Player report ({report.status})
               </Link>
             ))}
-          <div className="flex flex-wrap gap-2">
-            {(data.boards.find((b) => b.id === thread.boardId)?.permissions.moderate
-              ? [
-                  ["Claim review", user?.userId, "IN_REVIEW"],
-                  ...(assigneeId ? [["Assign reviewer", assigneeId, "IN_REVIEW"]] : []),
-                  [
-                    review?.status === "RESOLVED"
-                      ? "Reopen review"
-                      : "Resolve forum review",
-                    review?.assigneeId ?? user?.userId,
-                    review?.status === "RESOLVED" ? "OPEN" : "RESOLVED",
-                  ],
-                ]
-              : []
-            ).map(([label, assignee, status]) => (
-              <Button
-                key={label}
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={reason.trim().length < 3 || reviewCase.isPending}
-                onClick={async () => {
-                  setError("");
-                  try {
-                    const result = await reviewCase.mutateAsync({
-                      postId: post.id,
-                      assigneeId: assignee ?? null,
-                      status: status as "OPEN" | "IN_REVIEW" | "RESOLVED",
-                      reason,
-                    });
-                    showMutationToast(result);
-                    if (result.success) await refresh();
-                    else setError(result.message);
-                  } catch (e) {
-                    setError(
-                      e instanceof Error ? e.message : "Review could not be saved.",
-                    );
-                  }
-                }}
-              >
-                {label}
-              </Button>
-            ))}
-          </div>
-          {post.removalReason && (
-            <p className="text-muted-foreground text-xs">
-              Removal reason: {post.removalReason}
-            </p>
-          )}
-          <details className="group text-sm">
-            <summary aria-label="Read full post" className="cursor-pointer">
-              <span className="font-medium">Read full post</span>
-              <div className="mt-2 line-clamp-6 break-words group-open:hidden">
-                {parseHtml(post.content)}
-              </div>
-            </summary>
-            <div className="mt-2 break-words">{parseHtml(post.content)}</div>
-          </details>
-          <div className="flex flex-wrap gap-2">
-            {[
-              ...(post.deletedAt &&
-              data.boards.find((b) => b.id === thread.boardId)?.permissions.moderate
-                ? ["RESTORE"]
-                : []),
-              ...(!post.isApproved &&
-              thread.isApproved &&
-              data.boards.find((b) => b.id === thread.boardId)?.permissions.approve
-                ? ["APPROVE"]
-                : []),
-              ...(post.isReported &&
-              data.boards.find((b) => b.id === thread.boardId)?.permissions.moderate
-                ? ["DISMISS_REPORT"]
-                : []),
-              ...(!post.deletedAt &&
-              data.boards.find((b) => b.id === thread.boardId)?.permissions.removeOthers
-                ? ["REMOVE"]
-                : []),
-            ].map((action) => (
-              <Button
-                key={action}
-                variant="outline"
-                size="sm"
-                disabled={reason.trim().length < 3 || moderate.isPending}
-                onClick={async () => {
-                  setError("");
-                  try {
-                    const r = await moderate.mutateAsync({
-                      postId: post.id,
-                      action: action as
-                        | "RESTORE"
-                        | "APPROVE"
-                        | "REMOVE"
-                        | "DISMISS_REPORT",
-                      reason,
-                    });
-                    showMutationToast(r);
-                    if (r.success) await refresh();
-                    else setError(r.message);
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : "Moderation failed");
-                  }
-                }}
-              >
-                {action === "RESTORE"
-                  ? "Restore post"
-                  : action === "APPROVE"
-                    ? "Approve post"
-                    : action === "REMOVE"
-                      ? "Remove post"
-                      : "Clear forum flag"}
-              </Button>
-            ))}
-          </div>
         </div>
-      ))}
-      {!data.posts.length && (
-        <p className="text-muted-foreground text-sm">No posts waiting for review.</p>
-      )}
-    </div>
+        <details className="group/post text-sm">
+          <summary aria-label="Read full post" className="cursor-pointer">
+            <span className="font-medium">Read full post</span>
+            <div className="mt-2 line-clamp-3 break-words group-open/post:hidden">
+              {parseHtml(post.content)}
+            </div>
+          </summary>
+          <div className="mt-2 break-words">{parseHtml(post.content)}</div>
+        </details>
+        {(post.removalReason || review?.decision) && (
+          <p className="text-muted-foreground text-xs break-words">
+            {post.removalReason
+              ? `Removal reason: ${post.removalReason}`
+              : `Last decision: ${review?.decision}`}
+          </p>
+        )}
+        {selectedAction && (
+          <form
+            className="bg-muted/30 space-y-3 rounded-md border p-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (isPending || disabledReason) return;
+              setError("");
+              try {
+                const result = await (selectedAction === "CLAIM" ||
+                selectedAction === "ASSIGN" ||
+                selectedAction === "RESOLVE" ||
+                selectedAction === "REOPEN"
+                  ? reviewCase.mutateAsync({
+                      postId: post.id,
+                      assigneeId:
+                        selectedAction === "ASSIGN"
+                          ? assigneeId
+                          : selectedAction === "CLAIM"
+                            ? (user?.userId ?? null)
+                            : (review?.assigneeId ?? user?.userId ?? null),
+                      status:
+                        selectedAction === "RESOLVE"
+                          ? "RESOLVED"
+                          : selectedAction === "REOPEN"
+                            ? "OPEN"
+                            : "IN_REVIEW",
+                      reason,
+                    })
+                  : moderate.mutateAsync({
+                      postId: post.id,
+                      action: selectedAction,
+                      reason,
+                    }));
+                showMutationToast(result);
+                if (result.success) {
+                  setReason("");
+                  await refresh();
+                } else setError(result.message);
+              } catch (e) {
+                setError(
+                  e instanceof Error ? e.message : "The review could not be saved.",
+                );
+              }
+            }}
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label htmlFor={`${fieldPrefix}-action`} className="block text-sm">
+                Action
+                <select
+                  id={`${fieldPrefix}-action`}
+                  className="bg-background block h-9 w-full rounded-md border px-2"
+                  value={selectedAction}
+                  disabled={isPending}
+                  onChange={(e) => {
+                    setAction(e.target.value);
+                    setError("");
+                  }}
+                >
+                  {actions.map((value) => (
+                    <option key={value} value={value}>
+                      {labels[value]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Reason value={reason} setValue={setReason} />
+            </div>
+            {selectedAction === "ASSIGN" && (
+              <div className="space-y-1">
+                <p className="text-sm font-medium">Reviewer</p>
+                <p className="text-muted-foreground text-xs">
+                  Choose a player who moderates this board.
+                </p>
+                <ForumPlayerSelect onSelect={setAssigneeId} />
+              </div>
+            )}
+            {error && (
+              <p role="alert" className="text-destructive text-sm">
+                {error}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="submit"
+                size="sm"
+                variant={selectedAction === "REMOVE" ? "destructive" : "default"}
+                disabled={!!disabledReason || isPending}
+                aria-busy={isPending}
+                aria-describedby={disabledReason ? `${fieldPrefix}-hint` : undefined}
+              >
+                {isPending ? "Saving…" : labels[selectedAction]}
+              </Button>
+              {disabledReason && (
+                <p
+                  id={`${fieldPrefix}-hint`}
+                  role="status"
+                  className="text-muted-foreground text-xs"
+                >
+                  {disabledReason}
+                </p>
+              )}
+            </div>
+            {selectedAction === "RESOLVE" && (
+              <p className="text-muted-foreground text-xs">
+                Closes the forum review and clears its flag. Player reports are handled
+                separately.
+              </p>
+            )}
+          </form>
+        )}
+      </div>
+    </details>
   );
 }
 /** Give audit-reason inputs stable accessible labels across independently mounted staff forms. */
