@@ -88,7 +88,12 @@ import {
  * rewards; the server remains authoritative for eligibility and mutation results.
  */
 export function PetProfile() {
-  const { data: userData, timeDiff } = useRequiredUserData();
+  const {
+    data: userData,
+    timeDiff,
+    prepareUserUpdate,
+    updateUser,
+  } = useRequiredUserData();
   const { sectorVillage } = useSectorVillage(userData);
   const searchParams = useSearchParams();
   const requestedPetId = searchParams.get("petId") ?? undefined;
@@ -247,7 +252,18 @@ export function PetProfile() {
     onError: failMutation,
   });
   const assign = api.pets.assignExperience.useMutation({
-    onSuccess: finishMutation,
+    onMutate: prepareUserUpdate,
+    onSuccess: async (result, _variables, revision) => {
+      setMessage(result.success ? null : result.message);
+      showMutationToast(result);
+      if (result.success) {
+        await Promise.all([
+          updateUser(undefined, { revision, delta: result.userDelta }),
+          utils.pets.getPet.invalidate(),
+          utils.pets.getCollection.invalidate(),
+        ]);
+      }
+    },
     onError: failMutation,
   });
   const updateAi = api.pets.updateAiConfig.useMutation({

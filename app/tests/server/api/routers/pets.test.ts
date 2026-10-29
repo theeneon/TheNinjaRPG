@@ -546,7 +546,7 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
     await parkedPet(database, { id: "parked", storedExperience: 20 });
     await database.update(userData).set({ petExperience: 99 }).where(eq(userData.userId, userId));
     const caller = callerForDatabase(petsRouter, userId, database);
-    expect((await caller.assignExperience({ ...stats, petId: "parked" })).success).toBe(true);
+    expect(await caller.assignExperience({ ...stats, petId: "parked" })).toMatchObject({ success: true, userDelta: {} });
     expect(await readPet(database, "parked")).toMatchObject({ storedExperience: 10, experience: 10, offence: 20 });
     expect((await caller.assignExperience({ ...stats, offence: 11, petId: "parked" })).success).toBe(false);
     expect((await caller.releasePet({ petId: "parked" })).success).toBe(true);
@@ -992,6 +992,8 @@ describeWithDatabase("Companion ownership, economy and generation", () => {
     const caller = callerForDatabase(petsRouter, userId, holdOwnerSnapshots(database, 2));
     const results = await Promise.all([caller.assignExperience({ ...stats, petId }), caller.assignExperience({ ...stats, petId })]);
     expect(results.filter((result) => result.success)).toHaveLength(1);
+    expect(results.find((result) => result.success)?.userDelta).toEqual({ petExperience: -10 });
+    expect(results.find((result) => !result.success)?.userDelta).toBeUndefined();
     expect((await readOwner(database))?.petExperience).toBe(0);
     const pet = await readPet(database);
     expect(pet?.offence).toBe(20);

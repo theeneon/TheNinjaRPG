@@ -90,6 +90,7 @@ import {
   updatePetAiSchema,
   updatePetSchema,
 } from "@/validators/pets";
+import { userDeltaResponseSchema } from "@/validators/userCache";
 
 /** Own, configure and progress companions through guarded account and pet snapshots. */
 export const petsRouter = createTRPCRouter({
@@ -614,7 +615,7 @@ export const petsRouter = createTRPCRouter({
   /** Spend the active or parked bank together with its companion stat gains. */
   assignExperience: protectedProcedure
     .input(assignPetExperienceSchema)
-    .output(baseServerResponse)
+    .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
       const { user, pet } = await fetchPetOwner(ctx.drizzle, ctx.userId, input.petId);
       const restriction = petMutationBlockMessage(user, pet);
@@ -671,6 +672,7 @@ export const petsRouter = createTRPCRouter({
         ? {
             success: true,
             message: `${spent.toLocaleString("en-US")} companion experience assigned.`,
+            userDelta: isActive ? { petExperience: -spent } : {},
           }
         : changedResponse();
     }),

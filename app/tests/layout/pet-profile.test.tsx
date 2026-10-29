@@ -55,12 +55,16 @@ let assign: ReturnType<typeof vi.fn>;
 let evolve: ReturnType<typeof vi.fn>;
 let timeDiff: number;
 let previousBattleEnabled: boolean;
+const prepareUserUpdate = vi.fn(() => 17);
+const updateUser = vi.fn(async () => undefined);
 let scrollDescriptor: PropertyDescriptor | undefined;
 
 const browserGlobals = ["Event", "CustomEvent", "ResizeObserver"] as const;
 const browserDescriptors = browserGlobals.map((key) => Object.getOwnPropertyDescriptor(globalThis, key));
 
 beforeEach(() => {
+  prepareUserUpdate.mockClear();
+  updateUser.mockClear();
   ensureDom();
   scrollDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
   Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: () => undefined });
@@ -114,11 +118,11 @@ beforeEach(() => {
   getPet = vi.fn(() => data);
   unlockSlot = vi.fn(() => ({ success: true, message: "Slot unlocked" }));
   generate = vi.fn(() => ({ success: false, message: "Please retry your image." }));
-  assign = vi.fn(() => ({ success: true, message: "Experience assigned" }));
+  assign = vi.fn(() => ({ success: true, message: "Experience assigned", userDelta: { petExperience: -1 } }));
   evolve = vi.fn(() => ({ success: true, message: "Evolved" }));
   Object.assign(vi.spyOn(client, "api" as never), { pets: testApi.pets, ai: testApi.ai, useUtils: testApi.useUtils });
   vi.spyOn(navigation, "useSearchParams").mockImplementation(() => new URLSearchParams(requestedPetId ? { petId: requestedPetId } : {}) as never);
-  vi.spyOn(UserContext, "useRequiredUserData").mockImplementation(() => ({ data: owner, timeDiff }) as never);
+  vi.spyOn(UserContext, "useRequiredUserData").mockImplementation(() => ({ data: owner, timeDiff, prepareUserUpdate, updateUser }) as never);
   vi.spyOn(SectorVillage, "useSectorVillage").mockImplementation(() => ({
     sectorVillage: owner.sector === owner.village.sector || owner.isOutlaw ? owner.village : null,
     isLoading: false,
@@ -1037,4 +1041,15 @@ it.each([
   const redirect = vi.spyOn(navigation, "redirect").mockImplementation((url) => { throw new Error(String(url)); });
   await expect(PetProfilePage({ searchParams: Promise.resolve(params as { petId?: string | string[] }) })).rejects.toThrow(expected);
   expect(redirect).toHaveBeenCalledWith(expected);
+});
+
+
+it("applies confirmed pet XP without invalidating the profile", async () => {
+  const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+  const view = mount();
+  await view.findByRole("tab", { name: "Training" });
+  selectTab(view, "Training");
+  fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
+  await waitFor(() => expect(updateUser).toHaveBeenCalledWith(undefined, { revision: 17, delta: { petExperience: -1 } }));
+  expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters?.queryKey).includes('"profile"'))).toBe(false);
 });
