@@ -14,6 +14,7 @@ export const useInfinitePagination = ({
 }: Pagination) => {
   const [page, setPage] = useState(0);
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const lastElementRef = useRef<HTMLElement | null>(null);
 
   /**
    * Mount only once
@@ -34,6 +35,7 @@ export const useInfinitePagination = ({
    * Update observerRef when last element changes
    */
   useEffect(() => {
+    lastElementRef.current = lastElement;
     if (lastElement && observerRef.current) {
       observerRef.current.observe(lastElement);
     }
@@ -47,7 +49,17 @@ export const useInfinitePagination = ({
   useEffect(() => {
     const fetchData = async () => {
       if (page > 0) {
-        await fetchNextPage();
+        const result = await fetchNextPage();
+        // The observer only fires when the last element starts intersecting. When a
+        // batch adds nothing after it (e.g. rows filtered out client-side), it stays on
+        // screen and would never fire again; re-observing reports it once more, so the
+        // next batch loads. Stops on the last page (hasNextPage) or on an error.
+        const element = lastElementRef.current;
+        const observer = observerRef.current;
+        if (!result?.isError && element && observer) {
+          observer.unobserve(element);
+          observer.observe(element);
+        }
       }
     };
     if (hasNextPage) {

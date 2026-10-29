@@ -224,9 +224,11 @@ export const ActionSelector: React.FC<ActionSelectorProps> = (props) => {
         })}
       </div>
       {items?.length === 0 && (
-        <span className="flex flex-row text-base">
+        // Doubles as the pagination sentinel: a batch that was filtered down to nothing
+        // can still have more batches behind it.
+        <div ref={props.setLastElement} className="flex flex-row text-base">
           {props.emptyText ? props.emptyText : "Nothing Available"}
-        </span>
+        </div>
       )}
     </>
   );
