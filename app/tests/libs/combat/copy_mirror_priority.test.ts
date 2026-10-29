@@ -28,8 +28,7 @@ const asUser = (userId: string, username: string): BattleUserState =>
 // NOTE: do NOT force `calculation` here. `BaseAttributes.calculation` defaults
 // to z.enum(["static"]); types like `shield` never override it, so passing
 // "percentage" is a Zod parse error. Let each schema default. Tests assert on
-// `power`/`type`/order only, and selection ordering is unaffected (level:0, all
-// powers <= 100 so no percentage clamp differs).
+// `power`/`type`/order using the source effect's calculation and units.
 const makeTransferEffect = (
   type: string,
   power: number,
@@ -119,9 +118,9 @@ describe("copy/mirror priority constants", () => {
     expect(COPY_PRIORITY_RANK.get("decreasedamagetaken")).toBe(0);
     expect(COPY_PRIORITY_RANK.get("lifesteal")).toBe(1);
     expect(COPY_PRIORITY_RANK.get("increasestat")).toBe(5);
-    expect(COPY_PRIORITY_RANK.get("shield")).toBe(2);
+    expect(COPY_PRIORITY_RANK.get("shield")).toBe(3);
     expect(COPY_PRIORITY_RANK.get("increaseheal")).toBe(4);
-    // absorb, reflect and shield share a tier
+    // Absorb and reflect share a tier above static-HP shields.
     expect(COPY_PRIORITY_RANK.get("absorb")).toBe(COPY_PRIORITY_RANK.get("reflect"));
   });
 
@@ -241,27 +240,49 @@ describe("copy tag: ceiling + priority", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("copies at most 4, highest-priority first", () => {
+  it.each([90, 100_000])(
+    "copies at most 4, keeping absorb ahead of a %i HP shield",
+    (shieldPower) => {
+      const effects: UserEffect[] = [
+        oppBuff("increasedamagegiven", 40),
+        oppBuff("decreasedamagetaken", 30),
+        oppBuff("lifesteal", 20),
+        oppBuff("absorb", 50),
+        oppBuff("shield", shieldPower),
+        oppBuff("increaseheal", 80),
+      ];
+      const before = effects.length;
+      copy(copyTag(), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
+      const copied = effects.filter(
+        (e) => e.targetId === SELF && e.creatorId === SELF && e.fromEffectId,
+      );
+      expect(copied).toHaveLength(4);
+      expect(copied.map((e) => e.type).sort()).toEqual<string[]>(
+        ["absorb", "decreasedamagetaken", "increasedamagegiven", "lifesteal"].sort(),
+      );
+      expect(copied.map((e) => e.type)).not.toContain("shield");
+      expect(effects.length).toBe(before + 4);
+    },
+  );
+
+  it("keeps multiple high-HP shields from displacing absorb and reflect", () => {
     const effects: UserEffect[] = [
+      oppBuff("shield", 100_000),
+      oppBuff("shield", 90_000),
+      oppBuff("shield", 80_000),
       oppBuff("increasedamagegiven", 40),
-      oppBuff("decreasedamagetaken", 30),
       oppBuff("lifesteal", 20),
       oppBuff("absorb", 50),
-      oppBuff("shield", 90),
-      oppBuff("increaseheal", 80),
+      oppBuff("reflect", 40),
     ];
-    const before = effects.length;
     copy(copyTag(), effects, asUser(SELF, "Self"), asUser(OPP, "Opp"));
-    const copied = effects.filter(
-      (e) => e.targetId === SELF && e.creatorId === SELF && e.fromEffectId,
-    );
-    expect(copied).toHaveLength(4);
-    expect(copied.map((e) => e.type).sort()).toEqual<string[]>(
-      ["shield", "decreasedamagetaken", "increasedamagegiven", "lifesteal"].sort(),
-    );
-    // Absorb loses to the stronger shield in their shared tier.
-    expect(copied.map((e) => e.type)).not.toContain("absorb");
-    expect(effects.length).toBe(before + 4);
+    const copied = effects.filter((e) => e.fromEffectId);
+    expect(copied.map((e) => e.type)).toEqual([
+      "increasedamagegiven",
+      "lifesteal",
+      "absorb",
+      "reflect",
+    ]);
   });
 
   it("respects the persistent ceiling across casts (already at 4 -> copies nothing)", () => {

@@ -268,8 +268,8 @@ const isMirrorableEffect = (e: UserEffect): boolean =>
  * Shared candidate gate for a transfer source effect: not from a passive/gear
  * origin, not ground-derived (the carry-forward pass drops `fromGround` effects at
  * end of round, so a clone would vanish while still consuming a capped slot), not
- * a source already transferred, still active, and not depleted (a fully absorbed shield
- * keeps rounds > 0 at power 0 — transferring it would burn a slot for nothing).
+ * a source already transferred, still active, and not depleted (a fully absorbed
+ * shield keeps rounds > 0 at power 0 — transferring it would burn a slot for nothing).
  */
 const isTransferCandidate = (e: UserEffect, heldSourceIds: Set<string>): boolean =>
   !TRANSFER_EXCLUDED_SOURCE_TYPES.has(e.fromType || "") &&
@@ -387,7 +387,11 @@ export const copy = (
           isTransferCandidate(e, heldSourceIds),
       );
 
-      const selected = selectTransferEffects(candidates, COPY_PRIORITY_RANK, remaining);
+      const selected = selectTransferEffects(
+        candidates,
+        COPY_PRIORITY_RANK,
+        remaining,
+      );
 
       if (selected.length === 0) {
         return {

@@ -3775,8 +3775,8 @@ export const MIRROR_MAX_TAGS = 4;
 export const COPY_PRIORITY_TIERS: readonly (readonly string[])[] = [
   ["increasedamagegiven", "decreasedamagetaken"],
   ["lifesteal"],
-  ["absorb", "reflect", "shield"],
-  [], // Reserve priority 4; healing and stat increases retain priorities 5 and 6.
+  ["absorb", "reflect"],
+  ["shield"], // Static HP must not compete with percentage-based absorb/reflect power.
   ["increaseheal"],
   ["increasestat"],
 ];

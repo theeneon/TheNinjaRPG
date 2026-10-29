@@ -3537,8 +3537,8 @@ export const getBattleClaimIds = (info: {
  * Strength is the MAGNITUDE of `getPower(e).power` (percentage magnitudes clamped
  * to 100): the damage-modifier pass negates `decrease*` powers in place, so a
  * signed comparison would rank a strong reduction below a weak boost and keep the
- * weaker instance ahead of a stronger one. Comparing static vs percentage magnitudes within a
- * tier is a coarse heuristic, consistent with the rest of the engine (no
+ * weaker instance ahead of a stronger one. Comparing static vs percentage
+ * magnitudes within a tier is a coarse heuristic, consistent with the engine (no
  * cross-calculation normalization exists anywhere) — accepted limitation.
  */
 export const selectTransferEffects = (
