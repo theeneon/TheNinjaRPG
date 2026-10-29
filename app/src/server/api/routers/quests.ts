@@ -23,7 +23,6 @@ import {
   type UserRole,
   VILLAGE_SYNDICATE_ID,
 } from "@/drizzle/constants";
-
 import {
   type Quest,
   quest,
@@ -33,7 +32,6 @@ import {
   userData,
   userPet,
 } from "@/drizzle/schema";
-
 import {
   deletedReason,
   editedReason,
@@ -87,9 +85,9 @@ import {
   questTypeConcurrentBlockMessage,
   questUiAccessBlockMessage,
   rollObjectiveAttackers,
+  snapQuestTargetsToReachable,
   verifyQuestContentForSave,
 } from "@/libs/quest";
-
 import {
   formatQuestEntryCost,
   getIsolatedPyramid,
@@ -110,7 +108,6 @@ import {
   verifyRewardChoiceForSave,
 } from "@/libs/rewardChoice";
 import { collapseRewards } from "@/libs/rewards";
-
 import { callDiscordContent } from "@/libs/socials";
 import { availableQuestLetterRanks, availableRanks } from "@/libs/train";
 import { villageMissionCompletionEvents } from "@/libs/villageMission";
@@ -273,6 +270,7 @@ import {
   getUserRegenerationGain,
   userRegenerationGainSql,
 } from "@/server/utils/regeneration";
+import { fetchPublishedSectorMaps } from "@/server/utils/sectorMap";
 import { grantTitles } from "@/server/utils/titleGrants";
 import { validateTitleRewardIds } from "@/server/utils/titleRewards";
 import { recordVillageMissionProgress } from "@/server/utils/villageMission";
@@ -630,9 +628,7 @@ export const questsRouter = createTRPCRouter({
       return {
         success: true,
         message: `Quest started: ${result.name}${rankInfo}`,
-        ...(assignment.userCacheEligible &&
-        !updatedUser.requiresProgressionRefresh &&
-        getQuestTargetSectorsToCheck(user, user.questData ?? []).length === 0
+        ...(assignment.userCacheEligible && !updatedUser.requiresProgressionRefresh
           ? getUserProgressionUpdate(user, updatedUser.publishedAchievementIds)
           : {}),
       };
@@ -679,8 +675,7 @@ export const questsRouter = createTRPCRouter({
         ...(result.success &&
         userCacheEligible === true &&
         !updatedUser.requiresProgressionRefresh &&
-        questData.questType !== "war" &&
-        getQuestTargetSectorsToCheck(user, user.questData ?? []).length === 0
+        questData.questType !== "war"
           ? getUserProgressionUpdate(user, updatedUser.publishedAchievementIds)
           : {}),
       };
@@ -3154,6 +3149,22 @@ export const upsertQuestEntry = async (
   const { trackers, consequences, notifications } = getNewTrackers(trackerUser, [
     { task: "any" },
   ]);
+  // Target sectors depend on the rolled trackers, so their cached map read follows
+  // tracker creation and precedes the same write that publishes the quest attempt.
+  // The map loader runs independent reads; transaction starts reconcile through the profile.
+  const targetSectors = getQuestTargetSectorsToCheck(user, trackers, true);
+  if (targetSectors.length > 0 && !inTransaction) {
+    const maps = await fetchPublishedSectorMaps(client, targetSectors).catch(
+      (error: unknown) => {
+        Sentry.captureException(error, {
+          level: "warning",
+          tags: { source: "questAssignmentTargets" },
+        });
+        return null;
+      },
+    );
+    if (maps) snapQuestTargetsToReachable(user, trackers, maps);
+  }
   promises.push(
     updateUserDataForUpsertQuestEntry(
       client,
@@ -3174,13 +3185,29 @@ export const upsertQuestEntry = async (
   Object.assign(user, recovery);
   user.questData = trackers;
   user.completedQuests = user.completedQuests.filter((row) => row.questId !== quest.id);
-  // Instant objectives may become done before a later pass can recover their side effects.
+  // A concurrent delegation may preserve a different tracker/attempt. Immediate
+  // effects also require reconciliation beyond the tracker-only assignment write.
+  // Team assignments change navigation derived by the profile query.
+  let userCacheEligible =
+    !(inTransaction && targetSectors.length > 0) &&
+    !quest.teamEnabled &&
+    !professionContract &&
+    consequences.every((entry) => entry.type === "update_user") &&
+    notifications.length === 0;
+  if (userCacheEligible) {
+    // Consecutive goals can unlock effects only after the initial tracker pass.
+    // Probe a copy so completion flags cannot consume effects before their handler runs.
+    const reconciled = getNewTrackers(structuredClone({ ...trackerUser, ...user }), [
+      { task: "any" },
+    ]);
+    userCacheEligible =
+      reconciled.consequences.every((entry) => entry.type === "update_user") &&
+      reconciled.notifications.length === 0 &&
+      JSON.stringify(reconciled.trackers) === JSON.stringify(trackers);
+  }
   return {
     entry,
-    // A concurrent delegation may have preserved a different tracker/attempt; reload
-    // profession assignments instead of publishing this proposed in-memory projection.
-    userCacheEligible:
-      !professionContract && consequences.length === 0 && notifications.length === 0,
+    userCacheEligible,
   };
 };
 
