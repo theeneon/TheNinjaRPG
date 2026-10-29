@@ -3,6 +3,7 @@ import * as clerk from "@clerk/nextjs";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "bun:test";
+import * as navigation from "next/navigation";
 import * as client from "@/app/_trpc/client";
 import { ClassicGameLayout } from "@/components/layout/ClassicGameLayout";
 import { PanelGameLayout } from "@/components/layout/PanelGameLayout";
@@ -182,6 +183,7 @@ describe("swap sidebars setting", () => {
       Object.defineProperty(globalThis, key, { configurable: true, value: window[key] });
     }
     vi.spyOn(clerk, "useUser").mockReturnValue({ isSignedIn: false } as never);
+    vi.spyOn(navigation, "useRouter").mockReturnValue({ refresh: vi.fn() } as never);
     Object.assign(vi.spyOn(client, "api" as never), {
       profile: { updatePreferences: { useMutation: () => ({ mutate: vi.fn() }) } },
     });

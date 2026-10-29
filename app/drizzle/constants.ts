@@ -3776,7 +3776,7 @@ export const COPY_PRIORITY_TIERS: readonly (readonly string[])[] = [
   ["increasedamagegiven", "decreasedamagetaken"],
   ["lifesteal"],
   ["absorb", "reflect"],
-  ["shield"],
+  ["shield"], // Static HP must not compete with percentage-based absorb/reflect power.
   ["increaseheal"],
   ["increasestat"],
 ];
