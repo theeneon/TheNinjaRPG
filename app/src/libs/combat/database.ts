@@ -1108,8 +1108,12 @@ export const updateRaidProgress = async (
     return;
   }
 
-  // Calculate total damage dealt to the boss this battle
-  const totalDamage = Math.max(0, raidInitialBossHp - Math.max(0, boss.curHealth));
+  // Calculate total damage dealt to the boss this battle, capped by the damage the
+  // attackers were actually credited with so that an HP loss not caused by them
+  // (e.g. an AI give-up or forfeit) can never be counted as raid damage
+  const hpLost = Math.max(0, raidInitialBossHp - Math.max(0, boss.curHealth));
+  const attackerDamage = attackers.reduce((sum, u) => sum + (u.damageDealt ?? 0), 0);
+  const totalDamage = Math.min(hpLost, attackerDamage);
 
   // Only record damage if it's positive
   if (totalDamage <= 0) {

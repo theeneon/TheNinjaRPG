@@ -333,3 +333,24 @@ describe("aggregated damage enmity", () => {
     expect(user(paid, "teammate").damageDealt).toBe(40);
   });
 });
+
+describe("onehitkill damage credit", () => {
+  it("credits the HP an instant kill removes to damageDealt", () => {
+    const ohk = makeEffect(
+      "onehitkill",
+      { power: 100, rounds: 0 },
+      {
+        id: "ohk",
+        creatorId: "attacker",
+        targetId: "defender",
+        targetType: "user",
+        isNew: true,
+        createdRound: 3,
+        fromType: "jutsu",
+      },
+    );
+    const current = applyEffects(battle([ohk], 700), "attacker").newBattle;
+    expect(user(current, "defender").curHealth).toBe(0);
+    expect(user(current, "attacker").damageDealt).toBe(700);
+  });
+});

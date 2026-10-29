@@ -27,26 +27,35 @@ const raidBattle = (
     raidInitialBossHp?: number;
     raidStartBattleCount?: Record<string, number>;
     bossHealth?: number;
+    damageDealt?: number;
     extraUsers?: ReturnType<typeof makeBattleUser>[];
   } = {},
-): CompleteBattle =>
-  makeCompleteBattle({
+): CompleteBattle => {
+  const initialHp = overrides.raidInitialBossHp ?? 1000;
+  const bossHealth = overrides.bossHealth ?? 0;
+  return makeCompleteBattle({
     battleType: overrides.battleType ?? "RAID",
     extraState: {
       raidQuestId: overrides.raidQuestId ?? QUEST_ID,
-      raidInitialBossHp: overrides.raidInitialBossHp ?? 1000,
+      raidInitialBossHp: initialHp,
       raidStartBattleCount: overrides.raidStartBattleCount ?? { [USER_ID]: 0 },
     },
     usersState: [
-      makeBattleUser(USER_ID, { isAi: false, isSummon: false }),
+      makeBattleUser(USER_ID, {
+        isAi: false,
+        isSummon: false,
+        // By default the attacker dealt exactly the HP the boss lost
+        damageDealt: overrides.damageDealt ?? Math.max(0, initialHp - bossHealth),
+      }),
       makeBattleUser("raid-boss", {
         isAi: true,
         isSummon: false,
-        curHealth: overrides.bossHealth ?? 0,
+        curHealth: bossHealth,
       }),
       ...(overrides.extraUsers ?? []),
     ],
   });
+};
 
 type RaidProgressClientOptions = {
   insertSucceeds?: boolean;
@@ -217,6 +226,37 @@ describe("updateRaidProgress", () => {
           "The boss in Test Raid has been defeated! Check if you've earned any rewards.",
       },
     ]);
+  });
+
+  it("caps credited damage at what the attackers actually dealt", async () => {
+    const { client, participationValues } = createRaidProgressClient({
+      bossHpAfterDecrement: 880,
+    });
+
+    // Boss HP dropped to 0 without the attacker dealing it (e.g. an AI give-up)
+    await updateRaidProgress(
+      client,
+      raidBattle({ raidInitialBossHp: 1000, bossHealth: 0, damageDealt: 120 }),
+      USER_ID,
+    );
+
+    expect(participationValues).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: USER_ID, damageDealt: 120 }),
+    );
+  });
+
+  it("does not write when the boss lost HP but the attackers dealt no damage", async () => {
+    const { client, calls } = createRaidProgressClient({
+      bossHpAfterDecrement: 0,
+    });
+
+    await updateRaidProgress(
+      client,
+      raidBattle({ raidInitialBossHp: 1000, bossHealth: 0, damageDealt: 0 }),
+      USER_ID,
+    );
+
+    expect(calls).toEqual([]);
   });
 
   it("splits battle damage evenly across human attackers and ignores summons", async () => {
