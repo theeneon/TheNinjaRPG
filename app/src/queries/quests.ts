@@ -1167,6 +1167,16 @@ export const updateUserDataForUpdateRewards = (
 ) =>
   client.update(userData).set(updatedUserData).where(eq(userData.userId, user.userId));
 
+/** Read the capped balance after the separate reward payout has committed. */
+export const findQuestRewardSkillPoints = (
+  client: Pick<DrizzleClient, "query">,
+  userId: string,
+) =>
+  client.query.userData.findFirst({
+    columns: { skillPoints: true },
+    where: eq(userData.userId, userId),
+  });
+
 /** Build the `recruitmentRewards` insert for `updateRewards`. */
 export const insertRecruitmentRewardsForUpdateRewards = (
   client: Pick<DrizzleClient, "insert">,

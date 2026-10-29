@@ -148,6 +148,7 @@ import {
   findQuestHistoryForClaimRewardChoice,
   findQuestHistoryForCollectPetTask,
   findQuestHistoryForUpsertQuestEntry,
+  findQuestRewardSkillPoints,
   findUserDataForGet,
   findUserDataForGetPendingRewardChoices,
   findUserDataForGetPetTask,
@@ -3503,6 +3504,8 @@ export const commitQuestObjectiveRewards = async (info: {
     // Terminal isolation release is conditional on the current run at payout time.
     !(resolved && isolatedRun) &&
     !(resolved && userQuest?.quest.questType === "achievement") &&
+    // Completed teams change the Quest Teams and unclaimed-rewards navigation.
+    !(resolved && userQuest?.quest.teamEnabled) &&
     !(resolved && info.existingHistory === null);
 
   const collectionObjectiveIds = new Set(
@@ -3808,11 +3811,24 @@ export const commitQuestObjectiveRewards = async (info: {
 
   // Update database. Chain the farm bonus after payout so a failed reward write cannot still
   // shorten crop timers and the established completion/snapshot/payout ordering is preserved.
-  const [rewardResult, farmRewardResult] = await Promise.all([
+  const needsConfirmedSkillPoints =
+    userCacheEligible &&
+    !changedQuestAssignments &&
+    userDelta !== undefined &&
+    rewards.reward_skillpoints !== 0;
+  const [rewardResult, farmRewardResult, confirmedSkillPoints] = await Promise.all([
     rewardPromise,
     shouldReduceFarmTimers
       ? rewardPromise.then(reduceFarmTimers)
       : Promise.resolve(null),
+    // The account claim precedes this atomic payout; another claim may have read its
+    // advanced snapshot before either payout. Return the saved capped balance instead.
+    needsConfirmedSkillPoints
+      ? rewardPromise.then(() =>
+          // A missing confirmation reconciles the profile without rejecting a paid claim.
+          findQuestRewardSkillPoints(client, userId).catch(() => undefined),
+        )
+      : undefined,
     resolved && userQuest
       ? rewardPromise.then(() =>
           recordVillageMissionProgress(
@@ -3848,6 +3864,7 @@ export const commitQuestObjectiveRewards = async (info: {
     user.reputationPoints += userDelta.reputationPoints ?? 0;
     user.reputationPointsTotal += rewards.reward_reputation;
     user.villagePrestige += rewards.reward_prestige;
+    if (confirmedSkillPoints) user.skillPoints = confirmedSkillPoints.skillPoints;
   }
   if (resolved && userQuest && completedEndAt) {
     const entry = user.userQuests.find((entry) => entry.questId === userQuest.questId);
@@ -3924,6 +3941,7 @@ export const commitQuestObjectiveRewards = async (info: {
     userDelta,
     userCacheEligible:
       userCacheEligible &&
+      (!needsConfirmedSkillPoints || confirmedSkillPoints !== undefined) &&
       !changedQuestAssignments &&
       !(farmRewardResult && farmRewardResult.rowsAffected > 0),
   };
@@ -4525,18 +4543,23 @@ export const getRewardUserDelta = (
 ): UserDelta | undefined => {
   if (
     // Integer columns round SQL payouts; fractional atomic increments need reconciliation.
-    [rewards.reward_money, rewards.reward_seichi_silver, rewards.reward_exp].some(
-      (amount) => !Number.isInteger(amount),
-    ) ||
+    [
+      rewards.reward_money,
+      rewards.reward_seichi_silver,
+      rewards.reward_exp,
+      rewards.reward_skillpoints,
+    ].some((amount) => !Number.isInteger(amount)) ||
     (!hasQuestSnapshot && rewards.reward_reputation !== 0) ||
     rewards.reward_prestige < 0 ||
     rewards.reward_rank !== "NONE" ||
     rewards.reward_village_membership !== "NONE" ||
-    rewards.reward_items.length > 0 ||
-    rewards.reward_jutsus.length > 0 ||
+    (!hasQuestSnapshot &&
+      (rewards.reward_items.length > 0 ||
+        rewards.reward_jutsus.length > 0 ||
+        rewards.reward_badges.length > 0 ||
+        rewards.reward_skillpoints !== 0)) ||
     rewards.reward_bloodlines.length > 0 ||
     rewards.reward_sage_modes.length > 0 ||
-    rewards.reward_badges.length > 0 ||
     (rewards.reward_titles?.length ?? 0) > 0 ||
     rewards.reward_hunter_items ||
     rewards.reward_gathering_items ||
@@ -4552,8 +4575,7 @@ export const getRewardUserDelta = (
     (rewards.reward_pet_experience ?? 0) !== 0 ||
     MASTERY_EXPERIENCE_FIELDS.some((field) => (rewards[field] ?? 0) > 0) ||
     (rewards.reward_mastery_rank && rewards.reward_mastery_rank !== "NONE") ||
-    rewards.reward_sage_mastery_experience !== 0 ||
-    rewards.reward_skillpoints !== 0
+    rewards.reward_sage_mastery_experience !== 0
   ) {
     // Content grants, profession milestones and shared relations change derived profile data.
     return undefined;
