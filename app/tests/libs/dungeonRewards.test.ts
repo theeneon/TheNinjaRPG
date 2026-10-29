@@ -38,3 +38,33 @@ it("rejects scalar overflow from multiplied packages and combined base rewards",
   rewards.experience = 1;
   expect(dungeonRewardError(rewards)).toContain("per scalar reward");
 });
+
+it("keeps missed one-time drops eligible and suppresses only successful rewards", () => {
+  const rewards = dungeonContent().rewards;
+  rewards.drops = [
+    { type: "item", id: "unique", chance: 50, quantity: 2, onlyOnce: true },
+    { type: "item", id: "repeat", chance: 100, quantity: 1 },
+  ];
+  vi.spyOn(Math, "random").mockReturnValue(0.75);
+  const missed = rollDungeonRewards(rewards);
+  expect(missed.grantedDrops).toEqual([JSON.stringify(["item", "repeat"])]);
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const first = rollDungeonRewards(rewards, new Set(missed.grantedDrops));
+  expect(first.reward_items).toEqual(["unique", "unique", "repeat"]);
+  const repeated = rollDungeonRewards(rewards, new Set(first.grantedDrops));
+  expect(repeated.reward_items).toEqual(["repeat"]);
+  expect(repeated.reward_money).toBe(100);
+});
+
+it("uses reward identity across row reorderings and suppresses duplicate one-time rows", () => {
+  const rewards = dungeonContent().rewards;
+  rewards.drops = [
+    { type: "cache", id: "unique", chance: 100, quantity: 1, onlyOnce: true },
+    { type: "cache", id: "unique", chance: 100, quantity: 1, onlyOnce: true },
+  ];
+  vi.spyOn(Math, "random").mockReturnValue(0);
+  const first = rollDungeonRewards(rewards);
+  expect(first.reward_items).toEqual(["unique"]);
+  rewards.drops.reverse();
+  expect(rollDungeonRewards(rewards, new Set(first.grantedDrops)).reward_items).toEqual([]);
+});

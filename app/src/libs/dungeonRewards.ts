@@ -7,17 +7,32 @@ import { collapseRewards } from "@/libs/rewards";
 import type { DungeonContent } from "@/validators/dungeon";
 import { ObjectiveReward, REWARD_CHOICE_AMOUNT_FIELDS } from "@/validators/rewards";
 
+/** Reward identity survives row reordering and quantity or chance edits. */
+export const dungeonDropKey = (drop: DungeonContent["rewards"]["drops"][number]) =>
+  JSON.stringify([drop.type, drop.id]);
+
 /**
  * Roll each completion drop once, granting its entire quantity on success.
  * Package copies retain their nested item chances through the shared reward pipeline;
  * absent quantities on persisted runs represent one copy.
  * @param rewards Saved run rewards, checked with dungeonRewardError before rolling.
- * @returns The shared grant payload, with item quantities expanded into delivered IDs.
+ * @param claimedDrops Successful drop identities from earlier claims in this dungeon.
+ * @returns The grant payload and successful drop identities for the durable receipt.
  * @throws When a successful package drop has no saved catalog snapshot.
  */
-export const rollDungeonRewards = (rewards: DungeonContent["rewards"]) => {
-  const drops = rewards.drops.filter((drop) => Math.random() * 100 < drop.chance);
-  return postProcessRewards(
+export const rollDungeonRewards = (
+  rewards: DungeonContent["rewards"],
+  claimedDrops: ReadonlySet<string> = new Set(),
+) => {
+  const grantedDrops = new Set<string>();
+  const drops = rewards.drops.filter((drop) => {
+    const key = dungeonDropKey(drop);
+    if (drop.onlyOnce && (claimedDrops.has(key) || grantedDrops.has(key))) return false;
+    if (Math.random() * 100 >= drop.chance) return false;
+    grantedDrops.add(key);
+    return true;
+  });
+  const rolled = postProcessRewards(
     collapseRewards([
       ObjectiveReward.parse({
         reward_money: rewards.money,
@@ -43,6 +58,7 @@ export const rollDungeonRewards = (rewards: DungeonContent["rewards"]) => {
       }),
     ]),
   );
+  return { ...rolled, grantedDrops: [...grantedDrops] };
 };
 
 /**

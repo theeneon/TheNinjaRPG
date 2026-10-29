@@ -28,6 +28,30 @@ describeWithDatabase("Dungeon parties and settlement", () => {
     return {a, id: result.id};
   };
 
+  it("grants a one-time package once across concurrent runs and independently per player and dungeon", async () => {
+    const db = await getTestDatabase();
+    const content = dungeonContent();
+    content.rewards.drops = [{type: "package", id: "once", chance: 100, quantity: 1, onlyOnce: true, package: {name: "Once", description: "", rewards: ObjectiveReward.parse({reward_money: 7})}}];
+    const completed = async (id: string, userId: string, dungeonId = "definition") => {
+      await db.insert(dungeonRun).values({id, dungeonId, leaderId: userId, content, status: "COMPLETED", createdAt: new Date(), state: {...dungeonBattleState().runState, memberIds: [userId], floor: 5, clearedFloors: [0,1,2,3,4]}});
+      await db.insert(dungeonMember).values({runId: id, userId});
+    };
+    await completed("first", "a");
+    await completed("second", "a");
+    const a = await callerFor(dungeonRouter, "a");
+    const results = await Promise.all([a.claim({id: "first"}), a.claim({id: "second"})]);
+    expect(results.every((result) => result.success)).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "a")}))?.money).toBe(207);
+    expect((await a.claim({id: "first"})).success).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "a")}))?.money).toBe(207);
+    await completed("other-player", "b");
+    expect((await (await callerFor(dungeonRouter, "b")).claim({id: "other-player"})).success).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "b")}))?.money).toBe(107);
+    await completed("other-dungeon", "a", "another-definition");
+    expect((await a.claim({id: "other-dungeon"})).success).toBe(true);
+    expect((await db.query.userData.findFirst({where: eq(userData.userId, "a")}))?.money).toBe(314);
+  });
+
   it("skips the unchanged run refresh while preserving membership and invitation guards", async () => {
     const db = await getTestDatabase();
     const { a, id } = await lobby();

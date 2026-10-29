@@ -250,6 +250,7 @@ it("searches enemies and rewards, preserves invalid quantity drafts, and saves g
   fireEvent.change(view.getByRole("combobox", {name: "Search drop 1 reward"}), {target: {value: "forest"}});
   await selectReward("Drop 1 reward", "Forest Cache");
   fireEvent.input(view.getByLabelText("Drop 1 quantity"), {target: {value: "4"}});
+  fireEvent.click(view.getByRole("switch", {name: "Drop 1 only once per player"}));
   fireEvent.click(view.getByRole("button", {name: "Add random drop"}));
   fireEvent.change(view.getByLabelText("Drop 2 type"), {target: {value: "package"}});
   fireEvent.click(view.getByRole("combobox", {name: "Drop 2 reward"}));
@@ -260,7 +261,7 @@ it("searches enemies and rewards, preserves invalid quantity drafts, and saves g
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
   expect(save.mock.calls[0]![0].content.tiers[0]![0]!.waves[0]!.aiIds).toEqual(["wolf", "wolf", "wolf"]);
   expect(save.mock.calls[0]![0].content.rewards.drops).toEqual([
-    {type: "cache", id: "cache", chance: 100, quantity: 4, package: undefined},
+    {type: "cache", id: "cache", chance: 100, quantity: 4, package: undefined, onlyOnce: true},
     {type: "package", id: "bundle", chance: 100, quantity: 2, package: undefined},
   ]);
   queryClient.clear();

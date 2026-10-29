@@ -22,11 +22,13 @@ import {
   listDungeonForGetAvailable,
   listDungeonMemberForAct,
   listDungeonMemberForGetState,
+  listDungeonRewardHistory,
   listDungeonRunForGetState,
   listItemForSave,
   listJutsuForSave,
   listRewardPackageForSave,
   listUserDataForGetState,
+  lockDungeonRewardUser,
   selectCandidatesForGetState,
   selectDungeonMemberForGetState,
   updateDungeonMemberForClaim,
@@ -431,23 +433,30 @@ export const dungeonRouter = createTRPCRouter({
       const rewards = run.content.rewards;
       const rewardError = dungeonRewardError(rewards);
       if (rewardError) return errorResponse(rewardError);
-      const rolled = rollDungeonRewards(rewards);
-      const receipt = {
-        money: rolled.reward_money,
-        experience: rolled.reward_exp,
-        tokens: rolled.reward_tokens,
-        prestige: rolled.reward_prestige,
-        items: rolled.reward_items,
-        jutsus: rolled.reward_jutsus,
-        rewards: rolled,
-      };
-      // A single guarded update cannot include item/jutsu inserts and village token grants.
-      // Keep them atomic with the personal receipt: recording it first can lose rewards,
-      // while granting first can duplicate them. Failed grants leave the receipt unclaimed.
-      const paid = await retryOnDeadlock(() =>
+      // Item/jutsu inserts and village grants cannot share one guarded statement with
+      // the receipt. The transaction also serializes cross-run drop history per player.
+      const receipt = await retryOnDeadlock(() =>
         ctx.drizzle.transaction(async (tx) => {
+          await lockDungeonRewardUser(tx, ctx.userId);
+          const history = rewards.drops.some((drop) => drop.onlyOnce)
+            ? await listDungeonRewardHistory(tx, ctx.userId, run.dungeonId)
+            : [];
+          const claimedDrops = new Set(
+            history.flatMap(({ reward }) => reward?.grantedDrops ?? []),
+          );
+          const { grantedDrops, ...rolled } = rollDungeonRewards(rewards, claimedDrops);
+          const receipt = {
+            money: rolled.reward_money,
+            experience: rolled.reward_exp,
+            tokens: rolled.reward_tokens,
+            prestige: rolled.reward_prestige,
+            items: rolled.reward_items,
+            jutsus: rolled.reward_jutsus,
+            rewards: rolled,
+            grantedDrops,
+          };
           const claim = await updateDungeonMemberForClaim(tx, receipt, run, ctx);
-          if (claim.rowsAffected === 0) return false;
+          if (claim.rowsAffected === 0) return null;
           // Reward tasks execute serially inside the driver's rotating transaction session.
           await updateRewards({
             client: tx as unknown as DrizzleClient,
@@ -458,10 +467,10 @@ export const dungeonRouter = createTRPCRouter({
             persistQuestData: false,
             pvpBoostApplied: true,
           });
-          return true;
+          return receipt;
         }),
       );
-      return paid
+      return receipt
         ? { success: true, message: "Completion rewards delivered.", reward: receipt }
         : errorResponse("Rewards were already claimed. Refresh to view your receipt.");
     }),

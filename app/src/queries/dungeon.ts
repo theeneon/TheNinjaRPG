@@ -7,6 +7,7 @@ import {
   eq,
   getTableColumns,
   inArray,
+  isNotNull,
   isNull,
   type SQL,
   sql,
@@ -373,6 +374,35 @@ export const findDungeonMemberForClaim = (
     where: and(eq(dungeonMember.runId, input.id), eq(dungeonMember.userId, ctx.userId)),
   });
 
+/** Serialize completion grants for an existing player across different dungeon runs. */
+export const lockDungeonRewardUser = (
+  client: Pick<DrizzleClient, "select">,
+  userId: string,
+) =>
+  client
+    .select({ userId: userData.userId })
+    .from(userData)
+    .where(eq(userData.userId, userId))
+    .for("update");
+
+/** Durable completion receipts preserve drop history even after inventory is consumed. */
+export const listDungeonRewardHistory = (
+  client: Pick<DrizzleClient, "select">,
+  userId: string,
+  dungeonId: string,
+) =>
+  client
+    .select({ reward: dungeonMember.reward })
+    .from(dungeonMember)
+    .innerJoin(dungeonRun, eq(dungeonRun.id, dungeonMember.runId))
+    .where(
+      and(
+        eq(dungeonMember.userId, userId),
+        eq(dungeonRun.dungeonId, dungeonId),
+        isNotNull(dungeonMember.reward),
+      ),
+    );
+
 /**
  * Build the `dungeonMember` update for `claim`, setting `reward` and `activeUserId`,
  * using predicates on `runId`, `userId`, `reward`.
@@ -387,6 +417,7 @@ export const updateDungeonMemberForClaim = (
     items: string[];
     jutsus: string[];
     rewards: import("@/validators/rewards").PostProcessedRewards;
+    grantedDrops?: string[];
   },
   run: { id: string },
   ctx: { userId: string },

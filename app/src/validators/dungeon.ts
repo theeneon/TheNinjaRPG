@@ -24,6 +24,8 @@ const dungeonDropSchema = z
     type: z.enum(["item", "jutsu", "cache", "package"]),
     id: z.string().min(1, "Choose a reward for each drop."),
     chance: z.number().min(1).max(100),
+    /** Stop rolling this reward after a successful drop in this dungeon. */
+    onlyOnce: z.boolean().optional(),
     quantity: z.number().int().min(1).max(DUNGEON_MAX_REWARD_QUANTITY).prefault(1),
     /** Server copies the approved catalog source at save; clients cannot author this payload. */
     package: RewardPackageValidator.optional(),
@@ -146,6 +148,8 @@ export type DungeonRunState = CoopRoster & {
 };
 /** Persisted completion roll returned by repeat claims without delivering rewards again. */
 export type DungeonRewardReceipt = {
+  /** Successful drop identities, including repeatable drops, scoped to the dungeon. */
+  grantedDrops?: string[];
   money: number;
   experience: number;
   tokens: number;
