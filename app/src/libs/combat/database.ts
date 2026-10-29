@@ -1629,10 +1629,18 @@ export const updateUser = async (
     const baseline = curBattle.extraState.profileCacheSnapshots?.[userId];
     const capacity = curBattle.extraState.energyCapacity?.[userId];
     const regeneration = curBattle.extraState.energyRegeneration?.[userId];
-    const newlyDoneGoal = trackers.some((tracker) =>
-      tracker.goals.some(
-        (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
-      ),
+    // Tier/daily/achievement completion can award passive progression on the next
+    // profile read. Ordinary quest objectives wait for their explicit reward claim.
+    const newlyDoneGoal = trackers.some(
+      (tracker) =>
+        hydratedUser.userQuests.some(
+          (entry) =>
+            entry.questId === tracker.id &&
+            ["tier", "daily", "achievement"].includes(entry.quest.questType),
+        ) &&
+        tracker.goals.some(
+          (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
+        ),
     );
     if (
       userSettlementCommitted &&

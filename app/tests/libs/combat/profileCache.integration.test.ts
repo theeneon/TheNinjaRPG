@@ -104,6 +104,34 @@ describeWithDatabase("combat profile cache inventory confirmation", () => {
     expect(current.questData.map((tracker) => tracker.id)).toEqual(["timed-event"]);
   });
 
+  it.each(["mission", "achievement"] as const)("projects a completed %s objective only when it has no passive progression", async (questType) => {
+    const database = await getTestDatabase();
+    await insertQuests([{ id: "complete-goal", questType, maxAttempts: 100, maxCompletes: 100,
+      content: { objectives: [AllObjectives.parse({ id: "kill", task: "arena_kills", value: 1 })], reward: ObjectiveReward.parse({}), sceneBackground: "", sceneCharacters: [] },
+    }]);
+    await insertQuestHistory([{ userId: "cache-player", questId: "complete-goal", questType }]);
+    const original = (await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player"), with: { items: { with: { item: true } }, userQuests: { with: { quest: true } } } }))!;
+    const current = { ...original, titles: [], completedQuests: [] } as unknown as NonNullable<UserWithRelations>;
+    current.questData = getNewTrackers(current, [{ task: "any" }]).trackers;
+    const state = makeCompleteBattle({ id: "cache-fight", battleType: "ARENA", rewardScaling: 1, usersState: [
+      makeBattleUser("cache-player", { direction: "left", rank: "NONE", level: original.level, originalLevel: original.level, isAi: false, isSummon: false, curHealth: 100, sector: 1, items: [] }),
+      makeBattleUser("cache-ai", { direction: "right", isAi: true, curHealth: 0, sector: 1, leftBattle: true }),
+    ], extraState: { profileCacheSnapshots: { "cache-player": captureCombatCacheSnapshot(original) },
+      energyCapacity: { "cache-player": 100 }, energyRegeneration: { "cache-player": 0 },
+      questData: { "cache-player": current.questData }, userQuests: { "cache-player": filterCombatQuests(structuredClone(current.userQuests)) },
+    } });
+    const result = calcBattleResult(state, "cache-player", [])!;
+    result.villagePrestige = 0; result.villageTokens = 0; result.anbuPoints = 0; result.clanPoints = 0;
+    const { statements } = await recordQueries(() => updateUser(database, { trigger: async () => {} } as unknown as PusherClient, state, result, "cache-player"));
+    expect(statements.some((statement) => /^select\b/i.test(statement))).toBe(false);
+    if (questType === "achievement") expect(result.profileUpdate).toBeUndefined();
+    else {
+      const patch = combatProfilePatch(current, result.profileUpdate!);
+      expect(patch?.questData?.find((tracker) => tracker.id === "complete-goal")?.goals[0]?.done).toBe(true);
+      expect(patch?.questData).toEqual((await database.query.userData.findFirst({ where: eq(userData.userId, "cache-player") }))?.questData);
+    }
+  });
+
   it("keeps loaded and omitted mock achievement trackers visible without persisting them", async () => {
     const database = await getTestDatabase();
     await insertQuests(["arena_kills", "user_level"].map((task, index) => ({
