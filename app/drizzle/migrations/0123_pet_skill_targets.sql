@@ -1,4 +1,5 @@
 -- Preserve each species' recipient choice on every tag, retaining tag order and payloads.
+-- Rebuild by index because JSON aggregation does not guarantee element order.
 WITH RECURSIVE `targeted` (`id`, `skillTarget`, `tagIndex`, `tags`) AS (
   SELECT `id`, `skillTarget`, 0, JSON_ARRAY() FROM `PetSpecies`
   UNION ALL

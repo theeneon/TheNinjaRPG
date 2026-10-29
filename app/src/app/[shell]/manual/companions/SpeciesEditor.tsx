@@ -68,6 +68,7 @@ export const CreateSpeciesModal = ({
   );
 };
 
+/** Edit species defaults while preserving each tag's recipients through the shared combat editor. */
 const SpeciesForm = ({
   editor,
   isNew,
@@ -80,7 +81,8 @@ const SpeciesForm = ({
   const validEffects = effects.filter(
     (effect): effect is ZodPetSpeciesEffect => effect !== undefined,
   );
-  // The shared combat editor owns tag fields; recipient settings stay on the species form.
+  // Combat schemas strip species-only recipients; the setter merges them back by index.
+  // Stable stripped inputs keep the shared editor's form synchronization from repeating.
   const combatEffects = useMemo(
     () =>
       effects

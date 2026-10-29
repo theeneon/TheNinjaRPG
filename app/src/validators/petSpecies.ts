@@ -17,7 +17,10 @@ import {
 import { idSchema } from "@/validators/misc";
 import { petAiProfileSchema } from "@/validators/pets";
 
-/** Each innate passive chooses its recipients independently of the other tags. */
+/**
+ * Each innate passive chooses its recipients independently of the other tags.
+ * Omitted recipients resolve to SELF in the editor and during battle initiation.
+ */
 export const PetSpeciesEffect = AllTags.and(
   z.object({ skillTarget: z.enum(PetSkillTargets).optional() }),
 );

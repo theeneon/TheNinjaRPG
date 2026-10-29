@@ -156,6 +156,7 @@ export const addPetsToBattle = (info: {
                 target.direction !== owner.direction,
             );
       for (const target of targets) {
+        // Self passives use each recipient's stats; enemy passives use the companion as caster.
         const creator = skillTarget === "SELF" ? target : actor;
         const realized = realizeTag({
           tag: structuredClone(effect) as UserEffect,
@@ -173,6 +174,7 @@ export const addPetsToBattle = (info: {
           realized.createdRound = 1;
           info.groundEffects?.push(realized);
         } else {
+          // These passives are already active; action processing must not recast them.
           realized.isNew = false;
           realized.castThisRound = false;
           realized.targetId = target.userId;
