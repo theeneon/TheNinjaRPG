@@ -97,7 +97,7 @@ export const buildDiscordEvents = ({
             ? `Sector war (sector ${war.sector})`
             : "War";
       const sides = `**${plain(war.attackerVillage.name)}** vs **${plain(war.defenderVillage.name)}**`;
-      const link = `https://www.theninja-rpg.com/townhall`;
+      const link = `https://www.theninja-rpg.com/townhall#Wars`;
       const notice =
         war.combatStartedAt && war.combatStartedAt > war.startedAt
           ? ` Combat opens <t:${Math.floor(war.combatStartedAt.getTime() / 1000)}:F>.`

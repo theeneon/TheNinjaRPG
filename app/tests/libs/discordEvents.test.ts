@@ -40,7 +40,8 @@ describe("Discord event messages", () => {
     expect(result[0]?.message).toContain("Akikaze");
     expect(result[0]?.message).toContain("Hyorin");
     expect(result[1]?.message).toContain("Winner: **Hyorin**");
-    expect(result[0]?.message).toContain("/townhall");
+    expect(result[0]?.message).toContain("https://www.theninja-rpg.com/townhall#Wars");
+    expect(result[1]?.message).toContain("https://www.theninja-rpg.com/townhall#Wars");
   });
   it("reports draws and objective-war combat opening times", () => {
     const result = buildDiscordEvents({ ...input(), wars: [{ ...war(), combatStartedAt: new Date(now.getTime() + 3_600_000), endedAt: now, status: "DRAW" }] });
