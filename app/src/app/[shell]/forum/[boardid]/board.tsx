@@ -16,7 +16,6 @@ import {
   ForumComposer,
   ForumNavigation,
   ForumSearch,
-  ForumStaffLink,
   ForumTopicList,
   ForumWatchButton,
 } from "@/layout/Forum";
@@ -58,9 +57,8 @@ export default function Board({
       subtitle={board?.summary}
       defaultBackHref="/forum"
       topRightCorntentBreakpoint="sm"
-      topRightContent={<ForumStaffLink />}
+      topRightContent={<ForumNavigation />}
     >
-      <ForumNavigation />
       {threads.error && (
         <p role="alert">
           This board could not load.{" "}

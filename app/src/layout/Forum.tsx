@@ -3,6 +3,8 @@
 import {
   Bell,
   BellOff,
+  Clock3,
+  LayoutGrid,
   LockKeyhole,
   MessageSquare,
   Pin,
@@ -28,39 +30,39 @@ import { canPostAsAi } from "@/utils/permissions";
 import { useUserData } from "@/utils/UserContext";
 import { getSearchValidator } from "@/validators/register";
 
-/** Provide forum browse links below the page header. */
-export const ForumNavigation = () => (
-  <nav
-    aria-label="Forum navigation"
-    className="mb-4 flex flex-wrap items-center gap-2 text-sm"
-  >
-    <Link
-      href="/forum"
-      className="hover:bg-accent rounded-md border px-3 py-2 font-medium"
-    >
-      All boards
-    </Link>
-    <Link
-      href="/forum?view=latest"
-      className="hover:bg-accent rounded-md border px-3 py-2"
-    >
-      Latest discussions
-    </Link>
-  </nav>
-);
-/** Expose the header shortcut only to accounts with forum management or moderation access. */
-export const ForumStaffLink = () => {
+/** Keep browse shortcuts compact in the header and expose staff tools only to eligible accounts. */
+export const ForumNavigation = ({
+  showBrowseLinks = true,
+}: {
+  showBrowseLinks?: boolean;
+}) => {
   const { data: context } = api.forum.getContext.useQuery();
   const canAccessStaffWorkspace = context?.canManage || context?.canModerate;
-  if (!canAccessStaffWorkspace) return null;
+  if (!showBrowseLinks && !canAccessStaffWorkspace) return null;
   return (
-    <Link
-      href="/forum/manage"
-      className="hover:bg-accent inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm whitespace-nowrap"
-    >
-      <ShieldCheck className="h-4 w-4" />
-      Staff workspace
-    </Link>
+    <nav aria-label="Forum navigation" className="flex flex-wrap justify-end gap-1">
+      {showBrowseLinks && (
+        <>
+          <Button asChild variant="outline" size="icon" hoverText="All boards">
+            <Link href="/forum" aria-label="All boards">
+              <LayoutGrid className="h-4 w-4" aria-hidden />
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="icon" hoverText="Latest discussions">
+            <Link href="/forum?view=latest" aria-label="Latest discussions">
+              <Clock3 className="h-4 w-4" aria-hidden />
+            </Link>
+          </Button>
+        </>
+      )}
+      {canAccessStaffWorkspace && (
+        <Button asChild variant="outline" size="icon" hoverText="Staff workspace">
+          <Link href="/forum/manage" aria-label="Staff workspace">
+            <ShieldCheck className="h-4 w-4" aria-hidden />
+          </Link>
+        </Button>
+      )}
+    </nav>
   );
 };
 /** Render server-authorized topics with unread/resume links and optional staff selection. */

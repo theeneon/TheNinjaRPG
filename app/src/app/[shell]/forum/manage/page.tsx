@@ -10,7 +10,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import ContentBox from "@/layout/ContentBox";
-import { ForumNavigation, ForumStaffLink } from "@/layout/Forum";
+import { ForumNavigation } from "@/layout/Forum";
 import { ForumAnalytics } from "@/layout/ForumAnalytics";
 import { ForumTopicTools } from "@/layout/ForumModeration";
 import Link from "@/layout/Link";
@@ -54,9 +54,8 @@ export default function ForumManagement() {
       subtitle="Manage discussions, community access and forum structure."
       defaultBackHref="/forum"
       topRightCorntentBreakpoint="sm"
-      topRightContent={<ForumStaffLink />}
+      topRightContent={<ForumNavigation />}
     >
-      <ForumNavigation />
       {!user ? (
         <p>Sign in with a forum staff account to continue.</p>
       ) : data.isPending ? (
