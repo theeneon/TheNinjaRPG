@@ -90,6 +90,7 @@ import {
   updatePetAiSchema,
   updatePetSchema,
 } from "@/validators/pets";
+import { userDeltaResponseSchema } from "@/validators/userCache";
 
 /** Own, configure and progress companions through guarded account and pet snapshots. */
 export const petsRouter = createTRPCRouter({
@@ -614,7 +615,7 @@ export const petsRouter = createTRPCRouter({
   /** Spend the active or parked bank together with its companion stat gains. */
   assignExperience: protectedProcedure
     .input(assignPetExperienceSchema)
-    .output(baseServerResponse)
+    .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
       const { user, pet } = await fetchPetOwner(ctx.drizzle, ctx.userId, input.petId);
       const restriction = petMutationBlockMessage(user, pet);
@@ -648,7 +649,8 @@ export const petsRouter = createTRPCRouter({
       }
       const spent = getAssignedCombatStatTotal(stats) - getAssignedCombatStatTotal(pet);
       const isActive = user.activePetId === pet.id;
-      if (spent > (isActive ? user.petExperience : pet.storedExperience))
+      const availableExperience = isActive ? user.petExperience : pet.storedExperience;
+      if (spent > availableExperience)
         return errorResponse("Not enough unused companion experience.");
       const now = new Date();
       const bank = isActive ? userData.petExperience : userPet.storedExperience;
@@ -660,6 +662,7 @@ export const petsRouter = createTRPCRouter({
           user,
           now,
           bank,
+          availableExperience,
           spent,
           stats,
           ownerSnapshotWhere,
@@ -671,6 +674,7 @@ export const petsRouter = createTRPCRouter({
         ? {
             success: true,
             message: `${spent.toLocaleString("en-US")} companion experience assigned.`,
+            userPatch: isActive ? { petExperience: availableExperience - spent } : {},
           }
         : changedResponse();
     }),

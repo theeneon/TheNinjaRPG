@@ -246,7 +246,7 @@ export const deleteUserPetForReleasePet = (
   },
 ) => client.delete(userPet).where(petSnapshotWhere(pet));
 
-/** Execute the database statement for `assignExperience`. */
+/** Pin the XP bank as well as revisions so allocation can return its exact remaining balance. */
 export const executeAssignedForAssignExperience = (
   client: Pick<DrizzleClient, "execute">,
   user: import("@/drizzle/schema").UserData,
@@ -254,6 +254,7 @@ export const executeAssignedForAssignExperience = (
   bank:
     | typeof import("@/drizzle/schema").userData["petExperience"]
     | typeof import("@/drizzle/schema").userPet["storedExperience"],
+  availableExperience: number,
   spent: number,
   stats: Pick<UserData, CombatStatName>,
   ownerSnapshotWhere: (user: UserData) => SQL<unknown> | undefined,
@@ -274,7 +275,7 @@ export const executeAssignedForAssignExperience = (
               ${userPet.experience} = ${userPet.experience} + ${spent},
               ${userPet.revision} = ${userPet.revision} + 1,
               ${userPet.updatedAt} = ${now}
-          WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet), gte(bank, spent))}
+          WHERE ${and(ownerSnapshotWhere(user), petSnapshotWhere(pet), eq(bank, availableExperience), gte(bank, spent))}
         `);
 
 /** Build the `userPet` update for `generateAppearance`, using predicates on `federalStatus` and `staffAccount`. */
