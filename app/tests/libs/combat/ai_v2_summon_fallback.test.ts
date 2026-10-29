@@ -101,4 +101,17 @@ describe("performAIaction for a summon", () => {
     expect(aiDescriptions).toEqual(["Tor Tor is exhausted and has to give up"]);
     expect(nextBattle.usersState.find((u) => u.userId === "summon")?.curHealth).toBe(0);
   });
+
+  it("makes a stuck raid boss end its turn instead of zeroing its shared HP", () => {
+    const grid = new Grid(TerrainHex, rectangle({ width: WIDTH, height: HEIGHT }));
+    const battle = {
+      ...mkBattle({ isSummon: false, aiProfileId: "missing-profile" }, {}),
+      battleType: "RAID",
+    } as CompleteBattle;
+    const { nextBattle, aiDescriptions } = performAIaction(battle, grid, "summon");
+    expect(aiDescriptions).toEqual(["Tor Tor hesitates and ends its turn"]);
+    const boss = nextBattle.usersState.find((u) => u.userId === "summon");
+    expect(boss?.curHealth).toBe(5000);
+    expect(boss?.actionPoints).toBe(0);
+  });
 });
