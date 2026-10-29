@@ -2,7 +2,14 @@
 
 import { Bell, ChevronRight, MessageSquare } from "lucide-react";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useId, useState } from "react";
+import {
+  Suspense,
+  startTransition,
+  useCallback,
+  useEffect,
+  useId,
+  useState,
+} from "react";
 import { api } from "@/app/_trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,13 +31,20 @@ export default function Forum() {
 
 function ForumHome() {
   const params = useSearchParams();
-  // Each discussion-view history entry restores its applied filter defaults.
-  return (
-    <ForumBrowse key={`${params.get("view") ?? "boards"}:${params.get("tag") ?? ""}`} />
-  );
+  const search = params.toString();
+  const [navigation, setNavigation] = useState({ search, key: 0 });
+  // Navigation restores URL defaults; applying filters keeps pending typing and focus.
+  if (navigation.search !== search) setNavigation({ search, key: navigation.key + 1 });
+  const replaceUrl = useCallback((url: URL) => {
+    startTransition(() => {
+      setNavigation((current) => ({ ...current, search: url.searchParams.toString() }));
+      window.history.replaceState(null, "", url);
+    });
+  }, []);
+  return <ForumBrowse key={navigation.key} replaceUrl={replaceUrl} />;
 }
 
-function ForumBrowse() {
+function ForumBrowse({ replaceUrl }: { replaceUrl: (url: URL) => void }) {
   const fieldPrefix = useId();
   const { data: user } = useUserData();
   const params = useSearchParams();
@@ -69,8 +83,8 @@ function ForumBrowse() {
       if (value) url.searchParams.set(key, value);
       else url.searchParams.delete(key);
     }
-    if (url.href !== window.location.href) window.history.replaceState(null, "", url);
-  }, [boardId, appliedAuthor, appliedSince, appliedUntil]);
+    if (url.href !== window.location.href) replaceUrl(url);
+  }, [boardId, appliedAuthor, appliedSince, appliedUntil, replaceUrl]);
   const { data: boards, isPending, error, refetch } = api.forum.getAll.useQuery();
   const topics = api.forum.getThreads.useInfiniteQuery(
     {
@@ -128,7 +142,7 @@ function ForumBrowse() {
             else url.searchParams.delete("q");
             if (view === "boards" || view === "alerts")
               url.searchParams.set("view", "latest");
-            window.history.replaceState(null, "", url);
+            replaceUrl(url);
           }}
         />
       </div>
