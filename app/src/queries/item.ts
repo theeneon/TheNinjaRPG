@@ -478,6 +478,19 @@ export const listItemVariantForDelete = (
     columns: { id: true },
   });
 
+/** Find surviving variants that require this item as their unlock token. */
+export const listItemVariantRequiringItemForDelete = (
+  client: Pick<DrizzleClient, "query">,
+  input: { id: string },
+) =>
+  client.query.itemVariant.findMany({
+    where: and(
+      eq(itemVariant.requiredItemId, input.id),
+      ne(itemVariant.itemId, input.id),
+    ),
+    columns: { name: true },
+  });
+
 /**
  * Build the `huntingSession` lookup for `delete`, selecting only `userId`, using
  * predicates on `content` and `contractId`.
@@ -547,6 +560,12 @@ export const deleteItemForDelete = (
       and(
         eq(item.id, input.id),
         notExists(client.select({ one: sql`1` }).from(evolutionChildGuard)),
+        notExists(
+          client
+            .select({ one: sql`1` })
+            .from(itemVariant)
+            .where(eq(itemVariant.requiredItemId, input.id)),
+        ),
       ),
     );
 
@@ -951,7 +970,7 @@ export const findItemForUpsertItemVariant = (
 ) =>
   client.query.item.findFirst({
     where: eq(item.id, input.itemId),
-    columns: { id: true, name: true, itemType: true },
+    columns: { id: true, name: true, itemType: true, effects: true },
   });
 
 /** Build the `itemVariant` update for `upsertItemVariant`, using predicates on `id` and `itemId`. */

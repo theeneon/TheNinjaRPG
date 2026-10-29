@@ -94,7 +94,7 @@ const refetch = async () => undefined;
 beforeEach(() => {
   vi.clearAllMocks();
   Object.assign(vi.spyOn(client, "api" as never), {
-    item: { getAllNames: names, getBloodlineItemNames: names, update },
+    item: { getVariantNames: names, getAllNames: names, getBloodlineItemNames: names, update },
     jutsu: {
       getAllNames: names,
       getReskinParents: names,

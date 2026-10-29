@@ -684,11 +684,18 @@ const ItemVariantsEditor: React.FC<ItemVariantsEditorProps> = ({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="any">Any compatible token</SelectItem>
-                        {(unlockItems ?? []).map((entry) => (
-                          <SelectItem key={entry.id} value={entry.id}>
-                            {entry.name}
-                          </SelectItem>
-                        ))}
+                        {(unlockItems ?? [])
+                          .filter((entry) =>
+                            entry.unlockVariantIds.some(
+                              (variantId) =>
+                                !variantId || variantId === editingVariant?.id,
+                            ),
+                          )
+                          .map((entry) => (
+                            <SelectItem key={entry.id} value={entry.id}>
+                              {entry.name}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                   </div>

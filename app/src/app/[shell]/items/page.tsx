@@ -1879,12 +1879,12 @@ const ItemVariantModal: React.FC<ItemVariantModalProps> = ({
   const unlockStatusLoaded = unlockedVariants !== undefined;
   const unlockedIds = new Set(unlockedVariants?.map((u) => u.variantId) ?? []);
 
-  // Only carried tokens count — home storage is not carried inventory, matching
-  // how regular consumables require the item to be in the backpack to be used.
+  // Match the server's carried, non-auctioned and finished-crafting checks.
   const variantTokens =
     allUserItems?.filter(
       (ui) =>
-        !ui.storedAtHome && ui.item.effects.some((e) => e.type === "unlockitemvariant"),
+        isEquippableUserItem(ui) &&
+        ui.item.effects.some((e) => e.type === "unlockitemvariant"),
     ) ?? [];
 
   const purchase = api.item.purchaseVariant.useMutation({

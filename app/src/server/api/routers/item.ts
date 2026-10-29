@@ -189,6 +189,7 @@ import {
   listItemVariantForDelete,
   listItemVariantForGetItemVariants,
   listItemVariantForUpsertItemVariant,
+  listItemVariantRequiringItemForDelete,
   listPetSpeciesForFetchRewardPetSpecies,
   listQuestForGetItemRelations,
   listUserItemForExecuteMergeStacksForItem,
@@ -419,6 +420,10 @@ export const itemRouter = createTRPCRouter({
             effect.rewardMode === "weightedCache",
         ),
         isRestrictedCacheReward: isRestrictedCacheReward({ bloodlineId, effects }),
+        /** Variant bindings let content selectors offer only compatible unlock tokens. */
+        unlockVariantIds: effects.flatMap((effect) =>
+          effect.type === "unlockitemvariant" ? [effect.variantId] : [],
+        ),
       }));
     }),
   getBloodlineItemNames: publicProcedure
@@ -577,12 +582,14 @@ export const itemRouter = createTRPCRouter({
         return errorResponse("You are banned and cannot perform this action");
       if (!canChangeContent(user.role))
         return errorResponse("Not allowed to delete item");
-      const [entry, childEvolutions, variants, huntingReferences] = await Promise.all([
-        fetchItem(ctx.drizzle, input.id),
-        listItemForDelete(ctx.drizzle, input),
-        listItemVariantForDelete(ctx.drizzle, input),
-        listHuntingHabitats(ctx.drizzle),
-      ]);
+      const [entry, childEvolutions, variants, huntingReferences, requiredByVariants] =
+        await Promise.all([
+          fetchItem(ctx.drizzle, input.id),
+          listItemForDelete(ctx.drizzle, input),
+          listItemVariantForDelete(ctx.drizzle, input),
+          listHuntingHabitats(ctx.drizzle),
+          listItemVariantRequiringItemForDelete(ctx.drizzle, input),
+        ]);
       if (
         huntingReferences.some((h) =>
           h.content.contracts.some((c) => c.rewards.some((r) => r.itemId === input.id)),
@@ -591,6 +598,11 @@ export const itemRouter = createTRPCRouter({
         return errorResponse(
           "This material is used by a hunting contract. Remove that reward first.",
         );
+      if (requiredByVariants.length) {
+        return errorResponse(
+          `This item unlocks variants: ${requiredByVariants.map((variant) => variant.name).join(", ")}. Change their required unlock item first.`,
+        );
+      }
       // Check accepted terms after live references: an acceptance can precede a
       // staff edit that removes the reward while the habitat query is in flight.
       // Match the selected contract; backfilled snapshots can contain the whole habitat.
@@ -621,7 +633,7 @@ export const itemRouter = createTRPCRouter({
         deleteUserItemImbuementForDelete(ctx.drizzle, input),
       ]);
 
-      // Write-time guard: only delete if no child evolutions appeared concurrently.
+      // Write-time guards preserve evolution and unlock-item references added concurrently.
       // The subquery alias materializes a derived table, avoiding MySQL errno 1093
       // (a DELETE cannot otherwise read its own target table in a subquery).
       const evolutionChildGuard = selectItemForDelete(ctx.drizzle, input);
@@ -632,7 +644,7 @@ export const itemRouter = createTRPCRouter({
       );
       if (deleteResult.rowsAffected === 0) {
         return errorResponse(
-          "Delete incomplete — an evolution now points at this item. Remove it and retry.",
+          "Delete incomplete — an evolution or variant now requires this item. Remove the reference and retry.",
         );
       }
       await Promise.all([
@@ -1176,6 +1188,16 @@ export const itemRouter = createTRPCRouter({
         return errorResponse("Required unlock item not found");
       if (input.variant.requiredItemId && input.variant.costType !== "VARIANT_TOKEN")
         return errorResponse("Only token variants can require an unlock item");
+      if (
+        requiredItem &&
+        !requiredItem.effects.some(
+          (effect) =>
+            effect.type === "unlockitemvariant" &&
+            (!effect.variantId || effect.variantId === input.variant.id),
+        )
+      ) {
+        return errorResponse("Required unlock item cannot unlock this variant");
+      }
       if (parentItem.itemType !== "FURNITURE" && input.variant.furnitureData) {
         return errorResponse("Only furniture variants can define orientation images");
       }
