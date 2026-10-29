@@ -258,7 +258,7 @@ export function PetProfile() {
       showMutationToast(result);
       if (result.success) {
         await Promise.all([
-          updateUser(result.userPatch, { revision, delta: result.userDelta }),
+          updateUser(result.userPatch, { revision }),
           utils.pets.getPet.invalidate(),
           utils.pets.getCollection.invalidate(),
         ]);

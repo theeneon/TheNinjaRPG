@@ -674,7 +674,6 @@ export const petsRouter = createTRPCRouter({
         ? {
             success: true,
             message: `${spent.toLocaleString("en-US")} companion experience assigned.`,
-            userDelta: {},
             userPatch: isActive ? { petExperience: availableExperience - spent } : {},
           }
         : changedResponse();

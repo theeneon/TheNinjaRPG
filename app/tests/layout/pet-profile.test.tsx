@@ -121,7 +121,7 @@ beforeEach(() => {
   getUser = vi.fn(() => ({ userData: owner }));
   unlockSlot = vi.fn(() => ({ success: true, message: "Slot unlocked" }));
   generate = vi.fn(() => ({ success: false, message: "Please retry your image." }));
-  assign = vi.fn(() => ({ success: true, message: "Experience assigned", userDelta: {}, userPatch: { petExperience: 99 } }));
+  assign = vi.fn(() => ({ success: true, message: "Experience assigned", userPatch: { petExperience: 99 } }));
   evolve = vi.fn(() => ({ success: true, message: "Evolved" }));
   Object.assign(vi.spyOn(client, "api" as never), { pets: testApi.pets, ai: testApi.ai, useUtils: testApi.useUtils });
   vi.spyOn(navigation, "useSearchParams").mockImplementation(() => new URLSearchParams(requestedPetId ? { petId: requestedPetId } : {}) as never);
@@ -1064,7 +1064,7 @@ it.each([true, false])("applies the confirmed bank without refetching the profil
   if (!isActive) data = { ...data, activePetId: "another-companion" };
   assign.mockImplementation(() => {
     data = { ...data, unusedExperience: 99 };
-    return { success: true, message: "Experience assigned", userDelta: {}, userPatch: isActive ? { petExperience: 99 } : {} };
+    return { success: true, message: "Experience assigned", userPatch: isActive ? { petExperience: 99 } : {} };
   });
   const cachedOwner = observeProfileCache();
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
@@ -1074,7 +1074,7 @@ it.each([true, false])("applies the confirmed bank without refetching the profil
   fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
   await waitFor(() => expect(cachedOwner()?.petExperience).toBe(isActive ? 99 : 50));
   await view.findByText("99 training points available");
-  expect(updateUser).toHaveBeenCalledWith(isActive ? { petExperience: 99 } : {}, { revision: expect.any(Number), delta: {} });
+  expect(updateUser).toHaveBeenCalledWith(isActive ? { petExperience: 99 } : {}, { revision: expect.any(Number) });
   expect(getUser).not.toHaveBeenCalled();
   expect(invalidate.mock.calls.some(([filters]) => JSON.stringify(filters?.queryKey).includes('"profile"'))).toBe(false);
 });
@@ -1102,7 +1102,7 @@ it("refreshes rejected allocation snapshots without erasing the error and allows
 
   assign.mockImplementationOnce(() => {
     data = { ...data, unusedExperience: 89 };
-    return { success: true, message: "Experience assigned", userDelta: {}, userPatch: { petExperience: 89 } };
+    return { success: true, message: "Experience assigned", userPatch: { petExperience: 89 } };
   });
   fireEvent.click(view.getByRole("button", { name: "Assign experience" }));
   await view.findByText("89 training points available");
@@ -1124,7 +1124,7 @@ it("reconciles a late allocation response after a newer profile revision", async
   data = { ...data, unusedExperience: 80 };
   await act(async () => {
     queryClient.setQueryData(getQueryKey(testApi.profile.getUser, undefined, "query"), { userData: owner });
-    finishAssignment({ success: true, message: "Experience assigned", userDelta: {}, userPatch: { petExperience: 99 } });
+    finishAssignment({ success: true, message: "Experience assigned", userPatch: { petExperience: 99 } });
   });
   await waitFor(() => expect(getUser).toHaveBeenCalledTimes(1));
   expect(cachedOwner()?.petExperience).toBe(80);
