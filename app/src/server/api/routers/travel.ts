@@ -20,6 +20,7 @@ import {
 import { type UserData, userData } from "@/drizzle/schema";
 
 import { getQuestMapLocations } from "@/libs/mapLocations";
+import { isQuestComplete } from "@/libs/objectives";
 import {
   getWarRelationship,
   isObjectiveWarActive,
@@ -750,13 +751,14 @@ export const travelRouter = createTRPCRouter({
       canProject &&= progress.consequences.every(
         (entry) => entry.type === "update_user",
       );
-      // Completing passive objectives can pay rewards on the next profile read.
+      // Passive completion needs profile reconciliation for rewards and team navigation.
       canProject &&= !progress.trackers.some(
         (tracker) =>
           visible.some(
             (entry) =>
               entry.questId === tracker.id &&
-              ["tier", "daily", "achievement"].includes(entry.questType),
+              (["tier", "daily", "achievement"].includes(entry.questType) ||
+                (entry.quest.teamEnabled && isQuestComplete(entry.quest, tracker))),
           ) &&
           tracker.goals.some(
             (goal) => goal.done && !previouslyDoneGoals.has(`${tracker.id}:${goal.id}`),
