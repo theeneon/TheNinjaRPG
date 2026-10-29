@@ -100,6 +100,7 @@ export const getForumContext = async (
   };
 };
 export type ForumContext = Awaited<ReturnType<typeof getForumContext>>;
+/** Return readable topics with stable paging and account-specific unread/resume state. */
 export const getInfiniteThreads = async (props: {
   client: DrizzleClient;
   limit: number;
@@ -163,6 +164,7 @@ export const getInfiniteThreads = async (props: {
   };
 };
 export type InfiniteThreads = ReturnType<typeof getInfiniteThreads>;
+/** Load a named game destination through the same forum access rules as the interactive pages. */
 export const fetchForumPageData = async (
   client: DrizzleClient,
   boardName: string,
@@ -184,6 +186,7 @@ export const fetchForumPageData = async (
     canPost: userRow ? canCreateNews(userRow.role) : null,
   };
 };
+/** Return only a readable, published topic and its visible posts; denied topics have an empty result. */
 export const fetchForumThreadPage = async (
   client: DrizzleClient,
   input: { thread_id: string; limit: number; cursor?: number | null },
@@ -248,6 +251,7 @@ export const resolveForumPost = async (
     ),
   };
 };
+/** Load this account's read positions and watches together without exposing another account's state. */
 export const forumPersonalState = async (client: DrizzleClient, userId: string) => {
   const [reads, watches] = await Promise.all([
     listForumReads(client, userId),
@@ -256,7 +260,10 @@ export const forumPersonalState = async (client: DrizzleClient, userId: string) 
   return { reads, watches };
 };
 
-/** Parent policies are read after the caller locks their section; stale permissions cannot authorize a write. */
+/**
+ * Recheck board/section hierarchy, policy and posting configuration under the caller's section lock.
+ * Actor, grants and posting restrictions remain inputs from the request's access snapshot.
+ */
 export const forumWriteSnapshotMatches = async (
   client: DrizzleClient,
   context: ForumContext,

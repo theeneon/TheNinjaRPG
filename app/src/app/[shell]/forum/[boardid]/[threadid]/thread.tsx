@@ -27,7 +27,7 @@ import { showMutationToast } from "@/libs/toast";
 import { parseHtml } from "@/utils/parse";
 import { useUserData } from "@/utils/UserContext";
 
-type ThreadData = RouterOutputs["comments"]["getForumComments"];
+/** Coordinate stable post links, visible read positions, drafts and confirmed-removal cache reconciliation. */
 export default function Thread({
   threadId,
   initialPage,
@@ -94,6 +94,7 @@ export default function Thread({
       ?.scrollIntoView({ block: "start", behavior: "instant" });
   }, [postId, comments.data?.data]);
   const readingPosts = JSON.stringify(comments.data?.data.map((p) => p.id) ?? []);
+  // Advance only fully visible posts; failed writes re-observe instead of recording local progress.
   useEffect(() => {
     if (!user || readingPosts === "[]") return;
     let active = true;
@@ -174,6 +175,7 @@ export default function Thread({
         limit: FORUM_THREAD_POSTS_PER_PAGE,
         cursor: page,
       });
+      // A completed read may already include the removal; never decrement that total twice.
       const totalComments = Math.max(
         0,
         (cachedPage?.totalComments ?? 0) -
@@ -427,6 +429,7 @@ export default function Thread({
   );
 }
 
+/** Expose permitted post actions and retain inline rejection feedback without assuming mutation success. */
 function ForumPost({
   post,
   thread,
@@ -761,3 +764,5 @@ function ForumPost({
     </article>
   );
 }
+
+type ThreadData = RouterOutputs["comments"]["getForumComments"];

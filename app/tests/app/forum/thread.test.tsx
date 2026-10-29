@@ -1,3 +1,4 @@
+/** Exercise application removal/recovery with real query/tRPC state and controlled transport failures. */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { TRPCClientError } from "@trpc/client";
@@ -65,6 +66,7 @@ afterEach(() => {
   else Reflect.deleteProperty(globalThis, "IntersectionObserver");
 });
 
+/** Build the server page from mutable fixture posts so later reads can represent removal or restoration. */
 function threadPage(cursor = 0): ThreadData {
   return {
     thread: { id: "topic", boardId: "board", userId: "reader", title: "Discussion", tags: [], kind: "DISCUSSION", nPosts: posts.length },
@@ -76,6 +78,7 @@ function threadPage(cursor = 0): ThreadData {
   } as unknown as ThreadData;
 }
 
+/** Mount the actual discussion with an in-memory transport that can reject reads after successful writes. */
 function renderThread() {
   const trpcClient = testApi.createClient({ links: [() => ({ op }) => observable((observer) => {
     let data: unknown = [];

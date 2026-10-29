@@ -3,6 +3,7 @@ import { forumBoard, forumSection } from "@/drizzle/schema";
 import { eq } from "drizzle-orm";
 import type { DrizzleClient } from "@/server/db";
 
+// Match the migration's stable legacy-group IDs so repeated seeds do not duplicate sections.
 const sections = {
   broadcast: { id: "section-32f9596501250c0c374c9d58850aeb0fc01e4e81b2834cdbe3b77c26d53dbcf4", name: "Main Broadcast", summary: "General boards for TNR", position: 0 },
   roleplay: { id: "section-7c478ab1fd7a0edca25c27f1d2c5b600fd7935bc09a1722e4e31eb1a1d3204ce", name: "Text-Based RPG", summary: "Village Boards", position: 1 },
@@ -69,6 +70,7 @@ const boards = [
 let counter = 0;
 const total = boards.length;
 
+/** Add a missing built-in board without overwriting staff-managed configuration on existing boards. */
 const upsertBoard = async (
   client: DrizzleClient,
   board: { name: string; summary: string; section: keyof typeof sections },
@@ -85,6 +87,7 @@ const upsertBoard = async (
   console.log(`Syncing board ${counter}/${total}`);
 };
 
+/** Ensure built-in destinations exist while preserving their stable migrated hierarchy. */
 export const seedForum = async (client: DrizzleClient) => {
   console.log("\nSyncing forum boards...\n");
   const promises: Promise<void>[] = [];

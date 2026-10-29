@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+/** Audience choices include explicit denial; omitted policy properties inherit their parent value. */
 export const forumAudiences = [
   "PUBLIC",
   "MEMBERS",
@@ -7,6 +8,7 @@ export const forumAudiences = [
   "MODERATORS",
   "NONE",
 ] as const;
+/** Capabilities are evaluated independently; permanent purge requires its own explicit grant. */
 export const forumCapabilities = [
   "view",
   "read",
@@ -22,6 +24,7 @@ export const forumCapabilities = [
   "purge",
 ] as const;
 export type ForumCapability = (typeof forumCapabilities)[number];
+/** Shared form/server contract for partial policy overrides, with inheritance represented by omission. */
 export const forumPolicySchema = z.object({
   view: z.enum(forumAudiences).optional(),
   read: z.enum(forumAudiences).optional(),
@@ -33,6 +36,7 @@ export const forumPolicySchema = z.object({
   deleteOwn: z.boolean().optional(),
 });
 export type ForumPolicy = z.infer<typeof forumPolicySchema>;
+/** Validate section configuration and the reason retained in its audit entry. */
 export const forumSectionSchema = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(2).max(100),
@@ -42,6 +46,7 @@ export const forumSectionSchema = z.object({
   policy: forumPolicySchema,
   reason: z.string().trim().min(3).max(500),
 });
+/** Validate board hierarchy, posting controls and audit reason for both staff forms and mutations. */
 export const forumStructureBoardSchema = z.object({
   id: z.string().optional(),
   sectionId: z.string(),

@@ -258,6 +258,7 @@ export const reportsRouter = createTRPCRouter({
       const getInfraction = async (system: typeof input.system) => {
         switch (system) {
           case "forum_comment": {
+            // Authorize the current destination before including post content or nearby evidence.
             const forumAccess = await getForumContext(ctx.drizzle, ctx.userId);
             const readable = await resolveForumPost(
               ctx.drizzle,

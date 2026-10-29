@@ -28,6 +28,7 @@ import { canPostAsAi } from "@/utils/permissions";
 import { useUserData } from "@/utils/UserContext";
 import { getSearchValidator } from "@/validators/register";
 
+/** Expose the staff workspace only to eligible accounts; browse links can be omitted on the home view. */
 export const ForumNavigation = ({
   showBrowseLinks = true,
 }: {
@@ -69,6 +70,7 @@ export const ForumNavigation = ({
     </nav>
   );
 };
+/** Render server-authorized topics with unread/resume links and optional staff selection. */
 export const ForumTopicList = ({
   threads,
   selectable,
@@ -179,6 +181,7 @@ export const ForumTopicList = ({
     ))}
   </div>
 );
+/** Save account-owned board/topic watches and optional push preferences through the forum router. */
 export const ForumWatchButton = ({
   scope,
   scopeId,
@@ -228,13 +231,6 @@ export const ForumWatchButton = ({
       )}
     </div>
   );
-};
-type Draft = {
-  content: string;
-  title: string;
-  kind: "DISCUSSION" | "QUESTION" | "ANNOUNCEMENT";
-  tags: string;
-  image: string;
 };
 /** Account-scoped drafts recover only on request; successful submissions clear the stored copy. */
 export const ForumComposer = ({
@@ -499,6 +495,7 @@ export const ForumComposer = ({
     </form>
   );
 };
+/** Keep search input synchronized with navigation while letting the caller own URL updates. */
 export const ForumSearch = ({
   query,
   onSearch,
@@ -532,4 +529,13 @@ export const ForumSearch = ({
       </Button>
     </form>
   );
+};
+
+/** Stored per account and composer scope; recovery is explicit and successful submission clears it. */
+type Draft = {
+  content: string;
+  title: string;
+  kind: "DISCUSSION" | "QUESTION" | "ANNOUNCEMENT";
+  tags: string;
+  image: string;
 };

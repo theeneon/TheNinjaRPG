@@ -3,6 +3,7 @@ import { getForumContext } from "@/libs/forum";
 import { buildMetadata, noindexMetadata } from "@/libs/seo";
 import { drizzleDB } from "@/server/db";
 
+/** Generate board metadata using guest read permissions so private names and summaries stay unindexed. */
 export async function generateMetadata(props: {
   params: Promise<{ boardid: string }>;
 }): Promise<Metadata> {

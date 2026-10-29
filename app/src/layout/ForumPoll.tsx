@@ -10,6 +10,7 @@ import Loader from "@/layout/Loader";
 import { showMutationToast } from "@/libs/toast";
 import { useUserData } from "@/utils/UserContext";
 
+/** Embed an existing public community poll; shared votes still require this topic's voting permission. */
 export function ForumPoll({ threadId }: { threadId: string }) {
   const { data: user } = useUserData();
   const poll = api.forum.threadPoll.useQuery({ threadId }, { refetchInterval: 20000 });
@@ -124,6 +125,7 @@ export function ForumPoll({ threadId }: { threadId: string }) {
   );
 }
 
+/** Edit staff summaries and attach existing public polls without creating a separate voting system. */
 export function ForumTopicExtras({
   thread,
   onDone,

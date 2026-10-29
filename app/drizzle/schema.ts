@@ -1349,6 +1349,7 @@ export const forumSection = mysqlTable("ForumSection", {
   archived: boolean("archived").default(false).notNull(),
   policy: json("policy").$type<ForumPolicy>().default({}).notNull(),
 });
+/** A stable hierarchy node with inherited policy overrides and cached visible-topic/post totals. */
 export const forumBoard = mysqlTable("ForumBoard", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   name: varchar("name", { length: 191 }).notNull(),
@@ -1368,6 +1369,7 @@ export const forumBoard = mysqlTable("ForumBoard", {
 }, (t) => ({ nameKey: uniqueIndex("ForumBoard_name_key").on(t.name), sectionIdx: index("ForumBoard_sectionId_idx").on(t.sectionId) }));
 export const forumBoardRelations = relations(forumBoard, ({ one }) => ({ section: one(forumSection, { fields: [forumBoard.sectionId], references: [forumSection.id] }) }));
 
+/** Keep authorship and moderation state separate from displayed identity; removal preserves recoverable content. */
 export const forumPost = mysqlTable("ForumPost", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   content: text("content").notNull(),
@@ -1390,6 +1392,7 @@ export const forumPostRelations = relations(forumPost, ({ one, many }) => ({
   thread: one(forumThread, { fields: [forumPost.threadId], references: [forumThread.id] }),
   reactions: many(forumReaction),
 }));
+/** Store topic metadata and activity derived from visible posts; metadata edits do not advance activity. */
 export const forumThread = mysqlTable("ForumThread", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   title: varchar("title", { length: 191 }).notNull(),
@@ -1417,6 +1420,7 @@ export const forumThreadRelations = relations(forumThread, ({ one, many }) => ({
   posts: many(forumPost),
   readPositions: many(forumRead),
 }));
+/** One grant/deny set per account and scope; global recovery and purge are evaluated separately. */
 export const forumGrant = mysqlTable("ForumGrant", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   userId: varchar("userId", { length: 191 }).notNull(),
@@ -1425,6 +1429,7 @@ export const forumGrant = mysqlTable("ForumGrant", {
   permissions: json("permissions").$type<ForumCapability[]>().notNull(),
   denies: json("denies").$type<ForumCapability[]>().notNull(),
 }, t => ({ userScopeKey: uniqueIndex("ForumGrant_user_scope_key").on(t.userId, t.scope, t.scopeId) }));
+/** Forum-only posting restriction; a null board applies globally without banning the game account. */
 export const forumRestriction = mysqlTable("ForumRestriction", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   userId: varchar("userId", { length: 191 }).notNull(),
@@ -1432,6 +1437,7 @@ export const forumRestriction = mysqlTable("ForumRestriction", {
   reason: text("reason").notNull(),
   expiresAt: datetime("expiresAt", { mode: "date", fsp: 3 }).notNull(),
 }, t => ({ userIdx: index("ForumRestriction_userId_idx").on(t.userId) }));
+/** Account-owned resume cursor ordered by post creation time and stable ID, not the visit timestamp. */
 export const forumRead = mysqlTable("ForumRead", {
   userId: varchar("userId", { length: 191 }).notNull(),
   threadId: varchar("threadId", { length: 191 }).notNull(),
@@ -1441,12 +1447,14 @@ export const forumRead = mysqlTable("ForumRead", {
 export const forumReadRelations = relations(forumRead, ({ one }) => ({
   thread: one(forumThread, { fields: [forumRead.threadId], references: [forumThread.id] }),
 }));
+/** Account-owned board/topic subscription; push delivery is an optional preference. */
 export const forumWatch = mysqlTable("ForumWatch", {
   userId: varchar("userId", { length: 191 }).notNull(),
   scope: mysqlEnum("scope", ["BOARD", "THREAD"]).notNull(),
   scopeId: varchar("scopeId", { length: 191 }).notNull(),
   push: boolean("push").default(false).notNull(),
 }, t => ({ pk: primaryKey({ columns: [t.userId, t.scope, t.scopeId] }) }));
+/** One notification per account/post; moves retain its read state and resolve current destination access. */
 export const forumAlert = mysqlTable("ForumAlert", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   userId: varchar("userId", { length: 191 }).notNull(),
@@ -1455,11 +1463,13 @@ export const forumAlert = mysqlTable("ForumAlert", {
   createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
   readAt: datetime("readAt", { mode: "date", fsp: 3 }),
 }, t => ({ userPostKey: uniqueIndex("ForumAlert_user_post_key").on(t.userId, t.postId), userIdx: index("ForumAlert_user_created_idx").on(t.userId, t.createdAt), postIdx: index("ForumAlert_postId_idx").on(t.postId), threadIdx: index("ForumAlert_threadId_idx").on(t.threadId) }));
+/** Independent reaction choices keyed by account, post and reaction; toggles need no read-modify-write. */
 export const forumReaction = mysqlTable("ForumReaction", {
   userId: varchar("userId", { length: 191 }).notNull(),
   postId: varchar("postId", { length: 191 }).notNull(),
   reaction: varchar("reaction", { length: 32 }).notNull(),
 }, t => ({ pk: primaryKey({ columns: [t.userId, t.postId, t.reaction] }), postIdx: index("ForumReaction_postId_idx").on(t.postId) }));
+/** Preserve the replaced post content with its editing actor and reason in the same commit as the edit. */
 export const forumRevision = mysqlTable("ForumRevision", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   postId: varchar("postId", { length: 191 }).notNull(),
@@ -1468,6 +1478,7 @@ export const forumRevision = mysqlTable("ForumRevision", {
   reason: text("reason").notNull(),
   createdAt: datetime("createdAt", { mode: "date", fsp: 3 }).default(sql`(CURRENT_TIMESTAMP(3))`).notNull(),
 }, t => ({ postIdx: index("ForumRevision_postId_idx").on(t.postId) }));
+/** Append moderation/access evidence independently of content lifetime, including after permanent purge. */
 export const forumAudit = mysqlTable("ForumAudit", {
   id: varchar("id", { length: 191 }).primaryKey().notNull(),
   actorId: varchar("actorId", { length: 191 }).notNull(),

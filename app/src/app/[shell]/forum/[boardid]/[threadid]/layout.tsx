@@ -4,6 +4,7 @@ import { buildMetadata, noindexMetadata } from "@/libs/seo";
 import { fetchThread } from "@/queries/forum";
 import { drizzleDB } from "@/server/db";
 
+/** Expose only published, publicly readable topics and derive the canonical URL from their actual board. */
 export async function generateMetadata(props: {
   params: Promise<{ boardid: string; threadid: string }>;
 }): Promise<Metadata> {

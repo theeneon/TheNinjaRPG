@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import Link from "@/layout/Link";
 import Loader from "@/layout/Loader";
 
+/** Present scoped activity and current backlog; period changes retain explicit loading and retry feedback. */
 export function ForumAnalytics() {
   const [days, setDays] = useState<7 | 30 | 90>(30);
   const metrics = api.forum.analytics.useQuery({ days });

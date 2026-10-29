@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { showMutationToast } from "@/libs/toast";
 
+/** Apply one audited action to selected topics; approval-only staff receive only the approval action. */
 export const ForumTopicTools = ({
   ids,
   onDone,
@@ -204,6 +205,7 @@ export const ForumTopicTools = ({
   );
 };
 
+/** Copy, merge or split a topic while preserving selected post identities for server-side validation. */
 export const ForumRestructureTools = ({
   thread,
   postIds,

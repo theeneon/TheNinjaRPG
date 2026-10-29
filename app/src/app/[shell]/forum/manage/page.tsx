@@ -29,7 +29,7 @@ import {
 } from "@/validators/forum";
 import { getSearchValidator } from "@/validators/register";
 
-type Administration = NonNullable<RouterOutputs["forum"]["administration"]>;
+/** Load one scoped staff workspace and retain independent review, structure, access and audit views. */
 export default function ForumManagement() {
   const fieldPrefix = useId();
   const { data: user } = useUserData();
@@ -191,6 +191,7 @@ export default function ForumManagement() {
   );
 }
 
+/** Navigate the stable section/board hierarchy and focus newly opened configuration forms. */
 function ForumStructure({
   data,
   refresh,
@@ -356,6 +357,7 @@ function ForumStructure({
     </div>
   );
 }
+/** Save shared section defaults with an audit reason; close the editor only after success. */
 function SectionEditor({
   section,
   done,
@@ -471,6 +473,7 @@ function SectionEditor({
     </form>
   );
 }
+/** Edit board overrides and hierarchy through shared validators; inherited settings stay explicit. */
 function BoardEditor({
   board,
   data,
@@ -667,6 +670,7 @@ function BoardEditor({
     </form>
   );
 }
+/** Distinguish inherited audience rules from explicit denial and per-board author capabilities. */
 function PolicyEditor({
   policy,
   onChange,
@@ -745,6 +749,7 @@ function PolicyEditor({
     </fieldset>
   );
 }
+/** Require a destination for retained content and surface recoverable server rejections in place. */
 function RemoveStructure({
   target,
   data,
@@ -824,6 +829,7 @@ function RemoveStructure({
     </form>
   );
 }
+/** Adapt the existing player picker to the staff forms without exposing raw account identifiers. */
 function ForumPlayerSelect({ onSelect }: { onSelect: (id: string) => void }) {
   const schema = getSearchValidator({ max: 1 });
   const form = useForm<z.infer<typeof schema>>({
@@ -848,6 +854,7 @@ function ForumPlayerSelect({ onSelect }: { onSelect: (id: string) => void }) {
     </div>
   );
 }
+/** Manage scoped grants/denies and inspect the resulting effective permissions for a selected player. */
 function ForumStaff({
   data,
   refresh,
@@ -1087,6 +1094,7 @@ function ForumStaff({
     </div>
   );
 }
+/** Apply or lift forum-only posting restrictions while retaining inputs after rejected attempts. */
 function ForumRestrictions({
   data,
   refresh,
@@ -1215,6 +1223,7 @@ function ForumRestrictions({
     </div>
   );
 }
+/** Review only the returned staff scope, expanding evidence in place and preserving retryable decisions. */
 function ForumReview({
   data,
   refresh,
@@ -1460,6 +1469,7 @@ function ForumReview({
     </div>
   );
 }
+/** Give audit-reason inputs stable accessible labels across independently mounted staff forms. */
 function Reason({
   value,
   setValue,
@@ -1484,6 +1494,7 @@ function Reason({
   );
 }
 
+/** Gate permanent removal behind explicit permission, exact-title confirmation and an audit reason. */
 function PurgeTopic({
   thread,
   done,
@@ -1551,6 +1562,7 @@ function PurgeTopic({
   );
 }
 
+/** Distinguish author-only edit/remove policy from delegated moderation capabilities in staff labels. */
 function capabilityLabel(capability: string, effective = false) {
   const labels: Record<string, string> = {
     view: "See boards",
@@ -1570,3 +1582,5 @@ function capabilityLabel(capability: string, effective = false) {
   };
   return labels[capability] ?? capability;
 }
+
+type Administration = NonNullable<RouterOutputs["forum"]["administration"]>;

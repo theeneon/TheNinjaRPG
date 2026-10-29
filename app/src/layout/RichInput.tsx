@@ -402,6 +402,7 @@ export const RichInput = (props: RichInputProps) => {
   }, [uploading]);
 
   useEffect(() => {
+    // Policy changes invalidate late image insertion without erasing recoverable draft media.
     if (props.disabled || !allowImages) generationRef.current++;
   }, [props.disabled, allowImages]);
 
@@ -874,6 +875,7 @@ interface RichInputProps {
   enableMentions?: boolean;
   /** Opt into moderated image paste, drop and file uploads. */
   allowClipboardPaste?: boolean;
+  /** Default true; false blocks new image embeds while preserving existing content for recovery. */
   allowImages?: boolean;
   autoFocus?: boolean;
   /** Place replies after externally inserted quotes without moving the caret during typing. */

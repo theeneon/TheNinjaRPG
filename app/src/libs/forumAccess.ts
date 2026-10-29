@@ -6,6 +6,7 @@ import {
   forumCapabilities,
 } from "@/validators/forum";
 
+/** Identify bootstrap administrators who can recover forum structure and permission configuration. */
 export const canAdminForum = (role?: UserRole) =>
   !!role && ["OWNER", "MODERATOR-ADMIN", "CODING-ADMIN"].includes(role);
 

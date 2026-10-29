@@ -24,6 +24,7 @@ import Loader from "@/layout/Loader";
 import { showMutationToast } from "@/libs/toast";
 import { useUserData } from "@/utils/UserContext";
 
+/** Combine board policy, URL-backed topic discovery, watches and permitted creation/moderation tools. */
 export default function Board({
   boardId,
   initialThreads,

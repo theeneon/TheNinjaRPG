@@ -109,6 +109,7 @@ const guideEntries = async (): Promise<SitemapEntry[]> => {
   }));
 };
 
+/** Include only discussions whose entire board hierarchy permits public reading. */
 const forumEntries = async (): Promise<SitemapEntry[]> => {
   const now = new Date();
   const [context, allThreads] = await Promise.all([

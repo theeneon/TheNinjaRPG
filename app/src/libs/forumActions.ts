@@ -40,6 +40,7 @@ import { processMentions } from "@/utils/chat";
 import { moderateUserText } from "@/utils/profanity";
 import type { MutateCommentSchema } from "@/validators/comments";
 
+/** Create a moderated reply with separate actual-author/displayed-sender identities and visibility-aware counters. */
 export const createForumReply = async (
   db: DrizzleClient,
   userId: string,
@@ -74,8 +75,8 @@ export const createForumReply = async (
   const effectiveUserId = resolveSenderId(user, sender);
   const { processedContent: content } = processMentions(moderated.sanitized);
   const id = nanoid();
-  // A post INSERT and its topic/board counters cannot be committed by one SQL statement.
-  // Serialize on existing parents so a concurrent lock or archive cannot admit a reply.
+  // MySQL cannot INSERT a post and UPDATE its existing parent counters in one statement.
+  // Lock section -> board -> topic so lock/archive changes and slow-mode replies serialize.
   const result = await retryOnDeadlock(() =>
     db.transaction(async (tx) => {
       await lockForumSection(tx, board.sectionId);
@@ -140,6 +141,7 @@ export const createForumReply = async (
   return result;
 };
 
+/** CAS-guard an authorized edit and retain the exact replaced content, actor and reason in revision/audit history. */
 export const editForumPost = async (
   db: DrizzleClient,
   userId: string,
@@ -183,7 +185,8 @@ export const editForumPost = async (
     return errorResponse("Attachments are disabled in this board");
   const content = processMentions(moderated.sanitized).processedContent;
   const reason = input.reason?.trim() || "Author edit";
-  // Revision history must be committed with the corresponding edit; SQL cannot insert and update together.
+  // A guarded MySQL UPDATE cannot also INSERT the replaced content and its audit event.
+  // Keep the edit and both history records atomic under section -> board -> topic locks.
   const result = await retryOnDeadlock(() =>
     db.transaction(async (tx) => {
       await lockForumSection(tx, board.sectionId);
@@ -242,6 +245,7 @@ export const editForumPost = async (
   return result;
 };
 
+/** Soft-remove an authorized post, retaining recoverable content while reconciling answers, counts and affected readers. */
 export const removeForumPost = async (
   db: DrizzleClient,
   userId: string,
@@ -275,7 +279,8 @@ export const removeForumPost = async (
     return errorResponse("You cannot remove this post");
   if (!board.permissions.moderate && (thread.isLocked || post.isLocked))
     return errorResponse("This post is locked");
-  // Soft removal, accepted-answer cleanup and both counters form one recoverable unit.
+  // MySQL cannot combine the removal/read-cursor UPDATEs or DELETE with a new audit INSERT.
+  // Keep cross-account read positions, answer validity and counts atomic with that evidence.
   return retryOnDeadlock(() =>
     db.transaction(async (tx) => {
       await lockForumSection(tx, board.sectionId);
