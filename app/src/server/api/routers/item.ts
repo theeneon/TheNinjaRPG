@@ -2506,14 +2506,6 @@ export const itemRouter = createTRPCRouter({
                 curHealth: Math.round(updates.curHealth),
                 curStamina: Math.round(updates.curStamina),
                 curChakra: Math.round(updates.curChakra),
-                extraJutsuSlots: user.extraJutsuSlots + jutsuSlotIncrease,
-                items: user.items.flatMap((entry) =>
-                  entry.id !== useritem.id
-                    ? [entry]
-                    : useritem.quantity > 1
-                      ? [{ ...entry, quantity: useritem.quantity - 1 }]
-                      : [],
-                ),
               },
               updatedUser.publishedAchievementIds,
             )
