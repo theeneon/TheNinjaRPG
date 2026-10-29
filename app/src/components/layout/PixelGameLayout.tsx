@@ -22,10 +22,7 @@ import { cn } from "@/libs/shadui";
 import { LayoutBackground } from "./shared/LayoutBackground";
 import { MobileNotificationsPopover } from "./shared/LayoutNotifications";
 import type { GameLayoutRenderProps } from "./shared/layoutTypes";
-import {
-  forwardVerticalWheelToDocumentScroll,
-  isClerkElement,
-} from "./shared/layoutUtils";
+import { isClerkElement } from "./shared/layoutUtils";
 import {
   ANONYMOUS_PIXEL_NAV_LINKS,
   PIXEL_MOBILE_HEADER_BUTTON_STYLE,
@@ -315,7 +312,6 @@ export const PixelGameLayout: React.FC<GameLayoutRenderProps> = ({
                     ? "overflow-x-visible border border-sky-200/15 bg-slate-950/70 text-slate-50 shadow-2xl shadow-black/30 backdrop-blur-md"
                     : "overflow-x-auto bg-transparent text-slate-50",
                 )}
-                onWheel={forwardVerticalWheelToDocumentScroll}
               >
                 <div
                   className={cn(

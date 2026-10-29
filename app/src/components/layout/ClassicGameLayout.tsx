@@ -40,10 +40,7 @@ import { LayoutBackground } from "./shared/LayoutBackground";
 import { MobileNotificationsPopover } from "./shared/LayoutNotifications";
 import { StrongestUsersBanner } from "./shared/LayoutSidebars";
 import type { GameLayoutRenderProps } from "./shared/layoutTypes";
-import {
-  forwardVerticalWheelToDocumentScroll,
-  isClerkElement,
-} from "./shared/layoutUtils";
+import { isClerkElement } from "./shared/layoutUtils";
 import { MobileGameNav } from "./shared/MobileGameNav";
 
 export { SideBannerTitle } from "./shared/LayoutSidebars";
@@ -245,7 +242,6 @@ export const ClassicGameLayout: React.FC<GameLayoutRenderProps> = ({
               <div
                 data-reading-surface
                 className="flex min-h-[200px] w-full grow flex-col overflow-x-scroll bg-background"
-                onWheel={forwardVerticalWheelToDocumentScroll}
               >
                 {/* From md the footer bar below is in flow rather than fixed; one viewport
                     of minimum height keeps it below the fold (see PixelGameLayout.tsx). */}
