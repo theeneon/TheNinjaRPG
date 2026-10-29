@@ -302,14 +302,17 @@ export default function CombatPage() {
   ]);
 
   const renderBattlefield = useCallback(() => {
-    // Reserve the canvas while loading. Settled results use their content height so
-    // rewards and follow-up actions never need a second scrollbar on small screens.
+    // Bound the whole field to the viewport while preserving its proportions, so
+    // wide layouts leave room for actions. Reserve the same space while loading.
+    // Settled results use their content height so rewards and follow-up actions
+    // never need a second scrollbar on small screens.
     return (
       <div
-        className="relative box-content overflow-hidden rounded-lg border bg-card text-card-foreground shadow-lg"
+        className="relative mx-auto box-content overflow-hidden rounded-lg border bg-card text-card-foreground shadow-lg"
         style={
           battle && !results
             ? {
+                width: `min(100%, ${50 / getBattlefieldHeightRatio(battle.width, battle.height)}dvh)`,
                 aspectRatio: `1 / ${getBattlefieldHeightRatio(battle.width, battle.height)}`,
               }
             : undefined
