@@ -148,7 +148,7 @@ export type DungeonRunState = CoopRoster & {
 };
 /** Persisted completion roll returned by repeat claims without delivering rewards again. */
 export type DungeonRewardReceipt = {
-  /** Successful drop identities, including repeatable drops, scoped to the dungeon. */
+  /** Delivered direct drops and successful package rolls, scoped to the dungeon. */
   grantedDrops?: string[];
   money: number;
   experience: number;

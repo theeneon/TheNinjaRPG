@@ -472,22 +472,31 @@ export const dungeonRouter = createTRPCRouter({
             persistQuestData: false,
             pvpBoostApplied: true,
           });
-          // Ownership filtering happens in updateRewards. A skipped jutsu must not
-          // consume its one-time eligibility or appear in the delivered receipt.
-          if (rolled.reward_jutsus.length > 0) {
-            const skippedKeys = new Set(
-              rolled.reward_jutsus
-                .filter((id) => !delivered.jutsus.some((jutsu) => jutsu.id === id))
-                .map((id) => dungeonDropKey({ type: "jutsu", id })),
+          const deliveredItems = new Set(delivered.items.map(({ id }) => id));
+          const deliveredJutsus = new Set(delivered.jutsus.map(({ id }) => id));
+          const items = receipt.items.filter((id) => deliveredItems.has(id));
+          const jutsus = receipt.jutsus.filter((id) => deliveredJutsus.has(id));
+          if (
+            items.length !== receipt.items.length ||
+            jutsus.length !== receipt.jutsus.length
+          ) {
+            // Owned jutsu and missing catalog entries are skipped by the reward pipeline.
+            // Only delivered direct drops consume eligibility; packages retain their roll identity.
+            const skippedDrops = new Set(
+              rewards.drops
+                .filter((drop) =>
+                  drop.type === "jutsu"
+                    ? !deliveredJutsus.has(drop.id)
+                    : drop.type !== "package" && !deliveredItems.has(drop.id),
+                )
+                .map(dungeonDropKey),
             );
-            if (skippedKeys.size > 0) {
-              receipt.jutsus = delivered.jutsus.map((jutsu) => jutsu.id);
-              receipt.rewards.reward_jutsus = receipt.jutsus;
-              receipt.grantedDrops = grantedDrops.filter(
-                (key) => !skippedKeys.has(key),
-              );
-              await updateDungeonRewardReceipt(tx, run.id, ctx.userId, receipt);
-            }
+            receipt.items = items;
+            receipt.jutsus = jutsus;
+            receipt.rewards.reward_items = items;
+            receipt.rewards.reward_jutsus = jutsus;
+            receipt.grantedDrops = grantedDrops.filter((key) => !skippedDrops.has(key));
+            await updateDungeonRewardReceipt(tx, run.id, ctx.userId, receipt);
           }
           return receipt;
         }),

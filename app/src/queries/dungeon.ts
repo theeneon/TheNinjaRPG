@@ -443,7 +443,13 @@ export const updateDungeonRewardReceipt = (
   client
     .update(dungeonMember)
     .set({ reward: receipt })
-    .where(and(eq(dungeonMember.runId, runId), eq(dungeonMember.userId, userId)));
+    .where(
+      and(
+        eq(dungeonMember.runId, runId),
+        eq(dungeonMember.userId, userId),
+        isNotNull(dungeonMember.reward),
+      ),
+    );
 
 /** Build the `dungeonRun` update for `rollbackDungeonStart`, using predicates on `id`, `battleId`, `version`. */
 export const updateDungeonRunForRollbackDungeonStart = (
