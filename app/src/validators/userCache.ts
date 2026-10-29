@@ -102,6 +102,7 @@ export const userPatchSchema = z.object({
   level: z.number().optional(),
   rank: z.enum(UserRanks).optional(),
   status: z.enum(UserStatuses).optional(),
+  travelFinishAt: z.date().nullable().optional(),
   battleId: z.string().nullable().optional(),
   activeNpcQuestId: z.string().nullable().optional(),
   senseiId: z.string().nullable().optional(),

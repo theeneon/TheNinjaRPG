@@ -31,7 +31,15 @@ import { placementToSectorUser } from "@/libs/overworldAi";
 import { calcActiveUserRegen, calcMaxEnergy, getEffectiveLevel } from "@/libs/profile";
 import { getServerPusher, updateUserOnMap } from "@/libs/pusher";
 import { boostPvpGain, getPvpBoost } from "@/libs/pvpExperience";
-import { getUserQuests } from "@/libs/quest";
+import {
+  filterQuestTrackersForDbPersist,
+  getNewTrackers,
+  getPublicQuestUser,
+  getQuestTargetSectorsToCheck,
+  getUserQuests,
+  isAvailableUserQuests,
+  snapQuestTargetsToReachable,
+} from "@/libs/quest";
 import { ISOLATED_PYRAMID_MESSAGE } from "@/libs/questRun";
 import { hasEnergyQueue } from "@/libs/queue";
 import {
@@ -63,6 +71,7 @@ import {
   fetchSectorWindowData,
   findUserDataForGetSectorData,
   findUserDataForMoveInSector,
+  findUserForGlobalTravelFinish,
   findVillageForMoveInSector,
   insertActionLogForRobPlayer,
   listQuestHistoryForGetSectorData,
@@ -80,7 +89,7 @@ import {
 } from "@/queries/travel";
 import { fetchSectorVillage, findVillageBySector } from "@/queries/village";
 import { initiateBattle } from "@/routers/combat";
-import { fetchUpdatedUser } from "@/routers/profile";
+import { fetchUpdatedUser, type UserWithRelations } from "@/routers/profile";
 import { breakStealth } from "@/routers/stealth";
 import {
   baseServerResponse,
@@ -107,7 +116,9 @@ import { findRelationship } from "@/utils/alliance";
 import { groupBy } from "@/utils/grouping";
 import { secondsFromNow, secondsPassed } from "@/utils/time";
 import { getStrucBoost } from "@/utils/village";
+import type { QuestTrackerType } from "@/validators/objectives";
 import { sectorIdSchema, startGlobalMoveSchema } from "@/validators/travel";
+import { userDeltaResponseSchema } from "@/validators/userCache";
 
 const pusher = getServerPusher();
 
@@ -649,12 +660,16 @@ export const travelRouter = createTRPCRouter({
   // Finish travel on the globe
   finishGlobalMove: protectedProcedure
     .meta({ mcp: { description: "Complete global travel" } })
-    .output(baseServerResponse)
+    .output(
+      userDeltaResponseSchema.extend({
+        projectedQuestIds: z.array(z.string()).optional(),
+      }),
+    )
     .mutation(async ({ ctx }) => {
-      let user: UserData & { raidBuffs?: TimedBuff[] } = await fetchUser(
-        ctx.drizzle,
-        ctx.userId,
-      );
+      const loaded = await findUserForGlobalTravelFinish(ctx.drizzle, ctx.userId);
+      if (!loaded) return errorResponse("User not found");
+      let user = loaded as NonNullable<UserWithRelations>;
+      let canProject = true;
       if (hasEnergyQueue(user)) {
         const updated = await fetchUpdatedUser({
           client: ctx.drizzle,
@@ -664,28 +679,87 @@ export const travelRouter = createTRPCRouter({
         if (!updated.user) return errorResponse("User not found");
         user = {
           ...updated.user,
-          // Preserve the resolved membership rate while integrating timed bonuses per tick.
           regeneration:
             updated.user.regenerationWithoutTimedBuffs ?? updated.user.regeneration,
         };
+        canProject = !updated.requiresProgressionRefresh;
       }
-      if (!["TRAVEL", "AWAKE"].includes(user.status)) {
-        return {
-          success: false,
-          message: `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
-        };
+      if (!["TRAVEL", "AWAKE"].includes(user.status))
+        return errorResponse(
+          `Cannot finish travel because your status is: ${user.status.toLowerCase()}`,
+        );
+      const wasTravelling = user.status === "TRAVEL";
+      const projectedQuestIds = user.userQuests
+        .filter((entry) => entry.questType !== "achievement")
+        .map((entry) => entry.questId);
+      const knownIds = new Set(projectedQuestIds);
+      const visible = user.userQuests.filter(
+        (entry) =>
+          entry.quest &&
+          entry.questType !== "achievement" &&
+          isAvailableUserQuests({ ...entry.quest, ...entry }, user, true).check,
+      );
+      const arrival = {
+        ...user,
+        status: "AWAKE" as const,
+        userQuests: visible,
+        questData: (user.questData ?? []).filter((tracker) => knownIds.has(tracker.id)),
+      };
+      const progress = wasTravelling
+        ? getNewTrackers(arrival, [{ task: "any" }])
+        : { trackers: arrival.questData, consequences: [], notifications: [] };
+      canProject &&= progress.consequences.every(
+        (entry) => entry.type === "update_user",
+      );
+      if (canProject && wasTravelling) {
+        const sectors = getQuestTargetSectorsToCheck(arrival, progress.trackers, true);
+        if (sectors.length > 0) {
+          // The target sectors depend on instantiated trackers. A missing map leaves
+          // its target usable and unchecked, matching ordinary profile hydration.
+          const maps = await fetchPublishedSectorMaps(ctx.drizzle, sectors).catch(
+            () => null,
+          );
+          if (maps) snapQuestTargetsToReachable(arrival, progress.trackers, maps);
+        }
       }
-      const claim = await completeGlobalTravel(ctx.drizzle, user);
-      if (user.status === "TRAVEL" && !claim.success)
+      const persisted = canProject
+        ? [
+            ...(user.questData ?? []).filter((tracker) => !knownIds.has(tracker.id)),
+            ...filterQuestTrackersForDbPersist(progress.trackers, arrival),
+          ]
+        : undefined;
+      const claim = await completeGlobalTravel(ctx.drizzle, user, persisted);
+      if (wasTravelling && !claim.success)
         return errorResponse("Your travel state changed. Please try again");
       user.status = "AWAKE";
       user.travelFinishAt = null;
-      // Deferred, not voided: the broadcast now runs after the write rather than
-      // before it, so nothing else keeps the invocation alive long enough to finish it.
-      if (!isUserCurrentlyStealthed(user)) {
+      if (!isUserCurrentlyStealthed(user))
         after(() => updateUserOnMap(pusher, user.sector, user));
-      }
-      return { success: true, message: "OK" };
+      const publicArrival = getPublicQuestUser({
+        ...arrival,
+        questData: progress.trackers,
+      });
+      return {
+        success: true,
+        message:
+          canProject && progress.notifications.length
+            ? progress.notifications.join("\n")
+            : "OK",
+        ...(canProject
+          ? {
+              projectedQuestIds,
+              userDelta: {},
+              userPatch: {
+                status: "AWAKE" as const,
+                travelFinishAt: null,
+                ...(claim.success ? { updatedAt: claim.claimedAt } : {}),
+                ...claim.userPatch,
+                userQuests: publicArrival.userQuests,
+                questData: publicArrival.questData,
+              },
+            }
+          : {}),
+      };
     }),
   // Get all sector ownership
   getAllSectors: protectedProcedure
@@ -1084,9 +1158,10 @@ const resolveAdjacentCrossing = (
 };
 
 /** Complete travel and consume its recovery ticks without training queued stats. */
-const completeGlobalTravel = (
+const completeGlobalTravel = async (
   client: DrizzleClient,
   user: UserData & { raidBuffs?: TimedBuff[] },
+  questData?: QuestTrackerType[],
 ) => {
   const recoveryTicks = Math.max(
     0,
@@ -1099,7 +1174,7 @@ const completeGlobalTravel = (
     recoveryTicks,
     REGEN_SECONDS,
   );
-  return retryOnDeadlock(() =>
+  const claim = await retryOnDeadlock(() =>
     claimUserSnapshot({
       client,
       userId: user.userId,
@@ -1108,6 +1183,7 @@ const completeGlobalTravel = (
       set: {
         status: "AWAKE",
         travelFinishAt: null,
+        ...(questData ? { questData } : {}),
         ...(hasEnergyQueue(user)
           ? {
               // Travel recovers Energy, but its elapsed ticks cannot train village-only queues.
@@ -1121,6 +1197,23 @@ const completeGlobalTravel = (
       },
     }),
   );
+  return {
+    ...claim,
+    userPatch:
+      claim.success && hasEnergyQueue(user)
+        ? {
+            curEnergy: Math.min(user.maxEnergy, user.curEnergy + recovery),
+            curHealth: Math.round(Math.min(user.maxHealth, user.curHealth + recovery)),
+            curChakra: Math.round(Math.min(user.maxChakra, user.curChakra + recovery)),
+            curStamina: Math.round(
+              Math.min(user.maxStamina, user.curStamina + recovery),
+            ),
+            regenAt: new Date(
+              user.regenAt.getTime() + recoveryTicks * REGEN_SECONDS * 1000,
+            ),
+          }
+        : {},
+  };
 };
 
 /** The hourly cleaner shares the endpoint's recovery and snapshot guards. */

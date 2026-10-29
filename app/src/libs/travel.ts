@@ -11,7 +11,9 @@ import type {
   GlobalTile,
   SectorPoint,
 } from "@/libs/sector-map/world-types";
+import type { UserWithRelations } from "@/server/api/routers/profile";
 import { secondsFromNow } from "@/utils/time";
+import type { UserCachePatch } from "@/validators/userCache";
 
 /**
  * Gets the biome for a globe tile terrain type (0=ocean, 1=land, 2=desert, 3=ice)
@@ -126,11 +128,24 @@ export const optimisticGlobalTravelStart = (travelTimeSeconds: number) => ({
     : {}),
 });
 
-/** Client cache patch when globe travel ends. */
-export const optimisticGlobalTravelFinish = () => ({
-  status: "AWAKE" as const,
-  travelFinishAt: null,
-});
+/** Merge arrival's public quest projection while retaining unloaded achievement progress. */
+export const globalTravelFinishPatch = (
+  current: Pick<NonNullable<UserWithRelations>, "userQuests" | "questData">,
+  patch: UserCachePatch,
+  projectedQuestIds: readonly string[] = [],
+) => {
+  const replaced = new Set([
+    ...current.userQuests.map((entry) => entry.questId),
+    ...projectedQuestIds,
+  ]);
+  return {
+    ...patch,
+    questData: [
+      ...(current.questData ?? []).filter((tracker) => !replaced.has(tracker.id)),
+      ...(patch.questData ?? []),
+    ],
+  };
+};
 
 /**
  * A fight nobody has touched for this long is abandoned. While any participant

@@ -97,10 +97,7 @@ import Modal from "@/layout/Modal";
 import NavTabs from "@/layout/NavTabs";
 import { WarFieldActions } from "@/layout/WarFieldActions";
 import { nonCombatConsume } from "@/libs/item";
-import {
-  getQuestTargetSectorsToCheck,
-  hasActiveHiddenQuestObjectives,
-} from "@/libs/quest";
+import {} from "@/libs/quest";
 import {
   findNearestWalkableCoordinate,
   isReachableCoordinate,
@@ -112,7 +109,7 @@ import { showMutationToast, showRewardToast } from "@/libs/toast";
 import { hasRequiredRank } from "@/libs/train";
 import {
   calcGlobalTravelTime,
-  optimisticGlobalTravelFinish,
+  globalTravelFinishPatch,
   optimisticGlobalTravelStart,
 } from "@/libs/travel";
 import { isTutorialActive } from "@/libs/tutorial";
@@ -220,7 +217,12 @@ function Travel() {
   const [targetSector, setTargetSector] = useState<number | null>(null);
 
   // Data from database
-  const { data: userData, timeDiff, updateUser } = useRequiredUserData();
+  const {
+    data: userData,
+    timeDiff,
+    prepareUserUpdate,
+    updateUser,
+  } = useRequiredUserData();
   const pins = parseTravelPins(storedPins?.[userData?.userId ?? ""]);
   const savePins = (next: TravelPin[]) => {
     if (userData) setStoredPins({ ...storedPins, [userData.userId]: next });
@@ -615,27 +617,20 @@ function Travel() {
 
   const { mutate: finishGlobalMove, isPending: isFinishingTravel } =
     api.travel.finishGlobalMove.useMutation({
-      onSuccess: async (result) => {
+      onMutate: prepareUserUpdate,
+      onSuccess: async (result, _variables, revision) => {
         showMutationToast(result);
-        if (result.success && currentStep?.title === "Travel") {
-          await handleNextStepAsync();
-        }
-        if (result.success) {
-          await updateUser(optimisticGlobalTravelFinish());
-          // Refresh hidden target visibility and recheck located goals against the arrival map.
-          if (
-            userData &&
-            (hasActiveHiddenQuestObjectives(userData) ||
-              getQuestTargetSectorsToCheck(
-                userData,
-                userData.questData ?? [],
-                true,
-              ).includes(userData.sector))
-          ) {
-            await utils.profile.getUser.invalidate();
-          }
-          setActiveTab(sectorLink);
-        }
+        if (!result.success) return;
+        const patch = result.userPatch;
+        await updateUser(
+          patch
+            ? (current) =>
+                globalTravelFinishPatch(current, patch, result.projectedQuestIds)
+            : undefined,
+          { revision, delta: result.userDelta },
+        );
+        if (currentStep?.title === "Travel") await handleNextStepAsync();
+        setActiveTab(sectorLink);
       },
     });
 
