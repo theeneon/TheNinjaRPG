@@ -39,7 +39,7 @@ beforeEach(() => {
   ensureDom();
   vi.clearAllMocks();
   isPending = false;
-  purchaseResult = { success: true, message: "Food purchased", cost: 10, newStamina: 40, newChakra: 40 };
+  purchaseResult = { success: true, message: "Food purchased", userPatch: { curStamina: 40, curChakra: 40, curHealth: 100 }, userDelta: { money: -10 } };
   Object.assign(vi.spyOn(client, "api" as never), {
     village: { buyFood: { useMutation: (options: PurchaseOptions) => {
       purchaseOptions = options;
@@ -68,9 +68,7 @@ describe("shared ramen menu", () => {
     await act(async () => fireEvent.click(view.getByRole("button", { name: /Small Bowl/ })));
     expect(purchase).toHaveBeenCalledWith({ ramen: "small" });
     expect(prepareUserUpdate).toHaveBeenCalledTimes(1);
-    expect(updateUser).toHaveBeenCalledWith(expect.any(Function), { revision: 17, delta: { money: -10 } });
-    const update = updateUser.mock.calls[0]?.[0] as unknown as (current: typeof user) => Partial<typeof user>;
-    expect(update(user)).toEqual({ curHealth: 100, curStamina: 40, curChakra: 40 });
+    expect(updateUser).toHaveBeenCalledWith(purchaseResult.userPatch, { revision: 17, delta: { money: -10 }, achievementProgress: undefined });
   });
 
   it("keeps rejected food purchases visible beside a recoverable menu", async () => {
@@ -97,4 +95,12 @@ describe("shared ramen menu", () => {
     await act(async () => fireEvent.click(view.getByRole("button", { name: /Large Bowl/ })));
     expect(purchase).toHaveBeenCalledWith({ ramen: "large" });
   });
+});
+
+
+it("applies a confirmed fractional-price debit without discarding the patch", async () => {
+  purchaseResult = { success: true, message: "Food purchased", userDelta: { money: -12 }, userPatch: { curStamina: 50, curChakra: 50, regenAt: new Date() } };
+  const view = render(<RamenShop.RamenMenu />);
+  await act(async () => fireEvent.click(view.getByRole("button", { name: /Small Bowl/ })));
+  expect(updateUser).toHaveBeenCalledWith(purchaseResult.userPatch, { revision: 17, delta: { money: -12 }, achievementProgress: undefined });
 });

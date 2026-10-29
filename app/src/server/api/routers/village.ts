@@ -41,7 +41,7 @@ import {
   updateVillageStructureForRestoreStructurePoints,
 } from "@/queries/village";
 import { createConvo } from "@/routers/comments";
-import { fetchUpdatedUser } from "@/routers/profile";
+import { fetchUpdatedUser, getUserProgressionUpdate } from "@/routers/profile";
 import { updateRequestState } from "@/routers/sparring";
 import {
   baseServerResponse,
@@ -60,6 +60,7 @@ import { canAdministrateWars, canSwapVillage } from "@/utils/permissions";
 import { calcRamenCost, getRamenHealPercentage, ramenOptions } from "@/utils/ramen";
 import { canAccessStructure, getStrucBoost } from "@/utils/village";
 import { idSchema } from "@/validators/misc";
+import { userDeltaResponseSchema } from "@/validators/userCache";
 
 const availRequests = ["SURRENDER", "ALLIANCE"];
 
@@ -137,14 +138,7 @@ export const villageRouter = createTRPCRouter({
   buyFood: protectedProcedure
     .meta({ mcp: { description: "Buy food at ramen shop to heal" } })
     .input(z.object({ ramen: z.enum(ramenOptions), villageId: z.string().nullish() }))
-    .output(
-      baseServerResponse.extend({
-        cost: z.number().optional(),
-        newHealth: z.number().optional(),
-        newStamina: z.number().optional(),
-        newChakra: z.number().optional(),
-      }),
-    )
+    .output(userDeltaResponseSchema)
     .mutation(async ({ ctx, input }) => {
       // Get structures of current (visiting) village or Sydicate if outlaw
       const updatedUser = await fetchUpdatedUser({
@@ -178,13 +172,17 @@ export const villageRouter = createTRPCRouter({
         return errorResponse("This is not a safe area for you to eat ramen");
       }
       // Mutate with guard
-      const newStamina = Math.min(
-        user.maxStamina,
-        user.curStamina + (user.maxStamina * healPercentage) / 100,
+      const newStamina = Math.round(
+        Math.min(
+          user.maxStamina,
+          user.curStamina + (user.maxStamina * healPercentage) / 100,
+        ),
       );
-      const newChakra = Math.min(
-        user.maxChakra,
-        user.curChakra + (user.maxChakra * healPercentage) / 100,
+      const newChakra = Math.round(
+        Math.min(
+          user.maxChakra,
+          user.curChakra + (user.maxChakra * healPercentage) / 100,
+        ),
       );
       const result = await updateUserDataForBuyFood(
         ctx.drizzle,
@@ -198,10 +196,17 @@ export const villageRouter = createTRPCRouter({
       } else {
         return {
           success: true,
-          message: `You have bought food and healed to ${Math.floor(newStamina)}SP and ${Math.floor(newChakra)}CP`,
-          cost,
-          newStamina,
-          newChakra,
+          message: `You have bought food and healed to ${newStamina}SP and ${newChakra}CP`,
+          ...(!updatedUser.requiresProgressionRefresh
+            ? {
+                ...getUserProgressionUpdate(
+                  { ...user, curStamina: newStamina, curChakra: newChakra },
+                  updatedUser.publishedAchievementIds,
+                ),
+                // MySQL rounds the remaining nonnegative integer balance, including half ryo.
+                userDelta: { money: Math.round(user.money - cost) - user.money },
+              }
+            : {}),
         };
       }
     }),
