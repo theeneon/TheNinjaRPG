@@ -854,15 +854,20 @@ export function PetProfile() {
               {pet.species.effects.length === 1 ? "tag" : "tags"}
             </summary>
             <div className="mt-2 space-y-2">
+              <p>
+                Applies once at battle start when this companion participates in an
+                eligible battle.
+              </p>
               {pet.species.effects.map((effect, index) => (
                 <ItemWithEffects
                   key={`${effect.type}-${index}`}
                   hideDates
+                  hideImage
+                  hideData
                   item={{
                     id: `species:${pet.species!.id}:${index}`,
                     name: `Tag ${index + 1} · ${effect.skillTarget === "ENEMIES" ? "Enemies" : "Companion and owner"}`,
-                    description:
-                      "Applies once at battle start when this companion participates in an eligible battle.",
+                    description: "",
                     effects: [effect],
                     createdAt: pet.species!.createdAt,
                     updatedAt: pet.species!.updatedAt,
