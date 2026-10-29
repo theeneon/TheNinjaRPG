@@ -78,7 +78,7 @@ const normalizeWheelDeltaY = (event: React.WheelEvent<HTMLElement>) => {
 };
 
 /** Wheel input waiting to learn whether the browser scrolled the document itself. */
-let pendingWheelForward: { startTop: number; deltaY: number } | null = null;
+let pendingWheelForward: { startTop: number; targetTop: number } | null = null;
 
 /**
  * Forwards vertical wheel movement from horizontal layout containers to the page.
@@ -92,7 +92,8 @@ let pendingWheelForward: { startTop: number; deltaY: number } | null = null;
  * scroll cannot be cancelled. The delta is therefore applied to
  * `document.scrollingElement` only when the document has not moved two frames
  * later; browsers that chain the scroll natively are left alone instead of
- * scrolling twice. Deltas arriving while that check is pending are combined.
+ * scrolling twice. Pending deltas update a projected scroll position, clamped
+ * after each event so movement beyond an edge does not offset a later reversal.
  */
 export const forwardVerticalWheelToDocumentScroll: React.WheelEventHandler<
   HTMLElement
@@ -125,22 +126,23 @@ export const forwardVerticalWheelToDocumentScroll: React.WheelEventHandler<
       scrollingElement.scrollHeight - scrollingElement.clientHeight,
       Math.max(0, top),
     );
-  if (
-    clampScrollTop(scrollingElement.scrollTop + deltaY) === scrollingElement.scrollTop
-  )
-    return;
-
   if (pendingWheelForward) {
-    pendingWheelForward.deltaY += deltaY;
+    pendingWheelForward.targetTop = clampScrollTop(
+      pendingWheelForward.targetTop + deltaY,
+    );
     return;
   }
-  pendingWheelForward = { startTop: scrollingElement.scrollTop, deltaY };
+  const startTop = scrollingElement.scrollTop;
+  const targetTop = clampScrollTop(startTop + deltaY);
+  if (targetTop === startTop) return;
+
+  pendingWheelForward = { startTop, targetTop };
   window.requestAnimationFrame(() =>
     window.requestAnimationFrame(() => {
       const pending = pendingWheelForward;
       pendingWheelForward = null;
       if (!pending || scrollingElement.scrollTop !== pending.startTop) return;
-      scrollingElement.scrollTop = clampScrollTop(pending.startTop + pending.deltaY);
+      scrollingElement.scrollTop = clampScrollTop(pending.targetTop);
     }),
   );
 };

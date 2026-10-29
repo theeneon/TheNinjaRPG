@@ -80,6 +80,24 @@ describe("layout wheel forwarding", () => {
     await nextFrames(3);
     expect(document.scrollingElement?.scrollTop).toBe(700);
   });
+
+  it.each([
+    { startTop: 0, deltas: [100, -100], expectedTop: 0 },
+    { startTop: 1500, deltas: [-100, 100], expectedTop: 1500 },
+    { startTop: 10, deltas: [-100, 100], expectedTop: 100 },
+    { startTop: 1490, deltas: [100, -100], expectedTop: 1400 },
+  ])(
+    "preserves rapid wheel reversals at scroll position $startTop",
+    async ({ startTop, deltas, expectedTop }) => {
+      const view = setup();
+      const page = document.scrollingElement as HTMLElement;
+      page.scrollTop = startTop;
+      const content = view.getByTestId("content");
+      for (const deltaY of deltas) fireEvent.wheel(content, { deltaY });
+      await nextFrames(3);
+      expect(page.scrollTop).toBe(expectedTop);
+    },
+  );
 });
 
 const nextFrames = async (count: number) => {
