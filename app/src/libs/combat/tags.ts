@@ -387,11 +387,7 @@ export const copy = (
           isTransferCandidate(e, heldSourceIds),
       );
 
-      const selected = selectTransferEffects(
-        candidates,
-        COPY_PRIORITY_RANK,
-        remaining,
-      );
+      const selected = selectTransferEffects(candidates, COPY_PRIORITY_RANK, remaining);
 
       if (selected.length === 0) {
         return {
