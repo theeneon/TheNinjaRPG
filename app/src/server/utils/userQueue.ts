@@ -52,7 +52,6 @@ import {
   insertUserCookingJobForStartQueuedCraft,
   insertUserItemForReturnMaterials,
   insertUserJutsuForStartQueuedJutsu,
-  insertUserQueueForAppendQueueEntries,
   insertUserQueueRows,
   listUserQueueForFetchCraftingQueue,
   listUserQueueForFetchJutsuTrainingQueue,
@@ -212,13 +211,34 @@ export const appendQueueEntries = async (
   entries: QueueEntryInsert[],
   lastPosition?: number,
 ) => {
-  if (entries.length === 0) return;
+  if (entries.length === 0) return [];
   let last = lastPosition;
   if (last === undefined) {
     const [row] = await selectUserQueueForAppendQueueEntries(client, userId, kind);
     last = Number(row?.position ?? 0);
   }
-  await insertUserQueueForAppendQueueEntries(client, entries, userId, kind, last);
+  const createdAt = new Date();
+  const rows: UserQueue[] = entries.map((entry, index) => ({
+    jutsuId: null,
+    itemId: null,
+    stat: null,
+    speed: null,
+    energy: null,
+    reservedRyo: null,
+    quantity: null,
+    materials: null,
+    durationSeconds: null,
+    startsAt: null,
+    finishesAt: null,
+    createdAt,
+    ...entry,
+    id: nanoid(),
+    userId,
+    kind,
+    position: last + index + 1,
+  }));
+  await insertUserQueueRows(client, rows);
+  return rows;
 };
 
 /** The last position used by a queue among `rows`, or 0. */

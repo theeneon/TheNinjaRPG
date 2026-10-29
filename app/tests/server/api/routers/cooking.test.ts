@@ -1,3 +1,5 @@
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
+import { prepareUserUpdate, updateUserCache } from "@/utils/userCache";
 import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as Sentry from "@sentry/nextjs";
 import { and, eq } from "drizzle-orm";
@@ -51,6 +53,32 @@ describeWithDatabase("Cooking production and consumption", () => {
     await insertUserItems([{ id: "rice-stack", userId, itemId: "rice", quantity: 20 }]);
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it("returns active cooking receipts and queued rows without a getUser refetch", async () => {
+    const db = await getTestDatabase();
+    await db.update(userData).set({ primaryElement: "Fire", secondaryElement: "Water" }).where(eq(userData.userId, userId));
+    const initial = await fetchUpdatedUser({ client: db, userId });
+    const key = [["profile", "getUser"], { type: "query" }];
+    const client = new QueryClient();
+    client.setQueryData(key, { userData: initial.user });
+    let reads = 0;
+    const observer = new QueryObserver(client, { queryKey: key, staleTime: Infinity, queryFn: async () => { reads++; return { userData: initial.user }; } });
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      const caller = await callerFor(occupationRouter, userId);
+      for (let index = 0; index < 2; index++) {
+        const revision = prepareUserUpdate(client, key);
+        const result = await caller.craftItem({ itemId: "meal", quantity: 1 });
+        expect(result.success).toBe(true);
+        expect(result.userDelta).toEqual({});
+        await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
+        const cached = client.getQueryData<{ userData: NonNullable<typeof initial.user> }>(key)!.userData;
+        expect(cached.cookingJobs).toEqual(await db.query.userCookingJob.findMany());
+        expect(cached.queue).toEqual(await db.query.userQueue.findMany());
+        expect(reads).toBe(0);
+      }
+    } finally { unsubscribe(); client.clear(); }
+  });
 
   it("captures the cooking bonus once per queued batch and retains it after equipment changes", async () => {
     const db = await getTestDatabase();

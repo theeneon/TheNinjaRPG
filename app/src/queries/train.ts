@@ -94,24 +94,6 @@ export const selectUserQueueForAppendQueueEntries = (
     .from(userQueue)
     .where(queueOf(userId, kind));
 
-/** Build the `userQueue` insert for `appendQueueEntries`. */
-export const insertUserQueueForAppendQueueEntries = (
-  client: Pick<DrizzleClient, "insert">,
-  entries: import("@/server/utils/userQueue").QueueEntryInsert[],
-  userId: string,
-  kind: "JUTSU" | "CRAFT",
-  last: number,
-) =>
-  client.insert(userQueue).values(
-    entries.map((entry, index) => ({
-      ...entry,
-      id: nanoid(),
-      userId,
-      kind,
-      position: last + index + 1,
-    })),
-  );
-
 /** Build deletion of consumed or replaced MASTERY, ELEMENT or ENERGY rows at or below the head. */
 export const deleteDeadQueueRows = (
   client: Pick<DrizzleClient, "delete">,

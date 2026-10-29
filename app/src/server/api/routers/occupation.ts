@@ -53,7 +53,7 @@ import {
   updateUserItemImbuementForFinishImbuingImmediately,
 } from "@/queries/occupation";
 import { fetchUser } from "@/queries/profile";
-import { fetchUpdatedUser } from "@/routers/profile";
+import { fetchUpdatedUser, getUserProgressionUpdate } from "@/routers/profile";
 import { fetchUserItems } from "@/server/api/routers/item";
 import {
   baseServerResponse,
@@ -63,6 +63,7 @@ import {
 } from "@/server/api/trpc";
 import {
   claimUserSnapshot,
+  getNextUserSnapshotAt,
   updateUserItemQuantityAtomically,
 } from "@/server/utils/concurrency";
 import { isMysqlDuplicateKeyError } from "@/server/utils/mysqlErrors";
@@ -157,15 +158,17 @@ export const occupationRouter = createTRPCRouter({
   craftItem: protectedProcedure
     .meta({ mcp: { description: "Craft an item using materials" } })
     .input(cookItemInputSchema)
+    .output(userDeltaResponseSchema.extend({ finishTime: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       // Read userData before inventory. Every capacity mutation commits both rows
       // atomically and bumps updatedAt, so this ordering gives the later CAS a
       // consistent boundary even when another request commits between the reads.
       // The refresh also starts any queued craft whose turn has come.
-      const { user, settings } = await fetchUpdatedUser({
+      const updatedUser = await fetchUpdatedUser({
         client: ctx.drizzle,
         userId: ctx.userId,
       });
+      const { user, settings } = updatedUser;
       const [itemWithRequirements, useritems, waiting] = await Promise.all([
         fetchItemWithCraftingRequirements(ctx.drizzle, input.itemId),
         fetchUserItems(ctx.drizzle, ctx.userId),
@@ -389,6 +392,28 @@ export const occupationRouter = createTRPCRouter({
             : [];
         },
       );
+      const profileUpdate = () => {
+        if (
+          updatedUser.requiresProgressionRefresh ||
+          allConsumptions.some((consumption) =>
+            user.items.some((entry) => entry.id === consumption.userItemId),
+          )
+        )
+          return {};
+        const progression = getUserProgressionUpdate(
+          user,
+          updatedUser.publishedAchievementIds,
+        );
+        return {
+          ...progression,
+          userPatch: {
+            ...progression.userPatch,
+            cookingJobs: user.cookingJobs,
+            craftingExperience: user.craftingExperience,
+          },
+          userDelta: {},
+        };
+      };
       if (isQueued) {
         // The snapshot claim serializes this user's crafts; the materials are taken next
         // and only then is the craft recorded, so a failed step returns what was taken.
@@ -439,7 +464,7 @@ export const occupationRouter = createTRPCRouter({
           );
         }
         try {
-          await appendQueueEntries(
+          const added = await appendQueueEntries(
             ctx.drizzle,
             ctx.userId,
             "CRAFT",
@@ -454,6 +479,8 @@ export const occupationRouter = createTRPCRouter({
             ],
             lastQueuePosition(waiting, "CRAFT"),
           );
+          user.queue.push(...added);
+          user.updatedAt = claim.claimedAt;
         } catch (error) {
           await returnCraftMaterials(ctx.drizzle, ctx.userId, materials);
           // Concurrent appends can claim the same unique slot; the losing craft is refunded.
@@ -465,8 +492,18 @@ export const occupationRouter = createTRPCRouter({
           success: true,
           message: `Queued ${outputQuantity}x ${itemWithRequirements.name}. Starts in ${formatSecondsToTimeDisplay(Math.max(0, Math.round((queueSchedule.startsAt.getTime() - Date.now()) / 1000)))}.`,
           finishTime: queueSchedule.finishesAt.toISOString(),
+          ...profileUpdate(),
         };
       }
+      const cookingJob = isMeal
+        ? {
+            id: nanoid(),
+            userId: ctx.userId,
+            experience: cookingExpGain,
+            finishesAt: finishTime,
+          }
+        : undefined;
+      const craftedAt = getNextUserSnapshotAt(user.updatedAt);
       const materialConflict = Symbol("materialConflict");
       try {
         const craftCommitted = await ctx.drizzle.transaction(async (tx) => {
@@ -476,6 +513,7 @@ export const occupationRouter = createTRPCRouter({
             expGain,
             questDataForDb,
             ctx,
+            craftedAt,
           );
           if (claimResult.rowsAffected !== 1) return false;
 
@@ -499,8 +537,7 @@ export const occupationRouter = createTRPCRouter({
           }
 
           await insertUserItems(tx, craftingItemValues);
-          if (isMeal)
-            await insertUserCookingJobForCraftItem(tx, ctx, cookingExpGain, finishTime);
+          if (cookingJob) await insertUserCookingJobForCraftItem(tx, cookingJob);
           return true;
         });
         if (!craftCommitted) {
@@ -517,10 +554,15 @@ export const occupationRouter = createTRPCRouter({
         throw error;
       }
 
+      user.updatedAt = craftedAt;
+      user.craftingExperience += expGain;
+      user.questData = trackers;
+      if (cookingJob) user.cookingJobs.push(cookingJob);
       return {
         success: true,
         message: `Started ${isMeal ? "cooking" : "crafting"} ${outputQuantity}x ${itemWithRequirements.name}. ${expGain > 0 ? `+${expGain} EXP.` : ""} Ready in ${formatSecondsToTimeDisplay(craftSeconds)}.`,
         finishTime: finishTime.toISOString(),
+        ...profileUpdate(),
       };
     }),
 
