@@ -278,7 +278,9 @@ describeWithDatabase("confirmed quest cache responses", () => {
     const api = await callerFor(questsRouter, playerId);
     expect((await api.startQuest({ questId: missionId, userSector: 0 })).success).toBe(true);
     await db.update(userData).set({ questData: [{ id: missionId, startAt: new Date().toISOString(), goals: [{ id: "train", value: 10, done: true, collected: false, recentlyDied: false }] }] }).where(eq(userData.userId, playerId));
+    await db.insert(userCookingJob).values({ id: "completed-cooking", userId: playerId, experience: 23, finishesAt: new Date(Date.now() + 60000) });
     const profile = await (await callerFor(profileRouter, playerId)).getUser();
+    await db.update(userCookingJob).set({ finishesAt: new Date(Date.now() - 1000) }).where(eq(userCookingJob.id, "completed-cooking"));
     const key = [["profile", "getUser"], { type: "query" }];
     const client = new QueryClient();
     client.setQueryData(key, profile);
@@ -293,7 +295,8 @@ describeWithDatabase("confirmed quest cache responses", () => {
       expect(await db.query.userItem.findMany()).toHaveLength(1);
       await updateUserCache(client, key, result.userPatch, { revision, delta: result.userDelta, achievementProgress: result.achievementProgress });
       const saved = await readPlayer();
-      expect(client.getQueryData<typeof profile>(key)?.userData).toMatchObject({ skillPoints: saved?.skillPoints, money: saved?.money });
+      expect(saved?.cookingExperience).toBe(23);
+      expect(client.getQueryData<typeof profile>(key)?.userData).toMatchObject({ skillPoints: saved?.skillPoints, money: saved?.money, cookingExperience: saved?.cookingExperience, cookingJobs: await db.query.userCookingJob.findMany() });
       expect(reads).toBe(0);
     } finally { stop(); client.clear(); }
   });
