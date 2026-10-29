@@ -5,7 +5,6 @@ import {
   filterLiveSectorBattleUsers,
   findGlobalTravelDestination,
   getBiomeAtSectorAnchor,
-  optimisticGlobalTravelFinish,
   optimisticGlobalTravelStart,
   SECTOR_BATTLE_STALE_SECONDS,
 } from "@/libs/travel";
@@ -102,14 +101,7 @@ describe("optimisticGlobalTravelStart", () => {
   });
 });
 
-describe("optimisticGlobalTravelFinish", () => {
-  it("returns to AWAKE and clears the countdown", () => {
-    expect(optimisticGlobalTravelFinish()).toEqual({
-      status: "AWAKE",
-      travelFinishAt: null,
-    });
-  });
-});
+
 
 describe("filterLiveSectorBattleUsers", () => {
   const users = [

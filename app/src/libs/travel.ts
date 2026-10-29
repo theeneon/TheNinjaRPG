@@ -4,6 +4,7 @@ import {
   MAP_WAKE_ISLAND_SECTOR,
 } from "@/drizzle/constants";
 import { COMBAT_LOBBY_SECONDS, COMBAT_SECONDS } from "@/libs/combat/constants";
+import { isQuestComplete } from "@/libs/objectives";
 import type { NormalizedSectorMap } from "@/libs/sector-map/types";
 import { getSectorTile } from "@/libs/sector-map/validation";
 import type {
@@ -11,7 +12,9 @@ import type {
   GlobalTile,
   SectorPoint,
 } from "@/libs/sector-map/world-types";
+import type { UserWithRelations } from "@/server/api/routers/profile";
 import { secondsFromNow } from "@/utils/time";
+import type { UserCachePatch } from "@/validators/userCache";
 
 /**
  * Gets the biome for a globe tile terrain type (0=ocean, 1=land, 2=desert, 3=ice)
@@ -126,11 +129,54 @@ export const optimisticGlobalTravelStart = (travelTimeSeconds: number) => ({
     : {}),
 });
 
-/** Client cache patch when globe travel ends. */
-export const optimisticGlobalTravelFinish = () => ({
-  status: "AWAKE" as const,
-  travelFinishAt: null,
-});
+/** Merge arrival's public quest projection while retaining unloaded achievement progress. */
+export const globalTravelFinishPatch = (
+  current: Pick<NonNullable<UserWithRelations>, "userQuests" | "questData">,
+  patch: UserCachePatch,
+  projectedQuestIds: readonly string[] = [],
+) => {
+  const projected = new Set(projectedQuestIds);
+  const teamQuestStates = ({ userQuests, questData }: typeof current) =>
+    new Map(
+      userQuests.flatMap((entry) => {
+        const tracker = questData?.find((tracker) => tracker.id === entry.questId);
+        return entry.quest.teamEnabled &&
+          !entry.endAt &&
+          !entry.completed &&
+          tracker &&
+          !tracker.failed
+          ? [[entry.questId, isQuestComplete(entry.quest, tracker)] as const]
+          : [];
+      }),
+    );
+  const previousTeams = teamQuestStates(current);
+  const arrivedTeams = teamQuestStates({
+    userQuests: patch.userQuests ?? [],
+    questData: patch.questData ?? [],
+  });
+  // Synthetic overworld achievements have no history row in the sparse arrival read.
+  // Reconcile their locations and passive progress through the full profile flow.
+  // Team eligibility and completion changes require authoritative navigation reconciliation.
+  if (
+    current.userQuests.some(
+      (entry) => entry.questType === "achievement" && !projected.has(entry.questId),
+    ) ||
+    previousTeams.size !== arrivedTeams.size ||
+    [...previousTeams].some(([id, complete]) => arrivedTeams.get(id) !== complete)
+  )
+    return undefined;
+  const replaced = new Set([
+    ...current.userQuests.map((entry) => entry.questId),
+    ...projectedQuestIds,
+  ]);
+  return {
+    ...patch,
+    questData: [
+      ...(current.questData ?? []).filter((tracker) => !replaced.has(tracker.id)),
+      ...(patch.questData ?? []),
+    ],
+  };
+};
 
 /**
  * A fight nobody has touched for this long is abandoned. While any participant

@@ -33,6 +33,10 @@ import { SECTOR_BATTLE_STALE_SECONDS } from "@/libs/travel";
 import { fetchSector } from "@/queries/village";
 import { activeWarAllyWhere, activeWarMercenaryWhere } from "@/queries/war";
 import type { DrizzleClient } from "@/server/db";
+import {
+  completedQuestHistoryRelation,
+  userQuestHistoryRelation,
+} from "@/server/utils/achievementObjectives";
 import { buildSectorWindowLayout } from "@/server/utils/sectorMap";
 import { secondsFromNow } from "@/utils/time";
 
@@ -435,3 +439,25 @@ export const updateUserDataForCompleteExpiredGlobalTravel = (
     .update(userData)
     .set({ status: "AWAKE", travelFinishAt: null })
     .where(and(expiredTravel, sql`NOT (${hasQueue})`));
+
+/** Arrival evaluates quest targets and collection bonuses from one relation read. */
+export const findUserForGlobalTravelFinish = (
+  client: Pick<DrizzleClient, "query">,
+  userId: string,
+) =>
+  client.query.userData.findFirst({
+    where: eq(userData.userId, userId),
+    with: {
+      userQuests: userQuestHistoryRelation,
+      completedQuests: completedQuestHistoryRelation,
+      bloodline: true,
+      village: true,
+      clan: true,
+      titles: true,
+      userSkills: { where: eq(userSkill.activated, true), with: { skill: true } },
+      items: {
+        where: and(ne(userItem.equipped, "NONE"), gt(userItem.quantity, 0)),
+        with: { item: true, imbuements: { with: { item: true } } },
+      },
+    },
+  });
