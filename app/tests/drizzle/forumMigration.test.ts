@@ -7,7 +7,7 @@ import mysql from "mysql2/promise";
 import { describeWithDatabase } from "../setup/testDatabase";
 
 it("loads the complete forum upgrade through the migration journal", () => {
-  const migration = readFileSync(new URL("../../drizzle/migrations/0123_flashy_mac_gargan.sql", import.meta.url), "utf8");
+  const migration = readFileSync(new URL("../../drizzle/migrations/0124_flashy_mac_gargan.sql", import.meta.url), "utf8");
   const migrations = readMigrationFiles({ migrationsFolder: fileURLToPath(new URL("../../drizzle/migrations", import.meta.url)) });
   expect(migrations.filter(({ sql }) => sql.join("\n").includes(migration))).toHaveLength(1);
 });
@@ -29,7 +29,7 @@ describeWithDatabase("forum structure migration", () => {
         INSERT INTO ForumThread(id,title,boardId,userId) VALUES('topic','Question topic','questions','author');
         INSERT INTO ForumPost(id,content,userId,authorId,threadId,createdAt) VALUES('opening','Opening','author','author','topic','2026-01-01 00:00:00.000'),('answer','Answer','author','author','topic','2026-01-02 00:00:00.000');
       `));
-      for (const name of ["0122_woozy_valkyrie.sql", "0123_flashy_mac_gargan.sql"]) await connection.query(rename(readFileSync(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")));
+      for (const name of ["0122_woozy_valkyrie.sql", "0124_flashy_mac_gargan.sql"]) await connection.query(rename(readFileSync(new URL(`../../drizzle/migrations/${name}`, import.meta.url), "utf8")));
       const [userColumns] = await connection.query<mysql.RowDataPacket[]>(rename("SHOW COLUMNS FROM UserData"));
       expect(userColumns.map(c => c.Field)).toEqual(["userId"]);
       const [sections] = await connection.query<mysql.RowDataPacket[]>(rename("SELECT * FROM ForumSection"));
